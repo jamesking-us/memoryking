@@ -64,7 +64,7 @@ For a lasting installation and the browser dashboard, follow the [getting starte
 
 ## See what your agents are doing
 
-![MemoryKing dashboard showing a synthetic task, pending criteria and reported blockers](docs/images/dashboard.png)
+![MemoryKing dashboard showing a synthetic task, pending criteria and reported blockers](docs/images/dashboard.jpg)
 
 *Dashboard overview with synthetic example data. Progress reflects saved agent reports and evidence.*
 
