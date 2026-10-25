@@ -24,6 +24,9 @@ BIN = Path(os.environ.get("MEMORYKING_PG_BIN", "tmp/postgres-dev/runtime/bin")).
 class PostgresStoreTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Shared transport suites reuse this method without inheriting the class decorator.
+        if not (BIN / "pg_ctl").is_file():
+            raise unittest.SkipTest("native PostgreSQL runtime not configured")
         cls.cluster = DevCluster(BIN)
         cls.directory = tempfile.TemporaryDirectory(prefix="mk-pg-store-", dir="/tmp")
         cls.base = Path(cls.directory.name)
