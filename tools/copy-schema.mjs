@@ -15,6 +15,7 @@ copyFileSync(
 for (const name of [
   "index.html",
   "app.css",
+  "elephant.png",
   "crown.svg",
   "favicon.svg",
   "wordmark.svg",

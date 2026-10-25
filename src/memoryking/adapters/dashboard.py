@@ -20,6 +20,7 @@ STATIC = Path(__file__).with_name("web")
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.css": ("app.css", "text/css"),
+    "/elephant.png": ("elephant.png", "image/png"),
     **{
         f"/{name}.js": (f"{name}.js", "text/javascript")
         for name in ("app", "observatory", "graph", "graph-layout", "graph-worker", "brand")

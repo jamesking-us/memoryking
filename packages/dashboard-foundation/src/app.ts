@@ -1,5 +1,5 @@
 import { Observatory } from "./observatory.js";
-import { installCrown } from "./brand.js";
+import { installEmblem } from "./brand.js";
 interface Evidence {
   report: string;
   verification: string;
@@ -74,7 +74,7 @@ const observatory = new Observatory(get("observatory"), api, () =>
       }
     : null,
 );
-installCrown(get<HTMLButtonElement>("crown-reveal"));
+installEmblem(get<HTMLButtonElement>("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
 let selected = "P05";
 let paused = false;

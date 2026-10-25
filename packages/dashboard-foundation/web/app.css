@@ -1,22 +1,30 @@
 :root {
   color-scheme: dark;
-  --bg: #0b0e16;
-  --panel: #121825;
-  --panel2: #181f30;
-  --text: #edf1fc;
-  --muted: #a7b3ca;
-  --line: #2b3549;
-  --accent: #bfabff;
-  --cyan: #76e3ed;
-  --good: #8fe0b6;
-  --amber: #f2c886;
+  --bg: #080e13;
+  --panel: #111c24;
+  --panel2: #192a34;
+  --text: #edf5f8;
+  --muted: #a7bdc9;
+  --line: #324955;
+  --accent: #8bdcea;
+  --cyan: #70c6ed;
+  --good: #8fddaf;
+  --amber: #f0c481;
 }
 * {
   box-sizing: border-box;
 }
 body {
   margin: 0;
-  background: var(--bg);
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(#8bdcea05 1px, transparent 1px),
+    linear-gradient(90deg, #8bdcea05 1px, transparent 1px),
+    radial-gradient(ellipse at 80% 0, #1c59652b, transparent 55%);
+  background-size:
+    48px 48px,
+    48px 48px,
+    100% 100%;
   color: var(--text);
   font-family:
     ui-sans-serif,
@@ -29,14 +37,14 @@ body {
 }
 body.light {
   color-scheme: light;
-  --bg: #f1f4fa;
+  --bg: #eaf0f3;
   --panel: #fff;
-  --panel2: #edf1f8;
-  --text: #192238;
-  --muted: #53627b;
-  --line: #ced6e5;
-  --accent: #6936bd;
-  --cyan: #08747c;
+  --panel2: #e2ebef;
+  --text: #172d38;
+  --muted: #4c6470;
+  --line: #b8cbd3;
+  --accent: #006b7c;
+  --cyan: #185d8b;
   --good: #236840;
   --amber: #875d17;
 }
@@ -53,7 +61,7 @@ button {
   background: var(--panel2);
   color: var(--text);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 5px;
   padding: 9px 14px;
 }
 button:hover {
@@ -85,19 +93,27 @@ aside {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  background:
+    linear-gradient(90deg, #ffffff03, transparent 30%, #00000018),
+    repeating-linear-gradient(0deg, #ffffff02 0 1px, transparent 1px 4px),
+    var(--panel);
+  box-shadow:
+    inset 0 3px #b9564b,
+    6px 0 32px #00000016;
 }
 .brand {
   display: flex;
   gap: 10px;
   align-items: center;
   color: var(--text);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   letter-spacing: -0.8px;
 }
 .brand img {
-  filter: drop-shadow(0 5px 12px #9d72f83b);
+  object-fit: contain;
+  flex-shrink: 0;
+  filter: drop-shadow(0 5px 12px #68c6df29);
 }
 .brand small {
   display: block;
@@ -120,11 +136,12 @@ aside {
   text-align: left;
   padding: 12px 10px;
   margin-bottom: 8px;
-  border-radius: 8px;
+  border-radius: 5px;
 }
 .nav.selected {
   color: var(--accent);
-  background: var(--panel2);
+  background: linear-gradient(90deg, #61cbdc19, transparent), var(--panel2);
+  box-shadow: inset 2px 0 var(--accent);
 }
 .nav small {
   display: block;
@@ -170,6 +187,8 @@ header {
   align-items: flex-start;
   gap: 24px;
   margin-bottom: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
 }
 h1 {
   font-size: 26px;
@@ -213,8 +232,11 @@ p {
 }
 .card {
   border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffffff06, transparent 32%), var(--panel);
+  box-shadow:
+    inset 0 1px #ffffff08,
+    0 10px 30px #00000012;
   padding: 24px;
 }
 .metrics {
@@ -257,7 +279,7 @@ p {
 .trajectory {
   margin-bottom: 22px;
   background:
-    radial-gradient(ellipse at top right, #7253ac18, transparent 55%),
+    radial-gradient(ellipse at top right, #4dc9e518, transparent 55%),
     var(--panel);
 }
 .phase-map {
@@ -285,7 +307,7 @@ p {
 .phase-node.in_progress {
   color: var(--accent);
   border-color: var(--accent);
-  background: #9577ef16;
+  background: #5bcde51a;
 }
 .phase-node[aria-pressed="true"] {
   outline: 2px solid var(--accent);
@@ -629,7 +651,7 @@ footer {
   accent-color: #63dcc7;
 }
 .trace-stage {
-  border-left: 2px solid #9b7cef;
+  border-left: 2px solid var(--accent);
   padding: 12px 16px;
   margin: 12px 0;
 }
@@ -660,6 +682,7 @@ footer {
   margin-top: 24px;
 }
 .task-card {
+  box-shadow: inset 2px 0 var(--accent);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 22px;
@@ -995,31 +1018,47 @@ summary:focus-visible,
   border-color: var(--amber);
   color: var(--amber);
 }
-.crown-reveal {
+.emblem-reveal {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  margin: 18px auto;
-  padding: 5px;
-  border: 0;
-  background: transparent;
-  min-height: 110px;
+  margin: 12px auto 16px;
+  padding: 14px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(0deg, transparent 49.5%, #73d5e810 50%, transparent 50.5%),
+    linear-gradient(90deg, transparent 49.5%, #73d5e810 50%, transparent 50.5%),
+    radial-gradient(ellipse, #50c8e01a, transparent 70%);
   width: 100%;
 }
-.crown-reveal img {
-  width: 70px;
-  height: 80px;
+.emblem-reveal img {
+  width: 160px;
+  height: 160px;
+  max-width: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 7px 10px #00000055);
 }
-.crown-reveal canvas {
-  width: 100px;
-  height: 100px;
-  margin: -10px 0;
-}
-.crown-reveal small {
+.emblem-reveal small {
   font-size: 11px;
-  letter-spacing: 0.2px;
   color: var(--muted);
+  margin-top: 10px;
+}
+.motion-toggle {
+  margin-bottom: 8px;
+}
+.tag,
+.controls,
+.nav-title,
+.metric strong,
+.task-card code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+body.light {
+  background-image:
+    linear-gradient(#335d6a08 1px, transparent 1px),
+    linear-gradient(90deg, #335d6a08 1px, transparent 1px);
 }
 @media (max-width: 1100px) {
   .graph-panes {
@@ -1050,7 +1089,7 @@ summary:focus-visible,
   .history-controls select {
     width: 100%;
   }
-  .crown-reveal {
+  .emblem-reveal {
     width: 100px;
   }
   .observatory-output .metrics {
@@ -1091,7 +1130,7 @@ footer {
     max-width: none;
     margin: 4px;
   }
-  aside .crown-reveal {
+  aside .emblem-reveal {
     display: inline-flex;
     vertical-align: middle;
     margin: 6px;
@@ -1099,4 +1138,16 @@ footer {
 }
 aside {
   overflow-y: auto;
+}
+
+/* Compact header on phones: the full emblem remains in the desktop sidebar. */
+@media (max-width: 650px) {
+  aside .emblem-reveal,
+  aside .motion-toggle {
+    display: none;
+  }
+  .brand img {
+    width: 48px;
+    height: 48px;
+  }
 }

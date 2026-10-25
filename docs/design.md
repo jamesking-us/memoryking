@@ -85,4 +85,12 @@ Repository inspection is passive: it records Git identity, tracked/dirty artifac
 
 Passing implementation tests does not establish better real-task outcomes, cost savings, production throughput, complete browser support, automatic failover or disaster-recovery service levels. The current [feature limits](reference.md#current-limits) preserve those distinctions.
 
+## Dashboard appearance
+
+The dashboard uses a crowned cybernetic elephant emblem with gunmetal panels, restrained circuit-grid and brushed-metal CSS textures, and cyan accents. Content panels keep solid surfaces for legible labels and evidence. Dark and light themes share the same controls and semantic status indicators. No fonts, textures or artwork are fetched from external services at runtime.
+
+The optional logo interaction tilts a rendered image using perspective; it is not an interactive 3D model. It runs once for 1.8 seconds on request, stops when hidden or offscreen, and respects reduced motion and the Motion off control. The compact phone layout uses the small static emblem.
+
+The main [elephant artwork](../packages/dashboard-foundation/web/elephant.png) was created with the built-in image-generation tool; its [generation prompt](images/memoryking-emblem-prompt.txt) is retained alongside the documentation. The favicon is a simplified vector mark for small sizes.
+
 [Back to README](../README.md) · [Security](../SECURITY.md) · [Deployment](deployment.md)

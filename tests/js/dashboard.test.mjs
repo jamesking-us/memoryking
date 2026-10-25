@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { layout } from "../../packages/dashboard-foundation/dist/graph-layout.js";
-import {
-  crownMesh,
-  installCrown,
-} from "../../packages/dashboard-foundation/dist/brand.js";
+import { installEmblem } from "../../packages/dashboard-foundation/dist/brand.js";
 
 test("bounded force graph terminates with finite positions and preserves pinned nodes", () => {
   for (const count of [0, 1, 200, 500]) {
@@ -45,48 +42,34 @@ test("force graph ceiling rejects oversize input; dangling references cannot mov
   );
   assert.deepEqual(a.nodes, [{ id: "a", x: 40, y: 40, pinned: true }]);
 });
-test("crown has finite extruded geometry for the crown and three memory layers", () => {
-  const faces = crownMesh();
-  assert.equal(faces.length, 27);
-  assert.ok(
-    faces.every(
-      (f) =>
-        f.points.length >= 4 &&
-        f.points.every((p) => p.length === 3 && p.every(Number.isFinite)),
-    ),
-  );
-  const depths = new Set(faces.flatMap((f) => f.points.map((p) => p[2])));
-  assert.ok([...depths].some((v) => v < 0) && [...depths].some((v) => v > 0));
-});
-
-test("motion gate cancels hidden/offscreen/reduced motion, stops at deadline and idles without frames", () => {
-  const names = [
-    "document",
-    "matchMedia",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-    "IntersectionObserver",
-    "devicePixelRatio",
-  ];
+test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or reduced", () => {
+  const names = ["document", "matchMedia", "IntersectionObserver"];
   const old = Object.fromEntries(
     names.map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]),
   );
-  const handlers = {},
-    queue = new Map();
-  let sequence = 0,
-    intersection,
+  const handlers = {};
+  let intersection,
     mediaChange,
-    toggle;
-  const img = { hidden: false },
-    canvas = {
-      hidden: true,
-      setAttribute() {},
-      getContext: () => new Proxy({}, { get: () => () => {} }),
-    };
+    toggle,
+    active = null,
+    starts = 0;
+  const img = {
+    animate(_frames, options) {
+      assert.equal(options.iterations, 1);
+      assert.ok(options.duration <= 2400);
+      starts++;
+      active = {
+        cancel() {
+          active = null;
+        },
+        onfinish: null,
+      };
+      return active;
+    },
+  };
   const button = {
     dataset: {},
     querySelector: () => img,
-    prepend() {},
     after(v) {
       toggle = v;
     },
@@ -101,18 +84,12 @@ test("motion gate cancels hidden/offscreen/reduced motion, stops at deadline and
     Object.assign(globalThis, {
       document: {
         hidden: false,
-        createElement: (t) => (t === "canvas" ? canvas : { setAttribute() {} }),
+        createElement: () => ({ setAttribute() {} }),
         addEventListener(k, f) {
           handlers[k] = f;
         },
       },
       matchMedia: () => media,
-      devicePixelRatio: 3,
-      requestAnimationFrame: (f) => {
-        queue.set(++sequence, f);
-        return sequence;
-      },
-      cancelAnimationFrame: (i) => queue.delete(i),
       IntersectionObserver: class {
         constructor(f) {
           intersection = f;
@@ -120,46 +97,44 @@ test("motion gate cancels hidden/offscreen/reduced motion, stops at deadline and
         observe() {}
       },
     });
-    installCrown(button);
-    assert.equal(queue.size, 0);
-    assert.equal(img.hidden, false);
+    installEmblem(button);
+    assert.equal(starts, 0);
     button.onclick();
-    assert.equal(queue.size, 1);
     assert.equal(button.dataset.animating, "true");
-    let [id, frame] = [...queue][0];
-    queue.delete(id);
-    frame(performance.now() + 100);
-    assert.equal(queue.size, 1);
-    assert.equal(canvas.width, 320);
+    assert.ok(active);
     document.hidden = true;
     handlers.visibilitychange();
-    assert.equal(queue.size, 0);
-    assert.equal(img.hidden, false);
+    assert.equal(active, null);
+    button.onclick();
+    assert.equal(starts, 1);
     document.hidden = false;
     media.matches = true;
     button.onclick();
-    assert.equal(queue.size, 0);
+    assert.equal(active, null);
     media.matches = false;
     button.onclick();
     media.matches = true;
     mediaChange();
-    assert.equal(queue.size, 0);
+    assert.equal(active, null);
     media.matches = false;
     button.onclick();
     intersection([{ isIntersecting: false }]);
-    assert.equal(queue.size, 0);
+    assert.equal(active, null);
+    button.onclick();
+    assert.equal(active, null);
     intersection([{ isIntersecting: true }]);
     button.onclick();
-    [id, frame] = [...queue][0];
-    queue.delete(id);
-    frame(performance.now() + 2500);
-    assert.equal(queue.size, 0);
+    active.onfinish();
+    assert.equal(active, null);
     assert.equal(button.dataset.animating, "false");
-    assert.equal(canvas.hidden, true);
     toggle.onclick();
     button.onclick();
-    assert.equal(queue.size, 0);
+    assert.equal(active, null);
     assert.equal(toggle.textContent, "Motion off");
+    toggle.onclick();
+    delete img.animate;
+    button.onclick();
+    assert.equal(button.dataset.animating, "false");
   } finally {
     for (const name of names) {
       if (old[name]) Object.defineProperty(globalThis, name, old[name]);

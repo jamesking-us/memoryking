@@ -1,4 +1,4 @@
-<p align="center"><img src="src/memoryking/adapters/web/wordmark.svg" width="360" alt="MemoryKing" /></p>
+<p align="center"><img src="src/memoryking/adapters/web/elephant.png" width="180" alt="MemoryKing" /></p>
 
 # Give your AI agents a memory they can pick up again
 
@@ -74,7 +74,7 @@ The dashboard helps you inspect recorded work without reading a long chat transc
 - **Memory:** an interactive graph and list of accessible memories and evidence.
 - **History and review:** inspect changes, review proposals and preview affected content.
 - **Retrieval history:** see the exact briefing returned, its sources and recorded usage.
-- **Appearance:** dark and light themes, reduced-motion behavior and an optional animated 3D crown.
+- **Appearance:** textured dark and light themes, a crowned cybernetic elephant, and an optional depth-tilt animation that respects reduced motion.
 
 Agents must publish their state through the supported interfaces. A displayed heartbeat is an observation, not proof that an agent is still working; missing cost data stays unknown.
 

@@ -1,5 +1,5 @@
 import { Observatory } from "./observatory.js";
-import { installCrown } from "./brand.js";
+import { installEmblem } from "./brand.js";
 const get = (id) => document.getElementById(id);
 function el(tag, text = "", cls = "") {
     const node = document.createElement(tag);
@@ -20,7 +20,7 @@ const observatory = new Observatory(get("observatory"), api, () => snapshot
         authorization_epoch: snapshot.authorization_epoch,
     }
     : null);
-installCrown(get("crown-reveal"));
+installEmblem(get("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
 let selected = "P05";
 let paused = false;

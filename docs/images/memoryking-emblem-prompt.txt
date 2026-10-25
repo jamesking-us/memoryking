@@ -1,0 +1,9 @@
+Generation method: built-in image generation; transparent background.
+
+Use case: logo-brand.
+Asset type: production brand emblem for the MemoryKing software dashboard, transparent PNG, square canvas.
+Primary request: a cybernetic elephant wearing a king's crown, futuristic science-fiction industrial design.
+Subject and composition: one centered front-facing elephant head with broad symmetrical ears, a clear articulated trunk, two short steel tusks, and a unmistakable five-point royal crown. Tight balanced badge silhouette occupying about 88 percent of the canvas; all crown points and tusks fully inside the frame. No surrounding shield.
+Style: premium cinematic 3D hard-surface emblem, bold simplified shapes that remain recognizable at small UI sizes, not a busy character illustration.
+Materials: brushed titanium and dark gunmetal armor plates, restrained engraved circuitry, beveled edges, subtle wear, precise machinery. Crown in lighter platinum metal with small warm amber insets. Narrow red illuminated eyes and a few ice-cyan circuit highlights. Strong edge lighting so it works on both a dark graphite dashboard and pale backgrounds.
+Constraints: elephant anatomy must be immediately recognizable; majestic and intelligent rather than angry or cute; no human skull, no weapons, no scenery, no floating particles, no text, no letters, no watermark, no cast background shadow. Truly transparent background and crisp isolated edges. Original design.

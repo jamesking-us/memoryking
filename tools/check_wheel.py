@@ -69,6 +69,7 @@ with zipfile.ZipFile(wheel) as archive:
         "web/index.html",
         "web/app.js",
         "web/app.css",
+        "web/elephant.png",
         "web/crown.svg",
         *[f"web/{name}.svg" for name in ("favicon", "wordmark", "crown-mono")],
         *[

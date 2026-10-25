@@ -130,7 +130,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(403, self.call("GET", "/../../AGENTS.md")[0])
 
     def test_navigation_login_reads_and_logout(self):
-        for path in ["/", "/app.js", "/app.css", "/crown.svg"]:
+        for path in ["/", "/app.js", "/app.css", "/crown.svg", "/elephant.png"]:
             result = self.call("GET", path)
             self.assertEqual(result[0], 200)
             self.assertEqual(result[1]["Cache-Control"], "no-store")
