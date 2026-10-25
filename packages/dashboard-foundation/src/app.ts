@@ -603,7 +603,7 @@ get<HTMLFormElement>("receipt-form").addEventListener(
               meter.className = "budget-failed";
             meter.setAttribute("aria-label", "Serialized token budget used");
             panel.replaceChildren(
-              el("div", "SERIALIZATION & EVIDENCE", "eyebrow"),
+              el("div", "Response details", "eyebrow"),
               el("h3", label(diag.status)),
               el(
                 "p",
@@ -883,9 +883,7 @@ let executionProject = "";
 let executionGeneration = 0;
 let executionExpires = 0;
 let executionBusy = false;
-function clearExecution(
-  message = "Choose a project to check current access.",
-): void {
+function clearExecution(message = "Enter a project to load its tasks."): void {
   executionGeneration++;
   executionExpires = 0;
   executionProject = "";
@@ -898,14 +896,14 @@ function renderExecution(value: ExecutionSnapshot): void {
   const tasks = get("execution-tasks");
   tasks.replaceChildren();
   get("execution-notice").textContent = value.tasks.length
-    ? `${value.tasks.length} visible task streams · refreshed every 5s while updates run`
-    : "No visible current checkpoints in this bounded project view.";
+    ? `${value.tasks.length} task record${value.tasks.length === 1 ? "" : "s"} · refreshed every 5s while updates run`
+    : "No tasks in the current project view.";
   for (const task of value.tasks) {
     const card = el("article", "", "task-card");
     card.append(
       el(
         "div",
-        `Writer ${task.writer} · ${task.task} / ${task.run ?? "task stream"}`,
+        `Saved by ${task.writer} · Task ${task.task}${task.run ? ` · Run ${task.run}` : ""}`,
         "eyebrow",
       ),
       el("h3", task.objective),

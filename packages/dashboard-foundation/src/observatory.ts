@@ -94,11 +94,10 @@ export class Observatory {
   ) {
     this.root = root;
     root.append(
-      e("div", "EXPLORE · VERIFY · DECIDE", "eyebrow"),
-      e("h2", "Memory observatory"),
+      e("h2", "Memory"),
       e(
         "p",
-        "Inspect current authorized records. Historical views recheck current permission. Loaded snapshots expire after 15 seconds; refresh before acting. No model calls or agent scheduling occur here.",
+        "Browse stored memories, checkpoints, reviews and processing usage. Records reflect your current permissions; views expire after 15 seconds.",
       ),
     );
     const form = e("form", "", "observatory-form");
@@ -109,10 +108,10 @@ export class Observatory {
     this.view = e("select");
     this.view.setAttribute("aria-label", "View");
     for (const [id, name] of [
-      ["atlas", "Memory atlas"],
-      ["history", "Checkpoint time machine"],
+      ["atlas", "Memory graph"],
+      ["history", "Checkpoint history"],
       ["review", "Review & conflicts"],
-      ["cost", "Cost & efficiency"],
+      ["cost", "Usage & costs"],
       ["operations", "Jobs & health"],
       ["handoffs", "Handoffs & checkpoints"],
       ["impact", "Change impact"],
@@ -338,7 +337,7 @@ export class Observatory {
     const load = () => this.command("retrieval", "atlas", args),
       data = await load();
     if (!this.graph) {
-      this.output.replaceChildren(e("h3", "Relationships with provenance"));
+      this.output.replaceChildren(e("h3", "Memory relationships"));
       const host = e("div");
       this.output.append(host);
       this.graph = new AtlasView(
@@ -487,7 +486,7 @@ export class Observatory {
         });
       }
       this.output.append(
-        e("h3", "Scope-aware comparison"),
+        e("h3", "Checkpoint comparison"),
         e(
           "p",
           "Changed denominators reflect scope edits. A higher fraction alone is not evidence of progress.",
@@ -755,7 +754,7 @@ export class Observatory {
       data = await load(),
       summary = doc(data.processing);
     this.output.replaceChildren(
-      e("h3", "Every recorded attempt counts"),
+      e("h3", "Processing attempts"),
       e(
         "p",
         "Known usage is a lower bound when any attempts are unknown. Failed calls, retries and background processing remain included. Provider reports and actor outcomes are not independent metering.",
@@ -1001,7 +1000,7 @@ export class Observatory {
     this.status.textContent =
       "Enter an observation to authorize and preview its consequences.";
     this.output.replaceChildren(
-      e("h3", "Preview retention consequences"),
+      e("h3", "Retention preview"),
       e(
         "p",
         "Permanent purge also invalidates dependent context, retry results, tenant experience bodies and ranking state. It cannot erase prior exports, provider deliveries or backups. Review the server preview before confirming.",

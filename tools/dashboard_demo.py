@@ -118,25 +118,27 @@ def main():
                         f"review{i}",
                     )
             checkpoint = json.loads((ROOT / "fixtures/contracts/checkpoint.json").read_text())
-            checkpoint["objective"] = "DEMO · Inspect recoverable delivery with evidence"
-            checkpoint["current_state"] = "Synthetic checkpoint; never real-task qualification"
+            checkpoint["objective"] = "Investigate retry timeouts"
+            checkpoint["current_state"] = (
+                "Sample task: reviewing timeout behavior and retry limits."
+            )
             checkpoint["acceptance"] = [
                 {
                     "id": "evidence",
-                    "text": "Inspect current evidence",
+                    "text": "Check retry evidence",
                     "state": "passed",
                     "evidence": [{"kind": "observation", "id": observations[0]}],
                     "decision": None,
                 },
                 {
                     "id": "review",
-                    "text": "Independent human review",
+                    "text": "Review proposed fix",
                     "state": "pending",
                     "evidence": [],
                     "decision": None,
                 },
             ]
-            scope = {"project": "demo", "task": "demo-delivery", "run": None}
+            scope = {"project": "demo", "task": "retry-investigation", "run": None}
             for revision in range(3):
                 if revision == 1:
                     checkpoint["acceptance"][0]["state"] = "pending"
@@ -144,7 +146,7 @@ def main():
                     checkpoint["acceptance"].append(
                         {
                             "id": "new_scope",
-                            "text": "DEMO scope added after baseline",
+                            "text": "Add regression tests",
                             "state": "pending",
                             "evidence": [],
                             "decision": None,

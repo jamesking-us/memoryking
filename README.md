@@ -66,14 +66,14 @@ For a lasting installation and the browser dashboard, follow the [getting starte
 
 ![MemoryKing dashboard showing a synthetic task, pending criteria and reported blockers](docs/images/dashboard.png)
 
-*A synthetic demo workspace. Progress reflects saved agent reports and evidence.*
+*Dashboard overview with synthetic example data. Progress reflects saved agent reports and evidence.*
 
 The dashboard helps you inspect recorded work without reading a long chat transcript:
 
 - **Task activity:** saved goals, completed and pending criteria, blockers and observed heartbeats.
-- **Memory observatory:** an interactive graph and list of accessible memories and evidence.
+- **Memory:** an interactive graph and list of accessible memories and evidence.
 - **History and review:** inspect changes, review proposals and preview affected content.
-- **Retrieval lab:** see the exact briefing returned, its sources and recorded usage.
+- **Retrieval history:** see the exact briefing returned, its sources and recorded usage.
 - **Appearance:** dark and light themes, reduced-motion behavior and an optional animated 3D crown.
 
 Agents must publish their state through the supported interfaces. A displayed heartbeat is an observation, not proof that an agent is still working; missing cost data stays unknown.

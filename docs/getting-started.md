@@ -63,7 +63,7 @@ In a second terminal, from the same checkout:
 
 Open the URL printed by the command. Read the private output file locally and enter its `code` in the page. Use the **one-use code**, never the owner credential. The code expires after 60 seconds; request a new file name for another attempt.
 
-The dashboard starts empty. Connect a project after your agent has saved something to it. **Task activity**, **Memory observatory** and **Retrieval lab** show different views of that project's current authorized records. They do not discover conversations in other applications automatically.
+The dashboard starts empty. Enter your project in **Task activity** and select **Load tasks** after your agent has saved something to it. **Memory** and **Retrieval history** show the project's stored records and briefings. Each view checks your current permissions. They do not discover conversations in other applications automatically.
 
 To explore a populated synthetic dashboard, install the [contributor environment](../CONTRIBUTING.md#setup) and run:
 

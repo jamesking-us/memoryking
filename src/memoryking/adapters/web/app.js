@@ -446,7 +446,7 @@ get("receipt-form").addEventListener("submit", async (event) => {
                     if (diag.status === "budget_insufficient")
                         meter.className = "budget-failed";
                     meter.setAttribute("aria-label", "Serialized token budget used");
-                    panel.replaceChildren(el("div", "SERIALIZATION & EVIDENCE", "eyebrow"), el("h3", label(diag.status)), el("p", `${diag.usage.output_tokens ?? "Unknown"} / ${diag.usage.max_output_tokens ?? "not applicable"} tokens · ${diag.usage.counting ?? "not counted for this artifact"}`), meter, el("p", `${diag.usage.serialized_bytes} serialized bytes · Provider usage: ${diag.usage.provider_usage}`));
+                    panel.replaceChildren(el("div", "Response details", "eyebrow"), el("h3", label(diag.status)), el("p", `${diag.usage.output_tokens ?? "Unknown"} / ${diag.usage.max_output_tokens ?? "not applicable"} tokens · ${diag.usage.counting ?? "not counted for this artifact"}`), meter, el("p", `${diag.usage.serialized_bytes} serialized bytes · Provider usage: ${diag.usage.provider_usage}`));
                     if (diag.status === "budget_insufficient") {
                         panel.prepend(el("p", `No briefing fits. Minimum essential budget: ${diag.minimum_required_tokens ?? "not computable"} tokens. The displayed count measures only the failure response.`, "integrity"));
                     }
@@ -590,7 +590,7 @@ let executionProject = "";
 let executionGeneration = 0;
 let executionExpires = 0;
 let executionBusy = false;
-function clearExecution(message = "Choose a project to check current access.") {
+function clearExecution(message = "Enter a project to load its tasks.") {
     executionGeneration++;
     executionExpires = 0;
     executionProject = "";
@@ -603,11 +603,11 @@ function renderExecution(value) {
     const tasks = get("execution-tasks");
     tasks.replaceChildren();
     get("execution-notice").textContent = value.tasks.length
-        ? `${value.tasks.length} visible task streams · refreshed every 5s while updates run`
-        : "No visible current checkpoints in this bounded project view.";
+        ? `${value.tasks.length} task record${value.tasks.length === 1 ? "" : "s"} · refreshed every 5s while updates run`
+        : "No tasks in the current project view.";
     for (const task of value.tasks) {
         const card = el("article", "", "task-card");
-        card.append(el("div", `Writer ${task.writer} · ${task.task} / ${task.run ?? "task stream"}`, "eyebrow"), el("h3", task.objective), el("p", task.current_state));
+        card.append(el("div", `Saved by ${task.writer} · Task ${task.task}${task.run ? ` · Run ${task.run}` : ""}`, "eyebrow"), el("h3", task.objective), el("p", task.current_state));
         const p = task.progress;
         const summary = `${p.passed} passed · ${p.pending} pending · ${p.failed} failed · ${p.unknown} unknown · ${p.waived} waived / ${p.total} criteria`;
         const bar = el("div", "", "criteria-bar");

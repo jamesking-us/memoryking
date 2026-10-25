@@ -70,7 +70,7 @@ export class Observatory {
         this.api = api;
         this.current = current;
         this.root = root;
-        root.append(e("div", "EXPLORE · VERIFY · DECIDE", "eyebrow"), e("h2", "Memory observatory"), e("p", "Inspect current authorized records. Historical views recheck current permission. Loaded snapshots expire after 15 seconds; refresh before acting. No model calls or agent scheduling occur here."));
+        root.append(e("h2", "Memory"), e("p", "Browse stored memories, checkpoints, reviews and processing usage. Records reflect your current permissions; views expire after 15 seconds."));
         const form = e("form", "", "observatory-form");
         this.project = field(form, "Project", "", "text");
         this.project.required = true;
@@ -79,10 +79,10 @@ export class Observatory {
         this.view = e("select");
         this.view.setAttribute("aria-label", "View");
         for (const [id, name] of [
-            ["atlas", "Memory atlas"],
-            ["history", "Checkpoint time machine"],
+            ["atlas", "Memory graph"],
+            ["history", "Checkpoint history"],
             ["review", "Review & conflicts"],
-            ["cost", "Cost & efficiency"],
+            ["cost", "Usage & costs"],
             ["operations", "Jobs & health"],
             ["handoffs", "Handoffs & checkpoints"],
             ["impact", "Change impact"],
@@ -265,7 +265,7 @@ export class Observatory {
             args.cursor = cursor;
         const load = () => this.command("retrieval", "atlas", args), data = await load();
         if (!this.graph) {
-            this.output.replaceChildren(e("h3", "Relationships with provenance"));
+            this.output.replaceChildren(e("h3", "Memory relationships"));
             const host = e("div");
             this.output.append(host);
             this.graph = new AtlasView(host, (id) => void this.run(() => this.atlas(id)));
@@ -354,7 +354,7 @@ export class Observatory {
                     total_now: p.total,
                 });
             }
-            this.output.append(e("h3", "Scope-aware comparison"), e("p", "Changed denominators reflect scope edits. A higher fraction alone is not evidence of progress."), table(changes, [
+            this.output.append(e("h3", "Checkpoint comparison"), e("p", "Changed denominators reflect scope edits. A higher fraction alone is not evidence of progress."), table(changes, [
                 "task",
                 "run",
                 "scope_changed",
@@ -524,7 +524,7 @@ export class Observatory {
     }
     async cost() {
         const load = () => this.command("inspection", "cost"), data = await load(), summary = doc(data.processing);
-        this.output.replaceChildren(e("h3", "Every recorded attempt counts"), e("p", "Known usage is a lower bound when any attempts are unknown. Failed calls, retries and background processing remain included. Provider reports and actor outcomes are not independent metering.", "integrity"));
+        this.output.replaceChildren(e("h3", "Processing attempts"), e("p", "Known usage is a lower bound when any attempts are unknown. Failed calls, retries and background processing remain included. Provider reports and actor outcomes are not independent metering.", "integrity"));
         const metrics = e("div", "", "metrics");
         for (const [name, value] of [
             ["Attempts", summary.attempts],
@@ -696,7 +696,7 @@ export class Observatory {
     retention() {
         this.status.textContent =
             "Enter an observation to authorize and preview its consequences.";
-        this.output.replaceChildren(e("h3", "Preview retention consequences"), e("p", "Permanent purge also invalidates dependent context, retry results, tenant experience bodies and ranking state. It cannot erase prior exports, provider deliveries or backups. Review the server preview before confirming.", "integrity"));
+        this.output.replaceChildren(e("h3", "Retention preview"), e("p", "Permanent purge also invalidates dependent context, retry results, tenant experience bodies and ranking state. It cannot erase prior exports, provider deliveries or backups. Review the server preview before confirming.", "integrity"));
         const f = e("form", "", "observatory-form"), observation = field(f, "Observation ID");
         observation.required = true;
         f.append(e("button", "Preview purge"));
