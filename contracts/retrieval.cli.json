@@ -1,0 +1,533 @@
+{
+  "operation": "retrieval",
+  "args": {
+    "command_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://memoryking.invalid/retrieval-v1",
+      "title": "MemoryKing retrieval v1",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "action": {
+              "const": "brief"
+            },
+            "args": {
+              "$ref": "#/$defs/Brief"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "action": {
+              "const": "fetch"
+            },
+            "args": {
+              "$ref": "#/$defs/Fetch"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "action": {
+              "const": "receipt"
+            },
+            "args": {
+              "$ref": "#/$defs/Receipt"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "action": {
+              "const": "replay"
+            },
+            "args": {
+              "$ref": "#/$defs/Receipt"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "action": {
+              "const": "receipts"
+            },
+            "args": {
+              "$ref": "#/$defs/ReceiptList"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "action": {
+              "const": "rerun"
+            },
+            "args": {
+              "$ref": "#/$defs/Rerun"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "action": {
+              "const": "atlas"
+            },
+            "args": {
+              "$ref": "#/$defs/Atlas"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        }
+      ],
+      "$defs": {
+        "Brief": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "object"
+              }
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "tokenizer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "top_k": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 32
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "valid_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "recorded_position": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "consistency": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "at_least_watermark": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "required_channels": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 2,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "lexical",
+                      "dense"
+                    ]
+                  }
+                },
+                "wait_ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2000
+                },
+                "on_timeout": {
+                  "enum": [
+                    "error",
+                    "partial"
+                  ]
+                }
+              },
+              "required": []
+            },
+            "freshness": {
+              "enum": [
+                "any",
+                "attested"
+              ]
+            },
+            "dense": {
+              "$ref": "#/$defs/DenseQuery"
+            }
+          },
+          "required": [
+            "project",
+            "query",
+            "bindings",
+            "max_output_tokens",
+            "tokenizer"
+          ]
+        },
+        "Fetch": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "reference": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "kind": {
+              "enum": [
+                "observation",
+                "revision"
+              ]
+            },
+            "start_byte": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65536
+            },
+            "end_byte": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "tokenizer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            }
+          },
+          "required": [
+            "project",
+            "reference",
+            "kind",
+            "start_byte",
+            "end_byte",
+            "max_output_tokens",
+            "tokenizer"
+          ]
+        },
+        "Receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "receipt": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "receipt"
+          ]
+        },
+        "ReceiptList": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        },
+        "Rerun": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "predecessor": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "brief": {
+              "$ref": "#/$defs/Brief"
+            }
+          },
+          "required": [
+            "project",
+            "predecessor",
+            "brief"
+          ]
+        },
+        "Atlas": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "object"
+              }
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "valid_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "recorded_position": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "types": {
+              "type": "array",
+              "uniqueItems": true,
+              "minItems": 1,
+              "maxItems": 7,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "observation",
+                  "claim",
+                  "attestation",
+                  "procedure",
+                  "checkpoint",
+                  "task",
+                  "run"
+                ]
+              }
+            },
+            "focus": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 16,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 192
+              }
+            },
+            "max_nodes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "max_edges": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1500
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          "required": [
+            "project",
+            "bindings"
+          ]
+        },
+        "DenseQuery": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "query_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "vector": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4096,
+              "items": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              }
+            },
+            "minimum_similarity_ppm": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "engine": {
+              "enum": [
+                "python_exact",
+                "pgvector_exact"
+              ]
+            }
+          },
+          "required": [
+            "fingerprint",
+            "query_hash",
+            "vector"
+          ]
+        }
+      }
+    }
+  },
+  "stdout": "canonical JSON plus newline framing"
+}

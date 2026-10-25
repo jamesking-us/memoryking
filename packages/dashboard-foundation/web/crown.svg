@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 128" role="img" aria-labelledby="title desc">
+  <title id="title">MemoryKing</title>
+  <desc id="desc">A three-peak crown above three stacked memory layers.</desc>
+  <path fill="#63508c" d="M12 99h96v17H12z"/>
+  <path fill="#8562bd" d="M17 79h86v16H17z"/>
+  <path fill="#b29ae5" d="M22 59h76v16H22z"/>
+  <path fill="#d9ac53" d="M26 54 17 17 43 31 60 5 77 31 103 17 94 54z"/>
+</svg>

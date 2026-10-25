@@ -1,0 +1,429 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "S01",
+      "requirements": [
+        "R01",
+        "R04"
+      ],
+      "completion_owner": "P05",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S02",
+      "requirements": [
+        "R02",
+        "R04"
+      ],
+      "completion_owner": "P05",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S03",
+      "requirements": [
+        "R02",
+        "R11"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S04",
+      "requirements": [
+        "R07",
+        "R09"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S05",
+      "requirements": [
+        "R05",
+        "R08"
+      ],
+      "completion_owner": "P03",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S06",
+      "requirements": [
+        "R06",
+        "R07"
+      ],
+      "completion_owner": "P06",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S07",
+      "requirements": [
+        "R03"
+      ],
+      "completion_owner": "P04",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S08",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "completion_owner": "P08",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S09",
+      "requirements": [
+        "R06"
+      ],
+      "completion_owner": "P08",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S10",
+      "requirements": [
+        "R01",
+        "R11"
+      ],
+      "completion_owner": "P08",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S11",
+      "requirements": [
+        "R05",
+        "R07",
+        "R08"
+      ],
+      "completion_owner": "P09",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S12",
+      "requirements": [
+        "R07",
+        "R11"
+      ],
+      "completion_owner": "P11",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S13",
+      "requirements": [
+        "R03",
+        "R07"
+      ],
+      "completion_owner": "P04",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S14",
+      "requirements": [
+        "R07",
+        "R11"
+      ],
+      "completion_owner": "P02",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S15",
+      "requirements": [
+        "R03",
+        "R07"
+      ],
+      "completion_owner": "P04",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S16",
+      "requirements": [
+        "R06",
+        "R07"
+      ],
+      "completion_owner": "P06",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S17",
+      "requirements": [
+        "R11"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S18",
+      "requirements": [
+        "R07"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S19",
+      "requirements": [
+        "R07"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S20",
+      "requirements": [
+        "R11"
+      ],
+      "completion_owner": "P02",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S21",
+      "requirements": [
+        "R01",
+        "R05"
+      ],
+      "completion_owner": "P03",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S22",
+      "requirements": [
+        "R06",
+        "R07"
+      ],
+      "completion_owner": "P04",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S23",
+      "requirements": [
+        "R05",
+        "R08"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S24",
+      "requirements": [
+        "R03",
+        "R04",
+        "R07"
+      ],
+      "completion_owner": "P08",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S25",
+      "requirements": [
+        "R04",
+        "R11"
+      ],
+      "completion_owner": "P05",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S26",
+      "requirements": [
+        "R03",
+        "R12"
+      ],
+      "completion_owner": "P12",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S27",
+      "requirements": [
+        "R04",
+        "R10"
+      ],
+      "completion_owner": "P04",
+      "implementation_status": "local_adapter_available"
+    },
+    {
+      "id": "S28",
+      "requirements": [
+        "R02",
+        "R07"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S29",
+      "requirements": [
+        "R07",
+        "R09"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S30",
+      "requirements": [
+        "R03",
+        "R04"
+      ],
+      "completion_owner": "P08",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S31",
+      "requirements": [
+        "R01",
+        "R02",
+        "R11"
+      ],
+      "completion_owner": "P12",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S32",
+      "requirements": [
+        "R04",
+        "R11"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S33",
+      "requirements": [
+        "R04",
+        "R07"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S34",
+      "requirements": [
+        "R07",
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "S35",
+      "requirements": [
+        "R07",
+        "R11"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "S36",
+      "requirements": [
+        "R06",
+        "R08"
+      ],
+      "completion_owner": "P07",
+      "implementation_status": "shared_adapter_available"
+    },
+    {
+      "id": "DB01",
+      "requirements": [
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB02",
+      "requirements": [
+        "R10",
+        "R12"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB03",
+      "requirements": [
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB04",
+      "requirements": [
+        "R10",
+        "R11"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB05",
+      "requirements": [
+        "R07",
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB06",
+      "requirements": [
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB07",
+      "requirements": [
+        "R06",
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB08",
+      "requirements": [
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB09",
+      "requirements": [
+        "R03",
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB10",
+      "requirements": [
+        "R10",
+        "R12"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB11",
+      "requirements": [
+        "R10"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    },
+    {
+      "id": "DB12",
+      "requirements": [
+        "R10",
+        "R11"
+      ],
+      "completion_owner": "P10",
+      "implementation_status": "not_evaluated"
+    }
+  ]
+}

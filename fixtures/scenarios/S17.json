@@ -1,0 +1,31 @@
+{
+  "fixture_version": "1",
+  "id": "S17",
+  "requirements": [
+    "R11"
+  ],
+  "completion_owner": "P07",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "Projection jobs complete out of order; a later completion cannot advance the frontier past an unfinished earlier event. Strict channel requests wait/fail while declared partial requests expose the gap safely; replicas cannot bypass the guarantee.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S17"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 5
+      }
+    }
+  ]
+}

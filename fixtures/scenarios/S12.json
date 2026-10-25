@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S12",
+  "requirements": [
+    "R07",
+    "R11"
+  ],
+  "completion_owner": "P11",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "A revoked or purged source disappears from derived outputs and cannot be restored by an old worker.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S12"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 14
+      }
+    }
+  ]
+}

@@ -1,0 +1,278 @@
+[
+  {
+    "name": "unknown outcome preserves nullable measurements",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "outcome",
+      "action": "outcome",
+      "args": {
+        "project": "demo",
+        "logical_key": "task-run",
+        "expected_revision": 0,
+        "body": {
+          "task": "task",
+          "run": "run",
+          "result": "unknown",
+          "acceptance_evidence": [],
+          "failures": [],
+          "rework": [],
+          "elapsed_ms": null,
+          "input_tokens": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "limitations": [
+            "Unobserved result"
+          ],
+          "readers": null
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "no invented success enum",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "outcome",
+      "action": "outcome",
+      "args": {
+        "project": "demo",
+        "logical_key": "task-run",
+        "expected_revision": 0,
+        "body": {
+          "task": "task",
+          "run": "run",
+          "result": "assumed_success",
+          "acceptance_evidence": [],
+          "failures": [],
+          "rework": [],
+          "elapsed_ms": null,
+          "input_tokens": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "limitations": [
+            "Unobserved result"
+          ],
+          "readers": null
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "no caller role authority",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "outcome",
+      "action": "outcome",
+      "args": {
+        "project": "demo",
+        "logical_key": "task-run",
+        "expected_revision": 0,
+        "body": {
+          "task": "task",
+          "run": "run",
+          "result": "unknown",
+          "acceptance_evidence": [],
+          "failures": [],
+          "rework": [],
+          "elapsed_ms": null,
+          "input_tokens": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "limitations": [
+            "Unobserved result"
+          ],
+          "readers": null
+        }
+      },
+      "role": "admin"
+    },
+    "valid": false
+  },
+  {
+    "name": "required explicit uncertainty",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "outcome",
+      "action": "outcome",
+      "args": {
+        "project": "demo",
+        "logical_key": "task-run",
+        "expected_revision": 0,
+        "body": {
+          "task": "task",
+          "run": "run",
+          "result": "unknown",
+          "acceptance_evidence": [],
+          "failures": [],
+          "rework": [],
+          "elapsed_ms": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "limitations": [
+            "Unobserved result"
+          ],
+          "readers": null
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "stable retry key required",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "action": "outcome",
+      "args": {
+        "project": "demo",
+        "logical_key": "task-run",
+        "expected_revision": 0,
+        "body": {
+          "task": "task",
+          "run": "run",
+          "result": "unknown",
+          "acceptance_evidence": [],
+          "failures": [],
+          "rework": [],
+          "elapsed_ms": null,
+          "input_tokens": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "limitations": [
+            "Unobserved result"
+          ],
+          "readers": null
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "bounded nonnegative usage",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "outcome",
+      "action": "outcome",
+      "args": {
+        "project": "demo",
+        "logical_key": "task-run",
+        "expected_revision": 0,
+        "body": {
+          "task": "task",
+          "run": "run",
+          "result": "unknown",
+          "acceptance_evidence": [],
+          "failures": [],
+          "rework": [],
+          "elapsed_ms": null,
+          "input_tokens": -1,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "limitations": [
+            "Unobserved result"
+          ],
+          "readers": null
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "current feedback records",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "action": "records",
+      "args": {
+        "project": "demo",
+        "kind": "feedback"
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "bounded ranking config",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "rank",
+      "action": "ranking_propose",
+      "args": {
+        "project": "demo",
+        "logical_key": "rank",
+        "feedback": [
+          "exp_example"
+        ],
+        "max_adjustment_ppm": 100000,
+        "policy": "bounded-feedback-v1"
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "excessive influence rejected",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "rank",
+      "action": "ranking_propose",
+      "args": {
+        "project": "demo",
+        "logical_key": "rank",
+        "feedback": [
+          "exp_example"
+        ],
+        "max_adjustment_ppm": 100001,
+        "policy": "bounded-feedback-v1"
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "duplicate IDs rejected",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "rank",
+      "action": "ranking_propose",
+      "args": {
+        "project": "demo",
+        "logical_key": "rank",
+        "feedback": [
+          "exp_example",
+          "exp_example"
+        ],
+        "max_adjustment_ppm": 100000,
+        "policy": "bounded-feedback-v1"
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "executable predicate rejected",
+    "request": {
+      "version": 1,
+      "incarnation": "hist_fixture",
+      "key": "rank",
+      "action": "ranking_propose",
+      "args": {
+        "project": "demo",
+        "logical_key": "rank",
+        "feedback": [
+          "exp_example"
+        ],
+        "max_adjustment_ppm": 100000,
+        "policy": "bounded-feedback-v1",
+        "predicate": "lambda x:True"
+      }
+    },
+    "valid": false
+  }
+]

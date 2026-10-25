@@ -1,0 +1,6 @@
+# Optional local CPU embeddings; separate from the no-model developer/runtime lock.
+# 1.23.2 is pinned for a published CPython 3.12 Intel macOS wheel.
+jsonschema==4.26.0
+onnxruntime==1.23.2
+numpy==2.5.4
+tokenizers==0.23.3

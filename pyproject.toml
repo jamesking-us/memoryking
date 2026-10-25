@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools==84.2.1", "wheel==0.48.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memoryking"
+version = "0.1.0a1"
+description = "MemoryKing local memory, checkpoint and recovery service"
+requires-python = ">=3.12,<3.13"
+dependencies = ["jsonschema==4.26.0"]
+classifiers = ["Private :: Do Not Upload"]
+
+[project.scripts]
+memoryking = "memoryking.__main__:main"
+memoryking-migrate = "memoryking.migration:main"
+memoryking-shared = "memoryking.shared:main"
+memoryking-reference-agent = "memoryking.reference_agent:main"
+memoryking-repository-worker = "memoryking.repository_worker:main"
+memoryking-embedding-worker = "memoryking.embedding_worker:main"
+
+[project.optional-dependencies]
+tokenizers = ["tiktoken==0.12.0"]
+embeddings = ["onnxruntime==1.23.2", "numpy==2.5.4", "tokenizers==0.23.3"]
+shared = ["psycopg[binary]==3.3.6", "psycopg-pool==3.3.3", "mcp==2.3.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"memoryking" = ["py.typed"]
+"memoryking.contracts" = ["*.json", "py.typed"]
+"memoryking.adapters" = ["*.sql", "*.json", "web/*", "tokenizers/*", "models/*.json"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["tmp", "docs/reports", "output"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.format]
+exclude = ["src/memoryking/contracts/generated.py", "src/memoryking/contracts/retrieval_generated.py", "src/memoryking/contracts/working_generated.py", "src/memoryking/contracts/handoff_generated.py", "src/memoryking/contracts/inference_generated.py", "src/memoryking/contracts/repository_generated.py", "src/memoryking/contracts/embedding_generated.py", "src/memoryking/contracts/processing_generated.py", "src/memoryking/contracts/experience_generated.py"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/memoryking"]
+
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true

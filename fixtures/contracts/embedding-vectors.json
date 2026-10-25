@@ -1,0 +1,233 @@
+[
+  {
+    "name": "explicit experiment configuration",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "configure",
+      "key": "test",
+      "args": {
+        "project": "p",
+        "model": "minilm-l6-v2-onnx",
+        "state": "experimental",
+        "expected_generation": 0
+      }
+    }
+  },
+  {
+    "name": "unknown provider",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "configure",
+      "key": "test",
+      "args": {
+        "project": "p",
+        "model": "remote",
+        "state": "experimental",
+        "expected_generation": 0
+      }
+    }
+  },
+  {
+    "name": "implicit default activation",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "configure",
+      "key": "test",
+      "args": {
+        "project": "p",
+        "model": "minilm-l6-v2-onnx",
+        "state": "active",
+        "expected_generation": 0
+      }
+    }
+  },
+  {
+    "name": "negative generation",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "configure",
+      "key": "test",
+      "args": {
+        "project": "p",
+        "model": "minilm-l6-v2-onnx",
+        "state": "experimental",
+        "expected_generation": -1
+      }
+    }
+  },
+  {
+    "name": "boolean generation",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "configure",
+      "key": "test",
+      "args": {
+        "project": "p",
+        "model": "minilm-l6-v2-onnx",
+        "state": "experimental",
+        "expected_generation": true
+      }
+    }
+  },
+  {
+    "name": "unknown field",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "configure",
+      "key": "test",
+      "args": {
+        "project": "p",
+        "model": "minilm-l6-v2-onnx",
+        "state": "experimental",
+        "expected_generation": 0,
+        "token": "secret"
+      }
+    }
+  },
+  {
+    "name": "claim",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "claim",
+      "args": {
+        "project": "p",
+        "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  {
+    "name": "claim closed",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "claim",
+      "args": {
+        "project": "p",
+        "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "extra": 1
+      }
+    }
+  },
+  {
+    "name": "status",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "status",
+      "args": {
+        "project": "p",
+        "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  {
+    "name": "status closed",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "status",
+      "args": {
+        "project": "p",
+        "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "extra": 1
+      }
+    }
+  },
+  {
+    "name": "complete",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "complete",
+      "args": {
+        "project": "p",
+        "lease": "lease",
+        "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "vector": [
+          1,
+          2,
+          3
+        ],
+        "input_tokens": null,
+        "truncated": false,
+        "duration_ms": 5
+      }
+    }
+  },
+  {
+    "name": "complete closed",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "complete",
+      "args": {
+        "project": "p",
+        "lease": "lease",
+        "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "vector": [
+          1,
+          2,
+          3
+        ],
+        "input_tokens": null,
+        "truncated": false,
+        "duration_ms": 5,
+        "extra": 1
+      }
+    }
+  },
+  {
+    "name": "fail",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "fail",
+      "args": {
+        "project": "p",
+        "lease": "lease",
+        "reason": "interrupted",
+        "input_tokens": 0,
+        "duration_ms": 0
+      }
+    }
+  },
+  {
+    "name": "fail closed",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist",
+      "action": "fail",
+      "args": {
+        "project": "p",
+        "lease": "lease",
+        "reason": "interrupted",
+        "input_tokens": 0,
+        "duration_ms": 0,
+        "extra": 1
+      }
+    }
+  }
+]

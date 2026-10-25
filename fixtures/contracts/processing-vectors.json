@@ -1,0 +1,123 @@
+[
+  {
+    "name": "no model whole-unit fallback",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "compile",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "tokenizer": "cl100k_base",
+        "max_output_tokens": 6000,
+        "sources": [
+          "obs_fixture"
+        ],
+        "claims": [],
+        "candidate": null
+      }
+    }
+  },
+  {
+    "name": "usage unknown preserved",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "usage",
+      "args": {
+        "project": "p",
+        "successful_tasks": 0
+      }
+    }
+  },
+  {
+    "name": "unknown command",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "activate",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "tokenizer": "cl100k_base",
+        "max_output_tokens": 6000,
+        "sources": [
+          "obs_fixture"
+        ],
+        "claims": [],
+        "candidate": null
+      }
+    }
+  },
+  {
+    "name": "unbounded source list",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "compile",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "tokenizer": "cl100k_base",
+        "max_output_tokens": 6000,
+        "sources": [
+          "obs_0",
+          "obs_1",
+          "obs_2",
+          "obs_3",
+          "obs_4",
+          "obs_5",
+          "obs_6",
+          "obs_7",
+          "obs_8"
+        ],
+        "claims": [],
+        "candidate": null
+      }
+    }
+  },
+  {
+    "name": "boolean token budget",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "compile",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "tokenizer": "cl100k_base",
+        "max_output_tokens": true,
+        "sources": [
+          "obs_fixture"
+        ],
+        "claims": [],
+        "candidate": null
+      }
+    }
+  }
+]

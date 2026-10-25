@@ -1,0 +1,237 @@
+[
+  {
+    "name": "brief",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "brief",
+      "args": {
+        "project": "demo",
+        "query": "retry",
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 1200,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "unknown field",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "brief",
+      "args": {
+        "project": "demo",
+        "query": "retry",
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 1200,
+        "tokenizer": "cl100k_base"
+      },
+      "extra": true
+    }
+  },
+  {
+    "name": "oversized budget",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "brief",
+      "args": {
+        "project": "demo",
+        "query": "retry",
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 65537,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "missing project",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "brief",
+      "args": {
+        "query": "retry",
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 1200,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "missing history",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "brief",
+      "args": {
+        "project": "demo",
+        "query": "retry",
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 1200,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "empty bindings",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "brief",
+      "args": {
+        "project": "demo",
+        "query": "retry",
+        "bindings": [],
+        "max_output_tokens": 1200,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "negative wait",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "brief",
+      "args": {
+        "project": "demo",
+        "query": "retry",
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 1200,
+        "tokenizer": "cl100k_base",
+        "consistency": {
+          "wait_ms": -1
+        }
+      }
+    }
+  },
+  {
+    "name": "receipt",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "receipt",
+      "args": {
+        "project": "demo",
+        "receipt": "rcpt_example"
+      }
+    }
+  },
+  {
+    "name": "replay",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "replay",
+      "args": {
+        "project": "demo",
+        "receipt": "rcpt_example"
+      }
+    }
+  },
+  {
+    "name": "receipts",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_example",
+      "action": "receipts",
+      "args": {
+        "project": "demo"
+      }
+    }
+  },
+  {
+    "name": "bounded-atlas",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "atlas",
+      "args": {
+        "project": "p",
+        "bindings": [
+          {}
+        ],
+        "max_nodes": 200,
+        "max_edges": 400
+      }
+    }
+  },
+  {
+    "name": "atlas-node-cap",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "atlas",
+      "args": {
+        "project": "p",
+        "bindings": [
+          {}
+        ],
+        "max_nodes": 501,
+        "max_edges": 400
+      }
+    }
+  },
+  {
+    "name": "atlas-edge-cap",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "atlas",
+      "args": {
+        "project": "p",
+        "bindings": [
+          {}
+        ],
+        "max_nodes": 200,
+        "max_edges": 1501
+      }
+    }
+  },
+  {
+    "name": "atlas-unknown-type",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_test",
+      "action": "atlas",
+      "args": {
+        "project": "p",
+        "bindings": [
+          {}
+        ],
+        "max_nodes": 200,
+        "max_edges": 400,
+        "types": [
+          "invented"
+        ]
+      }
+    }
+  }
+]

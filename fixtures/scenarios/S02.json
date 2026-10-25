@@ -1,0 +1,37 @@
+{
+  "fixture_version": "1",
+  "id": "S02",
+  "requirements": [
+    "R02",
+    "R04"
+  ],
+  "completion_owner": "P05",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "A reviewer receives a compact change-focused handoff with verification gaps preserved.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "materialize_handoff",
+      "arguments": {
+        "sender": "principal_implementer",
+        "recipient": "principal_reviewer",
+        "verification_gap": "integration test not run"
+      },
+      "expect": {
+        "verification_gap_retained": true,
+        "full_essential_state": true,
+        "recipient_authenticated": true,
+        "wrong_identity_denied": true,
+        "duplicate_bytes_identical": true,
+        "ack_is_not_completion": true
+      }
+    }
+  ]
+}

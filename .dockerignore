@@ -1,0 +1,11 @@
+**
+!deploy/
+!deploy/shared/
+!deploy/shared/Dockerfile
+!pyproject.toml
+!requirements-dev.lock
+!requirements-build.lock
+!requirements-shared.lock
+!README.md
+!src/
+!src/**

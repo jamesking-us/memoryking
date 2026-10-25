@@ -1,0 +1,35 @@
+{
+  "fixture_version": "1",
+  "id": "DB10",
+  "requirements": [
+    "R10",
+    "R12"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Report generation, PDF/EPUB QA, SMTP acceptance, device confirmation and approval are separate observable states.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "render_closeout_status",
+      "arguments": {
+        "report": "qa_passed",
+        "smtp": "accepted",
+        "device": "unverified",
+        "approval": "pending"
+      },
+      "expect": {
+        "device_confirmed": false,
+        "approval_inferred": false,
+        "states_distinct": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Synthetic evaluation-audit contract example only. No real task, model call, statistical study or measured savings. Frozen protocol SHA-256: 9abefd05b6da6140a1345af5840d0a8dbc3a6ca0288f53c91bf4ed7fcebf8711

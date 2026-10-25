@@ -1,0 +1,39 @@
+{
+  "fixture_version": "1",
+  "id": "S22",
+  "requirements": [
+    "R06",
+    "R07"
+  ],
+  "completion_owner": "P04",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "Cache an empty response, then accept relevant knowledge or register a contradiction. The next request observes the membership change. Repeat across validity start/end, grant expiry, and new mandatory constraints.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "repeat_cached_query_after_changes",
+      "arguments": {
+        "cached_result": [],
+        "changes": [
+          "accept_claim",
+          "register_conflict",
+          "validity_start",
+          "validity_end",
+          "grant_expiry",
+          "new_constraint"
+        ]
+      },
+      "expect": {
+        "all_changes_rechecked": true,
+        "stale_empty_result_served": false
+      }
+    }
+  ]
+}

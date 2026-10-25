@@ -1,0 +1,152 @@
+{
+  "protocol_sha256": "9abefd05b6da6140a1345af5840d0a8dbc3a6ca0288f53c91bf4ed7fcebf8711",
+  "started_at_ms": 200,
+  "split": "holdout",
+  "initial_memory": [
+    {
+      "task": "task",
+      "arm": "no_memory",
+      "namespace": "namespace-no_memory",
+      "resources": []
+    },
+    {
+      "task": "task",
+      "arm": "transcript",
+      "namespace": "namespace-transcript",
+      "resources": [
+        "earlier"
+      ]
+    },
+    {
+      "task": "task",
+      "arm": "compact_checkpoint",
+      "namespace": "namespace-compact_checkpoint",
+      "resources": [
+        "earlier"
+      ]
+    },
+    {
+      "task": "task",
+      "arm": "full_system",
+      "namespace": "namespace-full_system",
+      "resources": [
+        "earlier"
+      ]
+    }
+  ],
+  "attempt_inventory": [
+    {
+      "id": "no_memory-1",
+      "task": "task",
+      "arm": "no_memory"
+    },
+    {
+      "id": "transcript-1",
+      "task": "task",
+      "arm": "transcript"
+    },
+    {
+      "id": "compact_checkpoint-1",
+      "task": "task",
+      "arm": "compact_checkpoint"
+    },
+    {
+      "id": "full_system-1",
+      "task": "task",
+      "arm": "full_system"
+    }
+  ],
+  "attempts": [
+    {
+      "id": "no_memory-1",
+      "task": "task",
+      "arm": "no_memory",
+      "status": "succeeded",
+      "cost": {
+        "tokens": 10,
+        "dollars": 10,
+        "cpu_ms": 10,
+        "gpu_ms": 10,
+        "human_minutes": 10,
+        "elapsed_ms": 10
+      }
+    },
+    {
+      "id": "transcript-1",
+      "task": "task",
+      "arm": "transcript",
+      "status": "succeeded",
+      "cost": {
+        "tokens": 10,
+        "dollars": 10,
+        "cpu_ms": 10,
+        "gpu_ms": 10,
+        "human_minutes": 10,
+        "elapsed_ms": 10
+      }
+    },
+    {
+      "id": "compact_checkpoint-1",
+      "task": "task",
+      "arm": "compact_checkpoint",
+      "status": "succeeded",
+      "cost": {
+        "tokens": 10,
+        "dollars": 10,
+        "cpu_ms": 10,
+        "gpu_ms": 10,
+        "human_minutes": 10,
+        "elapsed_ms": 10
+      }
+    },
+    {
+      "id": "full_system-1",
+      "task": "task",
+      "arm": "full_system",
+      "status": "succeeded",
+      "cost": {
+        "tokens": 10,
+        "dollars": 10,
+        "cpu_ms": 10,
+        "gpu_ms": 10,
+        "human_minutes": 10,
+        "elapsed_ms": 10
+      }
+    }
+  ],
+  "shared_costs": [
+    {
+      "id": "ingestion",
+      "cost": {
+        "tokens": 8,
+        "dollars": 8,
+        "cpu_ms": 8,
+        "gpu_ms": 8,
+        "human_minutes": 8,
+        "elapsed_ms": 8
+      }
+    }
+  ],
+  "task_results": [
+    {
+      "task": "task",
+      "arm": "no_memory",
+      "outcome": "success"
+    },
+    {
+      "task": "task",
+      "arm": "transcript",
+      "outcome": "success"
+    },
+    {
+      "task": "task",
+      "arm": "compact_checkpoint",
+      "outcome": "success"
+    },
+    {
+      "task": "task",
+      "arm": "full_system",
+      "outcome": "success"
+    }
+  ]
+}

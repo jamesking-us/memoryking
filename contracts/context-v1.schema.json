@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MemoryKing current authorized project context",
+  "type": "object",
+  "properties": {
+    "project": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"}
+  },
+  "required": ["project"],
+  "additionalProperties": false
+}

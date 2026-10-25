@@ -1,0 +1,33 @@
+{
+  "fixture_version": "1",
+  "id": "S11",
+  "requirements": [
+    "R05",
+    "R07",
+    "R08"
+  ],
+  "completion_owner": "P09",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "A malicious source cannot promote itself, change policy, or activate a procedure.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S11"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 6
+      }
+    }
+  ]
+}

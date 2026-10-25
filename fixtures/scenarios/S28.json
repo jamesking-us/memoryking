@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S28",
+  "requirements": [
+    "R02",
+    "R07"
+  ],
+  "completion_owner": "P07",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "A recipient can read guidance the sender cannot. Preparation reveals only a safe opaque handle; previews use the intersection, recipient materialization uses current recipient rights, and role spoofing or handle transfer cannot widen access.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S28"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 12
+      }
+    }
+  ]
+}

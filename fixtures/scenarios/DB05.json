@@ -1,0 +1,39 @@
+{
+  "fixture_version": "1",
+  "id": "DB05",
+  "requirements": [
+    "R07",
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Grant reduction removes restricted graph/list/inspector/export content and aggregate leakage; historical replay uses current permission.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "revoke_while_dashboard_open",
+      "arguments": {
+        "revoke_record": "claim_secret",
+        "surfaces": [
+          "graph",
+          "list",
+          "inspector",
+          "export",
+          "counts",
+          "historical"
+        ]
+      },
+      "expect": {
+        "restricted_content_remaining": false,
+        "aggregate_leakage": false
+      }
+    }
+  ]
+}

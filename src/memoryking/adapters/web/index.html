@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>MemoryKing · Execution observatory</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/app.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to execution overview</a>
+    <div class="shell">
+      <aside>
+        <a class="brand" href="/"
+          ><img src="/crown.svg" width="42" height="42" alt="" /><span
+            >MemoryKing<small>EXECUTION OBSERVATORY</small></span
+          ></a
+        >
+        <div class="nav-title">WORKSPACE</div>
+        <button class="nav selected" id="overview">◈ &nbsp; Workspace</button>
+        <button class="nav" id="atlas-nav">◇ &nbsp; Memory observatory</button>
+        <button class="nav" id="execution-nav">◷ &nbsp; Task activity</button>
+        <button class="nav" id="retrieval-nav">⌁ &nbsp; Retrieval lab</button>
+        <div class="side-note">
+          <span class="dot"></span> AUTHORIZED OBSERVATION<br />
+          <p>
+            Tasks, evidence and memory inspection.<br />Current permissions
+            govern every response.
+          </p>
+        </div>
+        <button
+          id="crown-reveal"
+          class="crown-reveal"
+          aria-label="Animate the MemoryKing 3D crown"
+        >
+          <img
+            src="/crown.svg"
+            width="80"
+            height="80"
+            alt="MemoryKing crown above three memory layers"
+          /><small>REVEAL THE CROWN</small>
+        </button>
+        <button id="theme" class="quiet">Switch appearance</button>
+      </aside>
+      <main id="main">
+        <header>
+          <div>
+            <div class="eyebrow">MEMORYKING / YOUR WORKSPACE</div>
+            <h1>Keep the context. Keep moving.</h1>
+            <p class="subtitle">
+              See what your agents learned, where work stands, and what happens
+              next.
+            </p>
+          </div>
+          <div class="controls">
+            <span id="freshness" role="status">Session required</span
+            ><button id="pause" hidden>Pause updates</button
+            ><button id="refresh" hidden>Refresh</button
+            ><button id="logout" hidden>Sign out</button>
+          </div>
+        </header>
+        <section id="login" class="login card">
+          <div>
+            <span class="eyebrow">PRIVATE WORKSPACE SESSION</span>
+            <h2>Open your observatory</h2>
+            <p>
+              Generate a one-use code with your service CLI, then enter it here.
+              Codes expire after one minute.
+            </p>
+            <code>python -m memoryking dashboard-login --help</code>
+          </div>
+          <form id="login-form">
+            <label for="code">One-use access code</label
+            ><input
+              id="code"
+              name="code"
+              autocomplete="off"
+              type="password"
+              required
+              maxlength="128"
+            /><button type="submit" class="primary">Connect securely</button>
+          </form>
+        </section>
+        <p id="notice" role="alert"></p>
+        <div id="content" hidden>
+          <div id="development-record" hidden>
+            <section
+              id="metrics"
+              class="metrics"
+              aria-label="Separate completion and verification indicators"
+            ></section>
+            <section class="card trajectory">
+              <div class="section-head">
+                <div>
+                  <span class="eyebrow">THE DELIVERY PATH</span>
+                  <h2>Twelve phases. Evidence at every gate.</h2>
+                </div>
+                <span id="baseline" class="tag"></span>
+              </div>
+              <div
+                id="phase-map"
+                class="phase-map"
+                aria-label="Ordered phase dependencies"
+              ></div>
+              <p class="caption">
+                Ordered dependencies · equal visual spacing does not represent
+                duration or percentage complete.
+              </p>
+            </section>
+            <div class="workspace">
+              <section class="card phase-list">
+                <div class="section-head">
+                  <h2>Execution plan</h2>
+                  <span class="tag">12 phases</span>
+                </div>
+                <div id="phases"></div>
+              </section>
+              <section
+                id="detail"
+                class="card detail"
+                aria-live="polite"
+              ></section>
+            </div>
+            <section class="bottom-grid">
+              <article class="card">
+                <span class="eyebrow">OBSERVED EXECUTION</span>
+                <h2>Every claim has a trail.</h2>
+                <p>
+                  Connect a project below to inspect actual reference-harness
+                  checkpoints, criteria, blockers and activity. The roadmap and
+                  connected tasks retain separate completion records.
+                </p>
+                <span class="tag">No inferred ETA or agent status</span>
+              </article>
+              <article class="card">
+                <span class="eyebrow">DECISION TRAIL</span>
+                <h2>Architecture & evidence</h2>
+                <div id="adrs" class="adr-list"></div>
+              </article>
+            </section>
+          </div>
+          <section id="execution-panel" class="card execution-panel">
+            <div class="section-head">
+              <div>
+                <span class="eyebrow">FROM CHECKPOINT TO EVIDENCE</span>
+                <h2>Task activity</h2>
+              </div>
+              <span class="tag">Agent-reported state · current access</span>
+            </div>
+            <p>
+              Inspect goals, criteria, blockers and evidence saved by connected
+              agents. Reported results need supporting evidence; conversations
+              in other apps are not automatically connected.
+            </p>
+            <form id="execution-form" class="receipt-form">
+              <label for="execution-project">Project</label
+              ><input
+                id="execution-project"
+                required
+                maxlength="96"
+                pattern="[A-Za-z0-9_-]+"
+                placeholder="demo"
+                autocomplete="off"
+              /><button type="submit">Connect project</button>
+            </form>
+            <p id="execution-notice" role="status">
+              Choose a project to check current access.
+            </p>
+            <div class="execution-workspace">
+              <div id="execution-tasks"></div>
+              <section aria-label="Observed activity timeline">
+                <h3>Activity trail</h3>
+                <ol id="execution-events" class="activity-trail"></ol>
+              </section>
+            </div>
+            <p id="execution-provenance" class="caption"></p>
+          </section>
+          <section id="retrieval-lab" class="card retrieval-lab">
+            <div class="section-head">
+              <div>
+                <span class="eyebrow">INSPECT THE CONTEXT</span>
+                <h2>Retrieval lab</h2>
+              </div>
+              <span class="tag"
+                >Inspect / replay / rerun · current permissions</span
+              >
+            </div>
+            <p>
+              Inspect the briefings this owner compiled: what was selected, how
+              the complete response used its budget, and which channels were
+              available.
+            </p>
+            <form id="receipt-form" class="receipt-form">
+              <label for="receipt-project">Project</label
+              ><input
+                id="receipt-project"
+                required
+                maxlength="96"
+                pattern="[A-Za-z0-9_-]+"
+                placeholder="demo"
+                autocomplete="off"
+              /><button type="submit">Load recent receipts</button>
+            </form>
+            <p id="receipt-notice" role="status">
+              Choose a project to inspect retained receipts. No model usage is
+              inferred.
+            </p>
+            <div class="receipt-workspace">
+              <div id="receipt-list"></div>
+              <div id="receipt-detail" aria-live="polite"></div>
+            </div>
+          </section>
+          <section id="observatory" class="card observatory"></section>
+          <footer id="provenance"></footer>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

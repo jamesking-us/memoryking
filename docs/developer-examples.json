@@ -1,0 +1,218 @@
+[
+  {
+    "id": "remember-and-resume",
+    "command": [
+      "{python}",
+      "examples/remember_and_resume.py"
+    ],
+    "exit_code": 0,
+    "contains": "Walkthrough passed."
+  },
+  {
+    "id": "validate-observation",
+    "command": [
+      "{python}",
+      "-m",
+      "memoryking.contracts",
+      "ObservationEvent",
+      "fixtures/contracts/event.json"
+    ],
+    "exit_code": 0,
+    "contains": ""
+  },
+  {
+    "id": "generated-contracts",
+    "command": [
+      "{python}",
+      "tools/generate_contracts.py",
+      "--check"
+    ],
+    "exit_code": 0,
+    "contains": "Contract artifacts match"
+  },
+  {
+    "id": "pending-scenarios",
+    "command": [
+      "{python}",
+      "tools/run_conformance.py",
+      "--output",
+      "tmp/checks/example-scenarios.json"
+    ],
+    "exit_code": 0,
+    "contains": "not_evaluated"
+  },
+  {
+    "id": "strict-release-gate",
+    "command": [
+      "{python}",
+      "tools/run_conformance.py",
+      "--require-complete",
+      "--output",
+      "tmp/checks/example-gate.json"
+    ],
+    "exit_code": 2,
+    "contains": "not_evaluated"
+  },
+  {
+    "id": "pilot-budget",
+    "command": [
+      "{python}",
+      "tools/evaluation_budget.py",
+      "fixtures/evaluation/pilot-budget.json"
+    ],
+    "exit_code": 0,
+    "contains": "estimate_not_authorization"
+  },
+  {
+    "id": "local-cli-workflow",
+    "command": [
+      "{python}",
+      "tools/local_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "restore_replays_purge_and_retires_history"
+  },
+  {
+    "id": "knowledge-cli-workflow",
+    "command": [
+      "{python}",
+      "tools/knowledge_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "attributed_no_model_episode"
+  },
+  {
+    "id": "briefing-cli-workflow",
+    "command": [
+      "{python}",
+      "tools/briefing_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "exact_replay_bytes"
+  },
+  {
+    "id": "working-cli-workflow",
+    "command": [
+      "{python}",
+      "tools/working_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "ambiguous_operation_reconciled_without_repeat"
+  },
+  {
+    "id": "stdio-sdk-workflow",
+    "command": [
+      "{python}",
+      "tools/stdio_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "real_mcp_stdio_subprocess"
+  },
+  {
+    "id": "handoff-sdk-workflow",
+    "command": [
+      "{python}",
+      "tools/handoff_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"verification_gap_retained\": true"
+  },
+  {
+    "id": "trusted-local-inference",
+    "command": [
+      "{python}",
+      "tools/inference_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"actual_request_excludes_purged_and_derived_content\": true"
+  },
+  {
+    "id": "reference-harness-crash-workflow",
+    "command": [
+      "{python}",
+      "tools/harness_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"readback_reconciled_without_rewrite\": true"
+  },
+  {
+    "id": "reference-agent-command-help",
+    "command": [
+      "{python}",
+      "-m",
+      "memoryking.reference_agent",
+      "--help"
+    ],
+    "exit_code": 0,
+    "contains": "create-file"
+  },
+  {
+    "id": "repository-snapshot-workflow",
+    "command": [
+      "{python}",
+      "tools/repository_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"paused_worker_unrelated_guidance\": \"complete\""
+  },
+  {
+    "id": "atlas-sdk-workflow",
+    "command": [
+      "{python}",
+      "tools/atlas_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"authorized_atlas_graph_and_list\": true"
+  },
+  {
+    "id": "delta-full-model-context",
+    "command": [
+      "{python}",
+      "tools/delta_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"model_token_savings_claimed\": false"
+  },
+  {
+    "id": "processing-compiler",
+    "command": [
+      "{python}",
+      "tools/processing_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"passed\": true"
+  },
+  {
+    "id": "experience-procedures-ranking",
+    "command": [
+      "{python}",
+      "tools/experience_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"exact_replay_preserved\": true"
+  },
+  {
+    "id": "legacy-migration-cli",
+    "command": [
+      "{python}",
+      "tools/migration_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"repeat_created_no_duplicates\": true"
+  },
+  {
+    "id": "evaluation-custody-and-cost-audit",
+    "command": [
+      "{python}",
+      "tools/evaluation_audit.py",
+      "--directory",
+      "fixtures/evaluation/audit-valid",
+      "--expected-protocol-sha256",
+      "9abefd05b6da6140a1345af5840d0a8dbc3a6ca0288f53c91bf4ed7fcebf8711",
+      "--output",
+      "tmp/checks/evaluation-audit.json"
+    ],
+    "exit_code": 0,
+    "contains": "Audit passed"
+  }
+]

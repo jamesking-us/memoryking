@@ -1,0 +1,377 @@
+{
+  "operation": "inference",
+  "command_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://memoryking.invalid/contracts/inference-v1",
+    "title": "MemoryKing trusted local inference authorization v1",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "action": {
+            "const": "authorize"
+          },
+          "args": {
+            "$ref": "#/$defs/Authorize"
+          }
+        },
+        "required": [
+          "version",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "action": {
+            "const": "consume"
+          },
+          "args": {
+            "$ref": "#/$defs/Consume"
+          }
+        },
+        "required": [
+          "version",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "action": {
+            "const": "validate"
+          },
+          "args": {
+            "$ref": "#/$defs/Authorize"
+          }
+        },
+        "required": [
+          "version",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    ],
+    "$defs": {
+      "Binding": {
+        "type": "object",
+        "properties": {
+          "store": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "tenant": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "principal": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "authorization_epoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "purge_epoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "delegation_chain": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^delegation_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "maxItems": 1,
+            "minItems": 0
+          },
+          "egress_policy_revision": {
+            "const": "local-recording-v1"
+          },
+          "model_session_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "context_epoch": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "store",
+          "tenant",
+          "principal",
+          "project",
+          "incarnation",
+          "authorization_epoch",
+          "purge_epoch",
+          "delegation_chain",
+          "egress_policy_revision",
+          "model_session_id",
+          "context_epoch"
+        ],
+        "additionalProperties": false
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "Handle": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "conversation"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "Request": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "const": "local-recording"
+          },
+          "model": {
+            "const": "echo-v1"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Message"
+            },
+            "maxItems": 32,
+            "minItems": 1
+          },
+          "state_handles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Handle"
+            },
+            "maxItems": 8,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "messages",
+          "state_handles"
+        ],
+        "additionalProperties": false
+      },
+      "Artifact": {
+        "type": "object",
+        "properties": {
+          "receipt": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "receipt",
+          "sha256"
+        ],
+        "additionalProperties": false
+      },
+      "HostAuthorization": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "classification": {
+            "enum": [
+              "public",
+              "internal",
+              "restricted"
+            ]
+          },
+          "source_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "expires_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id",
+          "classification",
+          "source_hash",
+          "expires_ms"
+        ],
+        "additionalProperties": false
+      },
+      "Proof": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "enum": [
+              "host",
+              "memory",
+              "derived"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Artifact"
+            },
+            "maxItems": 32,
+            "minItems": 0
+          },
+          "host_authorizations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/HostAuthorization"
+            },
+            "maxItems": 32,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "origin",
+          "sha256",
+          "artifacts",
+          "host_authorizations"
+        ],
+        "additionalProperties": false
+      },
+      "Manifest": {
+        "type": "object",
+        "properties": {
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Proof"
+            },
+            "maxItems": 32,
+            "minItems": 1
+          },
+          "handles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Proof"
+            },
+            "maxItems": 8,
+            "minItems": 0
+          }
+        },
+        "required": [
+          "segments",
+          "handles"
+        ],
+        "additionalProperties": false
+      },
+      "Authorize": {
+        "type": "object",
+        "properties": {
+          "binding": {
+            "$ref": "#/$defs/Binding"
+          },
+          "request": {
+            "$ref": "#/$defs/Request"
+          },
+          "manifest": {
+            "$ref": "#/$defs/Manifest"
+          }
+        },
+        "required": [
+          "binding",
+          "request",
+          "manifest"
+        ],
+        "additionalProperties": false
+      },
+      "Consume": {
+        "type": "object",
+        "properties": {
+          "binding": {
+            "$ref": "#/$defs/Binding"
+          },
+          "request": {
+            "$ref": "#/$defs/Request"
+          },
+          "manifest": {
+            "$ref": "#/$defs/Manifest"
+          },
+          "permit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          }
+        },
+        "required": [
+          "binding",
+          "request",
+          "manifest",
+          "permit"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

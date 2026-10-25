@@ -1,0 +1,39 @@
+{
+  "fixture_version": "1",
+  "id": "DB06",
+  "requirements": [
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Force-layout selection, edge provenance, filters, bounded expansion, pinning and list equivalents remain usable by keyboard and touch.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "exercise_atlas_controls",
+      "arguments": {
+        "nodes": 200,
+        "edges": 400,
+        "input_modes": [
+          "keyboard",
+          "touch"
+        ],
+        "views": [
+          "graph",
+          "list"
+        ]
+      },
+      "expect": {
+        "selection_and_edges_accessible": true,
+        "expansion_bounded": true
+      }
+    }
+  ]
+}

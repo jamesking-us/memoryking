@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S13",
+  "requirements": [
+    "R03",
+    "R07"
+  ],
+  "completion_owner": "P04",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "An oversized set of mandatory constraints returns budget insufficiency rather than silent truncation.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "compile_mandatory_overflow",
+      "arguments": {
+        "essential_tokens": 1400,
+        "max_output_tokens": 1200
+      },
+      "expect": {
+        "code": "budget_insufficient",
+        "silent_truncation": false
+      }
+    }
+  ]
+}

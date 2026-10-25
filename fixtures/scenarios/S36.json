@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S36",
+  "requirements": [
+    "R06",
+    "R08"
+  ],
+  "completion_owner": "P07",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "Apply the worked overlapping path/environment/dependency-version replacement and verify identical canonical intersections, containment outcomes, retained predecessor regions, and per-binding eligibility on SQLite/PostgreSQL. Include missing values, known-absent dependencies, shallow/incomparable commit ancestry, unsupported predicates, oversized expressions, and proof-budget exhaustion. None may silently widen applicability or suppress an unresolved mandatory constraint.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S36"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 7
+      }
+    }
+  ]
+}

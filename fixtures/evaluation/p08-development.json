@@ -1,0 +1,36 @@
+{
+  "version": "p08-synthetic-development-v1",
+  "status": "development_only_not_holdout_or_task_success",
+  "selection": "Handwritten synthetic cases; SQL latency was already used in development. No tuning or independent generalization claim.",
+  "allocation": "All ingestion and query embedding calls charged once to this run. Model input/output absent: retrieval scores are not successful tasks. No amortization.",
+  "observations": [
+    {"id": "db", "text": "The database query timed out after thirty seconds."},
+    {"id": "retry", "text": "Do not retry an ambiguous payment: reconcile the original transaction first."},
+    {"id": "backup", "text": "After restoring a backup, issue a new history incarnation and retire the previous retry namespace."},
+    {"id": "access", "text": "When a reader loses permission, rebuild future model input without the restricted content."},
+    {"id": "old", "text": "In the old deployment, the request timeout was ten seconds. This observation is historical."},
+    {"id": "new", "text": "In the new deployment, the request timeout is thirty seconds. This observation is current."},
+    {"id": "music", "text": "The violinist performed a concerto in the evening."},
+    {"id": "garden", "text": "Tomato seedlings grow in the garden when watered regularly."},
+    {"id": "expiry", "text": "Evaluate grant expiry at the persisted authorization timestamp before releasing content."},
+    {"id": "tests", "text": "The integration test failed, so deployment must wait for a fix and new verification."},
+    {"id": "vector", "text": "Embedding vectors from different model fingerprints must occupy separate partitions."},
+    {"id": "usage", "text": "Unknown provider usage cannot be counted as zero tokens or zero cost."}
+  ],
+  "queries": [
+    {"id": "q1", "query": "SQL latency", "relevant": ["db"]},
+    {"id": "q2", "query": "ambiguous payment", "relevant": ["retry"]},
+    {"id": "q3", "query": "restore older database", "relevant": ["backup"]},
+    {"id": "q4", "query": "revoke access retained conversation", "relevant": ["access"]},
+    {"id": "q5", "query": "request timeout", "relevant": ["db", "old", "new"]},
+    {"id": "q6", "query": "violin concerto", "relevant": ["music"]},
+    {"id": "q7", "query": "growing tomatoes", "relevant": ["garden"]},
+    {"id": "q8", "query": "grant expiry", "relevant": ["expiry"]},
+    {"id": "q9", "query": "test failed deployment", "relevant": ["tests"]},
+    {"id": "q10", "query": "model fingerprints", "relevant": ["vector"]},
+    {"id": "q11", "query": "unmeasured token consumption", "relevant": ["usage"]},
+    {"id": "q12", "query": "lunar landing coordinates", "relevant": []}
+  ],
+  "metrics": ["recall_at_3", "precision_at_3", "empty_truth_abstention", "serial_query_latency_ms", "all_observed_embedding_tokens"],
+  "activation": "No default activation from this fixture; real-task benefit and continuation quality remain unmeasured."
+}

@@ -1,0 +1,57 @@
+{
+  "schema": "embedding-model-v1",
+  "id": "minilm-l6-v2-onnx",
+  "provider": "local-onnx",
+  "repository": "sentence-transformers/all-MiniLM-L6-v2",
+  "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+  "license": "Apache-2.0",
+  "dimensions": 384,
+  "max_input_tokens": 256,
+  "pooling": "attention-mask-mean-v1",
+  "normalization": "l2-then-round-1e6-v1",
+  "files": [
+    {
+      "path": "tokenizer.json",
+      "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/tokenizer.json",
+      "bytes": 466247,
+      "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/tokenizer_config.json",
+      "bytes": 350,
+      "sha256": "acb92769e8195aabd29b7b2137a9e6d6e25c476a4f15aa4355c233426c61576b"
+    },
+    {
+      "path": "config.json",
+      "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/config.json",
+      "bytes": 612,
+      "sha256": "953f9c0d463486b10a6871cc2fd59f223b2c70184f49815e7efbcab5d8908b41"
+    },
+    {
+      "path": "1_Pooling/config.json",
+      "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/1_Pooling/config.json",
+      "bytes": 190,
+      "sha256": "4be450dde3b0273bb9787637cfbd28fe04a7ba6ab9d36ac48e92b11e350ffc23"
+    },
+    {
+      "path": "README.md",
+      "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/README.md",
+      "bytes": 10454,
+      "sha256": "7dfc82496ec33f906b5b0d6750c1e2397da6530c74d1ae3568c55bc2739125e7"
+    },
+    {
+      "path": "onnx/model.onnx",
+      "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/10dbd2f06a8baf40ad285b037edda610c1b9a57c/onnx/model.onnx",
+      "bytes": 90405214,
+      "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+    }
+  ],
+  "runtime": {
+    "onnxruntime": "1.23.2",
+    "numpy": "2.5.4",
+    "tokenizers": "0.23.3"
+  },
+  "activation": "experimental-off-by-default",
+  "remote_code": false
+}

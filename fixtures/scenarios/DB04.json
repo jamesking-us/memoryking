@@ -1,0 +1,38 @@
+{
+  "fixture_version": "1",
+  "id": "DB04",
+  "requirements": [
+    "R10",
+    "R11"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Duplicate, reordered, missing and expired events converge to an authorized snapshot; stale cursors cannot cross history incarnations.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "reconnect_event_stream",
+      "arguments": {
+        "arrival": [
+          "e3",
+          "e1",
+          "e1"
+        ],
+        "expired_cursor": true,
+        "incarnation_changed": true
+      },
+      "expect": {
+        "snapshot_resync": true,
+        "duplicates_counted": false,
+        "old_history_accepted": false
+      }
+    }
+  ]
+}

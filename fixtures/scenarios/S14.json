@@ -1,0 +1,33 @@
+{
+  "fixture_version": "1",
+  "id": "S14",
+  "requirements": [
+    "R07",
+    "R11"
+  ],
+  "completion_owner": "P02",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "A restored backup reapplies later deletions before any agent can read it.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "restore_then_read",
+      "arguments": {
+        "backup_frontier": "40",
+        "deletion_frontier": "42",
+        "deleted_id": "evidence_deleted"
+      },
+      "expect": {
+        "journal_replayed_before_reads": true,
+        "deleted_visible": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+[
+  {
+    "name": "trusted-capture",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "capture",
+      "key": "capture1",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "clone": "local",
+        "environment": "test"
+      }
+    }
+  },
+  {
+    "name": "extra-command",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "capture",
+      "key": "capture1",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "clone": "local",
+        "environment": "test"
+      },
+      "execute": "bad"
+    }
+  },
+  {
+    "name": "extra-capture-path",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "capture",
+      "key": "capture1",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "clone": "local",
+        "environment": "test",
+        "path": "/private"
+      }
+    }
+  },
+  {
+    "name": "missing-history",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "capture",
+      "key": "capture1",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "clone": "local",
+        "environment": "test"
+      }
+    }
+  },
+  {
+    "name": "unbounded-environment",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "capture",
+      "key": "capture1",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "clone": "local",
+        "environment": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    }
+  },
+  {
+    "name": "no-retry-key",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "capture",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "clone": "local",
+        "environment": "test"
+      }
+    }
+  },
+  {
+    "name": "pending",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "pending",
+      "args": {
+        "project": "p",
+        "repository": "repo"
+      }
+    }
+  },
+  {
+    "name": "history",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "history",
+      "args": {
+        "project": "p",
+        "revision": "rev",
+        "snapshot": "snap"
+      }
+    }
+  },
+  {
+    "name": "impact",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "impact",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "snapshot": "snap",
+        "paths": [
+          "a.py"
+        ],
+        "limit": 128
+      }
+    }
+  },
+  {
+    "name": "coverage",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "history",
+      "action": "coverage",
+      "args": {
+        "project": "p",
+        "repository": "repo",
+        "snapshot": "snap",
+        "paths": [
+          "a.py"
+        ],
+        "bindings": [
+          {}
+        ]
+      }
+    }
+  }
+]

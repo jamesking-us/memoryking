@@ -1,0 +1,33 @@
+{
+  "fixture_version": "1",
+  "id": "S01",
+  "requirements": [
+    "R01",
+    "R04"
+  ],
+  "completion_owner": "P05",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "A solo agent resumes after a context reset without losing a critical constraint or repeating a recorded failed approach.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "reset_and_resume",
+      "arguments": {
+        "constraint": "Never retry an unknown payment outcome",
+        "failed_attempt": "blind retry"
+      },
+      "expect": {
+        "critical_constraint_retained": true,
+        "failed_attempt_retained": true,
+        "actual_model_request_retains_essentials": true
+      }
+    }
+  ]
+}

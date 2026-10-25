@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S05",
+  "requirements": [
+    "R05",
+    "R08"
+  ],
+  "completion_owner": "P03",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "A previous revision is available in a historical query after later supersession.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "supersede_then_query_history",
+      "arguments": {
+        "original": "claim_revision_1",
+        "successor": "claim_revision_2",
+        "as_of_ms": 1000
+      },
+      "expect": {
+        "revision": "claim_revision_1"
+      }
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "fixture_version": "1",
+  "id": "S21",
+  "requirements": [
+    "R01",
+    "R05"
+  ],
+  "completion_owner": "P03",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "A solo client with no LLM and no curator captures a failure and recalls it in a later authorized task as an attributed episode, without promoting a proposed generalization.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "capture_and_recall_episode",
+      "arguments": {
+        "models_enabled": false,
+        "curator": false,
+        "failure": "retry fixture failed"
+      },
+      "expect": {
+        "attributed_episode_recalled": true,
+        "generalization_promoted": false
+      }
+    }
+  ]
+}

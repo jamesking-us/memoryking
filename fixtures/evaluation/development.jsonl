@@ -1,0 +1,3 @@
+{"id":"synthetic_1","family":"fixture-recovery","available_at":"2026-01-01T00:00:00Z","kind":"observation","text":"Synthetic retry fixture failed before reconciliation.","classification":"synthetic"}
+{"id":"synthetic_2","family":"fixture-policy","available_at":"2026-01-01T00:00:00Z","kind":"constraint","text":"Synthetic rule: do not redispatch an operation with unknown outcome.","classification":"synthetic"}
+{"id":"synthetic_3","family":"fixture-history","available_at":"2026-01-01T00:00:00Z","kind":"observation","text":"Synthetic history H2 replaced H1; old tokens are retired.","classification":"synthetic"}

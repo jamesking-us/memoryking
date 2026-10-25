@@ -1,0 +1,43 @@
+{
+  "schema_version": "1",
+  "event_id": "event_demo",
+  "event_type": "task.updated",
+  "scope": {
+    "store_id": "store_demo",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_demo"
+  },
+  "history_incarnation": "hist_11111111111111111111111111111111",
+  "plan_id": "plan_demo",
+  "plan_revision": "1",
+  "phase_id": "P01",
+  "task_id": "task_demo",
+  "run_id": null,
+  "producer_id": "producer_demo",
+  "correlation_id": "correlation_demo",
+  "causation_id": null,
+  "observed_at_ms": 1000,
+  "recorded_at_ms": 1100,
+  "source_position": {
+    "scope": {
+      "store_id": "store_demo",
+      "tenant_id": "tenant_alpha",
+      "project_id": "project_demo"
+    },
+    "history_incarnation": "hist_11111111111111111111111111111111",
+    "position": "9007199254740993"
+  },
+  "entity_revision": "2",
+  "evidence": [
+    {
+      "evidence_id": "evidence_demo",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_revision": "fixture-1",
+      "classification": "synthetic"
+    }
+  ],
+  "detail": {
+    "execution_status": "running",
+    "summary": "Observed task start; not proof of acceptance."
+  }
+}

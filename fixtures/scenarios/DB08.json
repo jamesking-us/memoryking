@@ -1,0 +1,37 @@
+{
+  "fixture_version": "1",
+  "id": "DB08",
+  "requirements": [
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Timeline scrubbing changes the displayed historical projection without tool/model execution; exact replay remains distinguishable from rerun.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "scrub_historical_run",
+      "arguments": {
+        "event_positions": [
+          "1",
+          "2",
+          "3"
+        ],
+        "retention_gap": "2",
+        "scrub_to": "1"
+      },
+      "expect": {
+        "external_actions": 0,
+        "gap_visible": true,
+        "rerun_distinct": true
+      }
+    }
+  ]
+}

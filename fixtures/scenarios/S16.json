@@ -1,0 +1,36 @@
+{
+  "fixture_version": "1",
+  "id": "S16",
+  "requirements": [
+    "R06",
+    "R07"
+  ],
+  "completion_owner": "P06",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "With validation workers paused, a changed or previously unseen repository/dirty snapshot cannot receive stale high-impact guidance as confirmed current knowledge. An unrelated validated dependency remains usable.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "brief_after_code_change",
+      "arguments": {
+        "workers": "paused",
+        "snapshots": [
+          "changed",
+          "unseen_dirty"
+        ],
+        "unrelated_dependency": "validated"
+      },
+      "expect": {
+        "stale_high_impact_confirmed": false,
+        "unrelated_available": true
+      }
+    }
+  ]
+}

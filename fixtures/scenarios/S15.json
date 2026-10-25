@@ -1,0 +1,41 @@
+{
+  "fixture_version": "1",
+  "id": "S15",
+  "requirements": [
+    "R03",
+    "R07"
+  ],
+  "completion_owner": "P04",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "A mandatory constraint with poor lexical/semantic similarity is delivered independently of top-k and channel availability; enumeration limits, unknown applicability, restricted essential policy, and conflicts never produce a falsely sufficient result.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "resolve_mandatory_constraints",
+      "arguments": {
+        "constraint_similarity": 0,
+        "top_k": 1,
+        "optional_channels": [
+          "unavailable"
+        ],
+        "variants": [
+          "enumeration_limit",
+          "unknown_binding",
+          "restricted_constraint",
+          "conflict"
+        ]
+      },
+      "expect": {
+        "mandatory_independent_of_rank": true,
+        "unresolved_reported_sufficient": false
+      }
+    }
+  ]
+}

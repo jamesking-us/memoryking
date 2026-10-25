@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S32",
+  "requirements": [
+    "R04",
+    "R11"
+  ],
+  "completion_owner": "P07",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "Restore a backup predating an acknowledged mutation, activate a new history incarnation, and advance its clock beyond the old position. Old watermarks, retry namespaces/keys, projection frontiers, cursors, handoff/resume handles, leases, and adapter acknowledgments must not bind to replacement history. Test both lost and surviving ledger rows, lost recovery anchors, and a crash midway through activation; reconciliation never blindly redispatches an external mutation.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S32"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 17
+      }
+    }
+  ]
+}

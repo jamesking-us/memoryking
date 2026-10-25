@@ -1,0 +1,40 @@
+{
+  "fixture_version": "1",
+  "id": "S25",
+  "requirements": [
+    "R04",
+    "R11"
+  ],
+  "completion_owner": "P05",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "Kill the reference agent without a final checkpoint, including after an external mutation but before its result is captured. Resume from acknowledged state, detect missing dirty artifacts, reconcile operation status, and block ambiguous redispatch.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "crash_and_resume_harness",
+      "arguments": {
+        "kill_points": [
+          "before_final_checkpoint",
+          "after_external_mutation"
+        ],
+        "dirty_artifact_missing": true,
+        "external_outcome": "unknown"
+      },
+      "expect": {
+        "acknowledged_state_recovered": true,
+        "missing_artifact_detected": true,
+        "ambiguous_redispatch_blocked": true,
+        "readback_reconciled_without_rewrite": true,
+        "dependent_mutation_blocked": true,
+        "actual_processes_killed": 2
+      }
+    }
+  ]
+}

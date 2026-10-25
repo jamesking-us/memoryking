@@ -1,0 +1,302 @@
+{
+  "operation": "handoff",
+  "command_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://memoryking.invalid/contracts/handoff-v1",
+    "title": "MemoryKing recipient-bound full handoffs v1",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "prepare"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "args": {
+            "$ref": "#/$defs/Prepare"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "key",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "materialize"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "args": {
+            "$ref": "#/$defs/View"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "key",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "preview"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "args": {
+            "$ref": "#/$defs/View"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "key",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "ack"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "args": {
+            "$ref": "#/$defs/Acknowledge"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "key",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "cancel"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "args": {
+            "$ref": "#/$defs/Cancel"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "key",
+          "args"
+        ],
+        "additionalProperties": false
+      }
+    ],
+    "$defs": {
+      "Prepare": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkpoint": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "recipient": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "role": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "stage": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "bindings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "type": "object"
+            }
+          },
+          "ttl_ms": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 86400000
+          }
+        },
+        "required": [
+          "project",
+          "task",
+          "run",
+          "checkpoint",
+          "recipient",
+          "role",
+          "stage",
+          "bindings",
+          "ttl_ms"
+        ],
+        "additionalProperties": false
+      },
+      "View": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "handle": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "max_output_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536
+          },
+          "tokenizer": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "handle",
+          "max_output_tokens",
+          "tokenizer"
+        ],
+        "additionalProperties": false
+      },
+      "Acknowledge": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "handle": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "materialization": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "rendered_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "handle",
+          "materialization",
+          "rendered_hash"
+        ],
+        "additionalProperties": false
+      },
+      "Cancel": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "handle": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "handle"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

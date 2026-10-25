@@ -1,0 +1,31 @@
+{
+  "fixture_version": "1",
+  "id": "S19",
+  "requirements": [
+    "R07"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "An unauthorized local process identity and a malicious browser Origin/Host cannot access local HTTP memory/admin endpoints. Test bootstrap-code reuse, cookie-authenticated CSRF, and active source markup in the dashboard.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S19"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 9
+      }
+    }
+  ]
+}

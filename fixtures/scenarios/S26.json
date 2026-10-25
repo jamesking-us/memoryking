@@ -1,0 +1,36 @@
+{
+  "fixture_version": "1",
+  "id": "S26",
+  "requirements": [
+    "R03",
+    "R12"
+  ],
+  "completion_owner": "P12",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Detect seeded solution/postmortem leakage into a task's starting corpus and contamination between experimental arms. Unknown usage, failed attempts, shared processing, and human review costs remain visible under the frozen protocol.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "audit_evaluation_cohort",
+      "arguments": {
+        "seeded_solution": true,
+        "cross_arm_memory": true,
+        "usage": "unknown",
+        "failed_attempts": 2,
+        "human_minutes": 10
+      },
+      "expect": {
+        "contamination_rejected": true,
+        "costs_hidden": false,
+        "exact_savings_claim_allowed": false
+      }
+    }
+  ]
+}

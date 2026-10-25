@@ -1,0 +1,15 @@
+{
+  "classification": "illustrative-planning-inputs-not-approved-budget",
+  "tasks": 32,
+  "arms": 2,
+  "repeats": 1,
+  "input_tokens_per_attempt": 5000,
+  "output_tokens_per_attempt": 1500,
+  "attempts_per_task": "1.25",
+  "input_usd_per_million": "2.00",
+  "output_usd_per_million": "8.00",
+  "shared_processing_usd": "5.00",
+  "compute_usd": "3.00",
+  "review_minutes_per_task_arm": "10.00",
+  "review_usd_per_hour": "60.00"
+}

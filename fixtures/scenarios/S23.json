@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S23",
+  "requirements": [
+    "R05",
+    "R08"
+  ],
+  "completion_owner": "P07",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "Reproduce the partial March correction history, backdated evidence, quarantine/release, purge, and concurrent reviewers; valid-time/recorded-time results and expected-version conflicts match the temporal contract on both backends.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S23"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 5
+      }
+    }
+  ]
+}

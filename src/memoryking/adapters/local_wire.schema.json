@@ -1,0 +1,6290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryking.invalid/local-wire-v1",
+  "title": "Local wire request v1 with P09 experience extensions",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "namespace"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "capture"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespace": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "request": {
+              "$ref": "#/$defs/Capture"
+            }
+          },
+          "required": [
+            "namespace",
+            "key",
+            "request"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "read"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "observation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "export"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "observation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "status"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "watermark": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "claim"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "finish"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "outcome": {
+              "enum": [
+                "complete",
+                "retry",
+                "cancel"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "lease",
+            "outcome"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "grant"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "principal": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "capabilities": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "capture",
+                  "read",
+                  "export",
+                  "jobs",
+                  "review",
+                  "policy",
+                  "attest",
+                  "task_constraint",
+                  "checkpoint",
+                  "handoff",
+                  "inference",
+                  "repository"
+                ]
+              }
+            },
+            "starts": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "expires": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          "required": [
+            "principal",
+            "project",
+            "capabilities"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "revoke"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "principal": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "principal",
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "purge"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "observation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "observation"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "reindex"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {},
+          "required": []
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "knowledge"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "title": "Knowledge command v1",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "incarnation": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "action": {
+                      "const": "propose"
+                    },
+                    "args": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "project": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "logical_key": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "expected_version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "body": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "text": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 8192
+                            },
+                            "kind": {
+                              "enum": [
+                                "knowledge",
+                                "constraint"
+                              ]
+                            },
+                            "selector": {
+                              "type": "object"
+                            },
+                            "valid_start": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "valid_end": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "task": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "run": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "readers": {
+                              "anyOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "type": "array",
+                                  "minItems": 1,
+                                  "maxItems": 64,
+                                  "uniqueItems": true,
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                                  }
+                                }
+                              ]
+                            },
+                            "evidence": {
+                              "type": "array",
+                              "minItems": 1,
+                              "maxItems": 16,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "observation": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                                  },
+                                  "start_byte": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "end_byte": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "content_hash": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                                  }
+                                },
+                                "required": [
+                                  "observation",
+                                  "start_byte",
+                                  "end_byte",
+                                  "content_hash"
+                                ]
+                              }
+                            },
+                            "authority": {
+                              "enum": [
+                                null,
+                                "project",
+                                "task"
+                              ]
+                            },
+                            "rule_key": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "effect": {
+                              "enum": [
+                                null,
+                                "require",
+                                "prohibit"
+                              ]
+                            },
+                            "rule_value": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "provenance": {
+                              "type": "object",
+                              "maxProperties": 16
+                            }
+                          },
+                          "required": [
+                            "text",
+                            "kind",
+                            "selector",
+                            "valid_start",
+                            "valid_end",
+                            "task",
+                            "run",
+                            "readers",
+                            "evidence",
+                            "authority",
+                            "rule_key",
+                            "effect",
+                            "rule_value",
+                            "provenance"
+                          ]
+                        },
+                        "preserve_legacy": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "logical_key",
+                        "expected_version",
+                        "body"
+                      ]
+                    },
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "incarnation",
+                    "action",
+                    "args",
+                    "key"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "incarnation": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "action": {
+                      "const": "review"
+                    },
+                    "args": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "project": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "expected_version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "decision": {
+                          "enum": [
+                            "accept",
+                            "reject",
+                            "deprecate",
+                            "quarantine",
+                            "release_quarantine"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "breadth_reviewed": {
+                          "type": "boolean"
+                        },
+                        "replacement": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "predecessor": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                            },
+                            "selector": {
+                              "type": "object"
+                            },
+                            "valid_start": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "valid_end": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "predecessor",
+                            "selector",
+                            "valid_start",
+                            "valid_end"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "revision",
+                        "expected_version",
+                        "decision",
+                        "reason",
+                        "breadth_reviewed"
+                      ]
+                    },
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "incarnation",
+                    "action",
+                    "args",
+                    "key"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "incarnation": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "action": {
+                      "const": "query"
+                    },
+                    "args": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "project": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "bindings": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 256,
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "valid_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "recorded_position": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "task": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "run": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "diagnostic": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "bindings"
+                      ]
+                    },
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "incarnation",
+                    "action",
+                    "args"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "incarnation": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "action": {
+                      "const": "constraints"
+                    },
+                    "args": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "project": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "bindings": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 256,
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "task": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "run": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "bindings"
+                      ]
+                    },
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "incarnation",
+                    "action",
+                    "args"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "incarnation": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "action": {
+                      "const": "attest"
+                    },
+                    "args": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "project": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "expires_ms": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "statement": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2048
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "revision",
+                        "expires_ms",
+                        "statement"
+                      ]
+                    },
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "incarnation",
+                    "action",
+                    "args",
+                    "key"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "const": 1
+                    },
+                    "incarnation": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "action": {
+                      "const": "promote"
+                    },
+                    "args": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "project": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "revision": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "logical_key": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                        },
+                        "expected_version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "project",
+                        "revision",
+                        "logical_key",
+                        "expected_version"
+                      ]
+                    },
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "incarnation",
+                    "action",
+                    "args",
+                    "key"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "dashboard_bootstrap"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {},
+          "required": []
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "retrieval"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "working"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Working"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "context"
+        },
+        "args": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "MemoryKing current authorized project context",
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "handoff"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Handoff"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "inference"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Inference"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "repository"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Repository"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "embedding"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Embedding"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "processing"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Processing"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "experience"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Experience"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    }
+  ],
+  "$defs": {
+    "Capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "project": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "source_event": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "readers": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              }
+            }
+          ]
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "internal",
+            "restricted"
+          ]
+        },
+        "observed_at_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "version",
+        "project",
+        "source",
+        "source_event",
+        "text",
+        "readers",
+        "classification",
+        "observed_at_ms"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "classification": {
+                "const": "restricted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "readers": {
+                "type": "array",
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Working": {
+      "title": "MemoryKing durable working state v1",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "save"
+            },
+            "args": {
+              "$ref": "#/$defs/Working/$defs/Save"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "resume"
+            },
+            "args": {
+              "$ref": "#/$defs/Working/$defs/Resume"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "assign_writer"
+            },
+            "args": {
+              "$ref": "#/$defs/Working/$defs/AssignWriter"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "operation_intent"
+            },
+            "args": {
+              "$ref": "#/$defs/Working/$defs/OperationIntent"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "operation_transition"
+            },
+            "args": {
+              "$ref": "#/$defs/Working/$defs/OperationTransition"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "operations"
+            },
+            "args": {
+              "$ref": "#/$defs/Working/$defs/OperationList"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "adapter_resume"
+            },
+            "args": {
+              "$ref": "#/$defs/Working/$defs/AdapterResume"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "$defs": {
+        "Dependency": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "observation",
+                "revision"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "Artifact": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "availability": {
+              "enum": [
+                "stored",
+                "external",
+                "missing"
+              ]
+            },
+            "observation": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "content_hash": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "required": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "availability",
+            "observation",
+            "content_hash",
+            "required"
+          ],
+          "additionalProperties": false
+        },
+        "Repository": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "base_commit": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "current_commit": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dirty": {
+              "type": "boolean"
+            },
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Artifact"
+              },
+              "maxItems": 32
+            },
+            "snapshot_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "environment": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "change_scope": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "minItems": 1,
+              "maxItems": 256,
+              "uniqueItems": true
+            },
+            "deleted_paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "maxItems": 256,
+              "uniqueItems": true
+            },
+            "clone": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "repository",
+            "base_commit",
+            "current_commit",
+            "dirty",
+            "artifacts"
+          ],
+          "additionalProperties": false
+        },
+        "Criterion": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "state": {
+              "enum": [
+                "pending",
+                "passed",
+                "failed",
+                "waived"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Dependency"
+              },
+              "maxItems": 16
+            },
+            "decision": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "weight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "description": "Declared relative criterion weight; absent means 1. Weight changes alter the scope denominator, not evidence validity."
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "state",
+            "evidence",
+            "decision"
+          ],
+          "additionalProperties": false
+        },
+        "Finding": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "kind": {
+              "enum": [
+                "decision",
+                "hypothesis"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Dependency"
+              },
+              "maxItems": 16
+            }
+          },
+          "required": [
+            "text",
+            "kind",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "FailedAttempt": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "outcome": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "do_not_repeat_when": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          "required": [
+            "action",
+            "outcome",
+            "do_not_repeat_when"
+          ],
+          "additionalProperties": false
+        },
+        "Verification": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "target_revision": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "environment": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "result": {
+              "enum": [
+                "passed",
+                "failed",
+                "not_evaluated",
+                "inconclusive"
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Dependency"
+              },
+              "maxItems": 16
+            }
+          },
+          "required": [
+            "name",
+            "target_revision",
+            "environment",
+            "result",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "Blocker": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "owner": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "text",
+            "owner"
+          ],
+          "additionalProperties": false
+        },
+        "Capture": {
+          "type": "object",
+          "properties": {
+            "last_event": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "observed_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "gaps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "last_event",
+            "observed_ms",
+            "gaps"
+          ],
+          "additionalProperties": false
+        },
+        "Checkpoint": {
+          "type": "object",
+          "properties": {
+            "objective": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "acceptance": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Criterion"
+              },
+              "maxItems": 32
+            },
+            "hard_constraints": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "maxItems": 32
+            },
+            "current_state": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "repository": {
+              "$ref": "#/$defs/Working/$defs/Repository"
+            },
+            "findings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Finding"
+              },
+              "maxItems": 32
+            },
+            "failed_attempts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/FailedAttempt"
+              },
+              "maxItems": 32
+            },
+            "verification": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Verification"
+              },
+              "maxItems": 32
+            },
+            "blockers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Blocker"
+              },
+              "maxItems": 32
+            },
+            "next_actions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "maxItems": 32
+            },
+            "references": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Dependency"
+              },
+              "maxItems": 128
+            },
+            "operation_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "maxItems": 32
+            },
+            "capture": {
+              "$ref": "#/$defs/Working/$defs/Capture"
+            }
+          },
+          "required": [
+            "objective",
+            "acceptance",
+            "hard_constraints",
+            "current_state",
+            "repository",
+            "findings",
+            "failed_attempts",
+            "verification",
+            "blockers",
+            "next_actions",
+            "references",
+            "operation_ids",
+            "capture"
+          ],
+          "additionalProperties": false
+        },
+        "Save": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expected_revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "readers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "checkpoint": {
+              "$ref": "#/$defs/Working/$defs/Checkpoint"
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run",
+            "expected_revision",
+            "readers",
+            "checkpoint"
+          ],
+          "additionalProperties": false
+        },
+        "Resume": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "checkpoint": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "bindings": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "maxItems": 256
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "tokenizer": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run",
+            "checkpoint",
+            "bindings",
+            "max_output_tokens",
+            "tokenizer"
+          ],
+          "additionalProperties": false
+        },
+        "AssignWriter": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expected_revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "writer": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run",
+            "expected_revision",
+            "writer",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        "OperationIntent": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "target_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "parameters_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "method": {
+              "enum": [
+                "readback",
+                "idempotent_retry",
+                "manual"
+              ]
+            },
+            "provider_key": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run",
+            "operation",
+            "target_hash",
+            "parameters_hash",
+            "method",
+            "provider_key"
+          ],
+          "additionalProperties": false
+        },
+        "OperationTransition": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "operation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "state": {
+              "enum": [
+                "dispatching",
+                "unknown",
+                "succeeded",
+                "failed"
+              ]
+            },
+            "reconciled": {
+              "type": "boolean"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Working/$defs/Dependency"
+              },
+              "maxItems": 16
+            },
+            "result_hash": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "operation",
+            "expected_revision",
+            "state",
+            "reconciled",
+            "evidence",
+            "result_hash"
+          ],
+          "additionalProperties": false
+        },
+        "OperationList": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run"
+          ],
+          "additionalProperties": false
+        },
+        "AdapterResume": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "checkpoint": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "bindings": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "maxItems": 256
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "tokenizer": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "base": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/Working/$defs/AdapterBase"
+                }
+              ]
+            },
+            "adapter_context": {
+              "$ref": "#/$defs/Working/$defs/AdapterContext"
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run",
+            "checkpoint",
+            "bindings",
+            "max_output_tokens",
+            "tokenizer",
+            "base",
+            "adapter_context"
+          ],
+          "additionalProperties": false
+        },
+        "AdapterBase": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            }
+          },
+          "required": [
+            "id",
+            "hash",
+            "sequence",
+            "schema"
+          ]
+        },
+        "AdapterContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model_session": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "context_epoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "model_session",
+            "context_epoch"
+          ]
+        }
+      }
+    },
+    "Handoff": {
+      "title": "MemoryKing recipient-bound full handoffs v1",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "prepare"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "args": {
+              "$ref": "#/$defs/Handoff/$defs/Prepare"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "key",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "materialize"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "args": {
+              "$ref": "#/$defs/Handoff/$defs/View"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "key",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "preview"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "args": {
+              "$ref": "#/$defs/Handoff/$defs/View"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "key",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "ack"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "args": {
+              "$ref": "#/$defs/Handoff/$defs/Acknowledge"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "key",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "cancel"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "args": {
+              "$ref": "#/$defs/Handoff/$defs/Cancel"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "key",
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "$defs": {
+        "Prepare": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "checkpoint": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "recipient": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "role": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "stage": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "object"
+              }
+            },
+            "ttl_ms": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 86400000
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run",
+            "checkpoint",
+            "recipient",
+            "role",
+            "stage",
+            "bindings",
+            "ttl_ms"
+          ],
+          "additionalProperties": false
+        },
+        "View": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "handle": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "tokenizer": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "handle",
+            "max_output_tokens",
+            "tokenizer"
+          ],
+          "additionalProperties": false
+        },
+        "Acknowledge": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "handle": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "materialization": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "rendered_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "handle",
+            "materialization",
+            "rendered_hash"
+          ],
+          "additionalProperties": false
+        },
+        "Cancel": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "handle": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "handle"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "Inference": {
+      "title": "MemoryKing trusted local inference authorization v1",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "action": {
+              "const": "authorize"
+            },
+            "args": {
+              "$ref": "#/$defs/Inference/$defs/Authorize"
+            }
+          },
+          "required": [
+            "version",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "action": {
+              "const": "consume"
+            },
+            "args": {
+              "$ref": "#/$defs/Inference/$defs/Consume"
+            }
+          },
+          "required": [
+            "version",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "action": {
+              "const": "validate"
+            },
+            "args": {
+              "$ref": "#/$defs/Inference/$defs/Authorize"
+            }
+          },
+          "required": [
+            "version",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "$defs": {
+        "Binding": {
+          "type": "object",
+          "properties": {
+            "store": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "tenant": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "principal": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            "authorization_epoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "purge_epoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "delegation_chain": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^delegation_[a-f0-9]{32}(?![\\s\\S])"
+              },
+              "maxItems": 1,
+              "minItems": 0
+            },
+            "egress_policy_revision": {
+              "const": "local-recording-v1"
+            },
+            "model_session_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "context_epoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "store",
+            "tenant",
+            "principal",
+            "project",
+            "incarnation",
+            "authorization_epoch",
+            "purge_epoch",
+            "delegation_chain",
+            "egress_policy_revision",
+            "model_session_id",
+            "context_epoch"
+          ],
+          "additionalProperties": false
+        },
+        "Message": {
+          "type": "object",
+          "properties": {
+            "role": {
+              "enum": [
+                "system",
+                "user",
+                "assistant",
+                "tool"
+              ]
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "role",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        "Handle": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "conversation"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        "Request": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "const": "local-recording"
+            },
+            "model": {
+              "const": "echo-v1"
+            },
+            "messages": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Inference/$defs/Message"
+              },
+              "maxItems": 32,
+              "minItems": 1
+            },
+            "state_handles": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Inference/$defs/Handle"
+              },
+              "maxItems": 8,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "provider",
+            "model",
+            "messages",
+            "state_handles"
+          ],
+          "additionalProperties": false
+        },
+        "Artifact": {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "receipt",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        "HostAuthorization": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "classification": {
+              "enum": [
+                "public",
+                "internal",
+                "restricted"
+              ]
+            },
+            "source_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "expires_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "id",
+            "classification",
+            "source_hash",
+            "expires_ms"
+          ],
+          "additionalProperties": false
+        },
+        "Proof": {
+          "type": "object",
+          "properties": {
+            "origin": {
+              "enum": [
+                "host",
+                "memory",
+                "derived"
+              ]
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Inference/$defs/Artifact"
+              },
+              "maxItems": 32,
+              "minItems": 0
+            },
+            "host_authorizations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Inference/$defs/HostAuthorization"
+              },
+              "maxItems": 32,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "origin",
+            "sha256",
+            "artifacts",
+            "host_authorizations"
+          ],
+          "additionalProperties": false
+        },
+        "Manifest": {
+          "type": "object",
+          "properties": {
+            "segments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Inference/$defs/Proof"
+              },
+              "maxItems": 32,
+              "minItems": 1
+            },
+            "handles": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Inference/$defs/Proof"
+              },
+              "maxItems": 8,
+              "minItems": 0
+            }
+          },
+          "required": [
+            "segments",
+            "handles"
+          ],
+          "additionalProperties": false
+        },
+        "Authorize": {
+          "type": "object",
+          "properties": {
+            "binding": {
+              "$ref": "#/$defs/Inference/$defs/Binding"
+            },
+            "request": {
+              "$ref": "#/$defs/Inference/$defs/Request"
+            },
+            "manifest": {
+              "$ref": "#/$defs/Inference/$defs/Manifest"
+            }
+          },
+          "required": [
+            "binding",
+            "request",
+            "manifest"
+          ],
+          "additionalProperties": false
+        },
+        "Consume": {
+          "type": "object",
+          "properties": {
+            "binding": {
+              "$ref": "#/$defs/Inference/$defs/Binding"
+            },
+            "request": {
+              "$ref": "#/$defs/Inference/$defs/Request"
+            },
+            "manifest": {
+              "$ref": "#/$defs/Inference/$defs/Manifest"
+            },
+            "permit": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          "required": [
+            "binding",
+            "request",
+            "manifest",
+            "permit"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "Repository": {
+      "title": "MemoryKing trusted local repository operations v1",
+      "$defs": {
+        "Register": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "remote": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "clone": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "readers": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  "maxItems": 64,
+                  "uniqueItems": true
+                }
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "remote",
+            "clone",
+            "path",
+            "readers"
+          ],
+          "additionalProperties": false
+        },
+        "Capture": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "clone": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "environment": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "project",
+            "repository",
+            "clone",
+            "environment"
+          ],
+          "additionalProperties": false
+        },
+        "Inspect": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "repository",
+            "snapshot"
+          ],
+          "additionalProperties": false
+        },
+        "Dependency": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "file",
+                "symbol"
+              ]
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "policy": {
+              "enum": [
+                "invalidate",
+                "revalidate",
+                "rank_penalty"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "target",
+            "policy"
+          ],
+          "additionalProperties": false
+        },
+        "Bind": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "dependencies": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Repository/$defs/Dependency"
+              },
+              "maxItems": 64,
+              "uniqueItems": true
+            },
+            "impact": {
+              "enum": [
+                "high",
+                "low"
+              ]
+            },
+            "coverage_reviewed": {
+              "const": true
+            },
+            "expected_policy": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "evidence": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "revision",
+            "repository",
+            "snapshot",
+            "dependencies",
+            "impact",
+            "coverage_reviewed",
+            "expected_policy",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "Verify": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_policy": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "evidence": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "expires_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "project",
+            "revision",
+            "snapshot",
+            "expected_policy",
+            "evidence",
+            "passed",
+            "expires_ms"
+          ],
+          "additionalProperties": false
+        },
+        "Revalidate": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_generation": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "project",
+            "repository",
+            "snapshot",
+            "expected_generation"
+          ],
+          "additionalProperties": false
+        },
+        "Impact": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "maxItems": 64,
+              "uniqueItems": true
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128
+            }
+          },
+          "required": [
+            "project",
+            "repository",
+            "snapshot",
+            "paths",
+            "limit"
+          ],
+          "additionalProperties": false
+        },
+        "Coverage": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "maxItems": 256,
+              "uniqueItems": true
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "project",
+            "repository",
+            "snapshot",
+            "paths",
+            "bindings"
+          ],
+          "additionalProperties": false
+        },
+        "Pending": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "repository": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "repository"
+          ]
+        },
+        "History": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "snapshot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "revision",
+            "snapshot"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "register"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Register"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "capture"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Capture"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "inspect"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Inspect"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "bind"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Bind"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "verify"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Verify"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "revalidate"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Revalidate"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "impact"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Impact"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "coverage"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Coverage"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "pending"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/Pending"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "history"
+            },
+            "args": {
+              "$ref": "#/$defs/Repository/$defs/History"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        }
+      ]
+    },
+    "Embedding": {
+      "title": "MemoryKing optional embedding administration and workers v1",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "configure"
+            },
+            "args": {
+              "$ref": "#/$defs/Embedding/$defs/Configure"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "claim"
+            },
+            "args": {
+              "$ref": "#/$defs/Embedding/$defs/Partition"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "complete"
+            },
+            "args": {
+              "$ref": "#/$defs/Embedding/$defs/Complete"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "fail"
+            },
+            "args": {
+              "$ref": "#/$defs/Embedding/$defs/Fail"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "status"
+            },
+            "args": {
+              "$ref": "#/$defs/Embedding/$defs/Partition"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        }
+      ],
+      "$defs": {
+        "Configure": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "model": {
+              "type": "string",
+              "enum": [
+                "minilm-l6-v2-onnx"
+              ]
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "experimental",
+                "disabled"
+              ]
+            },
+            "expected_generation": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "project",
+            "model",
+            "state",
+            "expected_generation"
+          ]
+        },
+        "Partition": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "fingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "fingerprint"
+          ]
+        },
+        "Complete": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "fingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "input_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "vector": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4096,
+              "items": {
+                "type": "integer",
+                "minimum": -1000000,
+                "maximum": 1000000
+              }
+            },
+            "input_tokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 600000
+            }
+          },
+          "required": [
+            "project",
+            "lease",
+            "fingerprint",
+            "input_hash",
+            "vector",
+            "input_tokens",
+            "truncated",
+            "duration_ms"
+          ]
+        },
+        "Fail": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "lease": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "provider_unavailable",
+                "model_invalid",
+                "interrupted",
+                "provider_failure"
+              ]
+            },
+            "input_tokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 600000
+            }
+          },
+          "required": [
+            "project",
+            "lease",
+            "reason",
+            "input_tokens",
+            "duration_ms"
+          ]
+        }
+      }
+    },
+    "Processing": {
+      "title": "Optional processing command v1",
+      "$defs": {
+        "Proposal": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "kind": {
+              "const": "knowledge"
+            },
+            "selector": {
+              "type": "object"
+            },
+            "valid_start": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "valid_end": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readers": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  }
+                }
+              ]
+            },
+            "evidence": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "observation": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  "start_byte": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "end_byte": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                  }
+                },
+                "required": [
+                  "observation",
+                  "start_byte",
+                  "end_byte",
+                  "content_hash"
+                ]
+              }
+            },
+            "authority": {
+              "type": "null"
+            },
+            "rule_key": {
+              "type": "null"
+            },
+            "effect": {
+              "type": "null"
+            },
+            "rule_value": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "text",
+            "kind",
+            "selector",
+            "valid_start",
+            "valid_end",
+            "task",
+            "run",
+            "readers",
+            "evidence",
+            "authority",
+            "rule_key",
+            "effect",
+            "rule_value"
+          ]
+        },
+        "Provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "configuration_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "prompt_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "input_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "output_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "provider",
+            "model",
+            "configuration_hash",
+            "prompt_revision",
+            "input_hash",
+            "output_hash"
+          ]
+        },
+        "Extract": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "logical_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "body": {
+              "$ref": "#/$defs/Processing/$defs/Proposal"
+            },
+            "provenance": {
+              "$ref": "#/$defs/Processing/$defs/Provenance"
+            }
+          },
+          "required": [
+            "project",
+            "logical_key",
+            "expected_version",
+            "body",
+            "provenance"
+          ]
+        },
+        "Quote": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "observations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          },
+          "required": [
+            "observations",
+            "text"
+          ]
+        },
+        "Candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "critical_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "quotes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Processing/$defs/Quote"
+              },
+              "maxItems": 8
+            },
+            "provenance": {
+              "$ref": "#/$defs/Processing/$defs/Provenance"
+            },
+            "attempt": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "critical_hash",
+            "quotes",
+            "provenance",
+            "attempt"
+          ]
+        },
+        "Compile": {
+          "type": "object",
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "checkpoint": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "bindings": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "maxItems": 256
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "tokenizer": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true
+            },
+            "candidate": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Processing/$defs/Candidate"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "claims": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "maxItems": 8,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "project",
+            "task",
+            "run",
+            "checkpoint",
+            "bindings",
+            "max_output_tokens",
+            "tokenizer",
+            "sources",
+            "candidate",
+            "claims"
+          ],
+          "additionalProperties": false
+        },
+        "Usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "successful_tasks": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "project",
+            "successful_tasks"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "extract"
+            },
+            "args": {
+              "$ref": "#/$defs/Processing/$defs/Extract"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "compile"
+            },
+            "args": {
+              "$ref": "#/$defs/Processing/$defs/Compile"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "usage"
+            },
+            "args": {
+              "$ref": "#/$defs/Processing/$defs/Usage"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        }
+      ]
+    },
+    "Experience": {
+      "title": "Experience command v1",
+      "$defs": {
+        "Procedure": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prerequisites": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true
+            },
+            "verification": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "expected_artifacts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "exceptions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "failure_signals": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "recovery": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "known_conditions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "success_evidence": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "failure_evidence": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "failure_assessment": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "dependency_mode": {
+              "enum": [
+                "independent",
+                "required"
+              ]
+            }
+          },
+          "required": [
+            "prerequisites",
+            "steps",
+            "verification",
+            "expected_artifacts",
+            "exceptions",
+            "failure_signals",
+            "recovery",
+            "known_conditions",
+            "success_evidence",
+            "failure_evidence",
+            "failure_assessment",
+            "dependency_mode"
+          ]
+        },
+        "Propose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "logical_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "body": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "kind": {
+                  "const": "procedure"
+                },
+                "selector": {
+                  "type": "object"
+                },
+                "valid_start": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "valid_end": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "task": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "run": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "readers": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 64,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                      }
+                    }
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 16,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "observation": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                      },
+                      "start_byte": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "end_byte": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "content_hash": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                      }
+                    },
+                    "required": [
+                      "observation",
+                      "start_byte",
+                      "end_byte",
+                      "content_hash"
+                    ]
+                  }
+                },
+                "authority": {
+                  "type": "null"
+                },
+                "rule_key": {
+                  "type": "null"
+                },
+                "effect": {
+                  "type": "null"
+                },
+                "rule_value": {
+                  "type": "null"
+                },
+                "provenance": {
+                  "type": "object",
+                  "maxProperties": 16
+                },
+                "procedure": {
+                  "$ref": "#/$defs/Experience/$defs/Procedure"
+                }
+              },
+              "required": [
+                "text",
+                "kind",
+                "selector",
+                "valid_start",
+                "valid_end",
+                "task",
+                "run",
+                "readers",
+                "evidence",
+                "authority",
+                "rule_key",
+                "effect",
+                "rule_value",
+                "provenance",
+                "procedure"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "logical_key",
+            "expected_version",
+            "body"
+          ]
+        },
+        "Review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "decision": {
+              "enum": [
+                "accept",
+                "reject",
+                "deprecate",
+                "quarantine",
+                "release_quarantine"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "breadth_reviewed": {
+              "type": "boolean"
+            },
+            "replacement": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "predecessor": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "selector": {
+                  "type": "object"
+                },
+                "valid_start": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "valid_end": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "predecessor",
+                "selector",
+                "valid_start",
+                "valid_end"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "revision",
+            "expected_version",
+            "decision",
+            "reason",
+            "breadth_reviewed"
+          ]
+        },
+        "Activate": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "bindings": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true
+            },
+            "policy": {
+              "const": "reviewed-procedure-v1"
+            }
+          },
+          "required": [
+            "project",
+            "revision",
+            "expected_version",
+            "reason",
+            "bindings",
+            "policy"
+          ]
+        },
+        "Suspend": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "revision",
+            "expected_version",
+            "reason"
+          ]
+        },
+        "Query": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "object"
+              }
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "diagnostic": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "project",
+            "bindings"
+          ]
+        },
+        "OutcomeBody": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "result": {
+              "enum": [
+                "success",
+                "failure",
+                "unknown"
+              ]
+            },
+            "acceptance_evidence": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "observation": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  "start_byte": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "end_byte": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                  }
+                },
+                "required": [
+                  "observation",
+                  "start_byte",
+                  "end_byte",
+                  "content_hash"
+                ]
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "failures": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "rework": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "elapsed_ms": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "input_tokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cached_input_tokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "output_tokens": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "readers": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  }
+                }
+              ]
+            }
+          },
+          "required": [
+            "task",
+            "run",
+            "result",
+            "acceptance_evidence",
+            "failures",
+            "rework",
+            "elapsed_ms",
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "limitations",
+            "readers"
+          ]
+        },
+        "Outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "logical_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "body": {
+              "$ref": "#/$defs/Experience/$defs/OutcomeBody"
+            }
+          },
+          "required": [
+            "project",
+            "logical_key",
+            "expected_revision",
+            "body"
+          ]
+        },
+        "Feedback": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "receipt": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "reference": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "use": {
+              "enum": [
+                "unknown",
+                "read",
+                "used"
+              ]
+            },
+            "usefulness": {
+              "enum": [
+                "unknown",
+                "helpful",
+                "irrelevant",
+                "misleading",
+                "harmful"
+              ]
+            },
+            "comment": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readers": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 64,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  }
+                }
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "receipt",
+            "reference",
+            "task",
+            "run",
+            "expected_revision",
+            "use",
+            "usefulness",
+            "comment",
+            "readers"
+          ]
+        },
+        "Records": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "kind": {
+              "enum": [
+                "outcome",
+                "feedback",
+                "ranking",
+                "shadow"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "kind"
+          ]
+        },
+        "ShadowBrief": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "bindings": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "object"
+              }
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "tokenizer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96
+            },
+            "top_k": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "task": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "freshness": {
+              "enum": [
+                "any",
+                "attested"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "query",
+            "bindings",
+            "max_output_tokens",
+            "tokenizer"
+          ]
+        },
+        "RankingPropose": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "logical_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "feedback": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 1,
+              "maxItems": 128,
+              "uniqueItems": true
+            },
+            "max_adjustment_ppm": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "policy": {
+              "const": "bounded-feedback-v1"
+            }
+          },
+          "required": [
+            "project",
+            "logical_key",
+            "feedback",
+            "max_adjustment_ppm",
+            "policy"
+          ]
+        },
+        "ShadowCase": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "brief": {
+              "$ref": "#/$defs/Experience/$defs/ShadowBrief"
+            },
+            "relevant": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            },
+            "forbidden": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "brief",
+            "relevant",
+            "forbidden"
+          ]
+        },
+        "RankingEvaluate": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "configuration": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "logical_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "cases": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Experience/$defs/ShadowCase"
+              },
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true
+            },
+            "dataset_kind": {
+              "const": "development"
+            },
+            "judgment_provenance": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "project",
+            "configuration",
+            "logical_key",
+            "cases",
+            "dataset_kind",
+            "judgment_provenance"
+          ]
+        },
+        "RankingActivate": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "configuration": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "shadow": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "configuration",
+            "shadow",
+            "expected_version",
+            "reason"
+          ]
+        },
+        "RankingRollback": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "configuration": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "configuration",
+            "expected_version",
+            "reason"
+          ]
+        },
+        "RankingInspect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        },
+        "RecordLookup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "record": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "kind": {
+              "enum": [
+                "outcome",
+                "feedback",
+                "ranking",
+                "shadow"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "record",
+            "kind"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "propose"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Propose"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "review"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Review"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "activate"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Activate"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "suspend"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Suspend"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "query"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Query"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "outcome"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Outcome"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "feedback"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Feedback"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "records"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/Records"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "ranking_propose"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/RankingPropose"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "ranking_evaluate"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/RankingEvaluate"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "ranking_activate"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/RankingActivate"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "ranking_rollback"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/RankingRollback"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "ranking_inspect"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/RankingInspect"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "record"
+            },
+            "args": {
+              "$ref": "#/$defs/Experience/$defs/RecordLookup"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        }
+      ]
+    }
+  }
+}

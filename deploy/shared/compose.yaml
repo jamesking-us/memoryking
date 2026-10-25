@@ -1,0 +1,98 @@
+name: memoryking-rehearsal
+x-common: &common
+  init: true
+  image: memoryking-shared:local
+  user: "${MK_UID:?run shared_compose_prepare}:${MK_GID:?run shared_compose_prepare}"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp]
+  volumes:
+    - "postgres-socket:/socket"
+    - "${MK_STATE:?}/content:/content-volume"
+    - "${MK_STATE:?}/control:/control-volume"
+services:
+  postgres:
+    init: true
+    restart: on-failure:3
+    image: postgres:18.6-bookworm@sha256:bbf83594798e144bff365a9c191c5d779f181fb3135902064ab8ff11918020fc
+    user: "${MK_UID:?}:${MK_GID:?}"
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_USER: mk_bootstrap
+      POSTGRES_DB: memoryking
+      POSTGRES_PASSWORD_FILE: /secrets/bootstrap.password
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=reject
+    command: [postgres, -c, "listen_addresses=", -c, unix_socket_directories=/var/run/postgresql, -c, unix_socket_permissions=0700, -c, fsync=on, -c, synchronous_commit=on, -c, full_page_writes=on]
+    volumes:
+      - "${MK_STATE:?}/postgres:/var/lib/postgresql"
+      - "postgres-socket:/var/run/postgresql"
+      - "${MK_STATE:?}/secrets/postgres:/secrets:ro"
+    healthcheck:
+      test: [CMD, pg_isready, -h, /var/run/postgresql, -U, mk_bootstrap, -d, memoryking]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  api:
+    <<: *common
+    restart: on-failure:3
+    build:
+      context: ../..
+      dockerfile: deploy/shared/Dockerfile
+    networks: [private]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: [serve, --dsn-file, /secrets/runtime.dsn, --content, /content-volume/data, --control, /control-volume/data, --bind, 0.0.0.0, --port, "8765", --host, "127.0.0.1:${MK_PORT:-8765}", --origin, "https://127.0.0.1:${MK_PORT:-8765}", --tls-cert, /secrets/test-cert.pem, --tls-key, /secrets/test-key.pem, --plan-root, /plan, --dashboard-tenant, demo]
+    volumes:
+      - "postgres-socket:/socket"
+      - "${MK_STATE:?}/content:/content-volume"
+      - "${MK_STATE:?}/control:/control-volume"
+      - "${MK_STATE:?}/secrets/api:/secrets:ro"
+      - "../../docs:/plan/docs:ro"
+  gateway:
+    init: true
+    restart: on-failure:3
+    image: memoryking-shared:local
+    user: "${MK_UID:?}:${MK_GID:?}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    entrypoint: [python, -m, memoryking.adapters.shared_gateway]
+    ports: ["127.0.0.1:${MK_PORT:-8765}:8765"]
+    networks: [ingress, private]
+    depends_on: [api]
+  worker:
+    <<: *common
+    profiles: [jobs]
+    network_mode: none
+    command: [worker-once, --dsn-file, /secrets/worker.dsn, --content, /content-volume/data, --control, /control-volume/data, --tenant, demo, --project, demo, --credential, /secrets/worker.credential]
+    volumes:
+      - "postgres-socket:/socket"
+      - "${MK_STATE:?}/content:/content-volume"
+      - "${MK_STATE:?}/control:/control-volume"
+      - "${MK_STATE:?}/secrets/worker:/secrets:ro"
+  operator:
+    <<: *common
+    profiles: [operations]
+    network_mode: none
+    command: [--help]
+    volumes:
+      - "postgres-socket:/socket"
+      - "${MK_STATE:?}/content:/content-volume"
+      - "${MK_STATE:?}/control:/control-volume"
+      - "${MK_STATE:?}/archives:/archives"
+      - "${MK_STATE:?}/secrets:/secrets:ro"
+networks:
+  ingress: {}
+  private:
+    internal: true
+volumes:
+  postgres-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=${MK_UID:?},gid=${MK_GID:?},mode=0700,size=16m"

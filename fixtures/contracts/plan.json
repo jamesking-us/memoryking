@@ -1,0 +1,22 @@
+{
+  "schema_version": "1",
+  "plan_id": "plan_demo",
+  "plan_revision": "1",
+  "scope": {
+    "store_id": "store_demo",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_demo"
+  },
+  "history_incarnation": "hist_11111111111111111111111111111111",
+  "tasks": [
+    {
+      "task_id": "task_demo",
+      "parent_task_id": null,
+      "dependencies": [],
+      "execution_status": "running",
+      "criterion_ids": [
+        "criterion_demo"
+      ]
+    }
+  ]
+}

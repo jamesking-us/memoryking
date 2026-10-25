@@ -1,0 +1,971 @@
+[
+  {
+    "name": "authorize",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "validate",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "validate",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "consume",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "consume",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        },
+        "permit": "signed-permit"
+      }
+    }
+  },
+  {
+    "name": "remote_provider",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "external",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "other_model",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "remote-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown_field",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": [],
+          "remote_url": "https://example.invalid"
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown_classification",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "trusted",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown_origin",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "inferred",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "unsupported_delegation",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [
+            "owner"
+          ],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown_egress_policy",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "network-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "unbounded_messages",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            },
+            {
+              "role": "user",
+              "content": "hi"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "bad_hash",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "negative_context_epoch",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": -1
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "consume_missing_permit",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "consume",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "one_hop_delegation_binding",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [
+            "delegation_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "two_hop_delegation_rejected",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [
+            "delegation_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "delegation_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "local-recording",
+          "model": "echo-v1",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  }
+]

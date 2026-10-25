@@ -1,0 +1,38 @@
+{
+  "fixture_version": "1",
+  "id": "S31",
+  "requirements": [
+    "R01",
+    "R02",
+    "R11"
+  ],
+  "completion_owner": "P12",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Run the declared local/shared load with concurrent capture and backfill, then restart/restore and verify durability, service targets, deletion-journal replay, and explicit unsupported/degraded states where configured capabilities are absent.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_load_and_recovery",
+      "arguments": {
+        "local_units": 10000,
+        "shared_units": 100000,
+        "tenants": 10,
+        "skew_percent": 80,
+        "sustained_seconds": 1800,
+        "background_backfill": true
+      },
+      "expect": {
+        "acknowledged_loss": 0,
+        "measurements_recorded": true,
+        "unsupported_states_explicit": true
+      }
+    }
+  ]
+}

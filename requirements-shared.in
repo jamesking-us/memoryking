@@ -1,0 +1,4 @@
+-r requirements-core.in
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.3
+mcp==2.3.0

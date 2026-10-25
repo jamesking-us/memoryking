@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "phase_id": "P01",
+  "plan_revision": "1",
+  "technical_status": "in_progress",
+  "approval_status": "accepted",
+  "blocking_decisions": [],
+  "report_status": "not_generated",
+  "email_status": "not_submitted",
+  "device_status": "unverified",
+  "report_digest": null
+}

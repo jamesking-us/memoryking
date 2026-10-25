@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S04",
+  "requirements": [
+    "R07",
+    "R09"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "A memory from another tenant/project is inaccessible through search, direct ID, graph traversal, caches, exports, and receipts.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S04"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 13
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "fixture_version": "1",
+  "id": "S27",
+  "requirements": [
+    "R04",
+    "R10"
+  ],
+  "completion_owner": "P04",
+  "implementation_status": "local_adapter_available",
+  "source_contract": "Exact replay returns the original hashed bytes even when a model rerun would differ. Expiry, purge, missing artifacts, and revoked access produce their documented unavailable/denied states; a rerun receives a new receipt.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "replay_then_rerun",
+      "arguments": {
+        "original_bytes": "fixture response v1",
+        "model_rerun_bytes": "different",
+        "variants": [
+          "expired",
+          "purged",
+          "missing",
+          "revoked"
+        ]
+      },
+      "expect": {
+        "exact_bytes_preserved": true,
+        "unavailable_states_distinct": true,
+        "rerun_new_receipt": true
+      }
+    }
+  ]
+}

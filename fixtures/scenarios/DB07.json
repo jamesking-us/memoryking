@@ -1,0 +1,37 @@
+{
+  "fixture_version": "1",
+  "id": "DB07",
+  "requirements": [
+    "R06",
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Impact preview distinguishes known affected, needs revalidation, unknown and truncated coverage; layout proximity never becomes authority.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "preview_dependency_impact",
+      "arguments": {
+        "dependency_closure": [
+          "claim_a",
+          "summary_b"
+        ],
+        "missing_edges": true,
+        "truncated": true
+      },
+      "expect": {
+        "unknown_visible": true,
+        "truncation_visible": true,
+        "preview_mutations": 0
+      }
+    }
+  ]
+}

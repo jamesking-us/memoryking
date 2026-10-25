@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S35",
+  "requirements": [
+    "R07",
+    "R11"
+  ],
+  "completion_owner": "P07",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "Pause after authorization evaluation, cross grant expiry, constraint activation/expiry, and verification-freshness boundaries, then commit/start delivery on both backends. Within the 5-second release window, the receipt's evaluation instant controls; after that window no old content is released and a new decision is required. Exercise each predicate independently, fresh requests after each boundary, clock discontinuity, export chunks, and provider dispatch.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S35"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 7
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S33",
+  "requirements": [
+    "R04",
+    "R07"
+  ],
+  "completion_owner": "P07",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "Retain restricted evidence and derived assistant/summary content, revoke permission or let a grant expire, and attempt another inference/retry. Inspect actual provider bytes and state handles: restricted dependency closure is absent after rebuild, or dispatch is blocked. Repeat for tenant/principal switches, history changes, missed revocation notifications, provider-side conversation chains, and unavailable permission checks. Previously authorized in-flight processing follows the documented bounded release rule.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S33"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 15
+      }
+    }
+  ]
+}

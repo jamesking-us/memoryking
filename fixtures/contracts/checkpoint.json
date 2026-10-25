@@ -1,0 +1,15 @@
+{
+  "objective": "Finish the timeout fix and preserve the review gaps",
+  "acceptance": [{"id":"retry-check", "text":"Verify retry behavior", "state":"pending", "evidence":[], "decision":null}],
+  "hard_constraints": ["Do not publish or call a paid provider"],
+  "current_state": "Patch in progress; verification is pending",
+  "repository": {"repository":"demo", "base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "current_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "dirty":false, "artifacts":[]},
+  "findings": [{"text":"Timeout may need to be scoped per attempt", "kind":"hypothesis", "evidence":[]}],
+  "failed_attempts": [{"action":"Increase every timeout", "outcome":"Exceeded the operation deadline", "do_not_repeat_when":"The total deadline is unchanged"}],
+  "verification": [{"name":"Retry regression", "target_revision":null, "environment":"local", "result":"not_evaluated", "evidence":[]}],
+  "blockers": [{"text":"Need a complete regression result", "owner":"owner"}],
+  "next_actions": ["Inspect the retry behavior", "Run the regression and capture its result"],
+  "references": [],
+  "operation_ids": [],
+  "capture": {"last_event":null, "observed_ms":1, "gaps":[]}
+}

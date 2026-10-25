@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S30",
+  "requirements": [
+    "R03",
+    "R04"
+  ],
+  "completion_owner": "P08",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "Compression tries to alter negation, a critical constraint, an unresolved operation, or a verification target. Deterministic critical fields remain intact; unsupported optional synthesis falls back to excerpts/omission and records why.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S30"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 6
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "fixture_version": "1",
+  "id": "DB11",
+  "requirements": [
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Reduced motion, hidden-tab suspension, no-WebGL fallback, light/dark appearance, 320 px layout and browser zoom preserve essential use.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "exercise_accessible_identity",
+      "arguments": {
+        "width_px": 320,
+        "zoom_percent": 200,
+        "reduced_motion": true,
+        "webgl": false,
+        "tab_hidden": true,
+        "themes": [
+          "light",
+          "dark"
+        ]
+      },
+      "expect": {
+        "essential_content_available": true,
+        "fallback_visible": true,
+        "hidden_animation_running": false
+      }
+    }
+  ]
+}

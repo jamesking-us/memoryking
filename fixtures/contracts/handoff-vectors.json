@@ -1,0 +1,264 @@
+[
+  {
+    "name": "recipient-bound prepare",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "prepare",
+      "key": "key",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": "ckpt",
+        "recipient": "reviewer",
+        "role": "review",
+        "stage": "verification",
+        "bindings": [
+          {}
+        ],
+        "ttl_ms": 60000
+      }
+    }
+  },
+  {
+    "name": "role is not a recipient",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "prepare",
+      "key": "key",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": "ckpt",
+        "recipient": null,
+        "role": "review",
+        "stage": "verification",
+        "bindings": [
+          {}
+        ],
+        "ttl_ms": 60000
+      }
+    }
+  },
+  {
+    "name": "bounded TTL",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "prepare",
+      "key": "key",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": "ckpt",
+        "recipient": "reviewer",
+        "role": "review",
+        "stage": "verification",
+        "bindings": [
+          {}
+        ],
+        "ttl_ms": 86400001
+      }
+    }
+  },
+  {
+    "name": "nonempty bindings",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "prepare",
+      "key": "key",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": "ckpt",
+        "recipient": "reviewer",
+        "role": "review",
+        "stage": "verification",
+        "bindings": [],
+        "ttl_ms": 60000
+      }
+    }
+  },
+  {
+    "name": "no executable callback",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "prepare",
+      "key": "key",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": "ckpt",
+        "recipient": "reviewer",
+        "role": "review",
+        "stage": "verification",
+        "bindings": [
+          {}
+        ],
+        "ttl_ms": 60000,
+        "callback": "eval()"
+      }
+    }
+  },
+  {
+    "name": "stable key required",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "prepare",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": "ckpt",
+        "recipient": "reviewer",
+        "role": "review",
+        "stage": "verification",
+        "bindings": [
+          {}
+        ],
+        "ttl_ms": 60000
+      }
+    }
+  },
+  {
+    "name": "preview",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "preview",
+      "key": "view",
+      "args": {
+        "project": "p",
+        "handle": "hnd",
+        "max_output_tokens": 6000,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "preview role spoofing",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "preview",
+      "key": "view",
+      "args": {
+        "project": "p",
+        "handle": "hnd",
+        "max_output_tokens": 6000,
+        "tokenizer": "cl100k_base",
+        "role": "admin"
+      }
+    }
+  },
+  {
+    "name": "materialize",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "materialize",
+      "key": "view",
+      "args": {
+        "project": "p",
+        "handle": "hnd",
+        "max_output_tokens": 6000,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "materialize role spoofing",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "materialize",
+      "key": "view",
+      "args": {
+        "project": "p",
+        "handle": "hnd",
+        "max_output_tokens": 6000,
+        "tokenizer": "cl100k_base",
+        "role": "admin"
+      }
+    }
+  },
+  {
+    "name": "exact hash acknowledgment",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "ack",
+      "key": "ack",
+      "args": {
+        "project": "p",
+        "handle": "hnd",
+        "materialization": "rcpt",
+        "rendered_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  {
+    "name": "bad hash",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "ack",
+      "key": "ack",
+      "args": {
+        "project": "p",
+        "handle": "hnd",
+        "materialization": "rcpt",
+        "rendered_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  },
+  {
+    "name": "cancel",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "cancel",
+      "key": "cancel",
+      "args": {
+        "project": "p",
+        "handle": "hnd"
+      }
+    }
+  },
+  {
+    "name": "history newline",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "action": "cancel",
+      "key": "cancel",
+      "args": {
+        "project": "p",
+        "handle": "hnd"
+      }
+    }
+  }
+]

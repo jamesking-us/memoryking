@@ -1,0 +1,34 @@
+{
+  "fixture_version": "1",
+  "id": "DB09",
+  "requirements": [
+    "R03",
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Costs reconcile with failed/background/retried work; unknown usage and uncertain estimates remain explicit.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "render_total_cost",
+      "arguments": {
+        "failed_calls": 2,
+        "background_calls": 3,
+        "unknown_usage": true,
+        "human_minutes": 12
+      },
+      "expect": {
+        "failed_background_included": true,
+        "unknown_explicit": true
+      }
+    }
+  ]
+}

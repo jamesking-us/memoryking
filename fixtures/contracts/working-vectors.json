@@ -1,0 +1,940 @@
+[
+  {
+    "name": "complete checkpoint",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "missing essential field",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown checkpoint field",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          },
+          "reasoning": "private"
+        }
+      }
+    }
+  },
+  {
+    "name": "negative CAS",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": -1,
+        "readers": [
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "empty audience",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "duplicate audience",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [
+          "owner",
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "unsupported criterion state",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "complete",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "trailing history newline",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "action": "save",
+      "key": "safe",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "mutation requires retry key",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "save",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "expected_revision": 0,
+        "readers": [
+          "owner"
+        ],
+        "checkpoint": {
+          "objective": "Finish the timeout fix and preserve the review gaps",
+          "acceptance": [
+            {
+              "id": "retry-check",
+              "text": "Verify retry behavior",
+              "state": "pending",
+              "evidence": [],
+              "decision": null
+            }
+          ],
+          "hard_constraints": [
+            "Do not publish or call a paid provider"
+          ],
+          "current_state": "Patch in progress; verification is pending",
+          "repository": {
+            "repository": "demo",
+            "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "current_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false,
+            "artifacts": []
+          },
+          "findings": [
+            {
+              "text": "Timeout may need to be scoped per attempt",
+              "kind": "hypothesis",
+              "evidence": []
+            }
+          ],
+          "failed_attempts": [
+            {
+              "action": "Increase every timeout",
+              "outcome": "Exceeded the operation deadline",
+              "do_not_repeat_when": "The total deadline is unchanged"
+            }
+          ],
+          "verification": [
+            {
+              "name": "Retry regression",
+              "target_revision": null,
+              "environment": "local",
+              "result": "not_evaluated",
+              "evidence": []
+            }
+          ],
+          "blockers": [
+            {
+              "text": "Need a complete regression result",
+              "owner": "owner"
+            }
+          ],
+          "next_actions": [
+            "Inspect the retry behavior",
+            "Run the regression and capture its result"
+          ],
+          "references": [],
+          "operation_ids": [],
+          "capture": {
+            "last_event": null,
+            "observed_ms": 1,
+            "gaps": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "full resume",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "resume",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 5000,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "zero budget",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "resume",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 0,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "run isolated resume",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "resume",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": "branch_1",
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 5000,
+        "tokenizer": "cl100k_base"
+      }
+    }
+  },
+  {
+    "name": "safe operation identity",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "operation_intent",
+      "key": "intent",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "operation": "external_1",
+        "target_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parameters_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "method": "readback",
+        "provider_key": null
+      }
+    }
+  },
+  {
+    "name": "raw external parameters rejected",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "operation_intent",
+      "key": "intent",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "operation": "external_1",
+        "target_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parameters_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "method": "readback",
+        "provider_key": null,
+        "parameters": {
+          "secret": "forbidden"
+        }
+      }
+    }
+  },
+  {
+    "name": "unsupported retry strategy",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "operation_intent",
+      "key": "intent",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "operation": "external_1",
+        "target_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parameters_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "method": "blind_retry",
+        "provider_key": null
+      }
+    }
+  },
+  {
+    "name": "host adapter full request",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "adapter_resume",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 5000,
+        "tokenizer": "cl100k_base",
+        "base": null,
+        "adapter_context": {
+          "model_session": "session",
+          "context_epoch": 0
+        }
+      }
+    }
+  },
+  {
+    "name": "host adapter retained base",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "adapter_resume",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 5000,
+        "tokenizer": "cl100k_base",
+        "base": {
+          "id": "state",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "schema": "adapter-state-v1",
+          "sequence": 1
+        },
+        "adapter_context": {
+          "model_session": "session",
+          "context_epoch": 0
+        }
+      }
+    }
+  },
+  {
+    "name": "host adapter boolean sequence rejected",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "action": "adapter_resume",
+      "args": {
+        "project": "p",
+        "task": "task",
+        "run": null,
+        "checkpoint": null,
+        "bindings": [
+          {}
+        ],
+        "max_output_tokens": 5000,
+        "tokenizer": "cl100k_base",
+        "base": {
+          "id": "state",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "schema": "adapter-state-v1",
+          "sequence": true
+        },
+        "adapter_context": {
+          "model_session": "session",
+          "context_epoch": 0
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,37 @@
+{
+  "fixture_version": "1",
+  "id": "DB12",
+  "requirements": [
+    "R10",
+    "R11"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Agreed node/event/tenant fixtures meet measured UI/telemetry budgets; a large corpus is never sent wholesale to the browser.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "measure_dashboard_limits",
+      "arguments": {
+        "overview_nodes": 200,
+        "overview_edges": 400,
+        "expanded_nodes": 500,
+        "expanded_edges": 1500,
+        "corpus_nodes": 100000,
+        "skew_percent": 80
+      },
+      "expect": {
+        "whole_corpus_downloaded": false,
+        "budgets_measured": true,
+        "core_regression_reported": true
+      }
+    }
+  ]
+}

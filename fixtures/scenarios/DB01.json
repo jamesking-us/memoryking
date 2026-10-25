@@ -1,0 +1,38 @@
+{
+  "fixture_version": "1",
+  "id": "DB01",
+  "requirements": [
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "Weighted and unweighted progress reconcile to stable leaf criteria; scope changes, reopened work, stale evidence and waivers remain visible.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "reconcile_progress",
+      "arguments": {
+        "leaf_tasks": 12,
+        "finished_tasks": 8,
+        "criteria": 10,
+        "passed": 7,
+        "failed": 1,
+        "pending": 2,
+        "new_scope": 2,
+        "stale_evidence": 1
+      },
+      "expect": {
+        "double_counted": false,
+        "scope_diff_visible": true,
+        "waiver_counted_as_pass": false
+      }
+    }
+  ]
+}

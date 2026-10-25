@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "classification": "synthetic",
+  "budget_approved": false,
+  "cohort": "fixed_corpus",
+  "arms": [
+    "no_memory",
+    "transcript",
+    "compact_checkpoint",
+    "full_system"
+  ],
+  "baseline": "compact_checkpoint",
+  "allocation": "equal_per_arm_once",
+  "frozen_at_ms": 100,
+  "identities": {
+    "dataset_sha256": "ab94ec319d9f7574e41c10b15b3fdfeb39cf322877ec00d5b269c15c853c7b7a",
+    "source_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "model_version": "no-model-synthetic-records",
+    "tool_version": "audit-v1",
+    "judge_version": "synthetic-explicit-outcomes",
+    "tokenizer_version": "synthetic-counts",
+    "resource_profile": "temporary-files-only",
+    "stopping_rule": "one fixed synthetic task",
+    "statistical_method": "none-no-efficacy-claim"
+  },
+  "tasks": [
+    {
+      "id": "task",
+      "family": "family",
+      "split": "holdout",
+      "cutoff_ms": 50,
+      "duplicate_group": "task-group",
+      "excluded_sha256": []
+    }
+  ],
+  "resources": [
+    {
+      "id": "earlier",
+      "path": "evidence.txt",
+      "sha256": "d4a992aa70d66821dad9a1fe924680ed0fa988b083f24edb84b52ed11923472e",
+      "available_at_ms": 20,
+      "kind": "evidence",
+      "duplicate_group": "prior-unrelated",
+      "origin_arm": null,
+      "origin_task": null
+    }
+  ],
+  "shared_processing_ids": [
+    "ingestion"
+  ]
+}

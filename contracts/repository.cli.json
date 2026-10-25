@@ -1,0 +1,667 @@
+{
+  "operation": "repository",
+  "command_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://memoryking.invalid/contracts/repository-v1",
+    "title": "MemoryKing trusted local repository operations v1",
+    "$defs": {
+      "Register": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "remote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "clone": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "readers": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 64,
+                "uniqueItems": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "project",
+          "remote",
+          "clone",
+          "path",
+          "readers"
+        ],
+        "additionalProperties": false
+      },
+      "Capture": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "clone": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "project",
+          "repository",
+          "clone",
+          "environment"
+        ],
+        "additionalProperties": false
+      },
+      "Inspect": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "repository",
+          "snapshot"
+        ],
+        "additionalProperties": false
+      },
+      "Dependency": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "file",
+              "symbol"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "policy": {
+            "enum": [
+              "invalidate",
+              "revalidate",
+              "rank_penalty"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "target",
+          "policy"
+        ],
+        "additionalProperties": false
+      },
+      "Bind": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Dependency"
+            },
+            "maxItems": 64,
+            "uniqueItems": true
+          },
+          "impact": {
+            "enum": [
+              "high",
+              "low"
+            ]
+          },
+          "coverage_reviewed": {
+            "const": true
+          },
+          "expected_policy": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "evidence": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "revision",
+          "repository",
+          "snapshot",
+          "dependencies",
+          "impact",
+          "coverage_reviewed",
+          "expected_policy",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "Verify": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "expected_policy": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "evidence": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "expires_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "project",
+          "revision",
+          "snapshot",
+          "expected_policy",
+          "evidence",
+          "passed",
+          "expires_ms"
+        ],
+        "additionalProperties": false
+      },
+      "Revalidate": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "expected_generation": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "project",
+          "repository",
+          "snapshot",
+          "expected_generation"
+        ],
+        "additionalProperties": false
+      },
+      "Impact": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "maxItems": 64,
+            "uniqueItems": true
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 128
+          }
+        },
+        "required": [
+          "project",
+          "repository",
+          "snapshot",
+          "paths",
+          "limit"
+        ],
+        "additionalProperties": false
+      },
+      "Coverage": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "maxItems": 256,
+            "uniqueItems": true
+          },
+          "bindings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 256,
+            "items": {
+              "type": "object"
+            }
+          }
+        },
+        "required": [
+          "project",
+          "repository",
+          "snapshot",
+          "paths",
+          "bindings"
+        ],
+        "additionalProperties": false
+      },
+      "Pending": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "repository"
+        ]
+      },
+      "History": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "revision",
+          "snapshot"
+        ]
+      }
+    },
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "register"
+          },
+          "args": {
+            "$ref": "#/$defs/Register"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "capture"
+          },
+          "args": {
+            "$ref": "#/$defs/Capture"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "inspect"
+          },
+          "args": {
+            "$ref": "#/$defs/Inspect"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "bind"
+          },
+          "args": {
+            "$ref": "#/$defs/Bind"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "verify"
+          },
+          "args": {
+            "$ref": "#/$defs/Verify"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "revalidate"
+          },
+          "args": {
+            "$ref": "#/$defs/Revalidate"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "impact"
+          },
+          "args": {
+            "$ref": "#/$defs/Impact"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "coverage"
+          },
+          "args": {
+            "$ref": "#/$defs/Coverage"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "pending"
+          },
+          "args": {
+            "$ref": "#/$defs/Pending"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "history"
+          },
+          "args": {
+            "$ref": "#/$defs/History"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "id": "synthetic-adapter-test",
+  "revision": "fixture-1",
+  "phases": [
+    {
+      "id": "P01",
+      "title": "Synthetic step 1",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P02",
+      "title": "Synthetic step 2",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P03",
+      "title": "Synthetic step 3",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P04",
+      "title": "Synthetic step 4",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P05",
+      "title": "Synthetic step 5",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P06",
+      "title": "Synthetic step 6",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P07",
+      "title": "Synthetic step 7",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P08",
+      "title": "Synthetic step 8",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P09",
+      "title": "Synthetic step 9",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P10",
+      "title": "Synthetic step 10",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P11",
+      "title": "Synthetic step 11",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    },
+    {
+      "id": "P12",
+      "title": "Synthetic step 12",
+      "approval": "pending",
+      "dependencies": [],
+      "criteria": []
+    }
+  ]
+}

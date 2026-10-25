@@ -1,0 +1,696 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryking.invalid/contracts/foundation-v1",
+  "title": "MemoryKing foundation contracts v1",
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*_[A-Za-z0-9][A-Za-z0-9_-]{0,95}(?![\\s\\S])",
+      "maxLength": 128
+    },
+    "HistoryIncarnation": {
+      "type": "string",
+      "pattern": "^hist_[0-9a-f]{32}(?![\\s\\S])"
+    },
+    "Counter": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})(?![\\s\\S])"
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "PhaseId": {
+      "type": "string",
+      "pattern": "^P(0[1-9]|1[0-2])(?![\\s\\S])"
+    },
+    "TimestampMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Scope": {
+      "type": "object",
+      "properties": {
+        "store_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "project_id": {
+          "$ref": "#/$defs/Id"
+        }
+      },
+      "required": [
+        "store_id",
+        "tenant_id",
+        "project_id"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryPosition": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "history_incarnation": {
+          "$ref": "#/$defs/HistoryIncarnation"
+        },
+        "position": {
+          "$ref": "#/$defs/Counter"
+        }
+      },
+      "required": [
+        "scope",
+        "history_incarnation",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "AuthorizationContext": {
+      "type": "object",
+      "properties": {
+        "store_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "principal_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "history_incarnation": {
+          "$ref": "#/$defs/HistoryIncarnation"
+        },
+        "authorization_generation": {
+          "$ref": "#/$defs/Counter"
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "store_id",
+        "tenant_id",
+        "principal_id",
+        "history_incarnation",
+        "authorization_generation",
+        "audience"
+      ],
+      "additionalProperties": false
+    },
+    "EvidenceReference": {
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "digest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "source_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "synthetic",
+            "internal",
+            "restricted"
+          ]
+        }
+      },
+      "required": [
+        "evidence_id",
+        "digest",
+        "source_revision",
+        "classification"
+      ],
+      "additionalProperties": false
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "forbidden",
+        "revision_conflict",
+        "budget_insufficient",
+        "constraint_resolution_incomplete",
+        "constraint_conflict",
+        "applicability_unknown",
+        "operation_ambiguous",
+        "index_not_ready",
+        "provider_unavailable",
+        "history_changed",
+        "reconciliation_required",
+        "authorization_release_expired",
+        "context_rebuild_required",
+        "selector_unsupported",
+        "selector_limit_exceeded",
+        "selector_relation_indeterminate",
+        "replacement_out_of_range",
+        "replay_expired",
+        "replay_purged",
+        "replay_artifact_missing",
+        "unsupported_schema",
+        "rate_limited",
+        "internal_error"
+      ]
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "request_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_ms": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 300000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "code",
+        "request_id",
+        "retryable",
+        "retry_after_ms"
+      ],
+      "additionalProperties": false
+    },
+    "RequestIdentity": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "history_incarnation": {
+          "$ref": "#/$defs/HistoryIncarnation"
+        },
+        "request_namespace": {
+          "$ref": "#/$defs/Id"
+        },
+        "principal_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "canonicalization_version": {
+          "const": "MK-C14N-1"
+        },
+        "request_hash": {
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "required": [
+        "scope",
+        "history_incarnation",
+        "request_namespace",
+        "principal_id",
+        "operation",
+        "idempotency_key",
+        "canonicalization_version",
+        "request_hash"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutionStatus": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "ready",
+        "running",
+        "waiting",
+        "blocked",
+        "failed",
+        "cancelled",
+        "finished"
+      ]
+    },
+    "WorkItem": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "parent_task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        },
+        "execution_status": {
+          "$ref": "#/$defs/ExecutionStatus"
+        },
+        "criterion_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "maxItems": 1000,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "task_id",
+        "parent_task_id",
+        "dependencies",
+        "execution_status",
+        "criterion_ids"
+      ],
+      "additionalProperties": false
+    },
+    "Plan": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "plan_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "plan_revision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "history_incarnation": {
+          "$ref": "#/$defs/HistoryIncarnation"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkItem"
+          },
+          "maxItems": 10000,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "plan_id",
+        "plan_revision",
+        "scope",
+        "history_incarnation",
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "AcceptanceCriterion": {
+      "type": "object",
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "task_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "plan_revision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "pending",
+            "stale",
+            "waived",
+            "not_evaluated"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceReference"
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "waiver_decision_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "criterion_id",
+        "task_id",
+        "plan_revision",
+        "status",
+        "evidence",
+        "waiver_decision_id"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "passed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "waived"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "waiver_decision_id": {
+                "$ref": "#/$defs/Id"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "PhaseStatus": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "phase_id": {
+          "$ref": "#/$defs/PhaseId"
+        },
+        "plan_revision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "technical_status": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "in_progress",
+            "closeout_pending",
+            "complete",
+            "partial",
+            "blocked"
+          ]
+        },
+        "approval_status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "accepted",
+            "rejected"
+          ]
+        },
+        "blocking_decisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Id"
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "report_status": {
+          "type": "string",
+          "enum": [
+            "not_generated",
+            "draft",
+            "qa_passed"
+          ]
+        },
+        "email_status": {
+          "type": "string",
+          "enum": [
+            "not_submitted",
+            "unknown",
+            "smtp_accepted",
+            "failed"
+          ]
+        },
+        "device_status": {
+          "type": "string",
+          "enum": [
+            "unverified",
+            "confirmed",
+            "rejected"
+          ]
+        },
+        "report_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "phase_id",
+        "plan_revision",
+        "technical_status",
+        "approval_status",
+        "blocking_decisions",
+        "report_status",
+        "email_status",
+        "device_status",
+        "report_digest"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "technical_status": {
+                "const": "complete"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "report_status": {
+                "const": "qa_passed"
+              },
+              "email_status": {
+                "const": "smtp_accepted"
+              },
+              "report_digest": {
+                "$ref": "#/$defs/Digest"
+              },
+              "blocking_decisions": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ObservationDetail": {
+      "type": "object",
+      "properties": {
+        "execution_status": {
+          "$ref": "#/$defs/ExecutionStatus"
+        },
+        "verification_status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "failed",
+            "pending",
+            "stale",
+            "waived",
+            "not_evaluated"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ObservationEvent": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "event_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "task.updated",
+            "verification.recorded",
+            "checkpoint.recorded",
+            "operation.observed",
+            "phase.updated",
+            "heartbeat.observed"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/Scope"
+        },
+        "history_incarnation": {
+          "$ref": "#/$defs/HistoryIncarnation"
+        },
+        "plan_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "plan_revision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "phase_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PhaseId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "producer_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "correlation_id": {
+          "$ref": "#/$defs/Id"
+        },
+        "causation_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_at_ms": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "recorded_at_ms": {
+          "$ref": "#/$defs/TimestampMs"
+        },
+        "source_position": {
+          "$ref": "#/$defs/HistoryPosition"
+        },
+        "entity_revision": {
+          "$ref": "#/$defs/Counter"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceReference"
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "detail": {
+          "$ref": "#/$defs/ObservationDetail"
+        }
+      },
+      "required": [
+        "schema_version",
+        "event_id",
+        "event_type",
+        "scope",
+        "history_incarnation",
+        "plan_id",
+        "plan_revision",
+        "phase_id",
+        "task_id",
+        "run_id",
+        "producer_id",
+        "correlation_id",
+        "causation_id",
+        "observed_at_ms",
+        "recorded_at_ms",
+        "source_position",
+        "entity_revision",
+        "evidence",
+        "detail"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "fixture_version": "1",
+  "id": "S34",
+  "requirements": [
+    "R07",
+    "R10"
+  ],
+  "completion_owner": "P10",
+  "implementation_status": "not_evaluated",
+  "source_contract": "In a real supported browser, navigate to the dashboard, load public assets, exchange the bootstrap code, perform authenticated `GET`/`HEAD` reads without Origin, and perform CSRF-protected mutations/logout. Retain hostile-origin/null-origin/Host, invalid session, reused code, and cross-origin API tests; public assets reveal no private data.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "navigate_login_read_logout",
+      "arguments": {
+        "browser": "real",
+        "read_methods": [
+          "GET",
+          "HEAD"
+        ],
+        "origin": null,
+        "mutations_csrf_protected": true
+      },
+      "expect": {
+        "navigation_succeeds": true,
+        "assets_public_only": true,
+        "authenticated_reads_succeed": true,
+        "hostile_requests_rejected": true
+      }
+    }
+  ]
+}

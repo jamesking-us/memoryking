@@ -1,0 +1,32 @@
+{
+  "fixture_version": "1",
+  "id": "S10",
+  "requirements": [
+    "R01",
+    "R11"
+  ],
+  "completion_owner": "P08",
+  "implementation_status": "shared_adapter_available",
+  "source_contract": "A provider outage leaves explicit lexical degradation, bounded retries, and no lost captured evidence.",
+  "seed": {
+    "classification": "synthetic",
+    "tenant_id": "tenant_alpha",
+    "project_id": "project_fixture",
+    "principal_id": "principal_fixture",
+    "clock_ms": 1000,
+    "random_seed": 17
+  },
+  "steps": [
+    {
+      "operation": "run_shared_product_suite",
+      "arguments": {
+        "scenario": "S10"
+      },
+      "expect": {
+        "all_product_assertions_passed": true,
+        "skipped_tests": 0,
+        "tests_executed": 5
+      }
+    }
+  ]
+}
