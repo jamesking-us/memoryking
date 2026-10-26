@@ -182,6 +182,7 @@ class ViewerSessionData(TypedDict):
     kind: Literal['session']
     projects: list[str]
     csrf: str
+    poll_seconds: int
 
 class ViewerTaskData(TypedDict):
     kind: Literal['overview', 'tasks', 'task']

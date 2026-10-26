@@ -28,6 +28,7 @@ def main():
         [sys.executable, "-m", "mypy"],
         ["npm", "run", "format:check"],
         ["npm", "test"],
+        [sys.executable, "tools/mobile_asset_audit.py"],
         [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
         [sys.executable, "tools/run_conformance.py", "--output", "tmp/checks/scenarios.json"],
         [sys.executable, "tools/check_docs.py"],

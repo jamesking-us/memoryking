@@ -7366,12 +7366,18 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 128
+            },
+            "poll_seconds": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 60
             }
           },
           "required": [
             "kind",
             "projects",
-            "csrf"
+            "csrf",
+            "poll_seconds"
           ]
         },
         "ViewerTaskData": {

@@ -228,6 +228,54 @@ class HttpCases:
             self.assertEqual((missing[0], missing[2]), (denied[0], denied[2]))
             self.assertNotIn("internal_error", server.counts)
 
+    def test_packaged_mobile_assets_are_public_closed_and_never_filesystem_fallback(self):
+        from memoryking.adapters.viewer_http import ASSETS
+
+        with self.listener(authenticated=False):
+            for path, (_, expected_type) in ASSETS.items():
+                for method in ("GET", "HEAD"):
+                    status, headers, raw = self.get(path, method=method, headers={"Cookie": ""})
+                    self.assertEqual(status, 200, path)
+                    self.assertEqual(headers["Content-Type"], expected_type)
+                    self.assertEqual(headers["Cache-Control"], "no-store")
+                    self.assertIn("worker-src 'none'", headers["Content-Security-Policy"])
+                    if method == "HEAD":
+                        self.assertEqual(raw, b"")
+                    else:
+                        self.assertTrue(raw)
+                self.assertEqual(self.get(path, method="POST", body=b"{}")[0], 400)
+                self.assertEqual(self.get(path, headers={"Origin": "https://evil.invalid"})[0], 404)
+            for path in (
+                "/viewer/client.ts",
+                "/viewer/app.js.map",
+                "/viewer/index.html",
+                "/viewer/web/../owner.credential",
+                "/viewer/app.js?v=1",
+                "/viewer/manifest.webmanifest?tenant=main",
+                "/viewer/sw.js",
+                "/viewer/elephant.png/extra",
+            ):
+                self.assertIn(self.get(path)[0], (400, 404), path)
+            self.assertEqual(self.get("/viewer/api/v1/session", headers={"Cookie": ""})[0], 401)
+            manifest = json.loads(self.get("/viewer/manifest.webmanifest")[2])
+            self.assertEqual(
+                (manifest["id"], manifest["start_url"], manifest["scope"]), ("/viewer/",) * 3
+            )
+            self.assertEqual(manifest["display"], "standalone")
+            self.assertEqual({item["sizes"] for item in manifest["icons"]}, {"192x192", "512x512"})
+
+    def test_session_exposes_configured_poll_interval_without_extending_display_allowance(self):
+        with self.listener() as server:
+            for interval in (5, 10, 60):
+                server.config["poll_seconds"] = interval
+                status, _, raw = self.get("/viewer/api/v1/session")
+                self.assertEqual(status, 200)
+                value = json.loads(raw)
+                self.assertEqual(value["data"]["poll_seconds"], interval)
+                self.assertLessEqual(
+                    value["binding"]["fresh_until_ms"] - value["binding"]["evaluated_ms"], 15000
+                )
+
     def test_raw_duplicate_headers_and_oversized_line_close_bounded(self):
         with self.listener():
             for extra in (

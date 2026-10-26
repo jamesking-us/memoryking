@@ -303,7 +303,8 @@ Fresh reports still require source authority, exact artifact QA and publication.
 
 This optional listener serves a public shell, GitHub authentication endpoints and a
 bounded read API. Its authentication implementation is tested with a controlled
-provider; the phone UI and real GitHub/Android deployment remain unqualified.
+provider. The four-tab phone UI has local browser coverage; real GitHub/Android
+and home deployment remain unqualified.
 Without a current session, private requests return 401. The listener is disabled
 when `--viewer-config` is omitted or `enabled` is false.
 The existing local owner dashboard and shared agent interface remain separate.
@@ -329,7 +330,7 @@ Never start a second SQLite owner against a running data directory.
 | `tls_cert_file`, `tls_key_file` | Both null for proxy mode; both required for direct TLS. The key must be a private regular file; TLS 1.2 is the minimum. |
 | `github_client_id`, `github_secret_file` | Dedicated GitHub OAuth app client ID and path to its protected secret file. Enabled startup reads the secret; disabled startup does not. |
 | `session_idle_seconds`, `session_absolute_seconds`, `login_seconds` | `1800`, `28800`, `300`; active idle, absolute and login-transaction lifetimes. Idle cannot exceed absolute lifetime. |
-| `poll_seconds`, `display_lifetime_seconds` | `10`, `15`; the latter limits issued display leases. Polling is a future client behavior. |
+| `poll_seconds`, `display_lifetime_seconds` | `10`, `15`; visible client polling accepts 5–60 seconds, display leases 1–15. The session response supplies the polling interval. Keep polling shorter than the lease for a continuous view; a longer interval clears the display while waiting. Neither setting extends access expiry. |
 | `limits.active_sessions`, `limits.pending_logins` | `5`, `64`; sessions per binding and combined pending contexts/logins, maxima 20/256. At the session ceiling the oldest session is evicted. |
 | `limits.list_items`, `limits.detail_bytes` | `50`, `16384`; smaller configured ceilings are honored. Detail bytes range 1024–16384. |
 | `limits.graph_nodes`, `limits.graph_edges` | `100`, `150`; maxima, with explicit partial coverage. |

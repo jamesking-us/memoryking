@@ -1,0 +1,9 @@
+{
+  "name": "@memoryking/mobile-viewer",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@memoryking/contracts": "0.1.0-alpha.1"
+  }
+}

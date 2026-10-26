@@ -47,7 +47,22 @@ def main():
         help="New private directory outside the disposable checkout; retained after container rehearsal",
     )
     parser.add_argument("--container-port", type=int, default=19765)
+    parser.add_argument(
+        "--chrome",
+        type=Path,
+        help="Explicit local Chrome executable for the four-way mobile browser matrix",
+    )
+    parser.add_argument(
+        "--playwright",
+        type=Path,
+        help="Explicit local Playwright ES module; used with --chrome and --postgres-bin",
+    )
     args = parser.parse_args()
+    if bool(args.chrome) != bool(args.playwright) or (args.chrome and not args.postgres_bin):
+        parser.error("--chrome and --playwright require each other and --postgres-bin")
+    for browser_path in (args.chrome, args.playwright):
+        if browser_path and (not browser_path.is_absolute() or not browser_path.is_file()):
+            parser.error("Browser runtime paths must be explicit existing absolute files")
     if bool(args.compose) != bool(args.container_state):
         parser.error("--compose and --container-state must be supplied together")
     if args.macos_supervision and sys.platform != "darwin":
@@ -179,6 +194,26 @@ def main():
                     checkout,
                 ),
             )
+        if args.chrome:
+            steps.insert(
+                -1,
+                (
+                    "mobile-browser",
+                    [
+                        str(python),
+                        "tools/mobile_viewer_browser_probe.py",
+                        "--node",
+                        shutil.which("node"),
+                        "--chrome",
+                        str(args.chrome),
+                        "--playwright",
+                        str(args.playwright),
+                        "--output",
+                        "tmp/mobile-browser/result.json",
+                    ],
+                    checkout,
+                ),
+            )
         if args.compose:
             steps.insert(
                 -1,
@@ -232,7 +267,7 @@ def main():
             shutil.copytree(checkout / "tmp/runtime-install", output / "runtime-install")
         if (checkout / "tmp/contracts-package").exists():
             shutil.copytree(checkout / "tmp/contracts-package", output / "contracts-package")
-        for directory in ("supervision", "containers"):
+        for directory in ("supervision", "containers", "mobile-browser"):
             if (checkout / "tmp" / directory).exists():
                 shutil.copytree(checkout / "tmp" / directory, output / directory)
         if (checkout / "dist").exists():

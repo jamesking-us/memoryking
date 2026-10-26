@@ -356,7 +356,12 @@ class ViewerReads:
                     self.s._auth(session.subject.credential, "read", row["project"], at)
                     projects.append(row["project"])
             return (
-                {"kind": "session", "projects": projects, "csrf": session.csrf},
+                {
+                    "kind": "session",
+                    "projects": projects,
+                    "csrf": session.csrf,
+                    "poll_seconds": self.config["poll_seconds"],
+                },
                 None,
                 len(rows) > 128,
                 "current_explicit_project_grants_up_to_128",

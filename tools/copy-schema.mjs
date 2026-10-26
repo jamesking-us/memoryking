@@ -1,4 +1,32 @@
-import { copyFileSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
+mkdirSync("src/memoryking/adapters/viewer_web", { recursive: true });
+for (const name of [
+  "index.html",
+  "shell.css",
+  "manifest.webmanifest",
+  "elephant.png",
+  "icon-192.png",
+  "icon-512.png",
+]) {
+  copyFileSync(
+    `packages/mobile-viewer/web/${name}`,
+    `src/memoryking/adapters/viewer_web/${name}`,
+  );
+}
+for (const name of [
+  "app",
+  "client",
+  "presentation",
+  "freshness",
+  "network",
+  "report",
+  "graph",
+]) {
+  copyFileSync(
+    `packages/mobile-viewer/dist/${name}.js`,
+    `src/memoryking/adapters/viewer_web/${name}.js`,
+  );
+}
 for (const stem of ["viewer", "reporting"]) {
   copyFileSync(
     `packages/contracts/${stem}.schema.json`,

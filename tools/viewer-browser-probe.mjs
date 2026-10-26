@@ -47,7 +47,7 @@ try {
   });
   const navigation = await page.goto(`${options.origin}/viewer/`);
   assert.equal(navigation.status(), 200);
-  assert.equal(await page.locator("h1").textContent(), "MemoryKing viewer");
+  assert.equal(await page.title(), "MemoryKing · Project dashboard");
   const reads = await page.evaluate(async () => {
     const results = [];
     for (const path of [

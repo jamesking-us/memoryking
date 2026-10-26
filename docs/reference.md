@@ -181,8 +181,7 @@ A queued report unavailable to the worker does not block another permitted build
 
 Each reader response is at most 64 KiB and carries a history-, principal-, policy-
 and revision-bound cursor. Fragments reassemble canonical block JSON in order;
-content must be rendered as data, never raw HTML. The phone reader is not yet
-implemented. `list` takes a limit of 1–50 and a nullable cursor; it returns only
+content is rendered as data, never raw HTML, by the phone reader. `list` takes a limit of 1–50 and a nullable cursor; it returns only
 currently permitted published app reports, ordered by report/revision. It exposes
 no total or hidden identities. Cursors bind identity/history/policy and contain only
 the last visible report. Each page scans at most 512 candidates; an exhausted scan
@@ -239,7 +238,33 @@ transfer; importing them as accepted is invalid. See [sender transfer](deploymen
 
 ## Restricted viewer API foundation
 
-`memoryking serve --viewer-config FILE` and `memoryking-shared serve --viewer-config FILE` accept the closed `ViewerConfig` contract. Omit the option, or set `enabled` to false, to leave the listener disabled. The file must be a private regular file. The dedicated listener binds only configured loopback, requires its exact HTTPS public-origin Host, and supports either direct TLS with a private key or explicitly selected isolated proxy transport. This does not relax the shared agent transport's TLS rules. The server includes GitHub authentication and browser sessions with controlled-provider qualification. The phone UI and real GitHub/Android installation are still unqualified.
+The public phone assets use an exact route allowlist: `/viewer/`, `shell.css`,
+`manifest.webmanifest`, `elephant.png`, `icon-192.png`, `icon-512.png`, and the
+`app`, `client`, `presentation`, `freshness`, `network`, `report` and `graph` JavaScript
+modules under `/viewer/`. Unknown files, queries, aliases and source-map paths are
+not served. Host/Origin/method validation still applies to these credential-free
+assets. All viewer responses are no-store. The wheel contains the frontend;
+running the service does not require Node.
+
+Session data includes `poll_seconds` (5–60; default 10) in the generated v1
+contract. Upgrade the frontend and server together; older strictly validating
+clients must accept this new field. The packaged client checks session plus the
+selected view at that interval while visible. A display lease always expires at
+the server's shorter deadline, at most 15 seconds, regardless of polling settings.
+A polling interval longer than that lease leaves a neutral screen until the next
+check. Request time reduces the allowance. Retry backoff caps locally at 60 seconds
+but honors a longer server Retry-After. Each fetch has a five-second deadline and
+a one-MiB decoded-body bound; server DTO limits remain lower and authoritative.
+
+The report reader fetches at most 64 ordered fragments per batch and starts no new
+fragment after five seconds of batch work. It rechecks session and complete report
+authority between batches. Only current whole-report metadata can renew retained
+blocks/figures from that immutable revision. Figures are explicit authenticated
+chunk loads, limited to eight MiB, with a full hash check before local blob display.
+Expired/mismatched cursors restart from current context; the client adds no direct
+section-seeking bypass. Detail memory handles are replaced with each current read.
+
+`memoryking serve --viewer-config FILE` and `memoryking-shared serve --viewer-config FILE` accept the closed `ViewerConfig` contract. Omit the option, or set `enabled` to false, to leave the listener disabled. The file must be a private regular file. The dedicated listener binds only configured loopback, requires its exact HTTPS public-origin Host, and supports either direct TLS with a private key or explicitly selected isolated proxy transport. This does not relax the shared agent transport's TLS rules. The server includes GitHub authentication and browser sessions with controlled-provider qualification. The phone UI has local browser coverage; real GitHub/Android installation is still unqualified.
 
 The implemented read routes are GET/HEAD `/viewer/api/v1/session` and `/viewer/api/v1/projects/{project}/` followed by `overview`, `tasks`, `tasks/{task}`, `memories`, `memories/{handle}`, `graph`, `reports`, `reports/{report}/versions/{revision}`, and that report version's `sections/{index}` or `images/{name}`. No owner, agent, bootstrap, raw artifact, mutation or retry route is delegated. Read tests may supply an internal synthetic session; authentication tests run the actual issuance flow with a controlled provider. No configuration field or HTTP header enables a test identity or provider.
 

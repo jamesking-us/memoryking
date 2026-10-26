@@ -199,6 +199,7 @@ export interface ViewerSessionData {
   kind: "session";
   projects: Array<string>;
   csrf: string;
+  poll_seconds: number;
 }
 
 export interface ViewerTaskData {

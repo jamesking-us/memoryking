@@ -33,6 +33,21 @@ Use a new output directory for each run. The helper builds a fresh checkout, rec
 
 All jobs run locally. Do not enable hosted workflows or register persistent runners. No check sends email or calls a paid model provider.
 
+For changes to the phone viewer, also pass `--chrome /absolute/path/to/chrome`
+and `--playwright /absolute/path/to/playwright/index.mjs` to the clean-checkout
+helper. Both options require `--postgres-bin`; the job then runs the actual mobile
+browser flow on SQLite and PostgreSQL with direct TLS and an isolated HTTPS proxy
+fixture. The local Node executable comes from the already verified pinned PATH.
+The test provider, data and certificates are disposable; no real GitHub account or
+email is used. Results include browser version, phone-width layout/text scaling,
+contrast, private-content lifecycle/races, reader parity, storage and asset bytes.
+These desktop results do not qualify physical Android, installation or TalkBack.
+
+`tools/mobile_asset_audit.py` runs in the normal checks after the TypeScript build.
+It verifies the fixed asset set, icons and raw-byte budget. The larger install icon
+and optional graph are included conservatively. Gzip estimates are labeled estimates;
+the direct listener currently sends uncompressed assets.
+
 ## Maintaining contracts and examples
 
 `contracts/` holds authoritative versioned schemas; generated Python, TypeScript and browser assets ship together. Run `tools/generate_contracts.py`, `npm run build`, then the full check to detect drift. Do not edit generated files alone.

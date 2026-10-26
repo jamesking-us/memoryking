@@ -30,7 +30,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "memoryking" = ["py.typed"]
 "memoryking.contracts" = ["*.json", "py.typed"]
-"memoryking.adapters" = ["*.sql", "*.json", "web/*", "tokenizers/*", "models/*.json"]
+"memoryking.adapters" = ["*.sql", "*.json", "web/*", "viewer_web/*", "tokenizers/*", "models/*.json"]
 
 [tool.ruff]
 target-version = "py312"

@@ -78,17 +78,25 @@ The dashboard helps you inspect recorded work without reading a long chat transc
 
 Agents must publish their state through the supported interfaces. A displayed heartbeat is an observation, not proof that an agent is still working; missing cost data stays unknown.
 
-### Phone access is being built
+### Check a project from your phone
 
-The viewer foundation supports owner-managed GitHub identity bindings and exact
-project grants. A project grant never shares owner-only notes automatically.
-Change viewer permissions through the versioned owner operations; ordinary agent
-grant/revoke commands reject viewer principals to prevent stale permission updates.
-An optional, separate read-only listener now supplies bounded task, memory and report
-responses with current permission checks. The server includes GitHub sign-in and
-expiring browser sessions, tested locally with a controlled provider. The phone
-interface and real GitHub/Android installation are still being built and validated.
-The existing dashboard is for the trusted local owner.
+<img src="docs/images/mobile-dashboard.png" width="360" alt="MemoryKing phone viewer showing a synthetic blocked task and distinct criterion states" />
+
+*Phone-sized browser view with synthetic data; physical Android qualification is pending.*
+
+The optional phone viewer has four tabs: **Overview, Tasks, Memory and Settings**.
+For example, open a blocked task, inspect the evidence behind a completed check,
+then read its latest report. Reports include the full narrative, decisions, code,
+tables and figures. An optional relationship graph shows tasks and their criteria.
+
+Sign in with GitHub on an operator-configured installation. Your operator chooses
+which projects and sources you can read; repository membership alone does not
+share notes. The viewer is read-only. It clears private content when backgrounded,
+disconnected or signed out and checks access again before showing it.
+
+The interface has local browser coverage at phone-sized layouts. Real GitHub,
+physical Android installation and the private home hosting setup are still being
+qualified. The existing local dashboard remains the trusted owner's interface.
 
 To try the permission model safely, run `.venv/bin/python examples/viewer_identity.py`.
 Run `.venv/bin/python tools/viewer_demo.py` to check the optional listener's public
@@ -101,8 +109,10 @@ report, build PDF and EPUB copies locally, record visual-review evidence and mak
 the reviewed version readable through the SDK. Each reader must still have access
 to every supporting source. An optional worker builds queued reports and can submit reviewed EPUBs through
 a configured Gmail destination. Operators can preserve verified receipts when
-replacing an older sender, without resending historical reports. The phone reader
-is still under development. See [reporting](docs/getting-started.md#experimental-reporting).
+replacing an older sender, without resending historical reports. Read published
+reports from Overview or a task's Reports button. App availability, Gmail submission
+and Kindle device arrival are shown separately. See [phone usage](docs/getting-started.md#use-the-phone-viewer)
+and [reporting](docs/getting-started.md#experimental-reporting).
 
 ## Choose your setup
 

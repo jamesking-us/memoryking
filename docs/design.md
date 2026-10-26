@@ -162,7 +162,8 @@ current permissions. Purge conservatively erases tenant report content and its
 derived references. New schemas are SQLite 10 and PostgreSQL 5.
 
 Scoped SDK/CLI operations and optional service worker scheduling are implemented.
-The phone reader interface remains under development. An
+The separate phone reader reconstructs the complete structured document in bounded
+batches, preserving code, tables and figures. An
 internal fixed-destination mail adapter and independent delivery journal support
 app, Kindle and both-channel policies when an operator injects mail configuration.
 The sender defaults off. Service startup/configuration and verified legacy-sender
@@ -205,4 +206,33 @@ The provider exchange runs in an isolated short-lived child so blocking DNS cann
 escape the listener's deadline. Private client secrets enter only the child's
 standard input; output contains only the numeric identity. No configurable provider
 URL or environment proxy creates an alternate trust path. This adds no database
-migration and does not qualify the future phone UI or home network topology.
+migration and does not qualify physical Android or home network topology.
+
+## Ephemeral phone presentation
+
+The separate TypeScript viewer package uses plain DOM APIs and the generated
+read-only contracts. Four tabs present saved state; reports are reached from
+Overview/task detail. A bounded force layout loads only on demand, alongside its
+semantic relationship list. The installed wheel includes all public assets and
+optimized existing logo icons. There is no new runtime framework or service worker.
+
+Each client request carries an internal generation and sequence. Results must
+match the complete current authorization binding and cannot move the observed
+frontier backward. Session CSRF changes also detect opaque-cookie rotation.
+The display lease composes the shortest contributing server allowance after
+request elapsed time, using monotonic time plus a conservative wall-clock sleep
+check. Rollback fails closed. Synchronous input/render checks complement timers.
+
+Logout, identity/project changes, backgrounding, page restoration, lost connection,
+failure or expiry clear the DOM and ephemeral private state, abort requests and
+revoke figure URLs. Late completions cannot restore cleared content. Only theme
+choice is saved in localStorage. No private browser database, cache, token or
+selected-project persistence is used. This bounds future display; prior delivery,
+screenshots and OS app-switcher snapshots cannot be erased remotely.
+
+Whole-report metadata reauthorizes every dependency of its immutable revision and
+can renew already verified blocks. An isolated section response cannot renew the
+rest of a report. Explicit figure loads reassemble bounded raster chunks and verify
+their SHA-256 before a local blob URL is rendered. CSP permits those local blobs,
+blocks workers/remote resources, and allows no inline executable content. Report
+text and captured Markdown remain inert. PDF/EPUB export stays outside the viewer.

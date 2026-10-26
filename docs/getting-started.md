@@ -97,12 +97,51 @@ grants, private-note isolation and revocation in a temporary store. It uses loca
 owner IPC and an internally simulated authenticated subject. It does not perform
 GitHub sign-in or start the phone application.
 
+## Use the phone viewer
+
+On an installation configured by your operator, open its private HTTPS address
+with `/viewer/` at the end. Choose **Continue with GitHub**, finish the sign-in and
+select a shared project. The operator must invite your numeric GitHub account and
+share the project's underlying sources; owning a repository is not an invitation.
+See [GitHub setup](deployment.md#github-sign-in-setup) for that operator procedure.
+
+1. **Overview** shows saved tasks and blockers. Counts describe the tasks shown,
+   not the whole organization's work or proof that an agent is currently running.
+2. **Tasks** opens a checkpoint's criteria and permitted evidence. Passed, failed,
+   not evaluated, waived and unknown remain different states. The optional
+   Relationships view has both a graph and a readable list.
+3. **Memory** searches shared findings and shows their source and authority.
+   Captured text is inert; external links open only when you choose one.
+4. **Settings** changes the color theme or signs out this/all sessions. Only the
+   appearance preference is saved locally.
+
+Open **Reports** from Overview or a task. Choose a published revision, use Contents
+to move between loaded headings, and read the complete narrative, ADRs, code and
+tables. Large documents load in bounded batches; the screen says when contents
+are still incomplete. Figures load when selected. The app does not download the
+PDF or EPUB. A report's technical result, human review, app availability, Gmail
+submission and unverified Kindle arrival are separate facts.
+
+Private content clears when you leave the app, lose the connection, switch
+projects or sign out. Returning starts a fresh access check and may reset the
+selected project/detail. There is no private offline mode. If a report's supporting
+source is revoked, the full report becomes unavailable. During a rate limit, the
+app waits for the server's retry interval; repeated refresh clicks do not shorten it.
+
+In Android Chrome, the browser menu may offer **Add to Home screen** or **Install**
+on a trusted HTTPS installation. The manifest uses standalone display and local
+icons, with no service worker. This UI has desktop-browser emulation coverage;
+physical Android installation, TalkBack and real GitHub/private-network operation
+still need qualification. iPhone is not qualified. Keep the private network and
+MemoryKing host running; a cold offline launch may show Chrome's network error.
+
 ## Experimental reporting
 
 A report turns an agent's work into a document you can review later. The current
 SDK can store a complete phase report, build PDF/EPUB copies and publish a reviewed
 record for authorized readers. An optional worker runs queued builds and fixed-destination
-Kindle submissions. The smartphone screen is still under development.
+Kindle submissions. The read-only phone viewer can read currently permitted,
+published reports without renderer dependencies on the phone.
 
 On native macOS, install the optional locked renderer dependencies in the pinned
 project environment and run this disposable example:

@@ -12,6 +12,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from importlib.resources import files
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
@@ -33,15 +34,28 @@ from memoryking.domain.local import LocalError, Released
 IDENT = r"[A-Za-z0-9_-]{1,96}"
 PREFIX = "/viewer/api/v1/"
 HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; worker-src 'none'",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Cross-Origin-Resource-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
-SHELL = b'<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/viewer/shell.css"><title>MemoryKing viewer</title><main><h1>MemoryKing viewer</h1><p>Private dashboard access.</p><p>The mobile dashboard interface is under development.</p></main></html>'
-STYLE = b"body{font:1rem system-ui;background:#101b29;color:#e8f1fa;margin:2rem}main{max-width:42rem;margin:auto}"
+# No request path ever becomes a filesystem path. All public assets are fixed,
+# packaged, credential-free bytes; private report figures use verified blob URLs.
+ASSETS = {
+    "/viewer/": ("index.html", "text/html; charset=utf-8"),
+    "/viewer/shell.css": ("shell.css", "text/css; charset=utf-8"),
+    "/viewer/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    **{
+        f"/viewer/{name}.png": (f"{name}.png", "image/png")
+        for name in ("elephant", "icon-192", "icon-512")
+    },
+    **{
+        f"/viewer/{name}.js": (f"{name}.js", "text/javascript; charset=utf-8")
+        for name in ("app", "client", "presentation", "freshness", "network", "report", "graph")
+    },
+}
 
 
 def route(target: str) -> tuple[str, str | None, dict[str, Any]]:
@@ -70,8 +84,8 @@ def route(target: str) -> tuple[str, str | None, dict[str, Any]]:
     if len({k for k, _ in pairs}) != len(pairs):
         raise LocalError("invalid_request")
     query: dict[str, Any] = dict(pairs)
-    if path in {"/viewer/", "/viewer/shell.css"} and not query:
-        return ("shell" if path.endswith("/") else "style"), None, {}
+    if path in ASSETS and not query:
+        return "asset", None, {"path": path}
     auth_routes = {
         "/viewer/auth/context": "auth_context",
         "/viewer/auth/github/start": "auth_start",
@@ -330,10 +344,11 @@ class Handler(BaseHTTPRequestHandler):
                 or self.headers.get("Content-Length", "0") != "0"
             ):
                 raise LocalError("invalid_request")
-            if name in {"shell", "style"}:
+            if name == "asset":
+                filename, content_type = ASSETS[params["path"]]
                 self.reply(
-                    SHELL if name == "shell" else STYLE,
-                    content_type="text/html; charset=utf-8" if name == "shell" else "text/css",
+                    files("memoryking.adapters").joinpath("viewer_web", filename).read_bytes(),
+                    content_type=content_type,
                 )
                 return
             if self.headers.get("Sec-Fetch-Site") not in {None, "same-origin", "none"}:

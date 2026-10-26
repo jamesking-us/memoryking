@@ -41,7 +41,10 @@ def gateway(fixture):
                 self.send_header("Connection", "close")
                 self.end_headers()
                 if self.command != "HEAD":
-                    self.wfile.write(raw)
+                    try:
+                        self.wfile.write(raw)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass  # Expected when the browser aborts an obsolete view.
             finally:
                 connection.close()
 

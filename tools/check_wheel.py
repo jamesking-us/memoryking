@@ -41,6 +41,8 @@ with zipfile.ZipFile(wheel) as archive:
     for resource in (Path("src/memoryking/adapters")).rglob("*"):
         if resource.is_file() and resource.suffix in {".sql", ".json"}:
             assert archive.read(str(resource.relative_to("src"))) == resource.read_bytes()
+    for resource in (root / "src/memoryking/adapters/viewer_web").iterdir():
+        assert archive.read(str(resource.relative_to(root / "src"))) == resource.read_bytes()
     assert (
         "memoryking-reference-agent = memoryking.reference_agent:main"
         in archive.read(entrypoints[0]).decode()
