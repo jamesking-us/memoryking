@@ -63,7 +63,7 @@ class EvidenceResult(unittest.TextTestResult):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=["M01", "M02"], required=True)
+    parser.add_argument("--phase", choices=["M01", "M02", "M03"], required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not (Path(os.environ.get("MEMORYKING_PG_BIN", "")) / "pg_ctl").is_file():
@@ -89,6 +89,10 @@ def main():
     external = {}
     if args.phase == "M02":
         from mobile_report_probes import EXPECTED, EXTERNAL
+
+        expected, external, extras = EXPECTED, EXTERNAL, []
+    elif args.phase == "M03":
+        from mobile_viewer_probes import EXPECTED, EXTERNAL
 
         expected, external, extras = EXPECTED, EXTERNAL, []
     probes = sorted({name for names in expected.values() for name in names} | set(extras))
@@ -117,7 +121,7 @@ def main():
         for case, names in expected.items()
     }
     modules = sorted({name.split(".")[0] for name in probes})
-    if args.phase == "M02":
+    if args.phase in {"M02", "M03"}:
         for case, item in cases.items():
             item["automated_status"] = item.pop("status")
             item["qualification"] = (

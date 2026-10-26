@@ -145,6 +145,8 @@ export interface ViewerCriterion {
   text: string;
   state: "pending" | "passed" | "failed" | "waived" | "unknown";
   evidence_available: boolean;
+  evidence: Array<ViewerEvidence>;
+  evidence_truncated: boolean;
 }
 
 export interface ViewerTask {
@@ -154,6 +156,9 @@ export interface ViewerTask {
   criteria: Array<ViewerCriterion>;
   blockers: Array<string>;
   coverage: string;
+  checkpoint_revision: number;
+  progress: ViewerProgress;
+  text_truncated: boolean;
 }
 
 export interface ViewerMemory {
@@ -295,4 +300,18 @@ export interface ViewerResponse {
   truncated: boolean;
   next_cursor: string | null;
   data: ViewerData;
+}
+
+export interface ViewerEvidence {
+  kind: "observation" | "knowledge";
+  handle: string;
+}
+
+export interface ViewerProgress {
+  passed: number;
+  failed: number;
+  pending: number;
+  waived: number;
+  unknown: number;
+  total: number;
 }

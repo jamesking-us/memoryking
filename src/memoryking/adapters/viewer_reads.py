@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,11 +44,64 @@ class ViewerReads:
         self.limits = config["limits"]
 
     def read(
+        self,
+        session: ViewerSession,
+        route: str,
+        project: str | None,
+        params: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> Released:
+        if deadline is None:
+            return self._read(session, route, project, params)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not self.s.lock.acquire(timeout=remaining):
+            raise LocalError("service_unavailable")
+        timer = None
+        interrupted = False
+
+        def progress() -> int:
+            nonlocal interrupted
+            if not interrupted and time.monotonic() >= deadline:
+                interrupted = True
+                return 1
+            return 0
+
+        try:
+            if isinstance(self.db, sqlite3.Connection):
+                self.db.set_progress_handler(progress, 1000)
+            elif hasattr(self.s, "connection"):
+
+                def cancel() -> None:
+                    try:
+                        getattr(self.s, "connection").cancel_safe(timeout=1)
+                    except Exception:
+                        pass  # Private request connection is still withheld and returned safely.
+
+                timer = threading.Timer(max(0, deadline - time.monotonic()), cancel)
+                timer.daemon = True
+                timer.start()
+            return self._read(session, route, project, params)
+        except Exception as exc:
+            if time.monotonic() >= deadline:
+                raise LocalError("service_unavailable") from exc
+            raise
+        finally:
+            if timer is not None:
+                timer.cancel()
+                timer.join()  # Cancellation cannot reach a later borrower of this connection.
+            if isinstance(self.db, sqlite3.Connection):
+                self.db.set_progress_handler(None, 0)
+            self.s.lock.release()
+
+    def _read(
         self, session: ViewerSession, route: str, project: str | None, params: dict[str, Any]
     ) -> Released:
         subject = session.subject
         if subject.tenant != self.config["tenant"] or subject.store != self.s.store_id:
             raise LocalError("unauthenticated")
+        if subject.incarnation != self.s.incarnation:
+            raise LocalError("context_changed")
         with self.s.transaction() as decision:
             at = decision.evaluated_ms
             if session.expires_ms <= at:
@@ -237,6 +293,8 @@ class ViewerReads:
         limit: int,
         after: str = "",
         task: str | None = None,
+        identity: dict[str, Any] | None = None,
+        fresh: int = 0,
     ) -> tuple[list[dict[str, Any]], bool]:
         snapshot = Execution(self.s).snapshot(
             who, project, at, viewer_after=after, viewer_task=task, viewer_limit=limit
@@ -245,23 +303,68 @@ class ViewerReads:
             raise LocalError("unavailable")
         tasks = []
         for item in snapshot["tasks"]:
+            detail = None
+            if task is not None:
+                row = Execution(self.s).w._checkpoint(
+                    who,
+                    {
+                        "project": project,
+                        "task": item["task"],
+                        "run": None,
+                        "checkpoint": item["checkpoint"],
+                    },
+                    at,
+                )
+                detail = json.loads(row["body"])
+            original = {} if detail is None else {c["id"]: c for c in detail["acceptance"]}
+
+            def evidence(dependencies: list[dict[str, str]]) -> list[dict[str, str]]:
+                return [
+                    {
+                        "kind": d["kind"],
+                        "handle": self.s._token(
+                            "viewer_memory", **(identity or {}), until=fresh, id=d["id"]
+                        ),
+                    }
+                    for d in dependencies[:8]
+                ]
+
             # Restrict the phone projection: no operations, producer payloads or repository paths.
             tasks.append(
                 {
                     "id": item["task"],
-                    "objective": item["objective"],
-                    "current_state": item["current_state"],
+                    "objective": item["objective"]
+                    if detail is None
+                    else clipped(detail["objective"], self.limits["detail_bytes"])[0],
+                    "current_state": item["current_state"]
+                    if detail is None
+                    else clipped(detail["current_state"], self.limits["detail_bytes"])[0],
+                    "checkpoint_revision": item["revision"],
+                    "progress": {
+                        k: item["progress"][k]
+                        for k in ("passed", "failed", "pending", "waived", "unknown", "total")
+                    },
                     "criteria": [
                         {
                             "id": c["id"],
-                            "text": c["text"],
+                            "text": original.get(c["id"], c)["text"],
+                            "evidence": evidence(c["evidence"]),
+                            "evidence_truncated": len(c["evidence"]) > 8,
                             "state": c["effective"],
                             "evidence_available": c["evidence_available"],
                         }
                         for c in item["criteria"]
                     ],
-                    "blockers": [b["text"] for b in item["blockers"]],
-                    "coverage": "current_task_stream; shortened_text; criteria_from_current_evidence",
+                    "blockers": [
+                        b["text"]
+                        for b in (item["blockers"] if detail is None else detail["blockers"])
+                    ],
+                    "text_truncated": detail is None
+                    or any(
+                        clipped(detail[k], self.limits["detail_bytes"])[1]
+                        for k in ("objective", "current_state")
+                    ),
+                    "coverage": "current_task_stream; bounded_text_and_evidence; criteria_from_current_evidence",
                 }
             )
         if task is not None and not tasks:
@@ -306,7 +409,7 @@ class ViewerReads:
             params.get("limit", 20 if route == "memories" else 25), self.limits["list_items"]
         )
         if route in {"overview", "tasks", "task", "graph"}:
-            tasks, more = self._tasks(who, project, at, limit, resume or "", task)
+            tasks, more = self._tasks(who, project, at, limit, resume or "", task, identity, fresh)
             if route == "graph":
                 # V1 relationship view is task/criterion containment, never invented dependencies.
                 nodes: list[dict[str, str]] = []

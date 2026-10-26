@@ -108,9 +108,27 @@ canonical authorization path checks the signed viewer ceiling and current policy
 before reading, including nested dependency checks. No owner credential is placed
 in a viewer context. Owner operations stay outside model-facing discovery.
 
-The current release implements this identity foundation and closed viewer/report
-contracts. The dedicated listener, GitHub authentication, mobile interface and
-complete reporting/delivery workflow remain under development.
+The dedicated viewer listener now implements bounded current-authorized task,
+memory, graph and report reads on both stores. It has no owner or agent routes.
+Opaque cursors bind session, project, policy, source frontier and history; a restore
+or changed context requires a new read. Task details retain actual criterion states
+and current evidence links. Missing current projections or unknown mandatory
+applicability block the view. Graph edges describe actual task/criterion containment.
+The node array also supports a plain list without requiring a graph renderer.
+
+Every read commits an authorization receipt at the canonical evaluation instant.
+The five-second release deadline and a separate, at-most-15-second display lease
+limit completion and retention respectively. The lease ends earlier at known
+permission, constraint, source and verification boundaries. A lease already expired
+on arrival must be discarded by the future client. Request admission, headers,
+database acquisition/query work and response sizes have bounded budgets. Timeout
+or capacity loss reports unavailable, without inventing revocation.
+
+GitHub authentication and the mobile interface remain under development. The
+production session resolver denies every private request until login is implemented;
+only disposable integration fixtures inject authenticated sessions. Configuration
+cannot enable that fixture seam. Real desktop Chrome has exercised both stores with
+direct TLS and a test HTTPS gateway; this is not physical-phone or tailnet evidence.
 
 ## Experimental report storage and rendering
 
@@ -121,7 +139,8 @@ establish factual accuracy or human approval.
 
 The native macOS renderer runs in a separate process with restricted file access,
 no network, no inherited mail environment or service descriptors, and bounded wall
-time and memory. Other platforms fail closed until their isolation is implemented.
+time and memory. Linux uses a separate fail-closed Landlock-based sandbox with
+the qualified container restrictions described in the deployment guide.
 SQLite and PostgreSQL store immutable report inputs, dependency references and
 artifact hashes. External source bindings explicitly name permitted readers and a
 classification; a Git hash or local path grants no permission. Report visibility
@@ -142,13 +161,15 @@ backup/restore preserves report blobs, retires old history handles, and replays
 current permissions. Purge conservatively erases tenant report content and its
 derived references. New schemas are SQLite 10 and PostgreSQL 5.
 
-Scoped SDK/CLI operations and an internal worker entry point are implemented.
-Automatic worker scheduling and the phone reader remain under development. An
+Scoped SDK/CLI operations and optional service worker scheduling are implemented.
+The phone reader interface remains under development. An
 internal fixed-destination mail adapter and independent delivery journal support
 app, Kindle and both-channel policies when an operator injects mail configuration.
-The sender defaults off. The service startup/configuration and legacy-sender
-handover are not yet integrated; installing renderer dependencies does not enable
-email.
+The sender defaults off. Service startup/configuration and verified legacy-sender
+handover are integrated; installing renderer dependencies alone does not enable
+email. Current recipient authorization includes active viewer bindings, without
+creating a browser session or credential. Disabled or revoked recipients cannot
+qualify publication or dispatch.
 
 Publication commits the app-visible record and required delivery intent together
 in the content transaction; a separately durable control intent prevents forgotten

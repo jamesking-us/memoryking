@@ -223,5 +223,14 @@
     ],
     "exit_code": 0,
     "contains": "Viewer identity demo: explicit grant, owner-only isolation and revocation verified."
+  },
+  {
+    "id": "restricted-viewer-shell",
+    "command": [
+      "{python}",
+      "tools/viewer_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "\"viewer_shell_only\": true"
   }
 ]

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "enabled": false,
+  "tenant": "main",
+  "public_origin": "https://viewer.example.invalid",
+  "listen_host": "127.0.0.1",
+  "listen_port": 8772,
+  "transport": "isolated_proxy",
+  "github_client_id": "example",
+  "github_secret_file": "example-secret-file",
+  "tls_cert_file": null,
+  "tls_key_file": null,
+  "session_idle_seconds": 1800,
+  "session_absolute_seconds": 28800,
+  "login_seconds": 300,
+  "poll_seconds": 10,
+  "display_lifetime_seconds": 15,
+  "limits": {
+    "active_sessions": 5,
+    "pending_logins": 64,
+    "list_items": 50,
+    "detail_bytes": 16384,
+    "graph_nodes": 100,
+    "graph_edges": 150,
+    "response_bytes": 262144,
+    "concurrency": 4,
+    "request_seconds": 5
+  }
+}

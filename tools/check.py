@@ -46,6 +46,16 @@ def main():
         commands.append(
             [
                 sys.executable,
+                "tools/mobile_conformance.py",
+                "--phase",
+                "M03",
+                "--output",
+                "tmp/checks/mobile-M03.json",
+            ]
+        )
+        commands.append(
+            [
+                sys.executable,
                 "tools/run_conformance.py",
                 "--backend",
                 "shared",

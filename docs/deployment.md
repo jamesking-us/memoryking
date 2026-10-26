@@ -299,4 +299,57 @@ process for you; use a trusted installation-specific collector and retain its
 transition receipt. Imported receipts do not publish old reports or send mail.
 Fresh reports still require source authority, exact artifact QA and publication.
 
+## Restricted viewer listener
+
+This optional foundation serves a public shell and a bounded read API. Production
+login and the phone UI are still being implemented, so private requests currently
+return 401. It is disabled when `--viewer-config` is omitted or `enabled` is false.
+The existing local owner dashboard and shared agent interface remain separate.
+
+Run `.venv/bin/python tools/viewer_demo.py` from the source checkout for a complete
+temporary SQLite rehearsal. It checks omitted/disabled startup, public navigation,
+denied private access and shutdown. It creates no external account, report or email.
+Native PostgreSQL startup is exercised separately by the viewer startup suite.
+
+Start from [examples/viewer-config.json](../examples/viewer-config.json). All fields
+are required; the sample is not implicitly loaded. Copy it outside the checkout,
+set permissions to 0600, and choose unused loopback ports. Supply it as
+`memoryking serve --store DATA --control CONTROL --viewer-config VIEWER_JSON`, or
+add `--viewer-config VIEWER_JSON` to the existing `memoryking-shared serve` command.
+Never start a second SQLite owner against a running data directory.
+
+| Configuration | Sample and effect |
+| --- | --- |
+| `version`, `enabled`, `tenant` | `1`, `false`, `main`; explicit opt-in and one fixed tenant. |
+| `public_origin` | Exact HTTPS origin, without a path, wildcard or user information; supplied Host and Origin must match. |
+| `listen_host`, `listen_port` | `127.0.0.1`, `8772`; only IPv4/IPv6 loopback is permitted. |
+| `transport` | `isolated_proxy` for a separately isolated HTTPS gateway, or `direct_tls`. Proxy mode does not trust forwarded identity headers. |
+| `tls_cert_file`, `tls_key_file` | Both null for proxy mode; both required for direct TLS. The key must be a private regular file; TLS 1.2 is the minimum. |
+| `github_client_id`, `github_secret_file` | Placeholder fields reserved for the upcoming login adapter. They do not enable login in this build. |
+| `session_idle_seconds`, `session_absolute_seconds`, `login_seconds` | `1800`, `28800`, `300`; reserved login/session policy. Idle cannot exceed absolute lifetime. |
+| `poll_seconds`, `display_lifetime_seconds` | `10`, `15`; the latter limits issued display leases. Polling is a future client behavior. |
+| `limits.active_sessions`, `limits.pending_logins` | `5`, `64`; reserved session/login capacity, maxima 20/256. |
+| `limits.list_items`, `limits.detail_bytes` | `50`, `16384`; smaller configured ceilings are honored. Detail bytes range 1024–16384. |
+| `limits.graph_nodes`, `limits.graph_edges` | `100`, `150`; maxima, with explicit partial coverage. |
+| `limits.response_bytes` | `262144`; allowed 16384–262144. An oversized response fails closed. |
+| `limits.concurrency`, `limits.request_seconds` | `4`, `5`; ranges 1–16 and 1–10. This budget also bounds database admission/query work. |
+
+Configuration is closed and limited to 32 KiB. Invalid files fail startup. Listener
+binding happens only when the service starts, after configuration validation.
+Changing configuration requires a restart; there is no unprotected reload route.
+Back up configuration and TLS keys privately alongside the separately retained
+security control history. A content restore changes history and invalidates prior
+viewer contexts and cursors; it cannot restore revoked access. The viewer adds no
+new database schema in this release.
+
+Loopback isolation requires a trusted local host. Proxy mode requires a dedicated
+container/network boundary before deployment, because another local process could
+otherwise access its plaintext loopback socket. It does not authorize router port
+forwarding or public exposure. The planned private Tailscale home profile and real
+Android installation are not yet qualified. Desktop Chrome tests use disposable
+synthetic sessions and a certificate pinned only in the test browser process.
+
+For the route list, freshness rules and stable errors, see
+[restricted API reference](reference.md#restricted-viewer-api-foundation).
+
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

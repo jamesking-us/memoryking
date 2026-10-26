@@ -133,6 +133,8 @@ class ViewerCriterion(TypedDict):
     text: str
     state: Literal['pending', 'passed', 'failed', 'waived', 'unknown']
     evidence_available: bool
+    evidence: list[ViewerEvidence]
+    evidence_truncated: bool
 
 class ViewerTask(TypedDict):
     id: str
@@ -141,6 +143,9 @@ class ViewerTask(TypedDict):
     criteria: list[ViewerCriterion]
     blockers: list[str]
     coverage: str
+    checkpoint_revision: int
+    progress: ViewerProgress
+    text_truncated: bool
 
 class ViewerMemory(TypedDict):
     handle: str
@@ -266,3 +271,15 @@ class ViewerResponse(TypedDict):
     truncated: bool
     next_cursor: str | None
     data: ViewerData
+
+class ViewerEvidence(TypedDict):
+    kind: Literal['observation', 'knowledge']
+    handle: str
+
+class ViewerProgress(TypedDict):
+    passed: int
+    failed: int
+    pending: int
+    waived: int
+    unknown: int
+    total: int

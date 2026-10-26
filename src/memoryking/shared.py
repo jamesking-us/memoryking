@@ -215,8 +215,10 @@ def run(args: Any) -> dict[str, Any]:
                 viewer_config = load_config(args.viewer_config)
                 viewer = ViewerListener(
                     viewer_config,
-                    lambda session: service.store(
-                        viewer_config["tenant"], session.subject.credential
+                    lambda session, deadline: service.store(
+                        viewer_config["tenant"],
+                        session.subject.credential,
+                        request_deadline=deadline,
                     ),
                 )
             if args.report_config is not None:

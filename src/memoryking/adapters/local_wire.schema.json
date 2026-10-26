@@ -7075,13 +7075,25 @@
             },
             "evidence_available": {
               "type": "boolean"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerEvidence"
+              },
+              "maxItems": 8
+            },
+            "evidence_truncated": {
+              "type": "boolean"
             }
           },
           "required": [
             "id",
             "text",
             "state",
-            "evidence_available"
+            "evidence_available",
+            "evidence",
+            "evidence_truncated"
           ]
         },
         "ViewerTask": {
@@ -7124,6 +7136,17 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 256
+            },
+            "checkpoint_revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "progress": {
+              "$ref": "#/$defs/Viewer/$defs/ViewerProgress"
+            },
+            "text_truncated": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -7132,7 +7155,10 @@
             "current_state",
             "criteria",
             "blockers",
-            "coverage"
+            "coverage",
+            "checkpoint_revision",
+            "progress",
+            "text_truncated"
           ]
         },
         "ViewerMemory": {
@@ -7897,6 +7923,71 @@
             "truncated",
             "next_cursor",
             "data"
+          ]
+        },
+        "ViewerEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "observation",
+                "knowledge"
+              ]
+            },
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "kind",
+            "handle"
+          ]
+        },
+        "ViewerProgress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "passed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "pending": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "waived": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "unknown": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "passed",
+            "failed",
+            "pending",
+            "waived",
+            "unknown",
+            "total"
           ]
         }
       },

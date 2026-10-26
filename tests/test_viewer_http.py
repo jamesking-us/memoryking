@@ -2,23 +2,31 @@
 
 import http.client
 import ipaddress
+import json
 import socket
 import ssl
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import test_knowledge as knowledge
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+from recovery_helpers import backup_fixture, restore_fixture
 from test_postgres_parity import NativeFixture
+from test_report_catalog import CatalogCases
 from test_viewer_reads import ReadCases
 
+from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.viewer_http import ViewerServer
+from memoryking.adapters.viewer_reads import ViewerReads
 from memoryking.domain.local import LocalError
 
 
@@ -66,14 +74,29 @@ class HttpCases:
     subject = ReadCases.subject
     actor_store = ReadCases.actor_store
     setup_viewer = ReadCases.setup_viewer
+    body = ReadCases.body
+    propose = ReadCases.propose
+    review = ReadCases.review
+    run_k = ReadCases.run_k
 
     @contextmanager
-    def listener(self, *, tls=False, authenticated=True):
+    def listener(
+        self,
+        *,
+        tls=False,
+        authenticated=True,
+        request_seconds=5,
+        browser_origin=False,
+        public_origin=None,
+    ):
         self.setup_viewer()
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         settings = {**self.settings, "listen_port": port}
+        if browser_origin or public_origin:
+            settings["public_origin"] = public_origin or f"https://viewer.example.invalid:{port}"
+        settings["limits"] = {**settings["limits"], "request_seconds": request_seconds}
         self.client_tls = None
         if tls:
             cert, key = certificate(self.root)
@@ -85,9 +108,23 @@ class HttpCases:
                 raise LocalError("unauthenticated")
             return self.session
 
+        def request_store(session, deadline):
+            if hasattr(self, "pool"):
+                return PostgresStore(
+                    self.pool,
+                    self.data,
+                    self.control,
+                    self.tenant,
+                    session.subject.credential,
+                    clock=self.store.clock,
+                    fault=self.store.fault,
+                    request_deadline=deadline,
+                )
+            return self.actor_store(session.subject.credential)
+
         server = ViewerServer(
             settings,
-            lambda session: self.actor_store(session.subject.credential),
+            request_store,
             **({"resolve": resolve} if authenticated else {}),
         )
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02})
@@ -242,6 +279,284 @@ class HttpCases:
             while server.threads and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertEqual(self.get("/viewer/")[0], 200)
+
+    def test_report_http_full_reader_image_private_catalog_and_revocation(self):
+        with self.listener() as server:
+
+            class Fixture(CatalogCases):
+                pass
+
+            fixture = Fixture()
+            fixture.store, fixture.owner, fixture.n = self.store, self.owner, 1000
+            fixture.actor = self.actor_store
+            files = fixture.publish("published", ["owner", "phone"], image=True)
+            fixture.publish("private-title", ["owner"])
+            self.session = replace(self.session, subject=self.subject())
+            base = "/viewer/api/v1/projects/p/reports"
+            status, _, raw = self.get(base)
+            self.assertEqual(status, 200, raw)
+            catalog = json.loads(raw)["data"]["reports"]
+            self.assertEqual([r["report"] for r in catalog], ["published"])
+            self.assertNotIn(b"private-title", raw)
+            target = base + "/published/versions/1"
+            status, _, raw = self.get(target)
+            self.assertEqual(status, 200, raw)
+            metadata = json.loads(raw)["data"]
+            self.assertEqual(metadata["device_delivery"], "unverified")
+            for secret in (
+                b"recipient",
+                b"destination",
+                b".pdf",
+                b".epub",
+                str(self.root).encode(),
+            ):
+                self.assertNotIn(secret, raw)
+            pieces = {}
+            cursor = None
+            first_cursor = None
+            for page in range(metadata["sections"]):
+                url = target + f"/sections/{page}" + ("?cursor=" + cursor if cursor else "")
+                status, headers, raw = self.get(url)
+                self.assertEqual(status, 200, raw)
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                result = json.loads(raw)
+                fragment = result["data"]["content"]
+                pieces.setdefault(fragment["block"], []).append(fragment["content"])
+                cursor = result["next_cursor"]
+                if page == 0:
+                    first_cursor = cursor
+            self.assertIsNone(cursor)
+            from memoryking.reporting.template import model
+
+            expected = model(files["source.md"].decode(), "Synthetic phase")
+            self.assertEqual(
+                [json.loads("".join(pieces[n])) for n in sorted(pieces)], expected["blocks"]
+            )
+            self.assertEqual(self.get(target + "/sections/1")[0], 404)
+            status, _, raw = self.get(target + "/images/diagram.png")
+            self.assertEqual(status, 200, raw)
+            import base64
+
+            self.assertEqual(
+                base64.b64decode(json.loads(raw)["data"]["data_base64"]), files["diagram.png"]
+            )
+            for name in ("report.pdf", "source.md", "owner.credential", "../diagram.png"):
+                self.assertNotEqual(self.get(target + "/images/" + name)[0], 200)
+            self.session = replace(self.session, identity="different-session")
+            self.assertEqual(self.get(target + "/sections/1?cursor=" + first_cursor)[0], 409)
+            fixture.source("published-evidence", files["evidence.json"], ["owner"], version=1)
+            self.session = replace(self.session, subject=self.subject())
+            self.assertEqual(json.loads(self.get(base)[2])["data"]["reports"], [])
+            for suffix in ("", "/sections/0", "/images/diagram.png"):
+                hidden = self.get(target + suffix)
+                absent = self.get(base + "/absent/versions/1" + suffix)
+                self.assertEqual((hidden[0], hidden[2]), (absent[0], absent[2]))
+                self.assertEqual(hidden[0], 404)
+            self.assertNotIn("internal_error", server.counts)
+
+    def test_query_deadline_interrupts_work_and_connection_recovers(self):
+        with self.listener(request_seconds=1) as server:
+            original = ViewerReads._data
+
+            def slow(reads, *args):
+                if hasattr(reads.s, "connection"):
+                    reads.db.execute("SELECT pg_sleep(4)")
+                else:
+                    reads.db.execute(
+                        "WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n"
+                    ).fetchone()
+                return original(reads, *args)
+
+            before = time.monotonic()
+            with patch.object(ViewerReads, "_data", slow):
+                status, _, body = self.get("/viewer/api/v1/projects/p/memories")
+            elapsed = time.monotonic() - before
+            self.assertEqual(status, 503, body)
+            self.assertEqual(json.loads(body)["error"], "service_unavailable")
+            self.assertLess(elapsed, 3)
+            self.assertEqual(self.get("/viewer/api/v1/projects/p/memories")[0], 200)
+            self.assertNotIn("internal_error", server.counts)
+
+    def test_report_revocation_serializes_after_release_decision(self):
+        with self.listener():
+
+            class Fixture(CatalogCases):
+                pass
+
+            fixture = Fixture()
+            fixture.store, fixture.owner, fixture.n = self.store, self.owner, 1000
+            fixture.actor = self.actor_store
+            files = fixture.publish("race", ["owner", "phone"])
+            self.session = replace(self.session, subject=self.subject())
+            entered, release = threading.Event(), threading.Event()
+
+            def stall(point):
+                if point == "after_validation" and not entered.is_set():
+                    entered.set()
+                    if not release.wait(3):
+                        raise RuntimeError("fixture release timeout")
+
+            self.store.fault = stall
+            target = "/viewer/api/v1/projects/p/reports/race/versions/1"
+            try:
+                with ThreadPoolExecutor(max_workers=2) as workers:
+                    reading = workers.submit(self.get, target)
+                    self.assertTrue(entered.wait(2))
+                    revoking = workers.submit(
+                        fixture.source,
+                        "race-evidence",
+                        files["evidence.json"],
+                        ["owner"],
+                        version=1,
+                    )
+                    time.sleep(0.05)
+                    self.assertFalse(revoking.done())
+                    release.set()
+                    self.assertEqual(reading.result(timeout=4)[0], 200)
+                    revoking.result(timeout=4)
+            finally:
+                release.set()
+                self.store.fault = lambda _: None
+            self.session = replace(self.session, subject=self.subject())
+            self.assertEqual(self.get(target)[0], 404)
+            self.assertEqual(
+                json.loads(self.get("/viewer/api/v1/projects/p/reports")[2])["data"]["reports"], []
+            )
+
+    def test_slow_header_total_deadline_and_recovery(self):
+        with self.listener(request_seconds=1):
+            before = time.monotonic()
+            with socket.create_connection(("127.0.0.1", self.port), timeout=3) as connection:
+                connection.sendall(b"GET /viewer/ HTTP/1.1\r\n")
+                self.assertEqual(connection.recv(100), b"")
+            self.assertLess(time.monotonic() - before, 2.5)
+            self.assertEqual(self.get("/viewer/")[0], 200)
+
+    def test_store_admission_pressure_uses_request_budget(self):
+        with self.listener(request_seconds=1):
+            held = []
+            try:
+                if hasattr(self, "pool"):
+                    # One fixture connection is already borrowed; exhaust the real pool.
+                    for _ in range(self.pool.max_size - 1):
+                        held.append(self.pool.getconn())
+                else:
+                    self.store.lock.acquire()
+                before = time.monotonic()
+                status, _, body = self.get("/viewer/api/v1/projects/p/memories")
+                self.assertEqual(status, 503, body)
+                self.assertLess(time.monotonic() - before, 2.5)
+            finally:
+                if hasattr(self, "pool"):
+                    for connection in held:
+                        self.pool.putconn(connection)
+                else:
+                    self.store.lock.release()
+            self.assertEqual(self.get("/viewer/api/v1/projects/p/memories")[0], 200)
+
+    def test_restore_rejects_old_session_cursor_and_cache_conditions(self):
+        with self.listener():
+            base = "/viewer/api/v1/projects/p/memories"
+            self.store.capture(
+                self.owner,
+                self.ns,
+                "second",
+                {
+                    "version": 1,
+                    "project": "p",
+                    "source": "test",
+                    "source_event": "second",
+                    "text": "second",
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+            first = json.loads(self.get(base + "?limit=1")[2])
+            cursor = first["next_cursor"]
+            self.assertIsNotNone(cursor)
+            handle = first["data"]["memories"][0]["handle"]
+            archive = backup_fixture(self)
+            old_position = self.store.status(self.owner, "p")["position"]
+            restore_fixture(self, archive)
+            namespace = self.store.namespace(self.owner, "p")
+            for i in range(old_position + 2):
+                self.store.capture(
+                    self.owner,
+                    namespace,
+                    f"replacement-{i}",
+                    {
+                        "version": 1,
+                        "project": "p",
+                        "source": "test",
+                        "source_event": f"replacement-{i}",
+                        "text": "new history",
+                        "readers": None,
+                        "classification": "internal",
+                        "observed_at_ms": 1,
+                    },
+                )
+            self.assertEqual(self.get(base)[0], 409)
+            self.session = replace(self.session, subject=self.subject())
+            self.assertEqual(self.get(base + "?limit=1&cursor=" + cursor)[0], 409)
+            self.assertEqual(self.get(base + "/" + handle)[0], 404)
+            status, headers, raw = self.get(
+                base,
+                headers={
+                    "If-None-Match": "*",
+                    "If-Modified-Since": "Wed, 21 Oct 2099 07:28:00 GMT",
+                },
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            self.assertNotEqual(
+                json.loads(raw)["binding"]["incarnation"], first["binding"]["incarnation"]
+            )
+            self.policy("revoke", {"principal": "phone", "project": "p", "expected_version": 2})
+            self.assertEqual(self.get(base, headers={"If-None-Match": "*"})[0], 409)
+
+    def test_utf8_detail_configured_bounds_and_disconnect_recover(self):
+        with self.listener() as server:
+            base = "/viewer/api/v1/projects/p/memories"
+            self.store.capture(
+                self.owner,
+                self.ns,
+                "unicode",
+                {
+                    "version": 1,
+                    "project": "p",
+                    "source": "test",
+                    "source_event": "unicode",
+                    "text": "界" * 10000,
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+            status, _, raw = self.get(base + "?q=%E7%95%8C")
+            self.assertEqual(status, 200, raw)
+            item = json.loads(raw)["data"]["memories"][0]
+            self.assertTrue(item["truncated"])
+            self.assertLessEqual(len(item["text"].encode()), 16384)
+            self.assertNotIn("\ufffd", item["text"])
+            server.config["limits"]["list_items"] = 1
+            bounded = json.loads(self.get(base + "?limit=2")[2])
+            self.assertEqual(len(bounded["data"]["memories"]), 1)
+            self.assertTrue(bounded["truncated"])
+            server.config["limits"]["response_bytes"] = 16384
+            self.assertEqual(self.get(base + "?limit=1&q=%E7%95%8C")[0], 503)
+            self.assertEqual(self.get(base + "?limit=1&q=Observed")[0], 200)
+            with socket.create_connection(("127.0.0.1", self.port), timeout=3) as stream:
+                stream.sendall(
+                    b"GET /viewer/api/v1/session HTTP/1.1\r\nHost: viewer.example.invalid\r\nCookie: __Host-memoryking-viewer="
+                    + b"a" * 48
+                    + b"\r\n\r\n"
+                )
+            until = time.monotonic() + 3
+            while server.threads and time.monotonic() < until:
+                time.sleep(0.01)
+            self.assertFalse(server.threads)
+            self.assertEqual(self.get(base + "?limit=1&q=Observed")[0], 200)
 
 
 class LocalViewerHTTP(HttpCases, unittest.TestCase):

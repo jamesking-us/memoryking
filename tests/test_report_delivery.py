@@ -53,7 +53,7 @@ class DeliveryCases:
                     "template": "phase-report",
                     "channel": getattr(self, "channel", "both"),
                     "destination": "synthetic",
-                    "recipient_principal": "owner",
+                    "recipient_principal": getattr(self, "recipient", "owner"),
                     "require_visual_qa": True,
                     "require_evidence": True,
                     "classification": "restricted",
@@ -73,6 +73,66 @@ class DeliveryCases:
         return Deliveries(self.store).attempt(
             self.owner, "p", delivery, smtp_factory=client.factory
         )
+
+    def viewer_recipient_job(self):
+        from memoryking.adapters.viewer_identity import ViewerIdentity
+
+        for action, args in (
+            ("bind", {"principal": "phone", "issuer": "https://github.com", "user_id": "12345"}),
+            (
+                "grant",
+                {
+                    "principal": "phone",
+                    "project": "p",
+                    "expected_version": 1,
+                    "starts": None,
+                    "expires": None,
+                },
+            ),
+        ):
+            ViewerIdentity(self.store).execute(
+                self.owner,
+                {
+                    "version": 1,
+                    "incarnation": self.store.incarnation,
+                    "key": "viewer-" + action,
+                    "action": action,
+                    "args": args,
+                },
+            )
+        self.recipient = "phone"
+        self.submitted(readers=["owner", "phone"])
+        self.build()
+        self.qa()
+        self.command("publish", {"report": "phase", "revision": 1})
+        return self.store.db.execute("SELECT id FROM report_deliveries").fetchone()[0]
+
+    def test_bound_viewer_recipient_can_receive_without_issuing_browser_session(self):
+        job = self.viewer_recipient_job()
+        smtp = FakeSMTP()
+        self.assertEqual(self.attempt(job, smtp)["state"], "smtp_accepted")
+        self.assertIn("body", smtp.events)
+
+    def test_disabled_viewer_recipient_blocks_dispatch_before_smtp(self):
+        job = self.viewer_recipient_job()
+        from memoryking.adapters.viewer_identity import ViewerIdentity
+
+        ViewerIdentity(self.store).execute(
+            self.owner,
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "key": "disable-viewer-recipient",
+                "action": "disable",
+                "args": {"principal": "phone", "expected_version": 2},
+            },
+        )
+        smtp = FakeSMTP()
+        with self.assertRaisesRegex(LocalError, "denied"):
+            self.attempt(job, smtp)
+        self.assertEqual(smtp.events, [])
+        status = self.command("delivery_status", {"delivery": job})
+        self.assertEqual(status["attempts"], 0)
 
     def test_reconciliation_requires_evidence_and_records_a_durable_receipt(self):
         job = self.publish()

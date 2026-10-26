@@ -101,8 +101,10 @@ class Deliveries:
         if legacy["accepted_ms"] > at or legacy["evidence"]["sha256"] != legacy["receipt_sha256"]:
             raise LocalError("report_legacy_evidence_mismatch")
         reports._dependency(who, project, legacy["evidence"], at)
+        recipient = reports._recipient_authority(who["tenant"], policy["recipient_principal"])
+        self.s._subject_auth(self.s._subject_token(recipient), "read", project, at)
         reports._dependency(
-            {"tenant": who["tenant"], "principal": policy["recipient_principal"]},
+            recipient,
             project,
             legacy["evidence"],
             at,
@@ -260,8 +262,9 @@ class Deliveries:
         if file is None:
             raise LocalError("report_artifact_unavailable")
         report = json.loads(row["body"])
-        recipient = {"tenant": who["tenant"], "principal": policy["recipient_principal"]}
-        Reports(self.s)._allowed(recipient, report, at)
+        reports = Reports(self.s)
+        recipient = reports._recipient_authority(who["tenant"], policy["recipient_principal"])
+        reports._allowed(recipient, report, at)
         identity = {
             "version": 1,
             "store": self.s.store_id,
@@ -343,7 +346,7 @@ class Deliveries:
             raise LocalError("report_delivery_policy_changed")
         reports._allowed(who, report, at)
         reports._allowed(
-            {"tenant": who["tenant"], "principal": body["recipient_principal"]}, report, at
+            reports._recipient_authority(who["tenant"], body["recipient_principal"]), report, at
         )
         file = self.db.execute(
             "SELECT blob FROM report_files WHERE tenant=? AND project=? AND report=? AND revision=? AND name='report.epub' AND kind='artifact'",

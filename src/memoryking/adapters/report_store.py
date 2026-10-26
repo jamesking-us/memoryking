@@ -407,6 +407,29 @@ class Reports:
             if CLASS[level] > CLASS[body["classification"]]:
                 raise LocalError("report_classification_conflict")
 
+    def _recipient_authority(self, tenant: str, principal: str) -> dict[str, Any]:
+        """Current recipient intersection, never a login/session or transport credential.
+
+        Publication and dispatch evaluate another intended reader within their own
+        canonical transaction. A viewer needs its current ceiling marker there too;
+        do not add this behavior to generic credential decoding or subject_token.
+        """
+        result: dict[str, Any] = {"tenant": tenant, "principal": principal}
+        row = self.db.execute(
+            "SELECT user_id,generation FROM viewer_bindings WHERE tenant=? AND principal=?",
+            (tenant, principal),
+        ).fetchone()
+        if row is not None:
+            epoch = self.db.execute(
+                "SELECT policy_epoch FROM tenants WHERE tenant=?", (tenant,)
+            ).fetchone()[0]
+            result["viewer"] = {
+                "user_id": row["user_id"],
+                "generation": row["generation"],
+                "policy_epoch": epoch,
+            }
+        return result
+
     def _submit(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
         tenant, project = who["tenant"], args["project"]
         version, policy = self._policy(tenant, project, args["program"])
@@ -763,7 +786,7 @@ class Reports:
             if version != body["policy_version"]:
                 raise LocalError("report_policy_changed")
             for principal in body["readers"]:
-                recipient = {"tenant": who["tenant"], "principal": principal}
+                recipient = self._recipient_authority(who["tenant"], principal)
                 self._allowed(recipient, body, at)
             if policy["channel"] != "app":
                 from memoryking.adapters.report_delivery import Deliveries

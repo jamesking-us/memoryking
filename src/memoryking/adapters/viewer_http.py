@@ -121,6 +121,8 @@ def route(target: str) -> tuple[str, str | None, dict[str, Any]]:
 
 
 def public_error(error: LocalError) -> tuple[str, int]:
+    if error.code == "history_changed":
+        return "context_changed", 409
     if error.code in {"unauthenticated", "context_changed", "invalid_cursor", "invalid_request"}:
         return error.code, {
             "unauthenticated": 401,
@@ -192,10 +194,13 @@ class Handler(BaseHTTPRequestHandler):
         content_type: str = "application/json",
         released: Released | None = None,
     ) -> None:
-        if time.monotonic() >= self.deadline:
+        if time.monotonic() >= self.deadline and status < 400:
             raise TimeoutError
         if released is not None:
             released.decision.check(released.clock)
+        self.connection.settimeout(
+            max(0.1, self.deadline - time.monotonic()) if status < 400 else 0.5
+        )
         self.close_connection = True
         self.response_started = True
         self.send_response(status)
@@ -266,16 +271,10 @@ class Handler(BaseHTTPRequestHandler):
             if token is None or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token.value):
                 raise LocalError("unauthenticated")
             session = self.server.resolve(token.value)
-            with self.server.store(session) as store:
-                remaining = self.deadline - time.monotonic()
-                if remaining <= 0 or not store.lock.acquire(timeout=remaining):
-                    raise LocalError("service_unavailable")
-                try:
-                    released = ViewerReads(store, self.server.config).read(
-                        session, name, project, params
-                    )
-                finally:
-                    store.lock.release()
+            with self.server.store(session, self.deadline) as store:
+                released = ViewerReads(store, self.server.config).read(
+                    session, name, project, params, deadline=self.deadline
+                )
             self.reply(released.body, released=released)
         except LocalError as exc:
             if self.response_started:
@@ -296,7 +295,7 @@ class ViewerServer(HTTPServer):
     def __init__(
         self,
         config: dict[str, Any],
-        store: Callable[[ViewerSession], AbstractContextManager[LocalStore]],
+        store: Callable[[ViewerSession, float], AbstractContextManager[LocalStore]],
         *,
         resolve: Callable[[str], ViewerSession] = deny_session,
     ):
@@ -371,13 +370,15 @@ class ViewerListener:
     def __init__(
         self,
         config: dict[str, Any],
-        store: Callable[[ViewerSession], AbstractContextManager[LocalStore]],
+        store: Callable[[ViewerSession, float], AbstractContextManager[LocalStore]],
     ):
-        self.server = ViewerServer(config, store) if config["enabled"] else None
+        self.config, self.store = validate_config(config), store
+        self.server: ViewerServer | None = None
         self.thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if self.server is not None:
+        if self.config["enabled"] and self.server is None:
+            self.server = ViewerServer(self.config, self.store)
             self.thread = threading.Thread(
                 target=self.server.serve_forever,
                 kwargs={"poll_interval": 0.1},

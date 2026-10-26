@@ -21,7 +21,14 @@ class SharedService:
         self.dashboard: Any = None
         self.report_configuration: Configuration | None = None
 
-    def store(self, tenant: str, credential: str, *, release_only: bool = False) -> PostgresStore:
+    def store(
+        self,
+        tenant: str,
+        credential: str,
+        *,
+        release_only: bool = False,
+        request_deadline: float | None = None,
+    ) -> PostgresStore:
         store = PostgresStore(
             self.pool,
             self.root,
@@ -30,6 +37,7 @@ class SharedService:
             credential,
             audience=self.audience,
             release_only=release_only,
+            request_deadline=request_deadline,
         )
         config = self.report_configuration
         if config is not None and config.enabled and tenant == config.tenant:

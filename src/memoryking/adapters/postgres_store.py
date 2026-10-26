@@ -78,6 +78,7 @@ class PostgresStore(LocalStore):
         fault: Callable[[str], None] | None = None,
         release_only: bool = False,
         audience: str = "memoryking-shared",
+        request_deadline: float | None = None,
     ):
         identifier(tenant)
         paths(root, control)
@@ -106,10 +107,21 @@ class PostgresStore(LocalStore):
         self.metrics: list[dict[str, float]] = []
         self.committed: dict[str, Any] | None = None
         self.pool = pool
+        self.request_deadline = request_deadline
         from memoryking.adapters.postgres_pool import acquire, check
 
-        self.connection = acquire(pool)
+        remaining = (
+            None if request_deadline is None else min(5.0, request_deadline - time.monotonic())
+        )
+        if remaining is not None and remaining <= 0:
+            raise LocalError("service_busy")
+        self.connection = acquire(pool, timeout=remaining)
         try:
+            if request_deadline is not None:
+                remaining_ms = max(1, int((request_deadline - time.monotonic()) * 1000))
+                self.connection.execute(
+                    "SELECT set_config('statement_timeout',%s,false)", (str(remaining_ms),)
+                )
             # getconn() does not run the pool's checkout check callback.
             check(self.connection)
             version = self.connection.execute(
@@ -214,8 +226,15 @@ class PostgresStore(LocalStore):
     def _settings(self) -> None:
         self.connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
         self.connection.execute("SET LOCAL search_path=memoryking,pg_catalog")
-        self.connection.execute("SET LOCAL lock_timeout='5s'")
-        self.connection.execute("SET LOCAL statement_timeout='5s'")
+        remaining_ms = (
+            5000
+            if self.request_deadline is None
+            else min(5000, int((self.request_deadline - time.monotonic()) * 1000))
+        )
+        if remaining_ms <= 0:
+            raise LocalError("service_busy")
+        for setting in ("lock_timeout", "statement_timeout"):
+            self.connection.execute("SELECT set_config(%s,%s,true)", (setting, str(remaining_ms)))
         self.connection.execute("SELECT set_config('memoryking.tenant',%s,true)", (self.tenant,))
         self.connection.execute(
             "SELECT set_config('memoryking.principal',%s,true)", (self.principal,)

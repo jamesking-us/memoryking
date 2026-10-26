@@ -137,7 +137,15 @@ class ReadCases:
         # Use the actual checkpoint operation; the browser has no write path.
         body = checkpoint()
         body["references"] = []
-        body["acceptance"] = []
+        body["acceptance"] = [
+            {
+                "id": "proof",
+                "text": "Recorded result",
+                "state": "passed",
+                "evidence": [{"kind": "observation", "id": self.obs["observation"]}],
+                "decision": None,
+            }
+        ]
         body["verification"] = []
         body["repository"]["artifacts"] = []
         from memoryking.adapters.working import Working
@@ -162,11 +170,24 @@ class ReadCases:
         result = self.read("tasks")
         self.assertEqual([t["id"] for t in result["data"]["tasks"]], ["visible"])
         self.assertNotIn("repository", json.dumps(result))
+        detail = self.read("task", params={"task": "visible"})["data"]["tasks"][0]
+        self.assertEqual(detail["id"], "visible")
+        self.assertFalse(detail["text_truncated"])
+        self.assertEqual(detail["progress"]["passed"], 1)
+        reference = detail["criteria"][0]["evidence"][0]
         self.assertEqual(
-            self.read("task", params={"task": "visible"})["data"]["tasks"], result["data"]["tasks"]
+            self.read("memory", params={"handle": reference["handle"]})["data"]["memories"][0][
+                "text"
+            ],
+            self.raw,
         )
         graph = self.read("graph")["data"]
-        self.assertEqual(len(graph["nodes"]), 1)
+        self.assertEqual(len(graph["nodes"]), 2)
+        self.assertEqual(len(graph["edges"]), 1)
+        self.store.purge(self.owner, self.obs["observation"])
+        self.session = replace(self.session, subject=self.subject())
+        with self.assertRaisesRegex(LocalError, "unavailable"):
+            self.read("task", params={"task": "visible"})
 
     def test_unknown_constraint_blocks_without_hidden_identity(self):
         self.setup_viewer()
@@ -199,6 +220,82 @@ class ReadCases:
             result.emit(lambda _: self.fail("late protected response"))
         with self.assertRaisesRegex(LocalError, "unauthenticated"):
             self.read("session", None, session=replace(self.session, expires_ms=now))
+
+    def test_persisted_instant_grant_expiry_and_display_lease(self):
+        self.setup_viewer()
+        from test_local_store import FakeClock
+
+        from memoryking.contracts.canonical import canonical_hash
+
+        clock = FakeClock()
+        clock.utc = self.store.last_utc + 10000
+        self.store.clock = clock
+        self.grant_viewer(version=2, expires=clock.utc + 1000)
+        self.session = replace(self.session, subject=self.subject(), expires_ms=clock.utc + 60000)
+        evaluated = clock.utc
+
+        def stall(point):
+            if point == "after_validation":
+                clock.advance(2000)
+
+        self.store.fault = stall
+        result = self.read("memories")
+        self.store.fault = lambda _: None
+        self.assertEqual(result["binding"]["evaluated_ms"], evaluated)
+        self.assertEqual(result["binding"]["fresh_until_ms"], evaluated + 1000)
+        # Canonical validity at the persisted evaluation instant permits completion;
+        # a client must discard this now-expired display lease.
+        receipt = self.store.db.execute(
+            "SELECT evaluated FROM receipts WHERE tenant=? AND response_hash=?",
+            (self.tenant, canonical_hash(result)),
+        ).fetchone()
+        self.assertEqual(receipt[0], evaluated)
+        with self.assertRaises(LocalError):
+            self.read("memories")
+
+    def test_constraint_activation_and_verification_expiry_cut_lease(self):
+        self.setup_viewer()
+        from test_local_store import FakeClock
+
+        clock = FakeClock()
+        clock.utc = self.store.last_utc + 10000
+        self.store.clock = clock
+        accepted = self.review(self.propose())
+        self.run_k(
+            "attest",
+            {
+                "project": "p",
+                "revision": accepted["revision"],
+                "expires_ms": clock.utc + 1000,
+                "statement": "verified",
+            },
+        )
+        self.session = replace(self.session, subject=self.subject(), expires_ms=clock.utc + 60000)
+        self.assertEqual(self.read("memories")["binding"]["fresh_until_ms"], clock.utc + 1000)
+        clock.advance(1001)
+        self.assertGreater(self.read("memories")["binding"]["fresh_until_ms"], clock.utc)
+        boundary = clock.utc + 1000
+        constraint = self.propose(
+            self.body(
+                kind="constraint",
+                selector=knowledge.sel(knowledge.eq("environment", "production")),
+                authority="project",
+                rule_key="safety",
+                effect="require",
+                rule_value="review",
+                valid_start=boundary,
+                valid_end=boundary + 1000,
+            ),
+            key="later-constraint",
+        )
+        self.review(constraint)
+        self.session = replace(self.session, subject=self.subject())
+        self.assertEqual(self.read("memories")["binding"]["fresh_until_ms"], boundary)
+        clock.advance(1000)
+        with self.assertRaisesRegex(LocalError, "unavailable"):
+            self.read("memories")
+        clock.advance(1000)
+        self.assertTrue(self.read("memories")["data"]["memories"])
 
 
 class LocalViewerReads(ReadCases, unittest.TestCase):

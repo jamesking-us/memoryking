@@ -147,11 +147,27 @@ class Execution:
         for stream in streams:
             if recorded_position is None:
                 current_stream = self.db.execute(
-                    "SELECT writer,revision FROM checkpoint_streams WHERE tenant=? AND project=? AND task=? AND stream=?",
+                    "SELECT writer,revision,latest,incarnation FROM checkpoint_streams WHERE tenant=? AND project=? AND task=? AND stream=?",
                     (who["tenant"], project, stream["task"], stream["stream"]),
                 ).fetchone()
+                if viewer and (
+                    current_stream is None
+                    or current_stream["latest"] != stream["latest"]
+                    or current_stream["incarnation"] != self.s.incarnation
+                ):
+                    return {
+                        **result,
+                        "status": "unavailable",
+                        "tasks": [],
+                        "events": [],
+                        "reason": "current_checkpoint_projection_unavailable",
+                    }
                 if current_stream is not None:
-                    stream = {**dict(stream), **dict(current_stream)}
+                    stream = {
+                        **dict(stream),
+                        "writer": current_stream["writer"],
+                        "revision": current_stream["revision"],
+                    }
             row = self.db.execute(
                 "SELECT * FROM checkpoints WHERE tenant=? AND id=?",
                 (who["tenant"], stream["latest"]),
