@@ -143,8 +143,23 @@ current permissions. Purge conservatively erases tenant report content and its
 derived references. New schemas are SQLite 10 and PostgreSQL 5.
 
 Scoped SDK/CLI operations and an internal worker entry point are implemented.
-Automatic worker scheduling, the phone reader and the delivery workflow remain
-under development. Only the app channel can currently be configured; installing
-optional rendering dependencies does not activate email.
+Automatic worker scheduling and the phone reader remain under development. An
+internal fixed-destination mail adapter and independent delivery journal support
+app, Kindle and both-channel policies when an operator injects mail configuration.
+The sender defaults off. The service startup/configuration and legacy-sender
+handover are not yet integrated; installing renderer dependencies does not enable
+email.
+
+Publication commits the app-visible record and required delivery intent together
+in the content transaction; a separately durable control intent prevents forgotten
+submissions after rollback. Replayed intents cannot send an unpublished report.
+A process lease and durable submitting record precede each attempt. Current report,
+dependency and recipient authority is evaluated under the canonical gate immediately
+before DATA; a five-second release check also runs before the first content byte.
+A later revocation cannot recall an already authorized transfer. Accepted and
+unknown outcomes remain fenced across content restore. Only proven pre-DATA
+transient failures retry automatically, at most three times with bounded backoff.
+An uncertain outcome requires an operator's currently accessible evidence and
+explicit reconciliation; provider acceptance remains separate from device arrival.
 
 [Back to README](../README.md) · [Security](../SECURITY.md) · [Deployment](deployment.md)

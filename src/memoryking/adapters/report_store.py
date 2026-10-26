@@ -23,6 +23,7 @@ from memoryking.reporting.template import model
 
 CLASS = {"public": 0, "internal": 1, "restricted": 2}
 CONTROL_ACTIONS = {"bind_source", "policy"}
+READ_ACTIONS = {"status", "reader", "artifact", "delivery_status"}
 CAPABILITIES = {
     "bind_source": "report_policy",
     "policy": "report_policy",
@@ -34,6 +35,8 @@ CAPABILITIES = {
     "withdraw": "report_publish",
     "artifact": "export",
     "discard_upload": "report_author",
+    "delivery_status": "report_delivery",
+    "reconcile": "report_policy",
 }
 
 
@@ -60,7 +63,7 @@ class Reports:
                     "SELECT request_hash,result FROM report_retries WHERE tenant=? AND actor=? AND incarnation=? AND key=?",
                     (who["tenant"], who["principal"], self.s.incarnation, command["key"]),
                 ).fetchone()
-                if prior is not None and action not in {"status", "reader", "artifact"}:
+                if prior is not None and action not in READ_ACTIONS:
                     if prior["request_hash"] != canonical_hash(command):
                         raise LocalError("idempotency_conflict")
                     result = json.loads(prior["result"])
@@ -89,10 +92,27 @@ class Reports:
                         result = self._reader(who, target, args)
                     elif action == "artifact":
                         result = self._artifact(who, target, args)
+                    elif action in {"delivery_status", "reconcile"}:
+                        from memoryking.adapters.report_delivery import Deliveries
+
+                        ledger = Deliveries(self.s)
+                        if action == "reconcile":
+                            result = ledger.reconcile(
+                                who,
+                                args,
+                                at,
+                                key=command["key"],
+                                request_hash=canonical_hash(command),
+                            )
+                        else:
+                            body = ledger._job(who["tenant"], args["delivery"])
+                            if body["project"] != args["project"]:
+                                raise LocalError("unavailable")
+                            result = ledger._public(body)
                     else:
                         result = self._lifecycle(who, target, action, args, at)
-                    if action not in {"status", "reader", "artifact"}:
-                        if action not in {"upload", "discard_upload"}:
+                    if action not in READ_ACTIONS:
+                        if action not in {"upload", "discard_upload", "reconcile"}:
                             position = self.s._event(
                                 who["tenant"],
                                 "report_" + action,
@@ -168,13 +188,16 @@ class Reports:
             name = body["program"]
             if body["project"] != args["project"] or body["template"] != "phase-report":
                 raise LocalError("invalid_report_policy")
-            # Channel delivery is deliberately unavailable until the independent sender is qualified.
-            if (
-                body["channel"] != "app"
-                or body["destination"] is not None
-                or body["recipient_principal"] is not None
-            ):
-                raise LocalError("report_delivery_unavailable")
+            if body["channel"] == "app":
+                if body["destination"] is not None or body["recipient_principal"] is not None:
+                    raise LocalError("invalid_report_policy")
+            else:
+                from memoryking.adapters.report_delivery import configured
+
+                config = configured(self.s, body["destination"])
+                if body["recipient_principal"] not in body["readers"]:
+                    raise LocalError("invalid_report_policy")
+                body = {**body, "recipient_fingerprint": config.destination.fingerprint}
         prior = self.db.execute(
             f"SELECT version FROM {table} WHERE tenant=? AND project=? AND {column}=?",
             (tenant, args["project"], name),
@@ -378,6 +401,14 @@ class Reports:
             ).fetchone()[0]
             or 0
         )
+        acknowledged = (
+            self.db.execute(
+                "SELECT MAX(revision) FROM report_deliveries WHERE tenant=? AND project=? AND report=?",
+                (tenant, project, args["report"]),
+            ).fetchone()[0]
+            or 0
+        )
+        latest = max(latest, acknowledged)
         if latest != args["expected_revision"]:
             raise LocalError("revision_conflict")
         revision = latest + 1
@@ -607,7 +638,9 @@ class Reports:
                 recipient = {"tenant": who["tenant"], "principal": principal}
                 self._allowed(recipient, body, at)
             if policy["channel"] != "app":
-                raise LocalError("report_delivery_unavailable")
+                from memoryking.adapters.report_delivery import Deliveries
+
+                Deliveries(self.s).enqueue(who, row, policy, version, at)
             self.db.execute(
                 "UPDATE report_revisions SET state='published' WHERE tenant=? AND project=? AND report=? AND revision=?",
                 key,
@@ -624,6 +657,9 @@ class Reports:
 
     def _reader(self, who: dict[str, Any], row: Any, args: dict[str, Any]) -> dict[str, Any]:
         if row["state"] != "published":
+            raise LocalError("unavailable")
+        _, policy = self._policy(who["tenant"], row["project"], json.loads(row["body"])["program"])
+        if policy["channel"] == "kindle":
             raise LocalError("unavailable")
         epochs = self.db.execute(
             "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)

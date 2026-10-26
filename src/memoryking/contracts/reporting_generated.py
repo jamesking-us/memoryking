@@ -246,4 +246,29 @@ class ReportDiscardUploadCommand(TypedDict):
     action: Literal['discard_upload']
     args: ReportDiscardArgs
 
-ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand
+class ReportDeliveryStatusArgs(TypedDict):
+    project: str
+    delivery: str
+
+class ReportReconcileArgs(TypedDict):
+    project: str
+    delivery: str
+    expected_attempts: int
+    outcome: Literal['smtp_accepted', 'not_submitted']
+    evidence: ReportDependency
+
+class ReportDeliveryStatusCommand(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    key: str
+    action: Literal['delivery_status']
+    args: ReportDeliveryStatusArgs
+
+class ReportReconcileCommand(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    key: str
+    action: Literal['reconcile']
+    args: ReportReconcileArgs
+
+ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand

@@ -152,11 +152,14 @@ content fails. The SDK does not automatically retry mutations.
 | `publish`, `withdraw` | `report_publish`: publish a verified revision or remove its current visibility. |
 | `status`, `reader` | `read` plus all current report/dependency permissions. Drafts are visible only to their author or permitted QA/publish actors. |
 | `artifact` | `export` plus report/dependency permissions: bounded operator PDF/EPUB/reader export. Read-only viewers cannot use it. |
+| `delivery_status` | `report_delivery` plus project read: minimal outcome and reconciliation identity. |
+| `reconcile` | `report_policy` plus project read: exact delivery/attempt, explicit outcome and a currently permitted evidence dependency. |
 
-Report authoring never grants readers or chooses recipients. Policies currently
-accept only `channel: app`, with null destination/recipient. The declared
-`report_delivery` capability reserves authority for the delivery implementation;
-it does not activate a sender. No report command enters the eight-tool model MCP
+Report authoring never grants readers or chooses recipients. Policies default to `channel: app`, with null destination/recipient. Kindle/both
+requires a fixed destination supplied by the trusted embedding host; the policy
+records its recipient principal and fingerprint. The internal sender requires an
+explicit `report_delivery` credential and enabled host configuration. Startup
+configuration/scheduling and the legacy-sender handover are still under development. No report command enters the eight-tool model MCP
 catalog.
 
 Inputs are `source.md`, `readme.md`, `evidence.json`, and identifier-named PNG/JPEG
@@ -184,7 +187,19 @@ and at most 32 KiB of base64-decoded bytes per response.
 Errors include `report_policy_required`, `report_source_binding_required`,
 `report_dependency_unavailable`, `report_qa_mismatch`, `report_policy_changed`,
 `report_worker_fenced`, `report_worker_busy`, `report_input_limit`,
-`report_delivery_unavailable` and `report_sandbox_unavailable`. None establishes
+`report_delivery_unavailable` and `report_sandbox_unavailable`, `report_sender_disabled`,
+`report_destination_changed`, `report_delivery_backoff` and
+`report_reconciliation_conflict`. None establishes
 human approval or provider/device delivery.
+
+The internal delivery adapter loads a protected operator-supplied JSON file with
+`version`, `destination`, `GMAIL_FROM`, `GMAIL_APP_KEY` and `KINDLE_TO`. It never
+reads shell startup files. Gmail uses verified TLS at the fixed host/port; authors
+cannot change the envelope. Complete MIME is limited to 24,000,000 bytes. SMTP
+acceptance means provider acceptance only. A connection failure after a possible
+content write is `unknown` and is never automatically retried. `reconcile` accepts
+`smtp_accepted` or independently evidenced `not_submitted`; the latter explicitly
+allows a new bounded attempt cycle after current authority is rechecked. A stable
+Message-ID alone is insufficient evidence.
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

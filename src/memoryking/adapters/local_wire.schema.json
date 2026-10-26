@@ -8739,6 +8739,135 @@
             "args"
           ]
         },
+        "ReportDeliveryStatusArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "delivery": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "delivery"
+          ]
+        },
+        "ReportReconcileArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "delivery": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "expected_attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "outcome": {
+              "enum": [
+                "smtp_accepted",
+                "not_submitted"
+              ]
+            },
+            "evidence": {
+              "$ref": "#/$defs/Reporting/$defs/ReportDependency"
+            }
+          },
+          "required": [
+            "project",
+            "delivery",
+            "expected_attempts",
+            "outcome",
+            "evidence"
+          ]
+        },
+        "ReportDeliveryStatusCommand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "action": {
+              "const": "delivery_status"
+            },
+            "args": {
+              "$ref": "#/$defs/Reporting/$defs/ReportDeliveryStatusArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ReportReconcileCommand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "action": {
+              "const": "reconcile"
+            },
+            "args": {
+              "$ref": "#/$defs/Reporting/$defs/ReportReconcileArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
         "ReportCommand": {
           "oneOf": [
             {
@@ -8776,6 +8905,12 @@
             },
             {
               "$ref": "#/$defs/Reporting/$defs/ReportDiscardUploadCommand"
+            },
+            {
+              "$ref": "#/$defs/Reporting/$defs/ReportDeliveryStatusCommand"
+            },
+            {
+              "$ref": "#/$defs/Reporting/$defs/ReportReconcileCommand"
             }
           ]
         }

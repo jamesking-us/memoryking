@@ -216,7 +216,10 @@ Restore changes the history incarnation. Existing report rows and their immutabl
 bytes can remain in an archive, but old SDK handles and reader cursors cannot be
 used as current reports. Unfinished uploads and worker tokens are retired. Current
 source permissions are replayed before activation. There is no automatic report
-republication or sender activation during restore. Purge conservatively erases
+republication or sender activation during restore. Delivery intent, submitting,
+accepted, unknown and reconciliation records live in independent control history.
+Restoring an older queued job cannot resend a later accepted/unknown submission;
+missing current control evidence blocks startup/sending. Purge conservatively erases
 all report content for the tenant, including derived blobs once garbage collected.
 
 Install the optional reports lock only for an explicitly configured rendering

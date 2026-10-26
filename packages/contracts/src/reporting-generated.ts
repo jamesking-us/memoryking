@@ -271,4 +271,33 @@ export interface ReportDiscardUploadCommand {
   args: ReportDiscardArgs;
 }
 
-export type ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand;
+export interface ReportDeliveryStatusArgs {
+  project: string;
+  delivery: string;
+}
+
+export interface ReportReconcileArgs {
+  project: string;
+  delivery: string;
+  expected_attempts: number;
+  outcome: "smtp_accepted" | "not_submitted";
+  evidence: ReportDependency;
+}
+
+export interface ReportDeliveryStatusCommand {
+  version: 1;
+  incarnation: string;
+  key: string;
+  action: "delivery_status";
+  args: ReportDeliveryStatusArgs;
+}
+
+export interface ReportReconcileCommand {
+  version: 1;
+  incarnation: string;
+  key: string;
+  action: "reconcile";
+  args: ReportReconcileArgs;
+}
+
+export type ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand;

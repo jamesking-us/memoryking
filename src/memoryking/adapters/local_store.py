@@ -849,6 +849,10 @@ class LocalStore:
             from memoryking.adapters.report_store import Reports
 
             Reports(self).apply_control(action)
+        elif kind == "report_delivery":
+            from memoryking.adapters.report_delivery import Deliveries
+
+            Deliveries(self).apply(action)
         else:
             raise LocalError("journal_invalid")
         if kind == "purge":
@@ -885,7 +889,7 @@ class LocalStore:
                 "UPDATE retries SET result=NULL WHERE tenant=? AND namespace='experience-v1'",
                 (tenant,),
             )
-        if kind != "operation":
+        if kind not in {"operation", "report_delivery"}:
             self.db.execute(
                 "UPDATE tenants SET policy_epoch=policy_epoch+1 WHERE tenant=?", (tenant,)
             )
