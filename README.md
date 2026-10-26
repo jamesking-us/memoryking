@@ -84,8 +84,10 @@ The viewer foundation supports owner-managed GitHub identity bindings and exact
 project grants. A project grant never shares owner-only notes automatically.
 Change viewer permissions through the versioned owner operations; ordinary agent
 grant/revoke commands reject viewer principals to prevent stale permission updates.
-The phone interface, browser sessions and real GitHub sign-in are not available yet;
-the existing dashboard is for the trusted local owner.
+An optional, separate read-only listener now supplies bounded task, memory and report
+responses with current permission checks. Its production session resolver denies access
+until sign-in is implemented. The phone interface, browser sessions and real GitHub
+sign-in are not available yet; the existing dashboard is for the trusted local owner.
 
 To try the permission model safely, run `.venv/bin/python examples/viewer_identity.py`.
 It uses a temporary store and no external account. See

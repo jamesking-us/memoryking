@@ -75,7 +75,15 @@ class Execution:
             return False
 
     def snapshot(
-        self, who: dict[str, Any], project: str, at: int, recorded_position: int | None = None
+        self,
+        who: dict[str, Any],
+        project: str,
+        at: int,
+        recorded_position: int | None = None,
+        *,
+        viewer_after: str | None = None,
+        viewer_task: str | None = None,
+        viewer_limit: int = 25,
     ) -> dict[str, Any]:
         current_position = self.db.execute(
             "SELECT position FROM tenants WHERE tenant=?", (who["tenant"],)
@@ -102,10 +110,38 @@ class Execution:
             "authorization_evaluated_ms": at,
             "external_actions": 0,
         }
+        viewer = viewer_after is not None or viewer_task is not None
+        if viewer and not 1 <= viewer_limit <= 50:
+            raise LocalError("invalid_request")
+        filters = " AND c.stream='task' AND c.task>?" if viewer else ""
+        parameters: tuple[Any, ...] = (
+            who["tenant"],
+            project,
+            self.s.incarnation,
+            frontier,
+            frontier,
+        )
+        if viewer:
+            parameters += (viewer_after or "",)
+        if viewer_task is not None:
+            filters += " AND c.task=?"
+            parameters += (viewer_task,)
         streams = self.db.execute(
-            "SELECT c.task,c.stream,c.writer,c.revision,c.id AS latest,c.created FROM checkpoints c WHERE c.tenant=? AND c.project=? AND c.incarnation=? AND c.position<=? AND NOT EXISTS(SELECT 1 FROM checkpoints newer WHERE newer.tenant=c.tenant AND newer.project=c.project AND newer.task=c.task AND newer.stream=c.stream AND newer.incarnation=c.incarnation AND newer.position<=? AND newer.revision>c.revision) ORDER BY c.created DESC,c.task,c.stream LIMIT 64",
-            (who["tenant"], project, self.s.incarnation, frontier, frontier),
+            "SELECT c.task,c.stream,c.writer,c.revision,c.id AS latest,c.created FROM checkpoints c WHERE c.tenant=? AND c.project=? AND c.incarnation=? AND c.position<=? AND NOT EXISTS(SELECT 1 FROM checkpoints newer WHERE newer.tenant=c.tenant AND newer.project=c.project AND newer.task=c.task AND newer.stream=c.stream AND newer.incarnation=c.incarnation AND newer.position<=? AND newer.revision>c.revision)"
+            + filters
+            + (
+                " ORDER BY c.task LIMIT 65"
+                if viewer
+                else " ORDER BY c.created DESC,c.task,c.stream LIMIT 64"
+            ),
+            parameters,
         ).fetchall()
+        if viewer:
+            result["coverage"] = (
+                "current_task_streams_from_at_most_64_candidates; no_hidden_denominator"
+            )
+            result["scan_complete"] = len(streams) < 65
+            streams = streams[:64]
         task_index: dict[tuple[str, str], dict[str, Any]] = {}
         linked_events: dict[tuple[str, str], set[str]] = {}
         for stream in streams:
@@ -288,8 +324,13 @@ class Execution:
             linked_events[(stream["task"], stream["stream"])] = {
                 dep["id"] for dep in json.loads(row["dependencies"]) if dep["kind"] == "observation"
             }
-            if len(result["tasks"]) >= 8:
+            if len(result["tasks"]) >= (viewer_limit if viewer else 8):
+                if viewer:
+                    result["scan_complete"] = False
                 break
+        if viewer:
+            # The phone never consumes producer event payloads or inferred agent liveness.
+            return result
         candidates = self.db.execute(
             "SELECT o.*,e.at_ms AS recorded_ms FROM observations o JOIN events e ON e.tenant=o.tenant AND e.position=o.position WHERE o.tenant=? AND o.project=? AND o.position<=? AND o.source IN ('reference-harness-v1','reference-heartbeat-v1') ORDER BY o.position DESC LIMIT 128",
             (who["tenant"], project, frontier),

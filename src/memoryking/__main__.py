@@ -26,6 +26,11 @@ def main() -> int:
         cmd.add_argument("--control", type=Path, required=True)
         if name == "serve":
             cmd.add_argument(
+                "--viewer-config",
+                type=Path,
+                help="Private optional restricted viewer configuration",
+            )
+            cmd.add_argument(
                 "--dashboard-port", type=int, help="Opt-in loopback port; 0 chooses a free port"
             )
             cmd.add_argument("--plan-root", type=Path, help="Explicit trusted plan/report checkout")
@@ -127,6 +132,14 @@ def main() -> int:
                     signal.signal(signal.SIGTERM, stop)
                     dashboard = None
                     report_worker = None
+                    viewer_listener = None
+                    if args.viewer_config is not None:
+                        from memoryking.adapters.viewer_config import load_config
+                        from memoryking.adapters.viewer_http import ViewerListener
+
+                        viewer_listener = ViewerListener(
+                            load_config(args.viewer_config), lambda _: nullcontext(store)
+                        )
                     if args.report_config is not None:
                         from memoryking.adapters.report_worker import Configuration, ReportWorker
 
@@ -143,6 +156,8 @@ def main() -> int:
                         dashboard.start()
                     try:
                         with Server(store) as server:
+                            if viewer_listener:
+                                viewer_listener.start()
                             if report_worker:
                                 report_worker.start()
                             print(
@@ -152,6 +167,8 @@ def main() -> int:
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        if viewer_listener:
+                            viewer_listener.stop()
                         if report_worker:
                             report_worker.stop()
                         if dashboard:

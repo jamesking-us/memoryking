@@ -93,6 +93,11 @@ def native_statement(statement: str) -> str:
     statement = statement.replace(
         "lexical MATCH ?", "to_tsvector('simple',text) @@ phraseto_tsquery('simple',?)"
     ).replace("length(CAST(body AS BLOB))", "octet_length(body)")
+    # Two fixed scalar expressions used by the viewer's conservative display lease.
+    for field in ("starts", "expires"):
+        statement = statement.replace(
+            f"json_extract(body,'$.{field}')", f"(body::jsonb->>'{field}')"
+        )
     if statement.startswith("INSERT OR REPLACE INTO "):
         match = re.fullmatch(r"INSERT OR REPLACE INTO (\w+) VALUES (\([^;]+\))", statement)
         if match is None or match[1] not in UPSERTS:

@@ -143,7 +143,7 @@ export interface ViewerError {
 export interface ViewerCriterion {
   id: string;
   text: string;
-  state: "pending" | "passed" | "failed" | "waived";
+  state: "pending" | "passed" | "failed" | "waived" | "unknown";
   evidence_available: boolean;
 }
 
@@ -162,6 +162,9 @@ export interface ViewerMemory {
   authority: "observed" | "proposed" | "accepted";
   observed_ms: number;
   evidence_available: boolean;
+  truncated: boolean;
+  source: string;
+  classification: "public" | "internal" | "restricted";
 }
 
 export interface ViewerBinding {
@@ -174,6 +177,7 @@ export interface ViewerBinding {
   evaluated_ms: number;
   fresh_until_ms: number;
   observed_position: number;
+  session_generation: number;
 }
 
 export interface ViewerPage {
@@ -184,4 +188,111 @@ export interface ViewerPage {
   next_cursor: string | null;
   tasks: Array<ViewerTask>;
   memories: Array<ViewerMemory>;
+}
+
+export interface ViewerSessionData {
+  kind: "session";
+  projects: Array<string>;
+  csrf: string;
+}
+
+export interface ViewerTaskData {
+  kind: "overview" | "tasks" | "task";
+  tasks: Array<ViewerTask>;
+}
+
+export interface ViewerMemoryData {
+  kind: "memories" | "memory";
+  memories: Array<ViewerMemory>;
+}
+
+export interface ViewerGraphNode {
+  id: string;
+  label: string;
+  kind: "task" | "criterion";
+}
+
+export interface ViewerGraphEdge {
+  source: string;
+  target: string;
+  kind: "declares";
+}
+
+export interface ViewerGraphData {
+  kind: "graph";
+  nodes: Array<ViewerGraphNode>;
+  edges: Array<ViewerGraphEdge>;
+}
+
+export interface ViewerReportItem {
+  report: string;
+  revision: number;
+  title: string;
+  program: string;
+  phase: string;
+  task: string | null;
+  technical_status: "complete" | "partial" | "blocked";
+  review_status: "pending" | "approved" | "changes_requested";
+  channel: "app" | "both";
+  delivery_states: Array<"queued" | "submitting" | "smtp_accepted" | "rejected" | "unknown" | "cancelled">;
+  device_delivery: "unverified";
+  created_ms: number;
+}
+
+export interface ViewerReportListData {
+  kind: "reports";
+  reports: Array<ViewerReportItem>;
+}
+
+export interface ViewerReportData {
+  kind: "report";
+  report: string;
+  revision: number;
+  title: string;
+  program: string;
+  phase: string;
+  task: string | null;
+  technical_status: "complete" | "partial" | "blocked";
+  review_status: "pending" | "approved" | "changes_requested";
+  channel: "app" | "both";
+  delivery_states: Array<"queued" | "submitting" | "smtp_accepted" | "rejected" | "unknown" | "cancelled">;
+  device_delivery: "unverified";
+  sections: number;
+}
+
+export interface ViewerReportFragment {
+  version: 1;
+  block: number;
+  part: number;
+  parts: number;
+  encoding: "canonical-block-json";
+  content: string;
+}
+
+export interface ViewerReportSectionData {
+  kind: "report_section";
+  page: number;
+  pages: number;
+  content: ViewerReportFragment;
+}
+
+export interface ViewerReportImageData {
+  kind: "report_image";
+  name: string;
+  sha256: string;
+  bytes: number;
+  offset: number;
+  data_base64: string;
+  next_offset: number | null;
+}
+
+export type ViewerData = ViewerSessionData | ViewerTaskData | ViewerMemoryData | ViewerGraphData | ViewerReportListData | ViewerReportData | ViewerReportSectionData | ViewerReportImageData;
+
+export interface ViewerResponse {
+  schema_version: 1;
+  binding: ViewerBinding;
+  coverage: string;
+  truncated: boolean;
+  next_cursor: string | null;
+  data: ViewerData;
 }

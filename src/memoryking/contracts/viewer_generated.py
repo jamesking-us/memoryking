@@ -131,7 +131,7 @@ class ViewerError(TypedDict):
 class ViewerCriterion(TypedDict):
     id: str
     text: str
-    state: Literal['pending', 'passed', 'failed', 'waived']
+    state: Literal['pending', 'passed', 'failed', 'waived', 'unknown']
     evidence_available: bool
 
 class ViewerTask(TypedDict):
@@ -148,6 +148,9 @@ class ViewerMemory(TypedDict):
     authority: Literal['observed', 'proposed', 'accepted']
     observed_ms: int
     evidence_available: bool
+    truncated: bool
+    source: str
+    classification: Literal['public', 'internal', 'restricted']
 
 class ViewerBinding(TypedDict):
     store: str
@@ -159,6 +162,7 @@ class ViewerBinding(TypedDict):
     evaluated_ms: int
     fresh_until_ms: int
     observed_position: int
+    session_generation: int
 
 class ViewerPage(TypedDict):
     schema_version: Literal[1]
@@ -168,3 +172,97 @@ class ViewerPage(TypedDict):
     next_cursor: str | None
     tasks: list[ViewerTask]
     memories: list[ViewerMemory]
+
+class ViewerSessionData(TypedDict):
+    kind: Literal['session']
+    projects: list[str]
+    csrf: str
+
+class ViewerTaskData(TypedDict):
+    kind: Literal['overview', 'tasks', 'task']
+    tasks: list[ViewerTask]
+
+class ViewerMemoryData(TypedDict):
+    kind: Literal['memories', 'memory']
+    memories: list[ViewerMemory]
+
+class ViewerGraphNode(TypedDict):
+    id: str
+    label: str
+    kind: Literal['task', 'criterion']
+
+class ViewerGraphEdge(TypedDict):
+    source: str
+    target: str
+    kind: Literal['declares']
+
+class ViewerGraphData(TypedDict):
+    kind: Literal['graph']
+    nodes: list[ViewerGraphNode]
+    edges: list[ViewerGraphEdge]
+
+class ViewerReportItem(TypedDict):
+    report: str
+    revision: int
+    title: str
+    program: str
+    phase: str
+    task: str | None
+    technical_status: Literal['complete', 'partial', 'blocked']
+    review_status: Literal['pending', 'approved', 'changes_requested']
+    channel: Literal['app', 'both']
+    delivery_states: list[Literal['queued', 'submitting', 'smtp_accepted', 'rejected', 'unknown', 'cancelled']]
+    device_delivery: Literal['unverified']
+    created_ms: int
+
+class ViewerReportListData(TypedDict):
+    kind: Literal['reports']
+    reports: list[ViewerReportItem]
+
+class ViewerReportData(TypedDict):
+    kind: Literal['report']
+    report: str
+    revision: int
+    title: str
+    program: str
+    phase: str
+    task: str | None
+    technical_status: Literal['complete', 'partial', 'blocked']
+    review_status: Literal['pending', 'approved', 'changes_requested']
+    channel: Literal['app', 'both']
+    delivery_states: list[Literal['queued', 'submitting', 'smtp_accepted', 'rejected', 'unknown', 'cancelled']]
+    device_delivery: Literal['unverified']
+    sections: int
+
+class ViewerReportFragment(TypedDict):
+    version: Literal[1]
+    block: int
+    part: int
+    parts: int
+    encoding: Literal['canonical-block-json']
+    content: str
+
+class ViewerReportSectionData(TypedDict):
+    kind: Literal['report_section']
+    page: int
+    pages: int
+    content: ViewerReportFragment
+
+class ViewerReportImageData(TypedDict):
+    kind: Literal['report_image']
+    name: str
+    sha256: str
+    bytes: int
+    offset: int
+    data_base64: str
+    next_offset: int | None
+
+ViewerData = ViewerSessionData | ViewerTaskData | ViewerMemoryData | ViewerGraphData | ViewerReportListData | ViewerReportData | ViewerReportSectionData | ViewerReportImageData
+
+class ViewerResponse(TypedDict):
+    schema_version: Literal[1]
+    binding: ViewerBinding
+    coverage: str
+    truncated: bool
+    next_cursor: str | None
+    data: ViewerData

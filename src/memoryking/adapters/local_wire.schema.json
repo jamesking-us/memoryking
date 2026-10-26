@@ -7069,7 +7069,8 @@
                 "pending",
                 "passed",
                 "failed",
-                "waived"
+                "waived",
+                "unknown"
               ]
             },
             "evidence_available": {
@@ -7162,6 +7163,21 @@
             },
             "evidence_available": {
               "type": "boolean"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "classification": {
+              "enum": [
+                "public",
+                "internal",
+                "restricted"
+              ]
             }
           },
           "required": [
@@ -7169,7 +7185,10 @@
             "text",
             "authority",
             "observed_ms",
-            "evidence_available"
+            "evidence_available",
+            "truncated",
+            "source",
+            "classification"
           ]
         },
         "ViewerBinding": {
@@ -7225,6 +7244,11 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "session_generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
             }
           },
           "required": [
@@ -7236,7 +7260,8 @@
             "authorization_epoch",
             "evaluated_ms",
             "fresh_until_ms",
-            "observed_position"
+            "observed_position",
+            "session_generation"
           ]
         },
         "ViewerPage": {
@@ -7292,6 +7317,586 @@
             "next_cursor",
             "tasks",
             "memories"
+          ]
+        },
+        "ViewerSessionData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "session"
+            },
+            "projects": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96,
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "maxItems": 128
+            },
+            "csrf": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "kind",
+            "projects",
+            "csrf"
+          ]
+        },
+        "ViewerTaskData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "overview",
+                "tasks",
+                "task"
+              ]
+            },
+            "tasks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerTask"
+              },
+              "maxItems": 50
+            }
+          },
+          "required": [
+            "kind",
+            "tasks"
+          ]
+        },
+        "ViewerMemoryData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "memories",
+                "memory"
+              ]
+            },
+            "memories": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerMemory"
+              },
+              "maxItems": 50
+            }
+          },
+          "required": [
+            "kind",
+            "memories"
+          ]
+        },
+        "ViewerGraphNode": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "kind": {
+              "enum": [
+                "task",
+                "criterion"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "kind"
+          ]
+        },
+        "ViewerGraphEdge": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "kind": {
+              "const": "declares"
+            }
+          },
+          "required": [
+            "source",
+            "target",
+            "kind"
+          ]
+        },
+        "ViewerGraphData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "graph"
+            },
+            "nodes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerGraphNode"
+              },
+              "maxItems": 100
+            },
+            "edges": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerGraphEdge"
+              },
+              "maxItems": 150
+            }
+          },
+          "required": [
+            "kind",
+            "nodes",
+            "edges"
+          ]
+        },
+        "ViewerReportItem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "report": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "program": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "phase": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 96,
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "technical_status": {
+              "enum": [
+                "complete",
+                "partial",
+                "blocked"
+              ]
+            },
+            "review_status": {
+              "enum": [
+                "pending",
+                "approved",
+                "changes_requested"
+              ]
+            },
+            "channel": {
+              "enum": [
+                "app",
+                "both"
+              ]
+            },
+            "delivery_states": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "queued",
+                  "submitting",
+                  "smtp_accepted",
+                  "rejected",
+                  "unknown",
+                  "cancelled"
+                ]
+              },
+              "maxItems": 6
+            },
+            "device_delivery": {
+              "const": "unverified"
+            },
+            "created_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "report",
+            "revision",
+            "title",
+            "program",
+            "phase",
+            "task",
+            "technical_status",
+            "review_status",
+            "channel",
+            "delivery_states",
+            "device_delivery",
+            "created_ms"
+          ]
+        },
+        "ViewerReportListData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "reports"
+            },
+            "reports": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerReportItem"
+              },
+              "maxItems": 50
+            }
+          },
+          "required": [
+            "kind",
+            "reports"
+          ]
+        },
+        "ViewerReportData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "report"
+            },
+            "report": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "program": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "phase": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "task": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 96,
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "technical_status": {
+              "enum": [
+                "complete",
+                "partial",
+                "blocked"
+              ]
+            },
+            "review_status": {
+              "enum": [
+                "pending",
+                "approved",
+                "changes_requested"
+              ]
+            },
+            "channel": {
+              "enum": [
+                "app",
+                "both"
+              ]
+            },
+            "delivery_states": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "queued",
+                  "submitting",
+                  "smtp_accepted",
+                  "rejected",
+                  "unknown",
+                  "cancelled"
+                ]
+              },
+              "maxItems": 6
+            },
+            "device_delivery": {
+              "const": "unverified"
+            },
+            "sections": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          },
+          "required": [
+            "kind",
+            "report",
+            "revision",
+            "title",
+            "program",
+            "phase",
+            "task",
+            "technical_status",
+            "review_status",
+            "channel",
+            "delivery_states",
+            "device_delivery",
+            "sections"
+          ]
+        },
+        "ViewerReportFragment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "block": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8191
+            },
+            "part": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 99999
+            },
+            "parts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "encoding": {
+              "const": "canonical-block-json"
+            },
+            "content": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "version",
+            "block",
+            "part",
+            "parts",
+            "encoding",
+            "content"
+          ]
+        },
+        "ViewerReportSectionData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "report_section"
+            },
+            "page": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 99999
+            },
+            "pages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "content": {
+              "$ref": "#/$defs/Viewer/$defs/ViewerReportFragment"
+            }
+          },
+          "required": [
+            "kind",
+            "page",
+            "pages",
+            "content"
+          ]
+        },
+        "ViewerReportImageData": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "report_image"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 110
+            },
+            "sha256": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8388608
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8388608
+            },
+            "data_base64": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 43692
+            },
+            "next_offset": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 8388608
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "sha256",
+            "bytes",
+            "offset",
+            "data_base64",
+            "next_offset"
+          ]
+        },
+        "ViewerData": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerSessionData"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerTaskData"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerMemoryData"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerGraphData"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerReportListData"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerReportData"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerReportSectionData"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerReportImageData"
+            }
+          ]
+        },
+        "ViewerResponse": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "binding": {
+              "$ref": "#/$defs/Viewer/$defs/ViewerBinding"
+            },
+            "coverage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "next_cursor": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "data": {
+              "$ref": "#/$defs/Viewer/$defs/ViewerData"
+            }
+          },
+          "required": [
+            "schema_version",
+            "binding",
+            "coverage",
+            "truncated",
+            "next_cursor",
+            "data"
           ]
         }
       },

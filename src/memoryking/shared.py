@@ -88,6 +88,7 @@ def parser() -> argparse.ArgumentParser:
         if name == "restore":
             item.add_argument("--lost-anchor-journal-head")
         if name == "serve":
+            item.add_argument("--viewer-config", type=Path)
             item.add_argument("--bind", default="127.0.0.1")
             item.add_argument("--port", type=int, default=8765)
             item.add_argument("--host", action="append", required=True)
@@ -206,6 +207,18 @@ def run(args: Any) -> dict[str, Any]:
                 private_file(args.tls_key)
             service = SharedService(pool, args.content, args.control, audience=args.audience)
             report_worker = None
+            viewer = None
+            if args.viewer_config is not None:
+                from memoryking.adapters.viewer_config import load_config
+                from memoryking.adapters.viewer_http import ViewerListener
+
+                viewer_config = load_config(args.viewer_config)
+                viewer = ViewerListener(
+                    viewer_config,
+                    lambda session: service.store(
+                        viewer_config["tenant"], session.subject.credential
+                    ),
+                )
             if args.report_config is not None:
                 from memoryking.adapters.report_worker import Configuration, ReportWorker
 
@@ -225,6 +238,8 @@ def run(args: Any) -> dict[str, Any]:
                 dashboard_tenant=args.dashboard_tenant,
             )
             try:
+                if viewer:
+                    viewer.start()
                 if report_worker:
                     report_worker.start()
                 uvicorn.run(
@@ -238,6 +253,8 @@ def run(args: Any) -> dict[str, Any]:
                     ssl_keyfile=str(args.tls_key) if args.tls_key else None,
                 )
             finally:
+                if viewer:
+                    viewer.stop()
                 if report_worker:
                     report_worker.stop()
             return {"status": "stopped"}
