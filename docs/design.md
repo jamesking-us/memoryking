@@ -112,4 +112,18 @@ The current release implements this identity foundation and closed viewer/report
 contracts. The dedicated listener, GitHub authentication, mobile interface and
 built-in reporting engine remain upcoming capabilities.
 
+## Experimental report rendering
+
+The optional report modules validate a complete phase document and build PDF, EPUB
+and structured reader content from the same source. Reader fragments preserve long
+code and tables without exceeding 64 KiB per response. Structure checks do not
+establish factual accuracy or human approval.
+
+The native macOS renderer runs in a separate process with restricted file access,
+no network, no inherited mail environment or service descriptors, and bounded wall
+time and memory. Other platforms fail closed until their isolation is implemented.
+This is an internal rendering foundation: durable report records, scoped service
+commands, current dependency permissions, app publication and delivery remain under
+development. Installing optional rendering dependencies does not activate email.
+
 [Back to README](../README.md) · [Security](../SECURITY.md) · [Deployment](deployment.md)

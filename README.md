@@ -90,8 +90,9 @@ the existing dashboard is for the trusted local owner.
 To try the permission model safely, run `.venv/bin/python examples/viewer_identity.py`.
 It uses a temporary store and no external account. See
 [viewer access](docs/deployment.md#viewer-access-foundation) for the owner operation
-and upgrade/recovery requirements. Built-in reporting contracts are defined, but
-report generation, app publication and delivery are not implemented yet.
+and upgrade/recovery requirements. Report document and isolated rendering libraries
+are experimental; the app report catalog and Kindle delivery workflow are not yet
+available.
 
 ## Choose your setup
 

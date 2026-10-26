@@ -22,6 +22,7 @@ memoryking-embedding-worker = "memoryking.embedding_worker:main"
 tokenizers = ["tiktoken==0.12.0"]
 embeddings = ["onnxruntime==1.23.2", "numpy==2.5.4", "tokenizers==0.23.3"]
 shared = ["psycopg[binary]==3.3.6", "psycopg-pool==3.3.3", "mcp==2.3.0"]
+reports = ["reportlab==4.4.9", "pillow==13.0.0", "pypdf==6.10.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -49,4 +50,8 @@ files = ["src/memoryking"]
 
 [[tool.mypy.overrides]]
 module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["reportlab", "reportlab.*"]
 ignore_missing_imports = true
