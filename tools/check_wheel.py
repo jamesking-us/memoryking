@@ -94,3 +94,16 @@ worker = Path(sys.executable).with_name("memoryking-repository-worker")
 result = subprocess.run([str(worker), "--help"], capture_output=True, text=True, timeout=10)
 assert result.returncode == 0 and "--once" in result.stdout
 print("Packaged schema and Python types verified:", wheel.name)
+
+subprocess.run(
+    [
+        sys.executable,
+        "tools/viewer_auth_audit.py",
+        "--wheel",
+        str(wheel),
+        "--output",
+        "tmp/checks/viewer-auth-package.json",
+    ],
+    cwd=root,
+    check=True,
+)

@@ -45,7 +45,9 @@ def main():
                     {"path": name, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
                 )
     assets = []
-    for directory in (ROOT / "packages/dashboard/dist", ROOT / "packages/contracts/dist"):
+    for directory in (ROOT / "src/memoryking/adapters/web", ROOT / "packages/contracts/dist"):
+        if not directory.is_dir():
+            raise SystemExit("Build distributed assets before the authentication audit")
         for path in sorted(directory.rglob("*")):
             if path.is_file():
                 raw = path.read_bytes()
