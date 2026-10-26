@@ -287,6 +287,11 @@ make staggered TLS reads at up to one read per second each, including bounded
 task, memory/search, pagination and graph reads. A mid-run grant reduction must
 deny an old session before access is explicitly restored.
 
+Before measurement, the seeder drains projection jobs in bounded batches through
+the normal claim/finish protocol, then verifies the corpus counts and an empty
+pending queue. It does not increase queue limits or write synthetic job states
+directly. Preparation time is reported separately from the timed read workload.
+
 The output contains sanitized request timings, status/pressure counts, response
 body byte totals, session churn, resource samples and database admission timings.
 No cookies, OAuth tokens, response contents or real mail are retained. SQLite

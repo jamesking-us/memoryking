@@ -181,6 +181,17 @@ class Client:
 def seed(fixture, tasks, memories):
     from memoryking.adapters.working import Working
 
+    projected = 0
+
+    def drain_projection_jobs():
+        nonlocal projected
+        # Use the real bounded worker protocol. Seeding is outside measurement;
+        # it must not fill the pending queue or bypass it with direct SQL writes.
+        while (job := fixture.store.claim(fixture.owner, "p")) is not None:
+            fixture.store.finish(fixture.owner, "p", job["lease"], "complete")
+            projected += 1
+            assert projected <= memories
+
     # The fixture already owns exactly one canonical observation. Add the rest
     # through capture, including one owner-only non-disclosure sentinel.
     for i in range(1, memories):
@@ -202,6 +213,9 @@ def seed(fixture, tasks, memories):
                 "observed_at_ms": 1,
             },
         )
+        if i % 250 == 0:
+            drain_projection_jobs()
+    drain_projection_jobs()
     body = json.loads((ROOT / "fixtures/contracts/checkpoint.json").read_text())
     body.update(findings=[], failed_attempts=[], verification=[], blockers=[], references=[])
     for i in range(tasks):
@@ -234,9 +248,20 @@ def seed(fixture, tasks, memories):
             "SELECT COUNT(*) FROM checkpoint_streams WHERE tenant=? AND project=? AND stream='task'",
             (fixture.tenant, "p"),
         ).fetchone()[0]
+        pending = fixture.store.db.execute(
+            "SELECT COUNT(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')",
+            (fixture.tenant,),
+        ).fetchone()[0]
     assert observed == memories
     assert saved_tasks == tasks
-    return {"tasks": saved_tasks, "memories": observed, "owner_only_memories": 1}
+    assert projected == memories and pending == 0
+    return {
+        "tasks": saved_tasks,
+        "memories": observed,
+        "owner_only_memories": 1,
+        "completed_projection_jobs": projected,
+        "pending_jobs_before_measurement": pending,
+    }
 
 
 def sample_processes(ledger, stop, pg_root):
