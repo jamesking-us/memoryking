@@ -52,11 +52,25 @@ def main() -> int:
     login.add_argument("--socket", type=Path, required=True)
     login.add_argument("--credential", type=Path, required=True)
     login.add_argument("--output", type=Path, required=True)
+    viewer = commands.add_parser(
+        "viewer-admin", help="Owner-only viewer policy JSON over local IPC"
+    )
+    viewer.add_argument("--socket", type=Path, required=True)
+    viewer.add_argument("--credential", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "init":
             path = LocalStore.initialize(args.store, args.control, args.tenant, args.principal)
             print(json.dumps({"credential_file": str(path)}))
+        elif args.command == "viewer-admin":
+            private_file(args.credential)
+            body = load_strict(sys.stdin.buffer.read(262145))
+            if not isinstance(body, dict):
+                raise LocalError("invalid_request")
+            result = request(
+                args.socket, args.credential.read_text().strip(), "viewer_admin", {"command": body}
+            )
+            print(canonical_bytes(result).decode())
         elif args.command == "restore":
             path = LocalStore.restore(
                 args.store,

@@ -178,7 +178,7 @@ class Retrieval:
                 or hashlib.sha256(row["body"].encode()).hexdigest() != row["body_hash"]
             ):
                 raise LocalError("replay_denied")
-            token = self.s._token("credential", tenant=who["tenant"], principal=who["principal"])
+            token = self.s._subject_token(who)
             self.s._subject_auth(token, "read", row["project"], at)
             for source in json.loads(row["dependencies"]):
                 self._dependency(who, source, at)
@@ -816,7 +816,7 @@ class Retrieval:
                 raise LocalError("unavailable")
             if state != "accepted":
                 self.s._subject_auth(
-                    self.s._token("credential", tenant=who["tenant"], principal=who["principal"]),
+                    self.s._subject_token(who),
                     "review",
                     args["project"],
                     at,

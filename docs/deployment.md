@@ -140,12 +140,63 @@ The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. I
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 8 and PostgreSQL 3. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 9 and PostgreSQL 4. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 
 Offline local `gc` expires retained result bodies and removes unreferenced blobs; consumed request keys remain consumed. Purge and retention previews are privileged operations with explicit dependency effects. They do not erase copies already exported or delivered. There is no installed backup/retention scheduler.
 
 Stop services before removing runtime environments or images. Removing software does not remove data, control, archives or migration bundles. Keep or deliberately dispose of those separately under your retention policy.
+
+## Viewer access foundation
+
+Viewer identity policy is available to the owner; the phone listener and real GitHub
+login are not enabled by this foundation. No new service, port, OAuth app or network
+configuration is created automatically. The existing dashboard retains its owner-only
+boundary.
+
+Run `.venv/bin/python examples/viewer_identity.py` for an exercised disposable
+SQLite/owner-IPC walkthrough. It does not connect to GitHub, change an existing
+store or expose a viewer credential.
+
+The owner CLI is `python -m memoryking viewer-admin --socket SOCKET --credential
+OWNER_CREDENTIAL_FILE`, reading one closed viewer command from stdin. Commands
+contain version `1`, the current history incarnation, a stable retry `key`, `action`
+and typed `args`. Use the authoritative viewer schema and the exercised example,
+not a copied history identifier. Shared owner requests use the same `viewer_admin`
+operation through the existing authenticated shared request channel.
+
+| Action | Arguments and effect |
+| --- | --- |
+| `bind` | Principal, fixed issuer `https://github.com`, decimal numeric `user_id`; requires a fresh dedicated principal without existing agent/owner grants. |
+| `grant` | Exact project, expected binding version, nullable start/expiry in UTC milliseconds; read-only and does not change content readers. |
+| `revoke` | Exact project and expected binding version; removes that viewer grant. |
+| `disable` | Principal and expected version; removes grants and disables sign-in identity resolution. |
+| `rebind` | New numeric subject and expected version; invalidates sessions and clears old project grants instead of transferring them to another account. It does not re-enable a disabled binding. |
+| `logout_all` | Principal and expected version; advances the independently durable generation. |
+| `list` | Empty args; bounded owner-only identity/grant inventory with truncation reported. |
+
+Identity uses the numeric subject, not login name/email. Every mutation advances
+binding version and session generation and the canonical tenant policy epoch. Old
+verified contexts are rejected. At most 256 bindings and 1,024 viewer project
+grants exist per tenant. General agent-grant commands cannot widen a registered
+viewer principal. Operator retries are journaled; a mismatched canonical payload
+under the same key is rejected. After restore, reconcile and use the new history
+namespace explicitly; do not blindly repeat an old request.
+
+SQLite upgrades from schema 8 to 9 under exclusive ownership; PostgreSQL migrates
+from shared schema 3 to 4 with the separate migration role. Both add tenant-bound
+viewer bindings, grants and retry projections; PostgreSQL forces row security and
+workers cannot mutate those tables. Current independent security history is still
+required on restore. Preserve the old package and a verified archive, and rehearse
+roll-forward/fresh-history recovery before adoption. There is no reverse migration.
+No running store has to be adopted to try the disposable example.
+
+Viewer/report JSON schemas and generated types are available now. They define
+future listener/session/report boundaries; they do not implement OAuth, a PWA,
+report rendering, publication or email delivery. Viewer configuration is rejected
+for non-HTTPS public origins, non-loopback listeners, invalid TLS-mode combinations,
+invalid limits or unknown fields. A configuration file does not start a listener
+in this version.
 
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

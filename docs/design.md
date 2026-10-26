@@ -93,4 +93,23 @@ The optional logo interaction tilts a rendered image using perspective; it is no
 
 The main [elephant artwork](../packages/dashboard-foundation/web/elephant.png) was created with the built-in image-generation tool; its [generation prompt](images/memoryking-emblem-prompt.txt) is retained alongside the documentation. The favicon is a simplified vector mark for small sizes.
 
+## Viewer identity boundary
+
+Viewer subjects have dedicated numeric GitHub identity bindings and read-only exact
+project grants. These policy operations use the existing independently durable
+control journal and canonical release transactions on both stores. A restored
+content archive cannot roll back a later revocation, and a new history invalidates
+old contexts. Binding changes invalidate generations and never transfer content
+readership.
+
+The trusted provider adapter will resolve an authenticated subject to an internal
+verified context; browser input cannot choose a principal or claim a role. The
+canonical authorization path checks the signed viewer ceiling and current policy
+before reading, including nested dependency checks. No owner credential is placed
+in a viewer context. Owner operations stay outside model-facing discovery.
+
+The current release implements this identity foundation and closed viewer/report
+contracts. The dedicated listener, GitHub authentication, mobile interface and
+built-in reporting engine remain upcoming capabilities.
+
 [Back to README](../README.md) · [Security](../SECURITY.md) · [Deployment](deployment.md)

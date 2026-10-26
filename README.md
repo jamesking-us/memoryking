@@ -78,6 +78,19 @@ The dashboard helps you inspect recorded work without reading a long chat transc
 
 Agents must publish their state through the supported interfaces. A displayed heartbeat is an observation, not proof that an agent is still working; missing cost data stays unknown.
 
+### Phone access is being built
+
+The viewer foundation supports owner-managed GitHub identity bindings and exact
+project grants. A project grant never shares owner-only notes automatically.
+The phone interface, browser sessions and real GitHub sign-in are not available yet;
+the existing dashboard is for the trusted local owner.
+
+To try the permission model safely, run `.venv/bin/python examples/viewer_identity.py`.
+It uses a temporary store and no external account. See
+[viewer access](docs/deployment.md#viewer-access-foundation) for the owner operation
+and upgrade/recovery requirements. Built-in reporting contracts are defined, but
+report generation, app publication and delivery are not implemented yet.
+
 ## Choose your setup
 
 | Setup | Suitable for | What runs |

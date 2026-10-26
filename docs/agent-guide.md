@@ -116,4 +116,13 @@ These commands run disposable examples in the [contributor environment](../CONTR
 
 Use `.venv/bin/python` in place of `python` unless the environment is activated. The examples make no paid provider calls.
 
+## Preparing phone viewers
+
+The owner can bind a numeric GitHub identity and grant read-only project access
+through the viewer policy operation. An agent cannot invite viewers or share
+owner-only evidence just by writing a project name. Phone login and the mobile
+interface are not available yet. Existing capture/checkpoint integrations continue
+unchanged. See the [disposable permission example](../examples/viewer_identity.py)
+and [owner setup](deployment.md#viewer-access-foundation).
+
 [Back to README](../README.md) · [Design](design.md) · [API reference](reference.md)

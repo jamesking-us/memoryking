@@ -109,4 +109,26 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 | `recovery_required`, `journal_rollback`, `backup_invalid` | Stay offline and use verified independent recovery evidence. |
 | `session_changed` | Sign in again; permissions changed and retained views were cleared. |
 
+## Viewer and report contracts
+
+[Viewer v1](../contracts/viewer-v1.schema.json) defines owner operations, fixed-issuer
+subject metadata, configuration, bounded task/memory DTOs and error shapes.
+[Reporting v1](../contracts/reporting-v1.schema.json) defines immutable revision,
+artifact, QA, capability and channel-policy types for the upcoming built-in engine.
+Generated Python/TypeScript and packaged schemas accompany these sources. Python
+`memoryking.contracts.viewer.validate_viewer` validates a named definition; it does
+not authenticate a provider subject or grant permissions.
+
+`viewer-admin` is an owner-only CLI/IPC operation, outside the eight MCP tools. Its
+commands are listed in [viewer access](deployment.md#viewer-access-foundation).
+`ViewerIdentity.resolve_authenticated_subject` is an internal trusted-adapter lookup,
+not a browser login API. Its signed read-only context is never returned to browser
+code; canonical project/content/dependency checks still execute on reads.
+
+Identity-specific errors include `viewer_binding_conflict`, `revision_conflict`,
+`viewer_policy_operation_required`, `invalid_viewer_request` and `viewer_limit`.
+The operator can inspect its own bindings; callers without owner authority receive
+no inventory. Login, viewer HTTP routes and built-in report operations are not yet
+implemented. Do not expose the administrator dashboard as a substitute phone app.
+
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

@@ -613,7 +613,7 @@ class KnowledgeTests(unittest.TestCase):
         db.close()
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 8)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],

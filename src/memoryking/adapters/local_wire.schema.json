@@ -1461,6 +1461,41 @@
         "operation",
         "args"
       ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "viewer_admin"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/Viewer/$defs/ViewerAdminCommand"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
     }
   ],
   "$defs": {
@@ -6285,6 +6320,942 @@
           ]
         }
       ]
+    },
+    "Viewer": {
+      "title": "viewer-v1",
+      "$defs": {
+        "BindArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "issuer": {
+              "const": "https://github.com"
+            },
+            "user_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20,
+              "pattern": "^[1-9][0-9]{0,19}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "principal",
+            "issuer",
+            "user_id"
+          ]
+        },
+        "GrantArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "starts": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expires": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "principal",
+            "project",
+            "expected_version",
+            "starts",
+            "expires"
+          ]
+        },
+        "RevokeArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "principal",
+            "project",
+            "expected_version"
+          ]
+        },
+        "PrincipalArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "principal",
+            "expected_version"
+          ]
+        },
+        "RebindArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "user_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20,
+              "pattern": "^[1-9][0-9]{0,19}(?![\\s\\S])"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "principal",
+            "user_id",
+            "expected_version"
+          ]
+        },
+        "EmptyArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {},
+          "required": []
+        },
+        "ViewerBind": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "const": "bind"
+            },
+            "args": {
+              "$ref": "#/$defs/Viewer/$defs/BindArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ViewerGrant": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "const": "grant"
+            },
+            "args": {
+              "$ref": "#/$defs/Viewer/$defs/GrantArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ViewerRevoke": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "const": "revoke"
+            },
+            "args": {
+              "$ref": "#/$defs/Viewer/$defs/RevokeArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ViewerDisable": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "const": "disable"
+            },
+            "args": {
+              "$ref": "#/$defs/Viewer/$defs/PrincipalArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ViewerRebind": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "const": "rebind"
+            },
+            "args": {
+              "$ref": "#/$defs/Viewer/$defs/RebindArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ViewerLogoutAll": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "const": "logout_all"
+            },
+            "args": {
+              "$ref": "#/$defs/Viewer/$defs/PrincipalArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ViewerList": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "const": "list"
+            },
+            "args": {
+              "$ref": "#/$defs/Viewer/$defs/EmptyArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ViewerAdminCommand": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerBind"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerGrant"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerRevoke"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerDisable"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerRebind"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerLogoutAll"
+            },
+            {
+              "$ref": "#/$defs/Viewer/$defs/ViewerList"
+            }
+          ]
+        },
+        "ViewerLimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "active_sessions": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "pending_logins": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256
+            },
+            "list_items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "detail_bytes": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 16384
+            },
+            "graph_nodes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "graph_edges": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 150
+            },
+            "response_bytes": {
+              "type": "integer",
+              "minimum": 16384,
+              "maximum": 262144
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "request_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          },
+          "required": [
+            "active_sessions",
+            "pending_logins",
+            "list_items",
+            "detail_bytes",
+            "graph_nodes",
+            "graph_edges",
+            "response_bytes",
+            "concurrency",
+            "request_seconds"
+          ]
+        },
+        "ViewerConfig": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "tenant": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "public_origin": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "listen_host": {
+              "enum": [
+                "127.0.0.1",
+                "::1"
+              ]
+            },
+            "listen_port": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65535
+            },
+            "transport": {
+              "enum": [
+                "isolated_proxy",
+                "direct_tls"
+              ]
+            },
+            "github_client_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "github_secret_file": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "tls_cert_file": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tls_key_file": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "session_idle_seconds": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 1800
+            },
+            "session_absolute_seconds": {
+              "type": "integer",
+              "minimum": 300,
+              "maximum": 28800
+            },
+            "login_seconds": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 300
+            },
+            "poll_seconds": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 60
+            },
+            "display_lifetime_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 15
+            },
+            "limits": {
+              "$ref": "#/$defs/Viewer/$defs/ViewerLimits"
+            }
+          },
+          "required": [
+            "version",
+            "enabled",
+            "tenant",
+            "public_origin",
+            "listen_host",
+            "listen_port",
+            "transport",
+            "github_client_id",
+            "github_secret_file",
+            "tls_cert_file",
+            "tls_key_file",
+            "session_idle_seconds",
+            "session_absolute_seconds",
+            "login_seconds",
+            "poll_seconds",
+            "display_lifetime_seconds",
+            "limits"
+          ]
+        },
+        "ViewerSubject": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "store": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "tenant": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "issuer": {
+              "const": "https://github.com"
+            },
+            "user_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20,
+              "pattern": "^[1-9][0-9]{0,19}(?![\\s\\S])"
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "policy_epoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "store",
+            "tenant",
+            "principal",
+            "issuer",
+            "user_id",
+            "incarnation",
+            "generation",
+            "policy_epoch"
+          ]
+        },
+        "ViewerError": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "error": {
+              "enum": [
+                "unauthenticated",
+                "unavailable",
+                "context_changed",
+                "invalid_cursor",
+                "invalid_request",
+                "rate_limited",
+                "service_unavailable"
+              ]
+            }
+          },
+          "required": [
+            "schema_version",
+            "error"
+          ]
+        },
+        "ViewerCriterion": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "state": {
+              "enum": [
+                "pending",
+                "passed",
+                "failed",
+                "waived"
+              ]
+            },
+            "evidence_available": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "state",
+            "evidence_available"
+          ]
+        },
+        "ViewerTask": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "objective": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "current_state": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "criteria": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerCriterion"
+              },
+              "maxItems": 100
+            },
+            "blockers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "maxItems": 100
+            },
+            "coverage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "id",
+            "objective",
+            "current_state",
+            "criteria",
+            "blockers",
+            "coverage"
+          ]
+        },
+        "ViewerMemory": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "handle": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            },
+            "authority": {
+              "enum": [
+                "observed",
+                "proposed",
+                "accepted"
+              ]
+            },
+            "observed_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "evidence_available": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "handle",
+            "text",
+            "authority",
+            "observed_ms",
+            "evidence_available"
+          ]
+        },
+        "ViewerBinding": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "store": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "tenant": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "principal": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "authorization_epoch": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "evaluated_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "fresh_until_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "observed_position": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "store",
+            "tenant",
+            "principal",
+            "project",
+            "incarnation",
+            "authorization_epoch",
+            "evaluated_ms",
+            "fresh_until_ms",
+            "observed_position"
+          ]
+        },
+        "ViewerPage": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "binding": {
+              "$ref": "#/$defs/Viewer/$defs/ViewerBinding"
+            },
+            "coverage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "next_cursor": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "tasks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerTask"
+              },
+              "maxItems": 50
+            },
+            "memories": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Viewer/$defs/ViewerMemory"
+              },
+              "maxItems": 50
+            }
+          },
+          "required": [
+            "schema_version",
+            "binding",
+            "coverage",
+            "truncated",
+            "next_cursor",
+            "tasks",
+            "memories"
+          ]
+        }
+      },
+      "$ref": "#/$defs/Viewer/$defs/ViewerAdminCommand"
     }
   }
 }

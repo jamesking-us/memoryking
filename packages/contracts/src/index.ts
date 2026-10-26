@@ -213,3 +213,6 @@ export function validateExperience(value: unknown): void {
   canonicalBytes(value);
   if (!experienceValidator(value)) throw new ContractError("schema_invalid");
 }
+
+export type * from "./viewer-generated.js";
+export type * from "./reporting-generated.js";

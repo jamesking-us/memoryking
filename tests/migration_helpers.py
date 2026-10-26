@@ -14,6 +14,7 @@ def historical_inventory(db, version):
         6: "repository",
         7: "optional",
         8: "experience",
+        9: "viewer",
     }
     for number, name in reversed(list(migrations.items())):
         if number > version:

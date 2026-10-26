@@ -90,4 +90,11 @@ For multiple machines or tenants, use the [shared deployment](deployment.md#shar
 | Dashboard has no tasks | Connect the correct project and ensure the agent has saved checkpoints. |
 | Exact tokenizer unavailable | Install the optional tokenizer lock or explicitly use `utf8-byte-estimate-v1`. |
 
+## Try viewer permissions safely
+
+Run `.venv/bin/python examples/viewer_identity.py` to exercise explicit viewer
+grants, private-note isolation and revocation in a temporary store. It uses local
+owner IPC and an internally simulated authenticated subject. It does not perform
+GitHub sign-in or start the phone application.
+
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

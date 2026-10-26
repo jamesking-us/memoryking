@@ -214,5 +214,14 @@
     ],
     "exit_code": 0,
     "contains": "Audit passed"
+  },
+  {
+    "id": "viewer-identity-owner-ipc",
+    "command": [
+      "{python}",
+      "examples/viewer_identity.py"
+    ],
+    "exit_code": 0,
+    "contains": "Viewer identity demo: explicit grant, owner-only isolation and revocation verified."
   }
 ]

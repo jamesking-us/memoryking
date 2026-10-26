@@ -25,3 +25,8 @@ packages/contracts/experience.schema.json
 packages/contracts/src/experience-generated.ts
 
 packages/dashboard-foundation/src/inspection-generated.ts
+
+packages/contracts/viewer.schema.json
+packages/contracts/src/viewer-generated.ts
+packages/contracts/reporting.schema.json
+packages/contracts/src/reporting-generated.ts

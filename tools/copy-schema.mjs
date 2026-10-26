@@ -1,4 +1,10 @@
 import { copyFileSync } from "node:fs";
+for (const stem of ["viewer", "reporting"]) {
+  copyFileSync(
+    `packages/contracts/${stem}.schema.json`,
+    `packages/contracts/dist/${stem}.schema.json`,
+  );
+}
 copyFileSync(
   "packages/contracts/embedding.schema.json",
   "packages/contracts/dist/embedding.schema.json",

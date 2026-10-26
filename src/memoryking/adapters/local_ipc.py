@@ -36,6 +36,10 @@ class StoreOperations:
             raise LocalError("invalid_request")
         op, args, credential = request["operation"], request["args"], request["credential"]
         store = self.store
+        if op == "viewer_admin":
+            from memoryking.adapters.viewer_identity import ViewerIdentity
+
+            return ViewerIdentity(store).execute(credential, args["command"])
         if op == "experience":
             return Experience(store).execute(credential, args["command"])
         if op == "processing":

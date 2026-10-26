@@ -1,0 +1,492 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryking.invalid/contracts/reporting-v1",
+  "title": "reporting-v1",
+  "$defs": {
+    "ReportArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "pdf",
+            "epub",
+            "reader"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000000
+        },
+        "renderer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "kind",
+        "sha256",
+        "bytes",
+        "renderer"
+      ]
+    },
+    "ReportDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "observation",
+            "revision",
+            "external_source"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "sha256"
+      ]
+    },
+    "ReportRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "template_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "program": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "technical_status": {
+          "enum": [
+            "complete",
+            "partial",
+            "blocked"
+          ]
+        },
+        "review_status": {
+          "enum": [
+            "pending",
+            "approved",
+            "changes_requested"
+          ]
+        },
+        "lifecycle": {
+          "enum": [
+            "draft",
+            "building",
+            "built",
+            "qa_verified",
+            "published",
+            "withdrawn",
+            "failed"
+          ]
+        },
+        "source_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "model_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "readme_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "evidence_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReportDependency"
+          },
+          "maxItems": 4096
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReportArtifact"
+          },
+          "maxItems": 3
+        },
+        "readers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "maxItems": 256
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "internal",
+            "restricted"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "project",
+        "report",
+        "revision",
+        "template",
+        "template_version",
+        "program",
+        "phase",
+        "task",
+        "title",
+        "technical_status",
+        "review_status",
+        "lifecycle",
+        "source_sha256",
+        "model_sha256",
+        "readme_sha256",
+        "evidence_sha256",
+        "dependencies",
+        "artifacts",
+        "readers",
+        "classification"
+      ]
+    },
+    "ReportPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "program": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "template": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "channel": {
+          "enum": [
+            "app",
+            "kindle",
+            "both"
+          ]
+        },
+        "destination": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recipient_principal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "require_visual_qa": {
+          "const": true
+        },
+        "require_evidence": {
+          "const": true
+        },
+        "classification": {
+          "enum": [
+            "public",
+            "internal",
+            "restricted"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "project",
+        "program",
+        "template",
+        "channel",
+        "destination",
+        "recipient_principal",
+        "require_visual_qa",
+        "require_evidence",
+        "classification"
+      ]
+    },
+    "ReportQA": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "source_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "pdf_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "epub_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "reader_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "readme_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "evidence_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "pdf_pages_reviewed": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "pdf_reviewed": {
+          "const": true
+        },
+        "epub_reviewed": {
+          "const": true
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "version",
+        "report",
+        "revision",
+        "source_sha256",
+        "pdf_sha256",
+        "epub_sha256",
+        "reader_sha256",
+        "readme_sha256",
+        "evidence_sha256",
+        "pdf_pages_reviewed",
+        "pdf_reviewed",
+        "epub_reviewed",
+        "method"
+      ]
+    },
+    "ReportDelivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "artifact_sha256": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "recipient_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "policy_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "submitting",
+            "smtp_accepted",
+            "rejected",
+            "unknown",
+            "cancelled"
+          ]
+        },
+        "device_delivery": {
+          "enum": [
+            "unverified",
+            "observed"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "report",
+        "revision",
+        "artifact_sha256",
+        "destination",
+        "recipient_fingerprint",
+        "policy_version",
+        "state",
+        "device_delivery"
+      ]
+    },
+    "ReportCapabilities": {
+      "enum": [
+        "report_author",
+        "report_qa",
+        "report_publish",
+        "report_policy",
+        "report_delivery"
+      ]
+    }
+  },
+  "$ref": "#/$defs/ReportRevision"
+}

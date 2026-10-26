@@ -185,7 +185,7 @@ class Knowledge:
             return False
         try:
             self.s._subject_auth(
-                self.s._token("credential", tenant=who["tenant"], principal=who["principal"]),
+                self.s._subject_token(who),
                 "read",
                 row["project"],
                 at,

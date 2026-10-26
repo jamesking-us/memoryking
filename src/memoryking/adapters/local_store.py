@@ -167,7 +167,9 @@ class LocalStore:
             self.db.executescript(Path(__file__).with_name("optional_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7}:
             self.db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
-        elif version != 8:
+        if version in {1, 2, 3, 4, 5, 6, 7, 8}:
+            self.db.executescript(Path(__file__).with_name("viewer_schema.sql").read_text())
+        elif version != 9:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         self.store_id, self.incarnation = meta["store"], meta["incarnation"]
@@ -223,6 +225,7 @@ class LocalStore:
             db.executescript(Path(__file__).with_name("repository_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("optional_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
+            db.executescript(Path(__file__).with_name("viewer_schema.sql").read_text())
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             db.close()
@@ -321,6 +324,9 @@ class LocalStore:
 
     def _auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
         identity = self._decode(token, "credential")
+        from memoryking.adapters.viewer_identity import ViewerIdentity
+
+        ViewerIdentity(self).check_identity(identity, capability, project, at)
         rows = self.db.execute(
             "SELECT * FROM grants WHERE tenant=? AND principal=? AND project IN (?, '*')",
             (identity["tenant"], identity["principal"], project),
@@ -339,6 +345,13 @@ class LocalStore:
     def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
         """Internal intersection check; never an alternate transport credential entry point."""
         return self._auth(token, capability, project, at)
+
+    def _subject_token(self, who: dict[str, Any]) -> str:
+        """Preserve the verified viewer ceiling in nested current-ACL checks."""
+        fields = {key: who[key] for key in ("tenant", "principal")}
+        if "viewer" in who:
+            fields["viewer"] = who["viewer"]
+        return self._token("credential", **fields)
 
     def _expose(self) -> None:
         """Fsync outside-DB evidence before any acknowledgment/handle leaves the process."""
@@ -530,7 +543,7 @@ class LocalStore:
             return False
         try:
             self._subject_auth(
-                self._token("credential", tenant=who["tenant"], principal=who["principal"]),
+                self._subject_token(who),
                 "read",
                 row["project"],
                 at,
@@ -685,6 +698,11 @@ class LocalStore:
             raise LocalError("invalid_interval")
         with self.transaction() as decision:
             who = self._auth(credential, "admin", "*", decision.evaluated_ms)
+            if self.db.execute(
+                "SELECT 1 FROM viewer_bindings WHERE tenant=? AND principal=?",
+                (who["tenant"], principal),
+            ).fetchone():
+                raise LocalError("viewer_policy_operation_required")
             # Replacement can reduce authority, so every change goes to the current journal.
             action = {
                 "kind": "grant",
@@ -811,6 +829,10 @@ class LocalStore:
             from memoryking.adapters.working import Working
 
             Working(self).apply_operation(action)
+        elif kind == "viewer":
+            from memoryking.adapters.viewer_identity import ViewerIdentity
+
+            ViewerIdentity(self).apply_policy(action)
         else:
             raise LocalError("journal_invalid")
         if kind == "purge":
@@ -1189,7 +1211,7 @@ class LocalStore:
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 8,
+                "schema": 9,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
                 "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
@@ -1255,7 +1277,7 @@ class LocalStore:
             controller.journal(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9}
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")
