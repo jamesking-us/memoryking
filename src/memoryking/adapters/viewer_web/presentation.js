@@ -30,6 +30,8 @@ export class Presentation {
     lastReadyGeneration = -1;
     lastReportKey = null;
     lastGraphKey = null;
+    graphDetailOpen = false;
+    graphScroll = 0;
     contentsOpen = false;
     constructor(root) {
         this.root = root;
@@ -45,7 +47,13 @@ export class Presentation {
         return button;
     }
     open(text, key, selection) {
-        return this.action(text, key, () => this.client.select(selection));
+        return this.action(text, key, () => {
+            if (this.client.state.selection.kind === "graph" &&
+                ["memory", "task"].includes(selection.kind))
+                this.client.openGraphDetail(selection);
+            else
+                this.client.select(selection);
+        });
     }
     paragraph(text) {
         const box = el("div", "", "source-text");
@@ -90,9 +98,15 @@ export class Presentation {
         // selection, but resolve every open action from the CURRENT authorized DTO.
         if (graphKey &&
             graphKey === this.lastGraphKey &&
-            this.root.querySelector(".graph-viewport"))
+            this.root.querySelector(".graph-viewport")) {
+            this.graphDrilldown(state);
             return;
+        }
         this.lastGraphKey = graphKey;
+        if (!graphKey) {
+            this.graphDetailOpen = false;
+            this.graphScroll = 0;
+        }
         const reportKey = state.status === "ready" &&
             state.response?.data.kind === "report" &&
             state.report?.complete
@@ -228,7 +242,7 @@ export class Presentation {
                             : selection.tab === "memories"
                                 ? "Source-attributed findings shared with you."
                                 : "Session, display and installation."));
-        const toolbar = el("div", "", "toolbar");
+        const toolbar = el("div", "", "toolbar view-actions");
         if (selection.kind !== selection.tab)
             toolbar.append(this.open(`Back to ${labels[selection.tab]}`, "back", {
                 tab: selection.tab,
@@ -324,7 +338,9 @@ export class Presentation {
             this.reader(main, data, state);
         else if (data?.kind === "graph") {
             const canvas = el("div", "", "graph");
-            main.append(canvas);
+            const drilldown = el("section", "", "graph-drilldown");
+            drilldown.hidden = true;
+            main.append(canvas, drilldown);
             const generation = this.client.gate.generation, sequence = this.client.gate.sequence;
             const allowed = () => this.client.check() &&
                 canvas.isConnected &&
@@ -338,13 +354,17 @@ export class Presentation {
                     return;
                 const node = current.nodes.find((n) => n.id === id);
                 if (node?.handle)
-                    this.client.select({
+                    this.client.openGraphDetail({
                         tab: "memories",
                         kind: "memory",
                         id: node.handle,
                     });
                 else if (node?.task)
-                    this.client.select({ tab: "tasks", kind: "task", id: node.task });
+                    this.client.openGraphDetail({
+                        tab: "tasks",
+                        kind: "task",
+                        id: node.task,
+                    });
             };
             // A semantic navigation list works even if the optional graph module fails.
             const fallback = el("ul", "", "relationships graph-fallback");
@@ -394,6 +414,8 @@ export class Presentation {
             nav.append(button);
         }
         this.root.append(main, nav);
+        if (data?.kind === "graph")
+            this.graphDrilldown(state);
         if (this.lastReadyGeneration !== this.client.gate.generation) {
             this.lastReadyGeneration = this.client.gate.generation;
             main.focus({ preventScroll: true });
@@ -403,6 +425,58 @@ export class Presentation {
             [...this.root.querySelectorAll("[data-focus]")]
                 .find((node) => node.dataset.focus === focused)
                 ?.focus({ preventScroll: true });
+    }
+    graphDrilldown(state) {
+        const graph = this.root.querySelector(".graph"), detail = this.root.querySelector(".graph-drilldown"), actions = this.root.querySelector(".view-actions");
+        if (!graph || !detail || !actions)
+            return;
+        const open = state.graphDetail !== null;
+        const focused = document.activeElement instanceof HTMLElement
+            ? document.activeElement.dataset.focus
+            : undefined;
+        if (open && !this.graphDetailOpen)
+            this.graphScroll = window.scrollY;
+        graph.hidden = open;
+        actions.hidden = open;
+        detail.hidden = !open;
+        detail.replaceChildren();
+        if (open) {
+            detail.append(this.action("Back to graph", "back-to-graph", () => this.client.backToGraph()));
+            detail.append(el("h2", state.graphDetail?.kind === "task"
+                ? "Task details"
+                : "Memory details"));
+            const data = state.graphDetailResponse?.data;
+            if (data?.kind === "memory")
+                for (const memory of data.memories)
+                    detail.append(this.memory(memory, true));
+            else if (data?.kind === "task")
+                for (const task of data.tasks)
+                    detail.append(this.task(task, true));
+            else {
+                const loading = el("p", "Loading current detail…");
+                loading.setAttribute("role", "status");
+                detail.append(loading);
+            }
+        }
+        if (open !== this.graphDetailOpen) {
+            if (open) {
+                detail
+                    .querySelector("button")
+                    ?.focus({ preventScroll: true });
+                window.scrollTo(0, 0);
+            }
+            else {
+                graph
+                    .querySelector('.graph-node[aria-pressed="true"]')
+                    ?.focus({ preventScroll: true });
+                window.scrollTo(0, this.graphScroll);
+            }
+        }
+        else if (open && focused)
+            [...detail.querySelectorAll("[data-focus]")]
+                .find((node) => node.dataset.focus === focused)
+                ?.focus({ preventScroll: true });
+        this.graphDetailOpen = open;
     }
     task(task, detail) {
         const card = el("article", "", "panel task");

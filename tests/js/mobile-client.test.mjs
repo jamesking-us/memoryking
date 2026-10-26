@@ -398,3 +398,71 @@ test("late figure chunks after clearing cannot create or retain an object URL", 
   assert.equal(f.client.state.report, null);
   assert.equal(f.client.state.response, null);
 });
+
+test("graph drilldown renews both views, replaces detail handles and honors the shortest lease", async () => {
+  const f = setup();
+  await f.client.refresh();
+  let count = 0;
+  f.next = (path) =>
+    path.endsWith("/session")
+      ? session()
+      : path.endsWith("/graph")
+        ? response(
+            "graph",
+            { nodes: [], edges: [] },
+            { fresh_until_ms: 103000 },
+          )
+        : response("memory", {
+            memories: [
+              { handle: `graph_detail_${++count}`, text: "PRIVATE_DETAIL" },
+            ],
+          });
+  f.client.select({ tab: "memories", kind: "graph" });
+  await tick();
+  f.client.openGraphDetail({ tab: "memories", kind: "memory", id: "initial" });
+  await tick();
+  assert.equal(f.client.state.selection.kind, "graph");
+  assert.equal(f.client.state.response.data.kind, "graph");
+  assert.equal(
+    f.client.state.graphDetailResponse.data.memories[0].text,
+    "PRIVATE_DETAIL",
+  );
+  assert.equal(f.client.state.graphDetail.id, "graph_detail_1");
+  await f.client.refresh();
+  assert.ok(f.calls.at(-1).endsWith("/memories/graph_detail_1"));
+  assert.equal(f.calls.filter((p) => p.endsWith("/graph")).length, 3);
+  f.time.mono += 3000;
+  f.time.utc += 3000;
+  assert.equal(f.client.check(), false);
+  assert.equal(f.client.state.response, null);
+  assert.equal(f.client.state.graphDetail, null);
+  assert.equal(f.client.state.graphDetailResponse, null);
+});
+
+test("returning to graph or invalidating authority fences a delayed drilldown", async () => {
+  for (const exit of ["backToGraph", "pause", "offline"]) {
+    const f = setup();
+    await f.client.refresh();
+    const held = deferred();
+    f.next = (path) =>
+      path.endsWith("/session")
+        ? session()
+        : path.endsWith("/graph")
+          ? response("graph", { nodes: [], edges: [] })
+          : held.promise;
+    f.client.select({ tab: "tasks", kind: "graph" });
+    await tick();
+    f.client.openGraphDetail({ tab: "tasks", kind: "task", id: "task" });
+    await tick();
+    f.client[exit]();
+    held.resolve(
+      response("task", { tasks: [{ objective: "PRIVATE_LATE_DETAIL" }] }),
+    );
+    await tick();
+    assert.equal(f.client.state.graphDetail, null);
+    assert.equal(f.client.state.graphDetailResponse, null);
+    if (exit === "backToGraph")
+      assert.equal(f.client.state.response.data.kind, "graph");
+    else assert.equal(f.client.state.response, null);
+  }
+});

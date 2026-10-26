@@ -40,6 +40,8 @@ export interface State {
   response: ViewerResponse | null;
   report: ReportBuffer | null;
   figures: Map<string, string>;
+  graphDetail: Selection | null;
+  graphDetailResponse: ViewerResponse | null;
 }
 export interface Environment {
   clock: Clock;
@@ -61,6 +63,8 @@ const initial = (): State => ({
   response: null,
   report: null,
   figures: new Map(),
+  graphDetail: null,
+  graphDetailResponse: null,
 });
 const browserClock: Clock = {
   monotonic: () => performance.now(),
@@ -203,9 +207,8 @@ export class ViewerClient {
       this.env.cancel(timeout);
     }
   }
-  private path(): string {
-    const s = this.state.selection,
-      base = `/viewer/api/v1/projects/${encodeURIComponent(this.state.project)}/`;
+  private path(s = this.state.selection): string {
+    const base = `/viewer/api/v1/projects/${encodeURIComponent(this.state.project)}/`;
     if (s.kind === "report")
       return `${base}reports/${encodeURIComponent(s.id ?? "")}/versions/${s.revision}`;
     if (s.kind === "task" || s.kind === "memory")
@@ -229,6 +232,7 @@ export class ViewerClient {
     this.poll = null;
     this.abort.abort();
     this.abort = new AbortController();
+    const detail = this.state.graphDetail;
     const sequence = this.gate.startCycle(),
       generation = this.gate.generation,
       started = this.env.clock.monotonic();
@@ -275,6 +279,22 @@ export class ViewerClient {
         )
           throw new Error("context_changed");
       }
+      // A graph drilldown retains the graph only while BOTH views are current.
+      // Detail reads cannot renew a hidden graph's authority on their own.
+      let detailResult: ViewerResponse | null = null;
+      if (detail) {
+        if (result.value.data.kind !== "graph")
+          throw new Error("context_changed");
+        const loaded = await this.read(
+          this.path(detail),
+          detail.kind,
+          project,
+          sequence,
+          result.value.binding,
+        );
+        leases.push(loaded.lease);
+        detailResult = loaded.value;
+      }
       this.state.session = session.value;
       this.state.response =
         project && this.state.selection.kind !== "settings"
@@ -317,6 +337,13 @@ export class ViewerClient {
         }
       }
       this.gate.commit(result.ticket, leases);
+      this.state.graphDetailResponse = detailResult;
+      if (
+        detail &&
+        detailResult?.data.kind === "memory" &&
+        detailResult.data.memories.length === 1
+      )
+        detail.id = detailResult.data.memories[0].handle;
       if (
         this.state.selection.kind === "memory" &&
         result.value.data.kind === "memory" &&
@@ -391,6 +418,26 @@ export class ViewerClient {
     this.clear("Loading current view…", "loading");
     this.state.project = project;
     this.state.selection = selection;
+    void this.refresh();
+  }
+  openGraphDetail(selection: Selection): void {
+    if (
+      !this.check() ||
+      this.state.selection.kind !== "graph" ||
+      !["memory", "task"].includes(selection.kind)
+    )
+      return;
+    this.state.graphDetail = { ...selection };
+    this.state.graphDetailResponse = null;
+    this.env.changed(this.state);
+    void this.refresh();
+  }
+  backToGraph(): void {
+    if (!this.check() || this.state.selection.kind !== "graph") return;
+    this.state.graphDetail = null;
+    this.state.graphDetailResponse = null;
+    this.env.changed(this.state);
+    // Supersede any in-flight detail response before it can restore the drilldown.
     void this.refresh();
   }
   async logout(all = false): Promise<void> {

@@ -226,7 +226,13 @@ its nodes and edges. Pan, pinch, node drag, selected connections and ordinary
 zoom/reset/open buttons provide navigation without continuous animation.
 Unchanged successful renewals preserve the graph DOM and view transform; each
 open action resolves the newly issued target from the current response. No
-previous memory handle can bypass a fresh detail check. The installed wheel includes all public assets and
+previous memory handle can bypass a fresh detail check. A node opens a drilldown
+inside the graph, with **Back to graph** restoring the existing view rather than
+rebuilding the Memory or Tasks section. While detail is open, each polling cycle
+checks session, graph and detail; the shortest contributing lease covers all
+retained data. The hidden graph is never renewed by a detail-only check. Returning
+supersedes any pending detail response. Normal navigation or invalidation clears
+both views and all selection/layout state. The installed wheel includes all public assets and
 optimized existing logo icons. There is no new runtime framework or service worker.
 
 Each client request carries an internal generation and sequence. Results must

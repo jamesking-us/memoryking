@@ -1,3 +1,6 @@
+[hidden] {
+  display: none !important;
+}
 :root {
   color-scheme: dark;
   --bg: #0b121d;

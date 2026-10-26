@@ -47,6 +47,8 @@ export class Presentation {
   private lastReadyGeneration = -1;
   private lastReportKey: string | null = null;
   private lastGraphKey: string | null = null;
+  private graphDetailOpen = false;
+  private graphScroll = 0;
   private contentsOpen = false;
   constructor(readonly root: HTMLElement) {}
   private action(
@@ -68,7 +70,14 @@ export class Presentation {
     key: string,
     selection: Selection,
   ): HTMLButtonElement {
-    return this.action(text, key, () => this.client.select(selection));
+    return this.action(text, key, () => {
+      if (
+        this.client.state.selection.kind === "graph" &&
+        ["memory", "task"].includes(selection.kind)
+      )
+        this.client.openGraphDetail(selection);
+      else this.client.select(selection);
+    });
   }
   private paragraph(text: string): HTMLElement {
     const box = el("div", "", "source-text");
@@ -113,9 +122,15 @@ export class Presentation {
       graphKey &&
       graphKey === this.lastGraphKey &&
       this.root.querySelector(".graph-viewport")
-    )
+    ) {
+      this.graphDrilldown(state);
       return;
+    }
     this.lastGraphKey = graphKey;
+    if (!graphKey) {
+      this.graphDetailOpen = false;
+      this.graphScroll = 0;
+    }
     const reportKey =
       state.status === "ready" &&
       state.response?.data.kind === "report" &&
@@ -281,7 +296,7 @@ export class Presentation {
                     : "Session, display and installation.",
       ),
     );
-    const toolbar = el("div", "", "toolbar");
+    const toolbar = el("div", "", "toolbar view-actions");
     if (selection.kind !== selection.tab)
       toolbar.append(
         this.open(`Back to ${labels[selection.tab]}`, "back", {
@@ -409,7 +424,9 @@ export class Presentation {
     } else if (data?.kind === "report") this.reader(main, data, state);
     else if (data?.kind === "graph") {
       const canvas = el("div", "", "graph");
-      main.append(canvas);
+      const drilldown = el("section", "", "graph-drilldown");
+      drilldown.hidden = true;
+      main.append(canvas, drilldown);
       const generation = this.client.gate.generation,
         sequence = this.client.gate.sequence;
       const allowed = () =>
@@ -423,13 +440,17 @@ export class Presentation {
         if (current?.kind !== "graph") return;
         const node = current.nodes.find((n) => n.id === id);
         if (node?.handle)
-          this.client.select({
+          this.client.openGraphDetail({
             tab: "memories",
             kind: "memory",
             id: node.handle,
           });
         else if (node?.task)
-          this.client.select({ tab: "tasks", kind: "task", id: node.task });
+          this.client.openGraphDetail({
+            tab: "tasks",
+            kind: "task",
+            id: node.task,
+          });
       };
       // A semantic navigation list works even if the optional graph module fails.
       const fallback = el("ul", "", "relationships graph-fallback");
@@ -501,6 +522,7 @@ export class Presentation {
       nav.append(button);
     }
     this.root.append(main, nav);
+    if (data?.kind === "graph") this.graphDrilldown(state);
     if (this.lastReadyGeneration !== this.client.gate.generation) {
       this.lastReadyGeneration = this.client.gate.generation;
       main.focus({ preventScroll: true });
@@ -509,6 +531,65 @@ export class Presentation {
       [...this.root.querySelectorAll<HTMLElement>("[data-focus]")]
         .find((node) => node.dataset.focus === focused)
         ?.focus({ preventScroll: true });
+  }
+  private graphDrilldown(state: State): void {
+    const graph = this.root.querySelector<HTMLElement>(".graph"),
+      detail = this.root.querySelector<HTMLElement>(".graph-drilldown"),
+      actions = this.root.querySelector<HTMLElement>(".view-actions");
+    if (!graph || !detail || !actions) return;
+    const open = state.graphDetail !== null;
+    const focused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement.dataset.focus
+        : undefined;
+    if (open && !this.graphDetailOpen) this.graphScroll = window.scrollY;
+    graph.hidden = open;
+    actions.hidden = open;
+    detail.hidden = !open;
+    detail.replaceChildren();
+    if (open) {
+      detail.append(
+        this.action("Back to graph", "back-to-graph", () =>
+          this.client.backToGraph(),
+        ),
+      );
+      detail.append(
+        el(
+          "h2",
+          state.graphDetail?.kind === "task"
+            ? "Task details"
+            : "Memory details",
+        ),
+      );
+      const data = state.graphDetailResponse?.data;
+      if (data?.kind === "memory")
+        for (const memory of data.memories)
+          detail.append(this.memory(memory, true));
+      else if (data?.kind === "task")
+        for (const task of data.tasks) detail.append(this.task(task, true));
+      else {
+        const loading = el("p", "Loading current detail…");
+        loading.setAttribute("role", "status");
+        detail.append(loading);
+      }
+    }
+    if (open !== this.graphDetailOpen) {
+      if (open) {
+        detail
+          .querySelector<HTMLElement>("button")
+          ?.focus({ preventScroll: true });
+        window.scrollTo(0, 0);
+      } else {
+        graph
+          .querySelector<HTMLElement>('.graph-node[aria-pressed="true"]')
+          ?.focus({ preventScroll: true });
+        window.scrollTo(0, this.graphScroll);
+      }
+    } else if (open && focused)
+      [...detail.querySelectorAll<HTMLElement>("[data-focus]")]
+        .find((node) => node.dataset.focus === focused)
+        ?.focus({ preventScroll: true });
+    this.graphDetailOpen = open;
   }
   private task(task: ViewerTask, detail: boolean): HTMLElement {
     const card = el("article", "", "panel task");

@@ -326,9 +326,8 @@ try {
     .getByRole("button", { name: "Open memory", exact: true })
     .click();
   await wait("Source: accepted_knowledge");
-  await tab("Memory");
   await page
-    .getByRole("button", { name: "Knowledge graph", exact: true })
+    .getByRole("button", { name: "Back to graph", exact: true })
     .click();
   await page.locator(".graph-viewport").waitFor();
   const memoryNode = page
@@ -406,8 +405,9 @@ try {
       beforePinch,
   );
   await cdp.detach();
-  await page.getByRole("button", { name: "Reset view", exact: true }).click();
-  assert.equal(await page.getByLabel("Graph zoom").textContent(), "100%");
+  await page.getByRole("button", { name: "Labels", exact: true }).click();
+  const returnZoom = await page.getByLabel("Graph zoom").textContent();
+  const returnStyle = await memoryNode.getAttribute("style");
   assert.ok((await memoryNode.boundingBox()).width >= 44);
 
   await page
@@ -419,11 +419,38 @@ try {
     .filter({ hasText: options.marker })
     .first()
     .waitFor();
-  await tab("Memory");
+  assert.equal(await retainedGraph.evaluate((n) => n.isConnected), true);
+  assert.equal(await page.locator(".graph-viewport").isVisible(), false);
+  const detailReads = traffic.filter((r) =>
+    r.path.includes("/memories/"),
+  ).length;
+  for (
+    let attempt = 0;
+    attempt < 140 &&
+    traffic.filter((r) => r.path.includes("/memories/")).length === detailReads;
+    attempt++
+  )
+    await page.waitForTimeout(100);
+  assert.ok(
+    traffic.filter((r) => r.path.includes("/memories/")).length > detailReads,
+  );
   await page
-    .getByRole("button", { name: "Knowledge graph", exact: true })
+    .getByRole("button", { name: "Back to graph", exact: true })
     .click();
   await page.locator(".graph-viewport").waitFor();
+  assert.equal(await retainedGraph.evaluate((n) => n.isConnected), true);
+  assert.equal(await page.getByLabel("Graph zoom").textContent(), returnZoom);
+  assert.equal(await memoryNode.getAttribute("style"), returnStyle);
+  assert.equal(await memoryNode.getAttribute("aria-pressed"), "true");
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Labels", exact: true })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  await page.getByRole("button", { name: "Reset view", exact: true }).click();
+  assert.equal(await page.getByLabel("Graph zoom").textContent(), "100%");
+  await page.getByRole("button", { name: "Labels", exact: true }).click();
   await page.locator(".relationships summary").click();
   await page.getByLabel("Find in this view").fill("Fix checkout");
   assert.equal(await page.locator(".relationships li button").count(), 1);
@@ -442,21 +469,42 @@ try {
     .locator(".graph-detail")
     .getByRole("button", { name: "Open task", exact: true })
     .click();
-  await wait("Retry regression recorded");
-  await tab("Memory");
   await page
-    .getByRole("button", { name: "Knowledge graph", exact: true })
+    .locator(".graph-drilldown")
+    .getByText("Retry regression recorded", { exact: true })
+    .waitFor();
+  await page
+    .getByRole("button", { name: "View evidence", exact: true })
+    .first()
+    .click();
+  await page.locator(".graph-drilldown .source-text").first().waitFor();
+  await page
+    .getByRole("button", { name: "Back to graph", exact: true })
     .click();
   await page.locator(".graph-viewport").waitFor();
+  assert.equal(
+    await page.getByLabel("Find in this view").inputValue(),
+    "Fix checkout",
+  );
+  await page
+    .locator(".graph-detail")
+    .getByRole("button", { name: "Open task", exact: true })
+    .click();
+  await page
+    .locator(".graph-drilldown")
+    .getByText("Retry regression recorded", { exact: true })
+    .waitFor();
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   assert.equal(
-    await page.locator(".graph-node,.graph-detail,.relationships").count(),
+    await page
+      .locator(".graph-node,.graph-detail,.relationships,.graph-drilldown")
+      .count(),
     0,
   );
   await page.reload();
   await wait("Fix checkout retry handling");
   checks.push(
-    "knowledge graph: actual permitted memories and evidence edges, touch pinch/pan/drag, selection/current-target detail, retained layout after renewal, keyboard list,44px targets and offline clearing; browser gesture synthesis is not physical Android qualification",
+    "knowledge graph: actual permitted memories and evidence edges, touch pinch/pan/drag, selection/current-target detail, retained layout after renewal and Back to graph from memory/task/evidence detail, both-view authority renewal, keyboard list,44px targets and offline clearing; browser gesture synthesis is not physical Android qualification",
   );
   await tab("Overview");
   await page.getByRole("button", { name: "Reports", exact: true }).click();
