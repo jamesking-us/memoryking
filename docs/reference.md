@@ -311,7 +311,7 @@ chunked transfer, bearer authorization and unknown fields are rejected.
 | --- | --- |
 | GET `/viewer/auth/context` | No cross-site fetch. Returns `ViewerAuthContext` (version, CSRF, expiry) and a short HttpOnly nonce cookie. A normal same-origin GET may omit Origin. |
 | POST `/viewer/auth/github/start` | Exact app Origin, nonce and `ViewerAuthPost` CSRF; consumes the context and returns `ViewerAuthStart` with a fixed GitHub authorization URL. Invalidates the previous local session. |
-| GET `/viewer/auth/github/callback` | One-use state, browser nonce and code; normal top-level GitHub navigation may omit Origin. A supplied Origin must be the app or `https://github.com`. No XHR callback. Returns 303 to `/viewer/` with a fresh cookie on success. Rejected unsolicited callbacks preserve any existing session cookie; a valid start has already invalidated its prior session. |
+| GET `/viewer/auth/github/callback` | One-use state, browser nonce, code and exact authorization-server `iss=https://github.com/login/oauth`; missing or mismatched issuer cannot authenticate. Normal top-level GitHub navigation may omit Origin. A supplied Origin must be the app or `https://github.com`. No XHR callback. Bounded denial diagnostics are discarded, never fetched or displayed. Returns 303 to `/viewer/` with a fresh cookie on success. Rejected unsolicited callbacks preserve any existing session cookie; a valid start has already invalidated its prior session. |
 | POST `/viewer/auth/logout` | Exact app Origin and session CSRF from the current `/viewer/api/v1/session` response. Invalidates this local session. |
 | POST `/viewer/auth/logout-all` | Same protections; durably advances only the signed-in viewer's generation and invalidates that account's sessions. |
 

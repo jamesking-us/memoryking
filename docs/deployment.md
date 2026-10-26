@@ -656,6 +656,12 @@ path and requires a fresh login. The consumed code/state is never automatically
 retried. If login repeatedly fails, check the exact origin/callback, private secret
 file, clock, empty provider scopes, numeric binding and current project grant.
 Provider bodies, callbacks and cookie values are deliberately absent from logs.
+The callback validates GitHub's exact authorization-server issuer,
+`https://github.com/login/oauth`, before exchanging a code. A missing issuer or
+even a different spelling fails closed. This is separate from the stored
+identity binding's `https://github.com` issuer; existing bindings do not change.
+GitHub denial fields (`error_description`, `error_uri`) are bounded and discarded,
+never rendered or fetched. See GitHub's [issuer documentation](https://docs.github.com/en/apps/github-authentication-discovery-endpoints).
 Transport counters and generic status codes cannot identify a hidden project.
 Pending-context pressure returns 503; retry after capacity recovers, using a new
 login context. Backward clock movement clears authentication state and blocks

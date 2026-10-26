@@ -33,7 +33,7 @@ try {
         `${options.origin}/viewer/auth/github/callback`,
       );
       await writeFile(options.exchange, JSON.stringify(query));
-      const callback = `${query.redirect_uri}?state=${query.state}&code=controlled-code`;
+      const callback = `${query.redirect_uri}?state=${query.state}&code=controlled-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth`;
       return route.fulfill({
         contentType: "text/html",
         body: `<html><title>Controlled provider</title><a id="continue" href="${callback.replaceAll("&", "&amp;")}">Continue</a></html>`,
@@ -42,7 +42,7 @@ try {
     if (url.origin === attacker)
       return route.fulfill({
         contentType: "text/html",
-        body: `<html><title>Hostile origin fixture</title><a id="attack" href="${options.origin}/viewer/auth/github/callback?state=${"z".repeat(43)}&amp;code=controlled-code">Forged callback</a></html>`,
+        body: `<html><title>Hostile origin fixture</title><a id="attack" href="${options.origin}/viewer/auth/github/callback?state=${"z".repeat(43)}&amp;code=controlled-code&amp;iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth">Forged callback</a></html>`,
       });
     return route.abort();
   });

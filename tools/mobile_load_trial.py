@@ -169,7 +169,11 @@ class Client:
             self.f.provider.challenge = query["code_challenge"][0]
             self.f.provider.user_id = str(12345 + self.number)
             status, _ = self.request(
-                CALLBACK + "?state=" + query["state"][0] + "&code=controlled-code", phase=phase
+                CALLBACK
+                + "?state="
+                + query["state"][0]
+                + "&code=controlled-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth",
+                phase=phase,
             )
             assert status == 303
 

@@ -29,6 +29,7 @@ from memoryking.domain.viewer import GITHUB_ISSUER, VerifiedViewer
 SESSION_COOKIE = "__Host-memoryking-viewer"
 LOGIN_COOKIE = "__Host-memoryking-login"
 CALLBACK = "/viewer/auth/github/callback"
+GITHUB_AUTHORIZATION_ISSUER = "https://github.com/login/oauth"
 AUTHORIZE = "https://github.com/login/oauth/authorize"
 StoreFactory = Callable[[float], AbstractContextManager[LocalStore]]
 
@@ -204,8 +205,10 @@ class ViewerAuth:
             if item is None or not hmac.compare_digest(item.nonce_hash, digest(nonce)):
                 raise LocalError("login_failed")
             del self.pending[digest(state)]  # Consume before any provider call, including denial.
-        if set(params) != {"state", "code"} or not re.fullmatch(
-            r"[A-Za-z0-9_-]{1,512}", params["code"]
+        if (
+            set(params) != {"state", "code", "iss"}
+            or params["iss"] != GITHUB_AUTHORIZATION_ISSUER
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,512}", params["code"])
         ):
             raise LocalError("login_failed")
         if self.snapshot(deadline) != item.fence:

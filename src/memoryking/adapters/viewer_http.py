@@ -77,7 +77,7 @@ def route(target: str) -> tuple[str, str | None, dict[str, Any]]:
             strict_parsing=True,
             encoding="utf-8",
             errors="strict",
-            max_num_fields=4,
+            max_num_fields=6 if path == CALLBACK else 4,
         )
     except (ValueError, UnicodeError) as exc:
         raise LocalError("invalid_request") from exc
@@ -95,9 +95,14 @@ def route(target: str) -> tuple[str, str | None, dict[str, Any]]:
     }
     if path in auth_routes:
         if path == CALLBACK:
-            if set(query) - {"state", "code", "error", "error_description"} or any(
-                len(v) > 512 or any(ord(c) < 32 for c in v) for v in query.values()
-            ):
+            if set(query) - {
+                "state",
+                "code",
+                "iss",
+                "error",
+                "error_description",
+                "error_uri",
+            } or any(len(v) > 512 or any(ord(c) < 32 for c in v) for v in query.values()):
                 raise LocalError("invalid_request")
         elif query:
             raise LocalError("invalid_request")

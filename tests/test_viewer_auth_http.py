@@ -113,7 +113,10 @@ class HttpAuthCases:
     def login_http(self):
         state = self.start_http()
         status, headers, raw = self.request(
-            CALLBACK + "?state=" + state + "&code=controlled-code",
+            CALLBACK
+            + "?state="
+            + state
+            + "&code=controlled-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth",
             extra={
                 "Sec-Fetch-Site": "cross-site",
                 "Sec-Fetch-Mode": "navigate",
@@ -264,7 +267,12 @@ class HttpAuthCases:
         with self.listener():
             state = self.start_http()
             nonce = self.cookies.pop(LOGIN_COOKIE)
-            result = self.request(CALLBACK + "?state=" + state + "&code=controlled-code")
+            result = self.request(
+                CALLBACK
+                + "?state="
+                + state
+                + "&code=controlled-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth"
+            )
             self.assertEqual(result[0], 303)
             self.assertFalse(self.provider.calls)
             self.cookies[LOGIN_COOKIE] = nonce
@@ -273,13 +281,20 @@ class HttpAuthCases:
                 + "?state="
                 + state
                 + "&error=access_denied&error_description=SYNTHETIC_PRIVATE_MARKER"
+                "&error_uri=https%3A%2F%2Fevil.invalid%2FNEVER_FETCH&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth"
             )
             self.assertEqual(result[0], 303)
             self.assertNotIn(b"SYNTHETIC_PRIVATE_MARKER", result[2])
             self.assertEqual(dict(result[1])["Location"], "/viewer/")
             self.cookies[LOGIN_COOKIE] = nonce
             self.assertEqual(
-                self.request(CALLBACK + "?state=" + state + "&code=controlled-code")[0], 303
+                self.request(
+                    CALLBACK
+                    + "?state="
+                    + state
+                    + "&code=controlled-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth"
+                )[0],
+                303,
             )
             self.assertFalse(self.provider.calls)
             self.assertFalse(self.auth.sessions)
@@ -301,12 +316,47 @@ class HttpAuthCases:
             state = self.start_http()
             self.provider.fail = True
             status, headers, raw = self.request(
-                CALLBACK + "?state=" + state + "&code=controlled-code"
+                CALLBACK
+                + "?state="
+                + state
+                + "&code=controlled-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth"
             )
             self.assertEqual(status, 303)
             self.assertEqual(dict(headers)["Location"], "/viewer/")
             self.assertEqual(raw, b"")
             self.assertNotIn(SESSION_COOKIE, self.cookies)
+
+    def test_callback_issuer_and_diagnostics_are_bounded_not_authority(self):
+        with self.listener():
+            for suffix, expected in (
+                ("", 303),
+                ("&iss=https%3A%2F%2Fevil.invalid", 303),
+                ("&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth%2F", 303),
+                (
+                    "&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth&iss=https%3A%2F%2Fevil.invalid",
+                    400,
+                ),
+                ("&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth&error=access_denied", 303),
+                (
+                    "&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth&error_uri=https%3A%2F%2Fevil.invalid",
+                    303,
+                ),
+                ("&iss=" + "x" * 513, 400),
+                ("&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth&unexpected=x", 400),
+            ):
+                state = self.start_http()
+                status, headers, raw = self.request(
+                    CALLBACK + "?state=" + state + "&code=controlled-code" + suffix
+                )
+                self.assertEqual(status, expected)
+                if status == 303:
+                    self.assertEqual(dict(headers)["Location"], "/viewer/")
+                    self.assertEqual(raw, b"")
+                self.assertFalse(self.provider.calls)
+                self.assertFalse(self.auth.sessions)
+            # The same real provider shape succeeds only with the pinned issuer.
+            self.login_http()
+            self.assertEqual(self.session_http()[0], 200)
 
     def test_disabled_listener_does_not_read_secret_and_enabled_requires_private_file(self):
         self.setup_auth()
@@ -354,7 +404,10 @@ class HttpAuthCases:
             token = self.cookies[SESSION_COOKIE]
             calls = len(self.provider.calls)
             status, headers, raw = self.request(
-                CALLBACK + "?state=" + "z" * 43 + "&code=controlled-code",
+                CALLBACK
+                + "?state="
+                + "z" * 43
+                + "&code=controlled-code&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth",
                 extra={
                     "Sec-Fetch-Site": "cross-site",
                     "Sec-Fetch-Mode": "navigate",

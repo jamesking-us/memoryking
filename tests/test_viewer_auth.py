@@ -17,7 +17,12 @@ from test_viewer_contracts import config
 from test_viewer_identity import ViewerCases
 
 from memoryking.adapters.postgres_store import PostgresStore
-from memoryking.adapters.viewer_auth import CALLBACK, ViewerAuth, digest
+from memoryking.adapters.viewer_auth import (
+    CALLBACK,
+    GITHUB_AUTHORIZATION_ISSUER,
+    ViewerAuth,
+    digest,
+)
 from memoryking.adapters.viewer_reads import ViewerReads
 from memoryking.domain.local import LocalError
 
@@ -89,7 +94,9 @@ class AuthCases:
 
     def finish(self, nonce, state):
         token, released = self.auth.callback(
-            nonce, {"state": state, "code": "controlled-code"}, self.deadline()
+            nonce,
+            {"state": state, "code": "controlled-code", "iss": GITHUB_AUTHORIZATION_ISSUER},
+            self.deadline(),
         )
         emitted = []
         released.emit(emitted.append)
@@ -168,6 +175,27 @@ class AuthCases:
         with self.assertRaises(LocalError):
             self.finish(nonce, state)
         self.assertEqual(len(self.provider.calls), 2)
+
+    def test_authorization_issuer_is_exact_and_failure_consumes_state(self):
+        self.setup_auth()
+        for issuer in (
+            None,
+            "",
+            "https://github.com",
+            "https://github.com/login/oauth/",
+            "https://GITHUB.com/login/oauth",
+            "https://evil.invalid",
+        ):
+            nonce, state, _ = self.begin()
+            params = {"state": state, "code": "controlled-code"}
+            if issuer is not None:
+                params["iss"] = issuer
+            with self.assertRaises(LocalError):
+                self.auth.callback(nonce, params, self.deadline())
+            with self.assertRaises(LocalError):
+                self.finish(nonce, state)
+        self.assertFalse(self.provider.calls)
+        self.assertFalse(self.auth.sessions)
 
     def test_unknown_malformed_and_ungranted_identity_never_issues(self):
         self.setup_auth(grant=False)

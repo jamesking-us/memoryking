@@ -308,7 +308,13 @@ class Probe:
         state = parse_qs(urlsplit(json.loads(raw)["authorization_url"]).query)["state"][0]
         status, _, headers = self.http(
             "/viewer/auth/github/callback?"
-            + urlencode({"state": state, "code": "synthetic-home-code"})
+            + urlencode(
+                {
+                    "state": state,
+                    "code": "synthetic-home-code",
+                    "iss": "https://github.com/login/oauth",
+                }
+            )
         )
         assert status == 303 and headers["Location"] == "/viewer/", (status, headers)
         status, raw, _ = self.http("/viewer/api/v1/session")

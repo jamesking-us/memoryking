@@ -94,7 +94,7 @@ try {
       await writeFile(options.exchange, JSON.stringify(query));
       return route.fulfill({
         contentType: "text/html",
-        body: `<a id="continue" href="${query.redirect_uri}?state=${query.state}&amp;code=controlled-code">Continue</a>`,
+        body: `<a id="continue" href="${query.redirect_uri}?state=${query.state}&amp;code=controlled-code&amp;iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth">Continue</a>`,
       });
     }
     unexpected.push(url.origin + url.pathname);
