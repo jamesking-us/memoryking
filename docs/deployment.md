@@ -179,8 +179,12 @@ operation through the existing authenticated shared request channel.
 Identity uses the numeric subject, not login name/email. Every mutation advances
 binding version and session generation and the canonical tenant policy epoch. Old
 verified contexts are rejected. At most 256 bindings and 1,024 viewer project
-grants exist per tenant. General agent-grant commands cannot widen a registered
-viewer principal. Operator retries are journaled; a mismatched canonical payload
+grants exist per tenant. General agent-grant and revoke commands reject registered
+viewer principals with `viewer_policy_operation_required`; use the versioned
+`viewer-admin` operations so both permission projections and the binding version
+change together. A grant prepared before a viewer revocation is then rejected as
+`revision_conflict`. Ordinary agent principals retain the general grant/revoke API.
+Operator retries are journaled; a mismatched canonical payload
 under the same key is rejected. After restore, reconcile and use the new history
 namespace explicitly; do not blindly repeat an old request.
 

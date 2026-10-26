@@ -25,6 +25,7 @@ METHODS = {
     ],
     "AC03": [
         "test_ac03_retries_ceiling_logout_and_binding_changes",
+        "test_ac03_generic_revoke_requires_versioned_viewer_policy",
         "test_ac03_concurrent_expected_version_only_one_wins",
         "test_ac03_after_journal_crash_replays_one_policy_result",
         "test_ac03_disable_and_content_grant_cannot_be_bypassed",

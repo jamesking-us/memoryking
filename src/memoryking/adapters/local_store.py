@@ -731,6 +731,14 @@ class LocalStore:
     def _policy(self, credential: str, action: dict[str, Any]) -> None:
         with self.transaction() as decision:
             who = self._auth(credential, "admin", "*", decision.evaluated_ms)
+            if (
+                action["kind"] == "revoke"
+                and self.db.execute(
+                    "SELECT 1 FROM viewer_bindings WHERE tenant=? AND principal=?",
+                    (who["tenant"], action["principal"]),
+                ).fetchone()
+            ):
+                raise LocalError("viewer_policy_operation_required")
             action["tenant"] = who["tenant"]
             action["actor"] = who["principal"]
             record = self._journal(action)

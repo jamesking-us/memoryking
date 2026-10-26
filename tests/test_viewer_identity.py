@@ -161,6 +161,52 @@ class ViewerCases:
         with self.assertRaises(LocalError):
             self.read_viewer(self.subject("55555"))
 
+    def test_ac03_generic_revoke_requires_versioned_viewer_policy(self):
+        self.bind()
+        self.grant_viewer()
+        old_subject = self.subject()
+        stale_grant = self.command(
+            "grant",
+            {
+                "principal": "phone",
+                "project": "p",
+                "expected_version": 2,
+                "starts": None,
+                "expires": None,
+            },
+        )
+        before = self.policy("list", {})
+        with self.assertRaises(LocalError) as generic:
+            StoreOperations(self.store).execute(
+                {
+                    "version": 1,
+                    "credential": self.owner,
+                    "operation": "revoke",
+                    "args": {"principal": "phone", "project": "p"},
+                }
+            )
+        self.assertEqual(generic.exception.code, "viewer_policy_operation_required")
+        self.assertEqual(self.policy("list", {}), before)
+        self.assertTrue(self.read_viewer(old_subject)["items"])
+
+        self.policy("revoke", {"principal": "phone", "project": "p", "expected_version": 2})
+        after = self.policy("list", {})
+        self.assertEqual(after["grants"], [])
+        self.assertEqual(after["bindings"][0]["version"], 3)
+        self.assertEqual(after["bindings"][0]["generation"], 3)
+        with self.assertRaises(LocalError) as stale:
+            ViewerIdentity(self.store).execute(self.owner, stale_grant)
+        self.assertEqual(stale.exception.code, "revision_conflict")
+        for subject in (old_subject, self.subject()):
+            with self.assertRaises(LocalError):
+                self.read_viewer(subject)
+
+        # Existing agent principals retain the ordinary revoke operation.
+        agent = self.store.grant(self.owner, "ordinary-agent", "p", ["read"])
+        self.store.revoke(self.owner, "ordinary-agent", "p")
+        with self.actor_store(agent) as store, self.assertRaises(LocalError):
+            store.read(agent, "p")
+
     def test_ac03_concurrent_expected_version_only_one_wins(self):
         self.bind()
         self.grant_viewer()
