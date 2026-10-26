@@ -51,7 +51,7 @@ class DeliveryCases:
                     "project": "p",
                     "program": "synthetic",
                     "template": "phase-report",
-                    "channel": "both",
+                    "channel": getattr(self, "channel", "both"),
                     "destination": "synthetic",
                     "recipient_principal": "owner",
                     "require_visual_qa": True,
@@ -88,6 +88,8 @@ class DeliveryCases:
         args["evidence"] = self.source("provider-proof", b"Synthetic provider acceptance evidence")
         result = self.command("reconcile", args, key="reconcile-accepted")
         self.assertEqual(result["state"], "smtp_accepted")
+        self.assertEqual(result["outcome_source"], "operator_reconciliation")
+        self.assertIsInstance(result["outcome_ms"], int)
         self.assertEqual(
             self.command("reconcile", args, key="reconcile-accepted")["state"], "smtp_accepted"
         )
@@ -110,7 +112,19 @@ class DeliveryCases:
         )
         self.assertEqual(result["state"], "queued")
         self.assertEqual(result["attempts"], 0)
-        self.assertEqual(self.attempt(job, FakeSMTP())["state"], "smtp_accepted")
+        accepted = self.attempt(job, FakeSMTP())
+        self.assertEqual(accepted["state"], "smtp_accepted")
+        self.assertEqual(accepted["outcome_source"], "data_reply")
+
+    def test_kindle_only_policy_queues_delivery_without_app_visibility(self):
+        self.channel = "kindle"
+        job = self.publish()
+        self.assertEqual(self.command("list", {"limit": 50, "cursor": None})["reports"], [])
+        with self.assertRaises(LocalError):
+            self.command("reader", {"report": "phase", "revision": 1, "page": 0, "cursor": None})
+        receipt = self.attempt(job, FakeSMTP())
+        self.assertEqual(receipt["state"], "smtp_accepted")
+        self.assertEqual(receipt["device_delivery"], "unverified")
 
     def test_reduction_ordered_after_release_instant_does_not_erase_acceptance(self):
         job = self.publish()

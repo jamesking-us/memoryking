@@ -341,4 +341,46 @@ export interface ReportImageCommand {
   args: ReportImageArgs;
 }
 
-export type ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand | ReportListCommand | ReportImageCommand;
+export interface ReportLegacyDelivery {
+  version: 1;
+  program: string;
+  phase: string;
+  revision: number;
+  legacy_identity: string;
+  receipt_sha256: string;
+  source_sha256: string;
+  artifact_sha256: string;
+  message_id: string;
+  accepted_ms: number;
+  recipient_fingerprint: string;
+  destination: string;
+  evidence: ReportDependency;
+}
+
+export interface ReportImportDeliveryArgs {
+  project: string;
+  report: string;
+  legacy: ReportLegacyDelivery;
+}
+
+export interface ReportSenderStatusArgs {
+  project: string;
+}
+
+export interface ReportImportDeliveryCommand {
+  version: 1;
+  incarnation: string;
+  key: string;
+  action: "import_delivery";
+  args: ReportImportDeliveryArgs;
+}
+
+export interface ReportSenderStatusCommand {
+  version: 1;
+  incarnation: string;
+  key: string;
+  action: "sender_status";
+  args: ReportSenderStatusArgs;
+}
+
+export type ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand | ReportListCommand | ReportImageCommand | ReportImportDeliveryCommand | ReportSenderStatusCommand;

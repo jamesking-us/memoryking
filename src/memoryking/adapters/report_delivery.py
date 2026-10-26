@@ -42,6 +42,138 @@ class Deliveries:
     def __init__(self, store: LocalStore):
         self.s, self.db = store, store.db
 
+    def sender_status(self, project: str) -> dict[str, Any]:
+        config = getattr(self.s, "report_mail", None)
+        if not isinstance(config, MailConfiguration) or config.project not in {None, project}:
+            return {
+                "configured": False,
+                "enabled": False,
+                "destination": None,
+                "recipient_fingerprint": None,
+            }
+        return {
+            "configured": True,
+            "enabled": config.enabled,
+            "destination": config.destination.id,
+            "recipient_fingerprint": config.destination.fingerprint,
+        }
+
+    def import_legacy(
+        self, who: dict[str, Any], args: dict[str, Any], at: int, *, key: str, request_hash: str
+    ) -> dict[str, Any]:
+        """Reserve an operator-verified accepted legacy identity; never publish/send.
+
+        The trusted collector verifies original receipts/artifacts. A source hash
+        is evidence binding, not proof of provider acceptance or a new content ACL.
+        """
+        prior = self.db.execute(
+            "SELECT request_hash,result FROM report_control_retries WHERE tenant=? AND actor=? AND key=?",
+            (who["tenant"], who["principal"], key),
+        ).fetchone()
+        if prior is not None:
+            if prior["request_hash"] != request_hash:
+                raise LocalError("idempotency_conflict")
+            return dict(json.loads(prior["result"]))
+        legacy, project = args["legacy"], args["project"]
+        config = configured(self.s, legacy["destination"], project)
+        if config.enabled:
+            raise LocalError("report_import_requires_disabled_sender")
+        if config.destination.fingerprint != legacy["recipient_fingerprint"]:
+            raise LocalError("report_destination_changed")
+        reports = Reports(self.s)
+        policy_version, policy = reports._policy(who["tenant"], project, legacy["program"])
+        if (
+            policy["channel"] not in {"kindle", "both"}
+            or policy["destination"] != legacy["destination"]
+            or policy.get("recipient_fingerprint") != legacy["recipient_fingerprint"]
+        ):
+            raise LocalError("report_delivery_policy_changed")
+        if legacy["accepted_ms"] > at or legacy["evidence"]["sha256"] != legacy["receipt_sha256"]:
+            raise LocalError("report_legacy_evidence_mismatch")
+        reports._dependency(who, project, legacy["evidence"], at)
+        reports._dependency(
+            {"tenant": who["tenant"], "principal": policy["recipient_principal"]},
+            project,
+            legacy["evidence"],
+            at,
+        )
+        digest = canonical_hash(
+            {
+                "kind": "legacy_report_delivery",
+                "store": self.s.store_id,
+                "tenant": who["tenant"],
+                "legacy_identity": legacy["legacy_identity"],
+            }
+        )
+        semantic = {"project": project, "report": args["report"], "legacy": legacy}
+        existing = self.db.execute(
+            "SELECT body FROM report_deliveries WHERE tenant=? AND id=?", (who["tenant"], digest)
+        ).fetchone()
+        if existing is not None:
+            body = json.loads(existing["body"])
+            if body.get("legacy_import_hash") != canonical_hash(semantic):
+                raise LocalError("report_delivery_identity_conflict")
+        else:
+            for table in ("report_revisions", "report_deliveries"):
+                if self.db.execute(
+                    f"SELECT 1 FROM {table} WHERE tenant=? AND project=? AND report=? AND revision=?",
+                    (who["tenant"], project, args["report"], legacy["revision"]),
+                ).fetchone():
+                    raise LocalError("report_delivery_identity_conflict")
+            body = {
+                "version": 1,
+                "id": digest,
+                "store": self.s.store_id,
+                "tenant": who["tenant"],
+                "project": project,
+                "report": args["report"],
+                "revision": legacy["revision"],
+                "program": legacy["program"],
+                "phase": legacy["phase"],
+                "source_sha256": legacy["source_sha256"],
+                "artifact_sha256": legacy["artifact_sha256"],
+                "channel": "kindle",
+                "destination": legacy["destination"],
+                "recipient_fingerprint": legacy["recipient_fingerprint"],
+                "recipient_principal": policy["recipient_principal"],
+                "policy_version": policy_version,
+                "source_incarnation": self.s.incarnation,
+                "created_ms": legacy["accepted_ms"],
+                "state": "smtp_accepted",
+                "attempts": 0,
+                "next_attempt_ms": 0,
+                "lease_token": None,
+                "lease_until": None,
+                "release": None,
+                "outcome": {"stage": "verified_legacy_import", "code": None},
+                "outcome_ms": legacy["accepted_ms"],
+                "message_id": legacy["message_id"],
+                "device_delivery": "unverified",
+                "reconciliation": [],
+                "legacy_import_hash": canonical_hash(semantic),
+                "legacy_identity": legacy["legacy_identity"],
+                "legacy_receipt_sha256": legacy["receipt_sha256"],
+                "imported_ms": at,
+                "imported_by": who["principal"],
+                "import_evidence": legacy["evidence"],
+            }
+        result = {
+            **self._public(body),
+            "imported": True,
+            "artifact_sha256": body["artifact_sha256"],
+            "receipt_sha256": body["legacy_receipt_sha256"],
+            "report": body["report"],
+            "revision": body["revision"],
+        }
+        self._write(
+            who,
+            body,
+            "import_legacy",
+            at,
+            retry={"key": key, "request_hash": request_hash, "result": result},
+        )
+        return result
+
     def apply(self, action: dict[str, Any]) -> None:
         body = action["delivery"]
         self.db.execute(
@@ -332,6 +464,7 @@ class Deliveries:
             current.update(
                 state=state,
                 outcome={"stage": outcome.stage, "code": outcome.code},
+                outcome_ms=completion.evaluated_ms,
                 lease_token=None,
                 lease_until=None,
                 next_attempt_ms=completion.evaluated_ms
@@ -351,6 +484,8 @@ class Deliveries:
             "attempts": body["attempts"],
             "device_delivery": "unverified",
             "message_id": body["message_id"],
+            "outcome_ms": body.get("outcome_ms"),
+            "outcome_source": (body.get("outcome") or {}).get("stage"),
         }
 
     def reconcile(
@@ -385,6 +520,7 @@ class Deliveries:
                 body.update(state="queued", attempts=0, next_attempt_ms=at)
             else:
                 body["state"] = "smtp_accepted"
+                body["outcome_ms"] = at
             if len(body["reconciliation"]) >= 32:
                 raise LocalError("report_reconciliation_limit")
             body["reconciliation"].append(

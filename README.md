@@ -94,8 +94,9 @@ and upgrade/recovery requirements. Experimental reporting can now store a comple
 report, build PDF and EPUB copies locally, record visual-review evidence and make
 the reviewed version readable through the SDK. Each reader must still have access
 to every supporting source. An optional worker builds queued reports and can submit reviewed EPUBs through
-a configured Gmail destination. The phone reader and migration from an existing
-report sender are still under development. See [reporting](docs/getting-started.md#experimental-reporting).
+a configured Gmail destination. Operators can preserve verified receipts when
+replacing an older sender, without resending historical reports. The phone reader
+is still under development. See [reporting](docs/getting-started.md#experimental-reporting).
 
 ## Choose your setup
 

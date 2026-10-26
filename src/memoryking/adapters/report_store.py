@@ -23,7 +23,7 @@ from memoryking.reporting.template import model
 
 CLASS = {"public": 0, "internal": 1, "restricted": 2}
 CONTROL_ACTIONS = {"bind_source", "policy"}
-READ_ACTIONS = {"status", "reader", "artifact", "delivery_status", "list", "image"}
+READ_ACTIONS = {"status", "reader", "artifact", "delivery_status", "list", "image", "sender_status"}
 CAPABILITIES = {
     "bind_source": "report_policy",
     "policy": "report_policy",
@@ -37,6 +37,8 @@ CAPABILITIES = {
     "discard_upload": "report_author",
     "delivery_status": "report_delivery",
     "reconcile": "report_policy",
+    "import_delivery": "report_policy",
+    "sender_status": "report_policy",
 }
 
 
@@ -96,18 +98,28 @@ class Reports:
                         result = self._reader(who, target, args)
                     elif action == "artifact":
                         result = self._artifact(who, target, args)
-                    elif action in {"delivery_status", "reconcile"}:
+                    elif action in {
+                        "delivery_status",
+                        "reconcile",
+                        "import_delivery",
+                        "sender_status",
+                    }:
                         from memoryking.adapters.report_delivery import Deliveries
 
                         ledger = Deliveries(self.s)
-                        if action == "reconcile":
-                            result = ledger.reconcile(
+                        if action in {"reconcile", "import_delivery"}:
+                            operation = (
+                                ledger.reconcile if action == "reconcile" else ledger.import_legacy
+                            )
+                            result = operation(
                                 who,
                                 args,
                                 at,
                                 key=command["key"],
                                 request_hash=canonical_hash(command),
                             )
+                        elif action == "sender_status":
+                            result = ledger.sender_status(args["project"])
                         else:
                             body = ledger._job(who["tenant"], args["delivery"])
                             if body["project"] != args["project"]:
@@ -561,6 +573,13 @@ class Reports:
                 if f["kind"] == "artifact"
             ],
             "qa": json.loads(row["qa"]) if row["qa"] else None,
+            "deliveries": [
+                {"delivery": item["id"], "state": item["state"]}
+                for item in self.db.execute(
+                    "SELECT id,state FROM report_deliveries WHERE tenant=? AND project=? AND report=? AND revision=? ORDER BY id",
+                    tuple(row[k] for k in ("tenant", "project", "report", "revision")),
+                ).fetchall()
+            ],
         }
 
     def _list(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:

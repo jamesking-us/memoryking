@@ -282,4 +282,21 @@ closing the store; restart loads changed configuration. Logs contain only worker
 state transitions. File configuration cannot grant a project permission, attest
 visual QA, publish a report or imply delivery to a device.
 
+## Replacing an existing report sender
+
+Keep the new product sender disabled while an operator verifies the old sender's
+complete inventory, immutable report/QA files, unique accepted receipts and exact
+recipient fingerprint. Preserve its independent delivery history. Use
+`sender_status` to verify the new fixed destination and disabled state, then
+`import_delivery` to reserve each verified accepted identity. Uncertain outcomes
+must be reconciled from evidence; do not guess acceptance or retry them.
+
+Hold the old sender's exclusive coordination lock throughout import and fencing.
+After verifying every returned import receipt, durably disable the old sender
+before enabling the product worker. A failed transfer must never automatically
+fall back to the old sender. The product cannot fence an unrelated external
+process for you; use a trusted installation-specific collector and retain its
+transition receipt. Imported receipts do not publish old reports or send mail.
+Fresh reports still require source authority, exact artifact QA and publication.
+
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

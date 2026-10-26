@@ -307,4 +307,41 @@ class ReportImageCommand(TypedDict):
     action: Literal['image']
     args: ReportImageArgs
 
-ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand | ReportListCommand | ReportImageCommand
+class ReportLegacyDelivery(TypedDict):
+    version: Literal[1]
+    program: str
+    phase: str
+    revision: int
+    legacy_identity: str
+    receipt_sha256: str
+    source_sha256: str
+    artifact_sha256: str
+    message_id: str
+    accepted_ms: int
+    recipient_fingerprint: str
+    destination: str
+    evidence: ReportDependency
+
+class ReportImportDeliveryArgs(TypedDict):
+    project: str
+    report: str
+    legacy: ReportLegacyDelivery
+
+class ReportSenderStatusArgs(TypedDict):
+    project: str
+
+class ReportImportDeliveryCommand(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    key: str
+    action: Literal['import_delivery']
+    args: ReportImportDeliveryArgs
+
+class ReportSenderStatusCommand(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    key: str
+    action: Literal['sender_status']
+    args: ReportSenderStatusArgs
+
+ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand | ReportListCommand | ReportImageCommand | ReportImportDeliveryCommand | ReportSenderStatusCommand

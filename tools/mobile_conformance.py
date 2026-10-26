@@ -63,7 +63,7 @@ class EvidenceResult(unittest.TextTestResult):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=["M01"], required=True)
+    parser.add_argument("--phase", choices=["M01", "M02"], required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not (Path(os.environ.get("MEMORYKING_PG_BIN", "")) / "pg_ctl").is_file():
@@ -86,6 +86,11 @@ def main():
         "test_viewer_contracts.ViewerContractTests.test_closed_config_origin_tls_and_bounds",
         "test_viewer_contracts.ViewerContractTests.test_subjects_keys_and_readonly_dtos_are_closed",
     ]
+    external = {}
+    if args.phase == "M02":
+        from mobile_report_probes import EXPECTED, EXTERNAL
+
+        expected, external, extras = EXPECTED, EXTERNAL, []
     probes = sorted({name for names in expected.values() for name in names} | set(extras))
     suite = unittest.defaultTestLoader.loadTestsFromNames(probes)
     with __import__("tempfile").TemporaryFile(mode="w+") as log:
@@ -111,14 +116,22 @@ def main():
         }
         for case, names in expected.items()
     }
-    modules = ("test_viewer_identity", "test_viewer_migrations", "test_viewer_contracts")
+    modules = sorted({name.split(".")[0] for name in probes})
+    if args.phase == "M02":
+        for case, item in cases.items():
+            item["automated_status"] = item.pop("status")
+            item["qualification"] = (
+                "external_evidence_required" if case in external else "automated_scope_only"
+            )
     args.output.write_text(
         json.dumps(
             {
                 "program": "mobile-v1",
                 "phase": args.phase,
                 "passed": complete,
-                "scope": "Actual foundation layer; no GitHub provider, viewer HTTP, PWA or device qualification",
+                "scope": "Automated product probes only; no human QA, real SMTP, transfer, phone or live deployment qualification",
+                "external_evidence_required": external,
+                "phase_complete": False,
                 "platform": platform.platform(),
                 "python": platform.python_version(),
                 "cases": cases,
@@ -132,7 +145,9 @@ def main():
         )
         + "\n"
     )
-    print(f"Mobile M01: {len(evidence)}/{len(probes)} probes observed; passed={complete}")
+    print(
+        f"Mobile {args.phase}: {len(evidence)}/{len(probes)} automated probes observed; passed={complete}"
+    )
     raise SystemExit(0 if complete else 1)
 
 

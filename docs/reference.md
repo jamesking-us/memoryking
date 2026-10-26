@@ -154,12 +154,12 @@ content fails. The SDK does not automatically retry mutations.
 | `artifact` | `export` plus report/dependency permissions: bounded operator PDF/EPUB/reader export. Read-only viewers cannot use it. |
 | `delivery_status` | `report_delivery` plus project read: minimal outcome and reconciliation identity. |
 | `reconcile` | `report_policy` plus project read: exact delivery/attempt, explicit outcome and a currently permitted evidence dependency. |
+| `sender_status`, `import_delivery` | `report_policy` plus project read: inspect the fixed sender binding or reserve a verified accepted legacy delivery while sending is disabled. |
 
 Report authoring never grants readers or chooses recipients. Policies default to `channel: app`, with null destination/recipient. Kindle/both
 requires a fixed destination supplied by the trusted embedding host; the policy
 records its recipient principal and fingerprint. The internal sender requires an
-explicit `report_delivery` credential and enabled host configuration. The optional `serve --report-config` worker schedules builds and sends; legacy-sender
-handover is still under development. No report command enters the eight-tool model MCP
+explicit `report_delivery` credential and enabled host configuration. The optional `serve --report-config` worker schedules builds and sends. Operator import preserves accepted legacy identities; the installation's trusted collector must verify old receipts and permanently disable its previous sender before activation. No report command enters the eight-tool model MCP
 catalog.
 
 Inputs are `source.md`, `readme.md`, `evidence.json`, and identifier-named PNG/JPEG
@@ -207,5 +207,23 @@ content write is `unknown` and is never automatically retried. `reconcile` accep
 `smtp_accepted` or independently evidenced `not_submitted`; the latter explicitly
 allows a new bounded attempt cycle after current authority is rechecked. A stable
 Message-ID alone is insufficient evidence.
+
+Delivery status includes `outcome_ms` and `outcome_source`. The time records the
+persisted observation, or the explicit reconciliation time; it is not a provider's
+independent clock or device-arrival proof. `data_reply` identifies a directly
+observed SMTP reply; `operator_reconciliation` identifies an evidenced operator
+decision. Report status includes its delivery IDs and channel states, protected by
+the same whole-report permissions as its other metadata.
+
+`import_delivery` takes a report ID and a closed `ReportLegacyDelivery` record:
+program/phase/revision, legacy identity, receipt/source/EPUB hashes, original
+Message-ID, acceptance time, destination fingerprint and an authorized receipt
+evidence dependency. The caller attests verification of the original files and
+provider receipt; the service cannot infer their truth from hashes. An identical
+import returns the original identity. Changed payloads, report aliases, occupied
+revisions, wrong destinations and enabled senders fail. The independent ledger
+reserves the revision across content restores. Import creates no app content,
+artifacts or queued mail. Unknown historical outcomes need reconciliation before
+transfer; importing them as accepted is invalid. See [sender transfer](deployment.md#replacing-an-existing-report-sender).
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)
