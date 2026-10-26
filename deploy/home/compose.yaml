@@ -1,0 +1,85 @@
+# Explicit opt-in; no ports, account enrollment or mail credentials are created.
+name: memoryking-home
+x-app: &app
+  image: memoryking-home:${MK_HOME_TAG:?set an immutable source revision as MK_HOME_TAG}
+  build:
+    context: ../..
+    dockerfile: deploy/home/Dockerfile
+    target: app
+  user: "10001:10001"
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 96
+  mem_limit: 1g
+  cpus: 2
+  tmpfs: ["/tmp:uid=10001,gid=10001,mode=0700,size=536870912"]
+  stop_grace_period: 240s
+services:
+  gateway:
+    image: memoryking-home-gateway:${MK_HOME_TAG:?}
+    build:
+      context: ../..
+      dockerfile: deploy/home/Dockerfile
+      target: gateway
+    user: "10002:10002"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1
+    tmpfs: ["/tmp:uid=10002,gid=10002,mode=0700,size=16777216", "/run/tailscale:uid=10002,gid=10002,mode=0700,size=1048576"]
+    command: ["--tun=userspace-networking", "--state=/var/lib/tailscale/tailscaled.state", "--socket=/run/tailscale/tailscaled.sock", "--port=41641", "--no-logs-no-support"]
+    volumes: ["tailnet-state:/var/lib/tailscale"]
+    healthcheck:
+      test: [CMD, test, -S, /run/tailscale/tailscaled.sock]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  app:
+    <<: *app
+    restart: unless-stopped
+    network_mode: service:gateway
+    depends_on:
+      gateway:
+        condition: service_healthy
+    command: [--data, /data/store, --control, /control/security, --viewer-config, /secrets/viewer.json, --report-config, /secrets/reports.json]
+    volumes:
+      - data:/data
+      - control:/control
+      - artifacts:/data/store/blobs
+      - secrets:/secrets:ro
+  bootstrap:
+    <<: *app
+    profiles: [operations]
+    network_mode: none
+    entrypoint: [python, -m, memoryking.home_setup]
+    command: [local]
+    volumes:
+      - data:/data
+      - control:/control
+      - artifacts:/artifacts
+      - secrets:/secrets
+  operator:
+    <<: *app
+    profiles: [operations]
+    network_mode: none
+    entrypoint: [python]
+    command: [-m, memoryking, --help]
+    volumes:
+      - data:/data
+      - control:/control
+      - artifacts:/data/store/blobs
+      - secrets:/secrets
+      - archives:/archives
+volumes:
+  data: {}
+  control: {}
+  artifacts: {}
+  secrets: {}
+  archives: {}
+  tailnet-state: {}

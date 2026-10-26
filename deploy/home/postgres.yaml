@@ -1,0 +1,56 @@
+# Add after compose.yaml for the optional Unix-socket PostgreSQL profile.
+services:
+  postgres:
+    image: memoryking-home-postgres:${MK_HOME_TAG:?}
+    build:
+      context: ../..
+      dockerfile: deploy/home/Dockerfile
+      target: database
+    user: "10001:10001"
+    init: true
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 96
+    mem_limit: 512m
+    cpus: 1
+    tmpfs: ["/tmp:uid=10001,gid=10001,mode=0700,size=67108864"]
+    shm_size: 128m
+    stop_grace_period: 120s
+    environment:
+      POSTGRES_USER: mk_bootstrap
+      POSTGRES_DB: memoryking
+      POSTGRES_PASSWORD_FILE: /pgadmin/bootstrap.password
+      POSTGRES_INITDB_ARGS: --auth-local=scram-sha-256 --auth-host=reject
+    command: [postgres, -c, "listen_addresses=", -c, unix_socket_directories=/var/run/postgresql, -c, unix_socket_permissions=0700, -c, fsync=on, -c, synchronous_commit=on, -c, full_page_writes=on, -c, max_connections=32]
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - postgres-socket:/var/run/postgresql
+      - pgadmin:/pgadmin:ro
+    healthcheck:
+      test: [CMD-SHELL, 'PGPASSWORD="$$(cat /pgadmin/bootstrap.password)" psql -h /var/run/postgresql -U mk_bootstrap -d memoryking -Atqc "SELECT 1"']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  app:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: [--backend, shared, --dsn-file, /secrets/runtime.dsn, --data, /data/store, --control, /control/security, --viewer-config, /secrets/viewer.json, --report-config, /secrets/reports.json]
+    volumes: ["postgres-socket:/socket"]
+  bootstrap:
+    command: [shared]
+    volumes: ["pgadmin:/pgadmin", "postgres-socket:/socket"]
+  operator:
+    volumes: ["postgres-socket:/socket", "pgadmin:/pgadmin"]
+volumes:
+  postgres-data: {}
+  pgadmin: {}
+  postgres-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=10001,gid=10001,mode=0700,size=16m

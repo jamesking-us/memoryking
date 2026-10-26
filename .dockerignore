@@ -2,6 +2,8 @@
 !deploy/
 !deploy/shared/
 !deploy/shared/Dockerfile
+!deploy/home/
+!deploy/home/Dockerfile
 !pyproject.toml
 !requirements-dev.lock
 !requirements-build.lock

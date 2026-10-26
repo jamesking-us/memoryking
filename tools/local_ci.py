@@ -48,6 +48,15 @@ def main():
     )
     parser.add_argument("--container-port", type=int, default=19765)
     parser.add_argument(
+        "--home-containers",
+        action="store_true",
+        help="Exercise disposable SQLite/PostgreSQL home profiles on local Docker; no real accounts or SMTP",
+    )
+    parser.add_argument(
+        "--home-baseline",
+        help="Prior full product SHA for home packaged-core compatibility rehearsal",
+    )
+    parser.add_argument(
         "--chrome",
         type=Path,
         help="Explicit local Chrome executable for the four-way mobile browser matrix",
@@ -58,6 +67,8 @@ def main():
         help="Explicit local Playwright ES module; used with --chrome and --postgres-bin",
     )
     args = parser.parse_args()
+    if args.home_baseline and not args.home_containers:
+        parser.error("--home-baseline requires --home-containers")
     if bool(args.chrome) != bool(args.playwright) or (args.chrome and not args.postgres_bin):
         parser.error("--chrome and --playwright require each other and --postgres-bin")
     for browser_path in (args.chrome, args.playwright):
@@ -233,6 +244,23 @@ def main():
                     checkout,
                 ),
             )
+        if args.home_containers:
+            home_command = [
+                str(python),
+                "tools/home_compose_rehearsal.py",
+                "--output",
+                "tmp/home-containers",
+            ]
+            if args.home_baseline:
+                home_command += ["--compatible-revision", args.home_baseline]
+            steps.insert(
+                -1,
+                (
+                    "home-containers",
+                    home_command,
+                    checkout,
+                ),
+            )
         if args.compose:
             steps.insert(
                 -1,
@@ -286,7 +314,13 @@ def main():
             shutil.copytree(checkout / "tmp/runtime-install", output / "runtime-install")
         if (checkout / "tmp/contracts-package").exists():
             shutil.copytree(checkout / "tmp/contracts-package", output / "contracts-package")
-        for directory in ("supervision", "containers", "mobile-browser", "owner-browser"):
+        for directory in (
+            "supervision",
+            "containers",
+            "home-containers",
+            "mobile-browser",
+            "owner-browser",
+        ):
             if (checkout / "tmp" / directory).exists():
                 shutil.copytree(checkout / "tmp" / directory, output / directory)
         if (checkout / "dist").exists():

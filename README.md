@@ -121,8 +121,11 @@ and [reporting](docs/getting-started.md#experimental-reporting).
 | Local | One person or agents on one computer | Python service, SQLite, private local files; optional browser dashboard. |
 | Shared | Multiple agents using a central service | PostgreSQL, authenticated HTTP/MCP, separate database roles and recovery storage. |
 | Docker evaluation | Trying the shared profile on one machine | A source-built Compose stack with loopback HTTPS. |
+| Private home preview | Preparing a phone viewer on your own Mac | One app container and a private-network sidecar; SQLite by default, with no published host ports. Account/device qualification is still pending. |
 
 See [deployment and configuration](docs/deployment.md) for commands, prerequisites, backup and recovery.
+The [home preview](docs/deployment.md#private-home-preview) starts with sign-in and
+report delivery disabled, so installation alone does not share your memory or send email.
 
 ## Read the documentation
 

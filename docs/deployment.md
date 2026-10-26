@@ -87,6 +87,197 @@ Shared `request` accepts `--url`, `--tenant`, `--project`, `--credential` and op
 
 ## Docker evaluation
 
+The general shared rehearsal below is separate from the private home preview.
+
+## Private home preview
+
+The opt-in [home Compose profile](../deploy/home/compose.yaml) runs the restricted
+phone viewer and optional report worker in one application container, alongside
+an unenrolled Tailscale sidecar. It publishes no host ports. SQLite is the default;
+an optional [PostgreSQL overlay](../deploy/home/postgres.yaml) connects through a
+private Unix socket. The home runner opens no administrative HTTP/MCP gateway.
+Your existing local installation is separate and is not imported automatically.
+
+This is an evaluation preview. Local Mac Docker rehearsals cover both stores;
+real Android, GitHub, Tailscale account/ACL/HTTPS setup and final qualification are
+still pending. Do not forward a router port or enable public Funnel. Host sleep,
+reboot, internet failure and Docker downtime make the service unavailable. Starting
+Docker after a reboot also requires the normal Mac/Docker Desktop login lifecycle;
+this profile does not promise unattended availability.
+
+For a **new disposable installation**, use a clean checkout of a reviewed commit
+and keep its full revision as the image tag. Docker Desktop and Compose must be
+running. These commands create new named volumes; do not use bootstrap on an
+existing installation:
+
+```sh
+export MK_HOME_TAG="$(git rev-parse HEAD)"
+docker compose -f deploy/home/compose.yaml build app gateway
+docker compose -f deploy/home/compose.yaml run --rm --no-deps bootstrap
+docker compose -f deploy/home/compose.yaml up -d --no-build --wait gateway app
+docker compose -f deploy/home/compose.yaml logs app
+```
+
+The application emits `"ready": true` after its configured components start.
+Compose's running state alone is not application readiness. Fresh bootstrap creates
+private disabled viewer/report configuration, a fresh store and an owner credential;
+it never prints credential values. Tailscale remains in `NeedsLogin` with no tailnet
+identity. Nothing is yet reachable from a phone.
+
+For a fresh PostgreSQL installation, use a separate Compose project name and
+include both files **on every command**. Build the database image too, prepare the
+private role secrets, start the database, then initialize MemoryKing before the app:
+
+```sh
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml build app gateway postgres
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml run --rm --no-deps bootstrap
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml up -d --no-build --wait postgres
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml run --rm --no-deps bootstrap postgres-init
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml up -d --no-build --wait gateway app
+```
+
+The database has no TCP listener or Docker network. Its health check authenticates
+and reads the expected database. A partially initialized database needs explicit
+operator diagnosis; bootstrap refuses to silently reuse existing roles or stores.
+The runtime DSN cannot use TCP, multiple hosts, service indirection or
+`PGHOSTADDR`/`PGSERVICE`/`PGSERVICEFILE` environment fallback.
+
+### Home boundaries and configuration
+
+| Component | Configuration and bound |
+| --- | --- |
+| App | UID/GID 10001, read-only root, no extra capabilities, no-new-privileges, 1 GiB memory, 2 CPUs, 96 processes, 512 MiB private temporary filesystem. |
+| Gateway | UID/GID 10002, userspace networking, no TUN device or added capabilities; 256 MiB memory, 1 CPU, 64 processes. Only its own persistent state is mounted. Log uploads are disabled. |
+| PostgreSQL | Optional, 512 MiB memory, 1 CPU, 96 processes, 32 connections; runtime pool defaults to eight, accepted range 2-16. Socket owner-only permissions and role authentication both apply. |
+| Viewer | `/secrets/viewer.json`, disabled initially; loopback 8772 with a fixed HTTPS public origin. Use the existing closed viewer configuration and GitHub setup below. |
+| Reports | `/secrets/reports.json`, disabled initially; one renderer at a time, ten pending builds, 120-second render deadline and 512 MiB child RSS limit. App-only reporting needs no SMTP credential. |
+| Secrets | Private named volume; app sees it read-only. Gateway sees none. PostgreSQL administration/backup credentials are on a separate operator/database-only volume. |
+| Data | Separate named data, content-addressed artifact, independent control-history and archive volumes. Rendered report files share the canonical artifact store; the browser never receives a raw filesystem URL. |
+| Stop | Up to 240 seconds for bounded work to drain. Wait for actual process exit before copying, restoring or changing storage. |
+
+The image pins Python, Tailscale and optional PostgreSQL base digests; Python
+dependencies are hash locked. Preserve the built image ID and wheel hash as well
+as the source revision. Supported renderer confinement on this profile is Linux
+x86-64 with Landlock ABI 6 or newer; unsupported kernels/architectures fail closed.
+Container behavior on an Apple Silicon host has not been qualified by an Intel Mac
+result. Root, the Docker administrator and the service owner are trusted.
+
+The native entry point is `python -m memoryking.home --data PATH --control PATH`.
+Its backend defaults to `local`; `--backend shared` requires `--dsn-file PATH` and
+accepts `--pool-size 2..16`. Optional `--viewer-config PATH` and `--report-config PATH`
+use the same private closed configuration contracts as the existing service.
+The CLI opens no HTTP listener when viewer configuration is absent or disabled; local
+Unix IPC remains available to authorized same-host clients. Startup checks the
+current shared schema and control history even when the viewer is disabled.
+
+To reproduce the isolated container checks, use a new evidence directory:
+
+```sh
+.venv/bin/python tools/home_compose_rehearsal.py --output tmp/home-rehearsal
+```
+
+The driver builds both profiles, creates only synthetic data, records actual
+container/image identities, and removes its disposable containers/volumes afterward.
+Its separate test launcher controls the GitHub callback; production code contains
+no test login bypass. No account is enrolled and no fixture email is sent. `--keep`
+retains stopped synthetic volumes for diagnosis. This is a local integration
+rehearsal, not proof of real tailnet access or physical Android behavior.
+
+### Home maintenance and recovery
+
+Keep the same Compose project name, files and immutable image tag when stopping
+or restarting. `docker compose ... stop app` prevents automatic restart until you
+explicitly start it again; check the container's actual stopped state and exit code.
+An exit caused by Docker's kill deadline needs failure diagnosis before maintenance.
+Do not remove named volumes as an upgrade or recovery shortcut.
+When recreating the gateway, recreate its app as well so both join the same new
+network namespace. A complete `docker compose ... down` followed by `up -d
+--no-build --wait gateway app` preserves named volumes; **omit `--volumes`** on
+real installations. Reconfirm application readiness afterward. Merely restarting
+the gateway is not a complete application recovery procedure.
+
+Back up through the existing signed logical backup adapters while the application
+is stopped. Retain canonical artifacts, private configuration and the **current**
+independent control/security/delivery journal separately. The named archive volume
+is on the same Docker disk, so copy protected backups to independently retained,
+encrypted storage. Signatures detect tampering; they do not encrypt secrets.
+Protect the gateway's persistent identity state too. Do not start two copies of
+the same restored gateway identity or report sender. Keep the current journal
+head in a separately retained location so losing a Docker disk does not leave only
+an older revocation/delivery history.
+
+For the default SQLite project, stop and inspect the app, then create a new archive
+(replace `backup-001` with a new name each time):
+
+```sh
+docker compose -f deploy/home/compose.yaml stop app
+docker inspect --format '{{json .State}}' "$(docker compose -f deploy/home/compose.yaml ps -aq app)"
+docker compose -f deploy/home/compose.yaml run --rm --no-deps operator -m memoryking backup --store /data/store --control /control/security --backup /archives/backup-001
+```
+
+For the optional PostgreSQL project, keep PostgreSQL running and stop only the app:
+
+```sh
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml stop app
+docker inspect --format '{{json .State}}' "$(docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml ps -aq app)"
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml run --rm --no-deps operator -m memoryking.shared backup --dsn-file /secrets/runtime.dsn --backup-dsn-file /pgadmin/backup.dsn --content /data/store --control /control/security --tenant main --credential /control/security/main/owner.credential --archive /archives/backup-001
+```
+
+Both backup commands were exercised against synthetic home containers. The logical
+archive includes canonical blobs; it does **not** replace independently retained
+current control history, secret configuration or gateway identity. Copy those private
+volumes only while their owning service is stopped. Do not export secret contents
+to terminal output or put them in Git. Retain the current journal head separately
+using the existing [control-history procedure](#backup-and-recovery), and verify the
+encrypted off-device copy before treating it as disaster recovery.
+
+Before restoring, disable the report worker and sender. Restore old content with
+the latest independently retained control history; never replace that history with
+an older snapshot to get the service to start. Interrupted restores remain fenced
+until the explicit restore procedure finishes. Missing history blocks startup.
+After restore, reconcile lost operations, refresh incarnation-bound credentials and
+review report/delivery state before enabling any sender. An accepted or ambiguous
+submission must not be retried automatically.
+
+With the app stopped, report configuration disabled and current control history
+intact, these are the exercised restore entry points for the two profiles:
+
+```sh
+docker compose -f deploy/home/compose.yaml run --rm --no-deps operator -m memoryking restore --store /data/store --control /control/security --backup /archives/backup-001
+docker compose -p memoryking-home-pg -f deploy/home/compose.yaml -f deploy/home/postgres.yaml run --rm --no-deps operator -m memoryking.shared restore --dsn-file /pgadmin/migration.dsn --content /data/store --control /control/security --tenant main --archive /archives/backup-001
+```
+
+Run only the command for the installation being restored. Each creates a replacement
+history and new owner credential; do not reuse old agent/viewer/report credentials.
+Keep the sender off while reconciling the lost requests and existing delivery
+receipts. These commands deliberately do not include a lost-control override.
+
+For upgrades, keep the last image/configuration and current backups. A prior image
+is usable only if it accepts the current schema and configuration. Do not bypass a
+schema rejection or blindly downgrade files. Compatible prior/current packaged-core
+reopening and unsupported-schema rejection have local rehearsal coverage. Real
+account/device setup and final private-pilot qualification remain pending.
+
+| Failure | First action |
+| --- | --- |
+| `unsafe_permissions` | Check UID/GID and 0700-directory/0600-secret modes; do not make private files world-readable. |
+| `owner_busy_or_unsafe` | Locate and stop the existing SQLite owner; do not delete its lock or copy a running database. |
+| `home_database_socket_required` | Check the explicit socket DSN and reject TCP/service/environment fallbacks. |
+| `schema_unsupported` | Preserve data, control history and the rejected package identity; select a verified compatible image or repair/roll forward. |
+| `recovery_required` | Preserve the current journal/anchor and complete the explicit restore/reconciliation procedure. |
+| Neutral startup failure | Privately inspect missing secret/control files, TLS certificate/key match and database readiness; never paste secret contents into logs or support messages. |
+| Gateway `NeedsLogin` | Expected after fresh bootstrap. No private network registration has occurred yet. |
+| Phone offline / host asleep | Restore Mac/Docker/network availability and sign in again; do not bypass TLS or expand network access to troubleshoot. |
+
+The rehearsal accepts `--compatible-revision FULL_GIT_SHA` to compare the actual
+prior/current packaged core against the same stopped synthetic store. This does
+not invent a prior home entry point or approve an arbitrary schema downgrade.
+For an immutable contributor job, use `tools/local_ci.py --revision FULL_GIT_SHA`
+with its usual local runtime arguments plus `--home-containers` and, when needed,
+`--home-baseline PRIOR_FULL_GIT_SHA`.
+
+## Shared Docker rehearsal
+
 The [Compose stack](../deploy/shared/compose.yaml) builds the application from source and pins its base images. It publishes only loopback HTTPS. PostgreSQL has no TCP listener; API/worker/operator communicate through a private Unix-socket volume. Content, current control state, database files, archives and role secrets are separate mounts.
 
 From the contributor environment with a working Docker engine and Compose:
@@ -198,7 +389,8 @@ No running store has to be adopted to try the disposable example.
 
 Viewer/report JSON schemas and generated types are available now. They define
 viewer listener/session boundaries and implemented report operations. The phone
-PWA is still being built; reporting is described below. Viewer configuration is rejected
+PWA is available as a local evaluation preview; physical Android and real private-network
+qualification remain pending. Reporting is described below. Viewer configuration is rejected
 for non-HTTPS public origins, non-loopback listeners, invalid TLS-mode combinations,
 invalid limits or unknown fields. Pass it explicitly to the serving command; the
 listener opens only when enabled.
