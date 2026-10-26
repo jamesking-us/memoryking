@@ -208,6 +208,14 @@ content write is `unknown` and is never automatically retried. `reconcile` accep
 allows a new bounded attempt cycle after current authority is rechecked. A stable
 Message-ID alone is insufficient evidence.
 
+`attempts` is a monotonically increasing delivery attempt identity; it does not
+reset during reconciliation. `expected_attempts` must match that exact identity
+(1–99). A separate private cycle counter enforces the three-attempt automatic
+retry budget. A stale reconciliation cannot authorize or accept a later cycle.
+Experimental pre-release records that already reset their counter without a cycle
+marker fail closed with `report_delivery_attempt_history_required`; their attempt
+identity must be reconstructed from retained independent evidence before migration.
+
 Delivery status includes `outcome_ms` and `outcome_source`. The time records the
 persisted observation, or the explicit reconciliation time; it is not a provider's
 independent clock or device-arrival proof. `data_reply` identifies a directly

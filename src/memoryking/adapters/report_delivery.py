@@ -38,6 +38,16 @@ def configured(store: LocalStore, destination: str | None, project: str) -> Mail
     return value
 
 
+def cycle_attempts(body: dict[str, Any]) -> int:
+    if "cycle_attempts" in body:
+        return int(body["cycle_attempts"])
+    if any(item["outcome"] == "not_submitted" for item in body["reconciliation"]):
+        # Pre-release experimental records reset their counter. Do not guess
+        # the identity of a current attempt from that ambiguous older history.
+        raise LocalError("report_delivery_attempt_history_required")
+    return int(body["attempts"])
+
+
 class Deliveries:
     def __init__(self, store: LocalStore):
         self.s, self.db = store, store.db
@@ -390,7 +400,7 @@ class Deliveries:
                 raw = None
                 config = None
             else:
-                if body["state"] != "queued" or body["attempts"] >= 3:
+                if body["state"] != "queued" or cycle_attempts(body) >= 3:
                     raise LocalError("report_delivery_retry_limit")
                 if at < body["next_attempt_ms"]:
                     raise LocalError("report_delivery_backoff")
@@ -410,6 +420,7 @@ class Deliveries:
                 body.update(
                     state="submitting",
                     attempts=body["attempts"] + 1,
+                    cycle_attempts=cycle_attempts(body) + 1,
                     lease_token=token,
                     lease_until=at + 120000,
                     release=None,
@@ -460,7 +471,7 @@ class Deliveries:
                 raise LocalError("report_delivery_fenced")
             state: str = outcome.state
             if state == "pre_data_transient":
-                state = "queued" if current["attempts"] < 3 else "rejected"
+                state = "queued" if cycle_attempts(current) < 3 else "rejected"
             current.update(
                 state=state,
                 outcome={"stage": outcome.stage, "code": outcome.code},
@@ -468,7 +479,7 @@ class Deliveries:
                 lease_token=None,
                 lease_until=None,
                 next_attempt_ms=completion.evaluated_ms
-                + (1000 if current["attempts"] == 1 else 5000),
+                + (1000 if cycle_attempts(current) == 1 else 5000),
             )
             self._write(who, current, "outcome", completion.evaluated_ms)
             result = self._public(current)
@@ -512,20 +523,22 @@ class Deliveries:
                 or body["attempts"] != args["expected_attempts"]
             ):
                 raise LocalError("report_reconciliation_conflict")
+            cycle_attempts(body)  # Refuse ambiguous pre-release reset histories.
             Reports(self.s)._dependency(who, args["project"], args["evidence"], at)
             if args["outcome"] == "not_submitted":
                 # A current recipient/history check is required even when an
                 # operator has evidence that the former attempt sent nothing.
                 self._authorized(who, body, at)
-                body.update(state="queued", attempts=0, next_attempt_ms=at)
+                body.update(state="queued", cycle_attempts=0, next_attempt_ms=at)
             else:
                 body["state"] = "smtp_accepted"
-                body["outcome_ms"] = at
+            body["outcome_ms"] = at
             if len(body["reconciliation"]) >= 32:
                 raise LocalError("report_reconciliation_limit")
             body["reconciliation"].append(
                 {
                     "actor": who["principal"],
+                    "attempts": body["attempts"],
                     "evaluated_ms": at,
                     "evidence": args["evidence"],
                     "outcome": args["outcome"],

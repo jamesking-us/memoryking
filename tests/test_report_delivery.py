@@ -111,10 +111,83 @@ class DeliveryCases:
             },
         )
         self.assertEqual(result["state"], "queued")
-        self.assertEqual(result["attempts"], 0)
+        self.assertEqual(result["attempts"], 1)
         accepted = self.attempt(job, FakeSMTP())
         self.assertEqual(accepted["state"], "smtp_accepted")
         self.assertEqual(accepted["outcome_source"], "data_reply")
+        self.assertEqual(accepted["attempts"], 2)
+
+    def test_stale_reconciliation_cannot_match_a_later_authorized_cycle(self):
+        job = self.publish()
+        self.assertEqual(self.attempt(job, FakeSMTP(fail="reply"))["state"], "unknown")
+        proof = self.source(
+            "first-attempt-proof", b"Synthetic observed first attempt nonsubmission"
+        )
+        original = {
+            "delivery": job,
+            "expected_attempts": 1,
+            "outcome": "not_submitted",
+            "evidence": proof,
+        }
+        self.command("reconcile", original, key="first-reconciliation")
+        later = self.attempt(job, FakeSMTP(fail="reply"))
+        self.assertEqual((later["state"], later["attempts"]), ("unknown", 2))
+        with self.assertRaises(LocalError) as stale:
+            self.command("reconcile", original, key="stale-new-key")
+        self.assertEqual(stale.exception.code, "report_reconciliation_conflict")
+        self.command("reconcile", original, key="first-reconciliation")
+        self.assertEqual(self.command("delivery_status", {"delivery": job})["state"], "unknown")
+        unused = FakeSMTP()
+        self.assertEqual(self.attempt(job, unused)["state"], "unknown")
+        self.assertEqual(unused.events, [])
+
+    def test_reconciled_cycle_keeps_three_attempt_budget_without_reusing_identity(self):
+        job = self.publish()
+        self.store.clock = AdvanceClock()
+        self.attempt(job, FakeSMTP(fail="body"))
+        self.command(
+            "reconcile",
+            {
+                "delivery": job,
+                "expected_attempts": 1,
+                "outcome": "not_submitted",
+                "evidence": self.source("proof", b"Synthetic nonsubmission evidence"),
+            },
+        )
+        for expected, offset, state in [
+            (2, 0, "queued"),
+            (3, 1001, "queued"),
+            (4, 5001, "rejected"),
+        ]:
+            self.store.clock.offset += offset
+            result = self.attempt(job, FakeSMTP(fail="connect"))
+            self.assertEqual((result["attempts"], result["state"]), (expected, state))
+
+    def test_ambiguous_experimental_reset_history_is_not_guessed(self):
+        job = self.publish()
+        self.attempt(job, FakeSMTP(fail="reply"))
+        proof = self.source("old-proof", b"Synthetic historical nonsubmission")
+        with self.store.transaction() as decision:
+            who = self.store._auth(self.owner, "report_policy", "p", decision.evaluated_ms)
+            ledger = Deliveries(self.store)
+            body = ledger._job(who["tenant"], job)
+            del body["cycle_attempts"]
+            body["reconciliation"].append({"outcome": "not_submitted"})
+            ledger._write(who, body, "synthetic_old_format", decision.evaluated_ms)
+        with self.assertRaises(LocalError) as ambiguous:
+            self.command(
+                "reconcile",
+                {
+                    "delivery": job,
+                    "expected_attempts": 1,
+                    "outcome": "not_submitted",
+                    "evidence": proof,
+                },
+            )
+        self.assertEqual(ambiguous.exception.code, "report_delivery_attempt_history_required")
+        unused = FakeSMTP()
+        self.assertEqual(self.attempt(job, unused)["state"], "unknown")
+        self.assertEqual(unused.events, [])
 
     def test_kindle_only_policy_queues_delivery_without_app_visibility(self):
         self.channel = "kindle"
