@@ -115,7 +115,7 @@ class PostgresStore(LocalStore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "4":
+            if version is None or version[0] != "5":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException:
@@ -360,8 +360,10 @@ class PostgresStore(LocalStore):
             live = {
                 row[0]
                 for row in self.db.execute(
-                    "SELECT blob FROM observations WHERE tenant=? AND blob IS NOT NULL",
-                    (self.tenant,),
+                    "SELECT blob FROM observations WHERE tenant=? AND blob IS NOT NULL "
+                    "UNION SELECT blob FROM report_files WHERE tenant=? "
+                    "UNION SELECT blob FROM report_uploads WHERE tenant=?",
+                    (self.tenant, self.tenant, self.tenant),
                 )
             }
             directory = self.root / "blobs" / self.tenant

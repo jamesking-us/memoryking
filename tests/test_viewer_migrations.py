@@ -46,7 +46,7 @@ class LocalViewerMigrations(unittest.TestCase):
                 db.execute("SELECT name FROM sqlite_master WHERE name='viewer_bindings'").fetchone()
             )
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
         self.assertEqual(
             self.store.db.execute("SELECT blob FROM observations").fetchone()[0],
             self.span["content_hash"],
@@ -153,7 +153,7 @@ class NativeViewerUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "4",
+                        "5",
                     )
         finally:
             cluster.close()

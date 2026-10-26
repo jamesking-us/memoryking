@@ -128,7 +128,63 @@ code; canonical project/content/dependency checks still execute on reads.
 Identity-specific errors include `viewer_binding_conflict`, `revision_conflict`,
 `viewer_policy_operation_required`, `invalid_viewer_request` and `viewer_limit`.
 The operator can inspect its own bindings; callers without owner authority receive
-no inventory. Login, viewer HTTP routes and built-in report operations are not yet
-implemented. Do not expose the administrator dashboard as a substitute phone app.
+no inventory. Login and viewer HTTP routes are not yet implemented. Do not expose the administrator dashboard as a substitute phone app.
+
+## Experimental report commands
+
+`LocalClient.report(command)` and `SharedClient.report(command)` use the closed
+`ReportCommand` schema. The local CLI accepts the same JSON through stdin:
+
+```sh
+memoryking report --socket "$MK_DATA/service.sock" --credential "$MK_REPORT_CREDENTIAL" < report-command.json
+```
+
+A command contains `version: 1`, the current `incarnation`, a stable `key`, an
+`action` and `args.project`. Keys bind canonical payloads; reuse with changed
+content fails. The SDK does not automatically retry mutations.
+
+| Action | Capability and purpose |
+| --- | --- |
+| `policy`, `bind_source` | `report_policy`: set a version-checked program policy or external source binding. |
+| `upload`, `discard_upload` | `report_author`: upload ordered 64 KiB chunks or discard the caller's unfinished upload. |
+| `submit`, `build` | `report_author`: create an immutable revision or queue its build. |
+| `qa` | `report_qa`: attest exact source/artifact/README/evidence hashes and reviewed PDF page count. |
+| `publish`, `withdraw` | `report_publish`: publish a verified revision or remove its current visibility. |
+| `status`, `reader` | `read` plus all current report/dependency permissions. Drafts are visible only to their author or permitted QA/publish actors. |
+| `artifact` | `export` plus report/dependency permissions: bounded operator PDF/EPUB/reader export. Read-only viewers cannot use it. |
+
+Report authoring never grants readers or chooses recipients. Policies currently
+accept only `channel: app`, with null destination/recipient. The declared
+`report_delivery` capability reserves authority for the delivery implementation;
+it does not activate a sender. No report command enters the eight-tool model MCP
+catalog.
+
+Inputs are `source.md`, `readme.md`, `evidence.json`, and identifier-named PNG/JPEG
+figures. There are at most 61 uploaded files, 50 MiB total and 2 MiB per text input;
+each raster is at most 8 MiB/12 million pixels. Source must contain the 17 numbered
+sections in order. Every non-narrative input hash must have a current dependency
+binding. Unfinished inputs are bounded to 50 MiB per author/project; discard them
+when abandoned. The service verifies bytes and permissions, not the truth of an
+author's evidence claims.
+
+The native worker entry point is `build_one(store, credential, project)` in
+`memoryking.adapters.report_build`. The embedding service owns the store and
+supplies an explicitly granted credential. A process lease permits one renderer
+per store root and the queue holds ten waiting builds per service tenant. Rendering
+runs outside canonical request transactions. Interrupted builds become failed;
+submit a new revision after correcting the cause. Automatic scheduling remains
+under development.
+
+Each reader response is at most 64 KiB and carries a history-, principal-, policy-
+and revision-bound cursor. Fragments reassemble canonical block JSON in order;
+content must be rendered as data, never raw HTML. The phone reader is not yet
+implemented. Operator artifact exports carry a fixed hash, total length, offset
+and at most 32 KiB of base64-decoded bytes per response.
+
+Errors include `report_policy_required`, `report_source_binding_required`,
+`report_dependency_unavailable`, `report_qa_mismatch`, `report_policy_changed`,
+`report_worker_fenced`, `report_worker_busy`, `report_input_limit`,
+`report_delivery_unavailable` and `report_sandbox_unavailable`. None establishes
+human approval or provider/device delivery.
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

@@ -97,4 +97,31 @@ grants, private-note isolation and revocation in a temporary store. It uses loca
 owner IPC and an internally simulated authenticated subject. It does not perform
 GitHub sign-in or start the phone application.
 
+## Experimental reporting
+
+A report turns an agent's work into a document you can review later. The current
+SDK can store a complete phase report, build PDF/EPUB copies and publish a reviewed
+record for authorized readers. The smartphone screen and Kindle sender are still
+under development.
+
+On native macOS, install the optional locked renderer dependencies in the pinned
+project environment and run this disposable example:
+
+```sh
+.venv/bin/python -m pip install -r requirements-reports.lock
+.venv/bin/python examples/report_draft.py
+```
+
+It creates a temporary store, binds synthetic evidence to the owner, uploads a
+17-section document and builds its artifacts. The output says `built`, `qa: null`
+and `email_sent: false`. It does not attest visual review, publish a report or
+contact an external service. Linux rendering currently fails closed.
+
+For real work, the operator first sets a project/program policy and binds external
+source permissions. An authorized author submits the narrative, README snapshot,
+evidence manifest and dependencies. A worker builds the copies; a reviewer inspects
+every PDF page and the EPUB and records the exact artifact hashes. Publication
+then checks every intended reader's current access. A frozen report becomes
+unavailable if any supporting source is later revoked or purged.
+
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

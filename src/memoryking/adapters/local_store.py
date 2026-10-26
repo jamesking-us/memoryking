@@ -36,6 +36,7 @@ from memoryking.domain.local import (
     SystemClock,
     temporal_valid,
 )
+from memoryking.domain.reporting import REPORT_CAPABILITIES
 
 CAPABILITIES = {
     "capture",
@@ -51,7 +52,7 @@ CAPABILITIES = {
     "handoff",
     "inference",
     "repository",
-}
+} | REPORT_CAPABILITIES
 RETRY_MS = 30 * 24 * 60 * 60 * 1000
 QUEUE_LIMIT = 1000
 CONCURRENCY_LIMIT = 4
@@ -169,7 +170,9 @@ class LocalStore:
             self.db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8}:
             self.db.executescript(Path(__file__).with_name("viewer_schema.sql").read_text())
-        elif version != 9:
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+            self.db.executescript(Path(__file__).with_name("report_schema.sql").read_text())
+        elif version != 10:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         self.store_id, self.incarnation = meta["store"], meta["incarnation"]
@@ -226,6 +229,7 @@ class LocalStore:
             db.executescript(Path(__file__).with_name("optional_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("viewer_schema.sql").read_text())
+            db.executescript(Path(__file__).with_name("report_schema.sql").read_text())
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             db.close()
@@ -841,12 +845,18 @@ class LocalStore:
             from memoryking.adapters.viewer_identity import ViewerIdentity
 
             ViewerIdentity(self).apply_policy(action)
+        elif kind == "report_policy":
+            from memoryking.adapters.report_store import Reports
+
+            Reports(self).apply_control(action)
         else:
             raise LocalError("journal_invalid")
         if kind == "purge":
             from memoryking.adapters.knowledge_store import Knowledge
+            from memoryking.adapters.report_store import Reports
 
             Knowledge(self).purge_dependencies(tenant, action["observation"])
+            Reports(self).purge(tenant)
             # Conservatively erase all tenant rendered copies, including dependent promotions.
             self.db.execute(
                 "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=?",
@@ -923,7 +933,8 @@ class LocalStore:
             live = {
                 (row[0], row[1])
                 for row in self.db.execute(
-                    "SELECT tenant,blob FROM observations WHERE blob IS NOT NULL"
+                    "SELECT tenant,blob FROM observations WHERE blob IS NOT NULL "
+                    "UNION SELECT tenant,blob FROM report_files UNION SELECT tenant,blob FROM report_uploads"
                 )
             }
             removed = 0
@@ -1209,7 +1220,8 @@ class LocalStore:
             private_dir(destination / "blobs", create=True)
             blobs: list[str] = []
             for tenant, digest in self.db.execute(
-                "SELECT DISTINCT tenant,blob FROM observations WHERE blob IS NOT NULL"
+                "SELECT tenant,blob FROM observations WHERE blob IS NOT NULL "
+                "UNION SELECT tenant,blob FROM report_files UNION SELECT tenant,blob FROM report_uploads"
             ):
                 relative = f"blobs/{tenant}/{digest}"
                 private_dir((destination / relative).parent, create=True)
@@ -1219,7 +1231,7 @@ class LocalStore:
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 9,
+                "schema": 10,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
                 "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
@@ -1285,7 +1297,7 @@ class LocalStore:
             controller.journal(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")
@@ -1380,6 +1392,9 @@ class LocalStore:
         self.db.execute("DELETE FROM adapter_bases")
         self.db.execute("DELETE FROM embedding_items")
         self.db.execute("DELETE FROM embedding_jobs")
+        self.db.execute("DELETE FROM report_uploads")
+        self.db.execute("DELETE FROM report_retries")
+        self.db.execute("UPDATE report_revisions SET token=NULL,lease_until=NULL")
         self.db.execute(
             "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0",
             (self.incarnation,),

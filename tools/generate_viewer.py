@@ -69,43 +69,55 @@ def generate(wire_bytes: bytes) -> dict[Path, bytes]:
             "\n".join(ts).rstrip() + "\n"
         ).encode()
     wire = json.loads(wire_bytes)
+    for node in wire["oneOf"]:
+        if node["properties"]["operation"]["const"] == "grant":
+            caps = node["properties"]["args"]["properties"]["capabilities"]["items"]["enum"]
+            for cap in schemas["reporting"]["$defs"]["ReportCapabilities"]["enum"]:
+                if cap not in caps:
+                    caps.append(cap)
     wire["oneOf"] = [
-        node for node in wire["oneOf"] if node["properties"]["operation"]["const"] != "viewer_admin"
+        node
+        for node in wire["oneOf"]
+        if node["properties"]["operation"]["const"] not in {"viewer_admin", "report"}
     ]
-    embedded = copy.deepcopy(schemas["viewer"])
-    embedded.pop("$id")
-    embedded.pop("$schema")
+    for stem, group, operation, command in (
+        ("viewer", "Viewer", "viewer_admin", "ViewerAdminCommand"),
+        ("reporting", "Reporting", "report", "ReportCommand"),
+    ):
+        embedded = copy.deepcopy(schemas[stem])
+        embedded.pop("$id")
+        embedded.pop("$schema")
 
-    def refs(node: Any) -> None:
-        if isinstance(node, dict):
-            if "$ref" in node:
-                node["$ref"] = node["$ref"].replace("#/$defs/", "#/$defs/Viewer/$defs/")
-            for child in node.values():
-                refs(child)
-        elif isinstance(node, list):
-            for child in node:
-                refs(child)
+        def refs(node: Any) -> None:
+            if isinstance(node, dict):
+                if "$ref" in node:
+                    node["$ref"] = node["$ref"].replace("#/$defs/", f"#/$defs/{group}/$defs/")
+                for child in node.values():
+                    refs(child)
+            elif isinstance(node, list):
+                for child in node:
+                    refs(child)
 
-    refs(embedded)
-    wire["$defs"]["Viewer"] = embedded
-    wire["oneOf"].append(
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "version": {"const": 1},
-                "credential": {"type": "string", "minLength": 1, "maxLength": 8192},
-                "operation": {"const": "viewer_admin"},
-                "args": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {"command": {"$ref": "#/$defs/Viewer/$defs/ViewerAdminCommand"}},
-                    "required": ["command"],
+        refs(embedded)
+        wire["$defs"][group] = embedded
+        wire["oneOf"].append(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "version": {"const": 1},
+                    "credential": {"type": "string", "minLength": 1, "maxLength": 8192},
+                    "operation": {"const": operation},
+                    "args": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {"command": {"$ref": f"#/$defs/{group}/$defs/{command}"}},
+                        "required": ["command"],
+                    },
                 },
-            },
-            "required": ["version", "credential", "operation", "args"],
-        }
-    )
+                "required": ["version", "credential", "operation", "args"],
+            }
+        )
     outputs[ROOT / "src/memoryking/adapters/local_wire.schema.json"] = (
         json.dumps(wire, indent=2) + "\n"
     ).encode()

@@ -104,6 +104,15 @@ class LocalClient:
         credential, _ = self._current()
         return self._request(credential, "repository", {"command": command})
 
+    def report(self, command: dict[str, Any]) -> dict[str, Any]:
+        """Scoped report surface. A viewer credential cannot author or deliver reports."""
+        from memoryking.contracts.viewer import validate_viewer
+
+        validate_viewer("ReportCommand", command, reporting=True)
+        self._bound(command)
+        credential, _ = self._current()
+        return self._request(credential, "report", {"command": command})
+
     def embedding(self, command: dict[str, Any]) -> dict[str, Any]:
         """Trusted operator/worker surface, excluded from model-facing MCP tools."""
         validate_embedding(command)

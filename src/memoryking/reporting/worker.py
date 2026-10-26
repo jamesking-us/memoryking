@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import resource
+import signal
 import sys
 from pathlib import Path
 
@@ -15,6 +17,10 @@ from memoryking.reporting.template import model, reader_pages
 
 
 def build(stage: Path) -> None:
+    os.umask(0o077)
+    # Also bound an orphan after the supervising service is killed. The durable
+    # worker lease outlives this alarm before another renderer may be started.
+    signal.alarm(BUILD_TIMEOUT)
     # OS limits supplement the parent wall-clock/RSS monitor and input/image bounds.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_FSIZE, (ARTIFACT_LIMIT, ARTIFACT_LIMIT))
@@ -40,6 +46,9 @@ def build(stage: Path) -> None:
     )
     render_epub(source_path, stage / "report.epub", title=metadata["title"])
     validate_epub(stage / "report.epub")
+    from pypdf import PdfReader
+
+    pdf_pages = len(PdfReader(stage / "report.pdf").pages)
     (stage / "reader.json").write_bytes(canonical_bytes(document))
     pages = reader_pages(document)
     (stage / "reader-pages.json").write_bytes(canonical_bytes([json.loads(p) for p in pages]))
@@ -54,7 +63,14 @@ def build(stage: Path) -> None:
     if artifact_bytes > ARTIFACT_LIMIT:
         raise LocalError("report_artifact_limit")
     (stage / "result.json").write_bytes(
-        canonical_bytes({"version": 1, "artifacts": artifacts, "reader_pages": len(pages)})
+        canonical_bytes(
+            {
+                "version": 1,
+                "artifacts": artifacts,
+                "reader_pages": len(pages),
+                "pdf_pages": pdf_pages,
+            }
+        )
     )
 
 

@@ -140,7 +140,7 @@ The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. I
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 9 and PostgreSQL 4. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 10 and PostgreSQL 5. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 
@@ -202,5 +202,30 @@ report rendering, publication or email delivery. Viewer configuration is rejecte
 for non-HTTPS public origins, non-loopback listeners, invalid TLS-mode combinations,
 invalid limits or unknown fields. A configuration file does not start a listener
 in this version.
+
+## Experimental reporting storage
+
+Reports add SQLite schema 10 and shared schema 5. Upgrades are transactional; the
+runtime and ordinary projection worker cannot run migration DDL. PostgreSQL report
+tables use forced tenant RLS; projection workers cannot mutate them. Content
+backups include uploaded inputs, reader fragments and rendered artifacts. The
+independent control journal retains source readership and report policy changes
+across content rollback.
+
+Restore changes the history incarnation. Existing report rows and their immutable
+bytes can remain in an archive, but old SDK handles and reader cursors cannot be
+used as current reports. Unfinished uploads and worker tokens are retired. Current
+source permissions are replayed before activation. There is no automatic report
+republication or sender activation during restore. Purge conservatively erases
+all report content for the tenant, including derived blobs once garbage collected.
+
+Install the optional reports lock only for an explicitly configured rendering
+host. The native macOS worker needs the pinned Python runtime and system fonts;
+keep secrets and store data outside runtime/package paths. Rendering is denied
+if those paths overlap. It has no network or mail configuration. The supervisor
+limits RSS to 512 MiB and wall time to 120 seconds; a worker alarm also bounds an
+orphaned render before its durable 130-second lease expires. Outputs are private,
+hashed and fsynced before manifest commit. Linux isolation and container reporting
+qualification remain pending; there is no unrestricted fallback.
 
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

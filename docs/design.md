@@ -110,9 +110,9 @@ in a viewer context. Owner operations stay outside model-facing discovery.
 
 The current release implements this identity foundation and closed viewer/report
 contracts. The dedicated listener, GitHub authentication, mobile interface and
-built-in reporting engine remain upcoming capabilities.
+complete reporting/delivery workflow remain under development.
 
-## Experimental report rendering
+## Experimental report storage and rendering
 
 The optional report modules validate a complete phase document and build PDF, EPUB
 and structured reader content from the same source. Reader fragments preserve long
@@ -122,8 +122,29 @@ establish factual accuracy or human approval.
 The native macOS renderer runs in a separate process with restricted file access,
 no network, no inherited mail environment or service descriptors, and bounded wall
 time and memory. Other platforms fail closed until their isolation is implemented.
-This is an internal rendering foundation: durable report records, scoped service
-commands, current dependency permissions, app publication and delivery remain under
-development. Installing optional rendering dependencies does not activate email.
+SQLite and PostgreSQL store immutable report inputs, dependency references and
+artifact hashes. External source bindings explicitly name permitted readers and a
+classification; a Git hash or local path grants no permission. Report visibility
+intersects the current project grant, original and current report readership, and
+every source dependency. Revoking one dependency denies the whole frozen report.
+
+Authors upload bounded chunks, submit a revision and queue a build. The fixed
+renderer holds a separate worker lease while the service remains available. After
+rendering, the parent checks bytes/hashes, validates the reader model and fsyncs
+private blobs before committing their manifest. A withdrawn revision or stale
+worker token cannot adopt an output. Visual QA binds the exact source, README,
+evidence, PDF, EPUB and reader hashes and the actual page count. It remains an
+attestation by the named actor; the service does not infer factual accuracy or
+human approval. Publication rechecks the entire readership and current policy.
+
+Security bindings and report policy use the independent control journal. Content
+backup/restore preserves report blobs, retires old history handles, and replays
+current permissions. Purge conservatively erases tenant report content and its
+derived references. New schemas are SQLite 10 and PostgreSQL 5.
+
+Scoped SDK/CLI operations and an internal worker entry point are implemented.
+Automatic worker scheduling, the phone reader and the delivery workflow remain
+under development. Only the app channel can currently be configured; installing
+optional rendering dependencies does not activate email.
 
 [Back to README](../README.md) · [Security](../SECURITY.md) · [Deployment](deployment.md)

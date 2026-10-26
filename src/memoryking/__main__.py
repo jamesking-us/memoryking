@@ -57,18 +57,24 @@ def main() -> int:
     )
     viewer.add_argument("--socket", type=Path, required=True)
     viewer.add_argument("--credential", type=Path, required=True)
+    report = commands.add_parser("report", help="Scoped report command JSON over local IPC")
+    report.add_argument("--socket", type=Path, required=True)
+    report.add_argument("--credential", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "init":
             path = LocalStore.initialize(args.store, args.control, args.tenant, args.principal)
             print(json.dumps({"credential_file": str(path)}))
-        elif args.command == "viewer-admin":
+        elif args.command in {"viewer-admin", "report"}:
             private_file(args.credential)
             body = load_strict(sys.stdin.buffer.read(262145))
             if not isinstance(body, dict):
                 raise LocalError("invalid_request")
             result = request(
-                args.socket, args.credential.read_text().strip(), "viewer_admin", {"command": body}
+                args.socket,
+                args.credential.read_text().strip(),
+                "report" if args.command == "report" else "viewer_admin",
+                {"command": body},
             )
             print(canonical_bytes(result).decode())
         elif args.command == "restore":

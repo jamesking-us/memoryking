@@ -90,9 +90,11 @@ the existing dashboard is for the trusted local owner.
 To try the permission model safely, run `.venv/bin/python examples/viewer_identity.py`.
 It uses a temporary store and no external account. See
 [viewer access](docs/deployment.md#viewer-access-foundation) for the owner operation
-and upgrade/recovery requirements. Report document and isolated rendering libraries
-are experimental; the app report catalog and Kindle delivery workflow are not yet
-available.
+and upgrade/recovery requirements. Experimental reporting can now store a complete
+report, build PDF and EPUB copies locally, record visual-review evidence and make
+the reviewed version readable through the SDK. Each reader must still have access
+to every supporting source. The phone report screen and Kindle delivery workflow
+are under development. See [reporting](docs/getting-started.md#experimental-reporting).
 
 ## Choose your setup
 
