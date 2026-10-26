@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 
@@ -251,7 +252,8 @@ def main():
     )
     args = parser.parse_args()
     import test_viewer_auth_http as http
-    from viewer_auth_browser_probe import gateway
+
+    from tools.viewer_auth_browser_probe import gateway
 
     backends = (
         (http.LocalViewerAuthHTTP,)
