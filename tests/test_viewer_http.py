@@ -565,4 +565,19 @@ class LocalViewerHTTP(HttpCases, unittest.TestCase):
 
 
 class PostgresViewerHTTP(HttpCases, NativeFixture):
-    pass
+    def test_postgres_checkout_validation_uses_total_deadline(self):
+        with self.listener(request_seconds=1) as server:
+
+            def slow(connection):
+                # Each statement fits the original per-statement timeout, but
+                # their sum must not overrun the total admitted request budget.
+                for _ in range(10):
+                    connection.execute("SELECT pg_sleep(0.4)")
+
+            before = time.monotonic()
+            with patch("memoryking.adapters.postgres_pool.check", slow):
+                status, _, raw = self.get("/viewer/api/v1/projects/p/memories")
+            self.assertEqual(status, 503, raw)
+            self.assertLess(time.monotonic() - before, 2.5)
+            self.assertEqual(self.get("/viewer/api/v1/projects/p/memories")[0], 200)
+            self.assertNotIn("internal_error", server.counts)

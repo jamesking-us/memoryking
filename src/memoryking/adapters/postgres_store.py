@@ -116,8 +116,22 @@ class PostgresStore(LocalStore):
         if remaining is not None and remaining <= 0:
             raise LocalError("service_busy")
         self.connection = acquire(pool, timeout=remaining)
+        timer = None
+        failed = False
         try:
             if request_deadline is not None:
+
+                def cancel_checkout() -> None:
+                    try:
+                        self.connection.cancel_safe(timeout=1)
+                    except Exception:
+                        pass
+
+                timer = threading.Timer(
+                    max(0, request_deadline - time.monotonic()), cancel_checkout
+                )
+                timer.daemon = True
+                timer.start()
                 remaining_ms = max(1, int((request_deadline - time.monotonic()) * 1000))
                 self.connection.execute(
                     "SELECT set_config('statement_timeout',%s,false)", (str(remaining_ms),)
@@ -130,9 +144,19 @@ class PostgresStore(LocalStore):
             if version is None or version[0] != "5":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
-        except BaseException:
-            pool.putconn(self.connection)
+        except BaseException as exc:
+            failed = True
+            if request_deadline is not None and (
+                time.monotonic() >= request_deadline or getattr(exc, "sqlstate", None) == "57014"
+            ):
+                raise LocalError("service_unavailable") from exc
             raise
+        finally:
+            if timer is not None:
+                timer.cancel()
+                timer.join()
+            if failed:
+                pool.putconn(self.connection)
 
     def close(self) -> None:
         if self.connection is not None:

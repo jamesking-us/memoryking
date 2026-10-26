@@ -50,7 +50,8 @@ EXPECTED = {
         "test_raw_duplicate_headers_and_oversized_line_close_bounded",
     )
     + [
-        "test_viewer_matrix.ViewerGraphBounds.test_graph_and_equivalent_list_honor_configured_bounds"
+        "test_viewer_matrix.ViewerGraphBounds.test_graph_and_equivalent_list_honor_configured_bounds",
+        "test_viewer_http.PostgresViewerHTTP.test_postgres_checkout_validation_uses_total_deadline",
     ],
     "AC11": ["test_viewer_matrix.ViewerDifferential.test_identical_http_eligibility_and_coverage"],
     "AC45": http(
