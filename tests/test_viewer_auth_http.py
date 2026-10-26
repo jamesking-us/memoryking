@@ -257,6 +257,8 @@ class HttpAuthCases:
             for body in (
                 {"csrf": csrf, "return": "https://evil.invalid"},
                 {"csrf": "a" * 600},
+                {"csrf": "a" * 50},
+                {"csrf": "z" * 64},
                 {"csrf": None},
                 {"csrf": "x"},
             ):

@@ -27,6 +27,7 @@ from memoryking.adapters.viewer_auth import (
 from memoryking.adapters.viewer_config import validate_config
 from memoryking.adapters.viewer_reads import ViewerReads, ViewerSession
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.contracts.viewer import validate_viewer
 from memoryking.domain.local import LocalError, Released
 
 IDENT = r"[A-Za-z0-9_-]{1,96}"
@@ -392,13 +393,12 @@ class Handler(BaseHTTPRequestHandler):
                 body = load_strict(self.rfile.read(int(length)))
             except ContractError:
                 raise LocalError("invalid_request") from None
-            if (
-                not isinstance(body, dict)
-                or set(body) != {"csrf"}
-                or not isinstance(body["csrf"], str)
-                or not re.fullmatch(r"[A-Za-z0-9_-]{43,64}", body["csrf"])
-            ):
+            if not isinstance(body, dict):
                 raise LocalError("invalid_request")
+            try:
+                validate_viewer("ViewerAuthPost", body)
+            except LocalError:
+                raise LocalError("invalid_request") from None
             csrf = body["csrf"]
         elif self.headers.get("Content-Length", "0") != "0":
             raise LocalError("invalid_request")
