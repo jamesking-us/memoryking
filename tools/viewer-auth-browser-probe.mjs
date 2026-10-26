@@ -42,7 +42,7 @@ try {
     if (url.origin === attacker)
       return route.fulfill({
         contentType: "text/html",
-        body: "<html><title>Hostile origin fixture</title></html>",
+        body: `<html><title>Hostile origin fixture</title><a id="attack" href="${options.origin}/viewer/auth/github/callback?state=${"z".repeat(43)}&amp;code=controlled-code">Forged callback</a></html>`,
       });
     return route.abort();
   });
@@ -122,6 +122,15 @@ try {
     }
   }, options.origin);
   assert.ok(blocked);
+  await Promise.all([
+    hostile.waitForURL(`${options.origin}/viewer/`),
+    hostile.locator("#attack").click(),
+  ]);
+  assert.equal(
+    (await context.cookies()).find((c) => c.name === "__Host-memoryking-viewer")
+      .value,
+    secondCookie.value,
+  );
   assert.equal(
     await page.evaluate(
       async () => (await fetch("/viewer/api/v1/session")).status,
@@ -178,6 +187,7 @@ try {
       no_browser_persistent_auth_storage: true,
       session_rotated: true,
       same_site_subdomain_attack_blocked: true,
+      forged_callback_preserves_existing_session: true,
       durable_logout_all_verified: true,
     }),
   );

@@ -49,6 +49,7 @@ EXPECTED = {
     + http("test_actual_login_cookie_flags_private_read_and_logout"),
     "AC15": http(
         "test_start_csrf_origin_fetch_site_host_return_url_and_get_logout",
+        "test_forged_callback_does_not_log_out_existing_session",
         "test_closed_post_shapes_callback_bounds_and_no_provider_override",
     )
     + auth(

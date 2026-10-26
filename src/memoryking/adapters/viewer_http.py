@@ -434,14 +434,13 @@ class Handler(BaseHTTPRequestHandler):
                 if self.response_started:
                     self.close_connection = True
                 else:
+                    # An unsolicited callback must not log out an existing session.
+                    # A valid start already invalidates its prior session; stale login
+                    # cookies expire naturally or are replaced by the next context.
                     self.reply(
                         b"",
                         303,
-                        headers=(
-                            ("Location", "/viewer/"),
-                            cookie_header(LOGIN_COOKIE, "", 0),
-                            cookie_header(SESSION_COOKIE, "", 0),
-                        ),
+                        headers=(("Location", "/viewer/"),),
                     )
         else:
             auth.logout(token, csrf, name == "auth_logout_all", self.deadline)

@@ -144,14 +144,14 @@ def run_browser(fixture, transport, args):
     )
     result = json.loads(output.read_text())
     assert len(calls) == 2
-    assert len(wire_callbacks) == 2, wire_callbacks
+    assert len(wire_callbacks) == 3, wire_callbacks
     assert all(
-        not c["origin_present"]
-        and c["fetch_site"] == "cross-site"
-        and c["fetch_mode"] == "navigate"
-        and c["fetch_dest"] == "document"
+        not c["origin_present"] and c["fetch_mode"] == "navigate" and c["fetch_dest"] == "document"
         for c in wire_callbacks
     ), wire_callbacks
+    assert [c["fetch_site"] for c in wire_callbacks] == ["cross-site", "cross-site", "same-site"], (
+        wire_callbacks
+    )
     assert not fixture.auth.sessions
     return {**result, "verified_provider_exchanges": len(calls), "wire_callbacks": wire_callbacks}
 

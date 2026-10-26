@@ -273,6 +273,26 @@ class HttpAuthCases:
                     validate_config({**self.settings, key: "https://evil.invalid"})
             self.assertFalse(self.provider.calls)
 
+    def test_forged_callback_does_not_log_out_existing_session(self):
+        with self.listener():
+            self.login_http()
+            token = self.cookies[SESSION_COOKIE]
+            calls = len(self.provider.calls)
+            status, headers, raw = self.request(
+                CALLBACK + "?state=" + "z" * 43 + "&code=controlled-code",
+                extra={
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Dest": "document",
+                },
+            )
+            self.assertEqual(status, 303)
+            self.assertEqual(dict(headers)["Location"], "/viewer/")
+            self.assertFalse(any(k.lower() == "set-cookie" for k, _ in headers))
+            self.assertEqual(self.cookies[SESSION_COOKIE], token)
+            self.assertEqual(self.session_http()[0], 200)
+            self.assertEqual(len(self.provider.calls), calls)
+
 
 class LocalViewerAuthHTTP(HttpAuthCases, unittest.TestCase):
     setUp = knowledge.KnowledgeTests.setUp
