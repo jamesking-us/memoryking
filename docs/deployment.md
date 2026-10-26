@@ -150,8 +150,8 @@ Stop services before removing runtime environments or images. Removing software 
 
 ## Viewer access foundation
 
-Viewer identity policy is available to the owner; the phone listener and real GitHub
-login are not enabled by this foundation. No new service, port, OAuth app or network
+Viewer identity policy is available to the owner; the separate viewer listener and
+GitHub authentication require explicit configuration. No new OAuth app or network
 configuration is created automatically. The existing dashboard retains its owner-only
 boundary.
 
@@ -197,11 +197,11 @@ roll-forward/fresh-history recovery before adoption. There is no reverse migrati
 No running store has to be adopted to try the disposable example.
 
 Viewer/report JSON schemas and generated types are available now. They define
-viewer listener/session boundaries and implemented report operations. OAuth and
-the phone PWA are not implemented yet; reporting is described below. Viewer configuration is rejected
+viewer listener/session boundaries and implemented report operations. The phone
+PWA is still being built; reporting is described below. Viewer configuration is rejected
 for non-HTTPS public origins, non-loopback listeners, invalid TLS-mode combinations,
-invalid limits or unknown fields. A configuration file does not start a listener
-in this version.
+invalid limits or unknown fields. Pass it explicitly to the serving command; the
+listener opens only when enabled.
 
 ## Experimental reporting storage
 
@@ -301,9 +301,11 @@ Fresh reports still require source authority, exact artifact QA and publication.
 
 ## Restricted viewer listener
 
-This optional foundation serves a public shell and a bounded read API. Production
-login and the phone UI are still being implemented, so private requests currently
-return 401. It is disabled when `--viewer-config` is omitted or `enabled` is false.
+This optional listener serves a public shell, GitHub authentication endpoints and a
+bounded read API. Its authentication implementation is tested with a controlled
+provider; the phone UI and real GitHub/Android deployment remain unqualified.
+Without a current session, private requests return 401. The listener is disabled
+when `--viewer-config` is omitted or `enabled` is false.
 The existing local owner dashboard and shared agent interface remain separate.
 
 Run `.venv/bin/python tools/viewer_demo.py` from the source checkout for a complete
@@ -325,10 +327,10 @@ Never start a second SQLite owner against a running data directory.
 | `listen_host`, `listen_port` | `127.0.0.1`, `8772`; only IPv4/IPv6 loopback is permitted. |
 | `transport` | `isolated_proxy` for a separately isolated HTTPS gateway, or `direct_tls`. Proxy mode does not trust forwarded identity headers. |
 | `tls_cert_file`, `tls_key_file` | Both null for proxy mode; both required for direct TLS. The key must be a private regular file; TLS 1.2 is the minimum. |
-| `github_client_id`, `github_secret_file` | Placeholder fields reserved for the upcoming login adapter. They do not enable login in this build. |
-| `session_idle_seconds`, `session_absolute_seconds`, `login_seconds` | `1800`, `28800`, `300`; reserved login/session policy. Idle cannot exceed absolute lifetime. |
+| `github_client_id`, `github_secret_file` | Dedicated GitHub OAuth app client ID and path to its protected secret file. Enabled startup reads the secret; disabled startup does not. |
+| `session_idle_seconds`, `session_absolute_seconds`, `login_seconds` | `1800`, `28800`, `300`; active idle, absolute and login-transaction lifetimes. Idle cannot exceed absolute lifetime. |
 | `poll_seconds`, `display_lifetime_seconds` | `10`, `15`; the latter limits issued display leases. Polling is a future client behavior. |
-| `limits.active_sessions`, `limits.pending_logins` | `5`, `64`; reserved session/login capacity, maxima 20/256. |
+| `limits.active_sessions`, `limits.pending_logins` | `5`, `64`; sessions per binding and combined pending contexts/logins, maxima 20/256. At the session ceiling the oldest session is evicted. |
 | `limits.list_items`, `limits.detail_bytes` | `50`, `16384`; smaller configured ceilings are honored. Detail bytes range 1024–16384. |
 | `limits.graph_nodes`, `limits.graph_edges` | `100`, `150`; maxima, with explicit partial coverage. |
 | `limits.response_bytes` | `262144`; allowed 16384–262144. An oversized response fails closed. |
@@ -346,10 +348,71 @@ Loopback isolation requires a trusted local host. Proxy mode requires a dedicate
 container/network boundary before deployment, because another local process could
 otherwise access its plaintext loopback socket. It does not authorize router port
 forwarding or public exposure. The planned private Tailscale home profile and real
-Android installation are not yet qualified. Desktop Chrome tests use disposable
-synthetic sessions and a certificate pinned only in the test browser process.
+Android installation are not yet qualified. Desktop Chromium tests use disposable stores, a controlled GitHub page/exchange,
+actual browser sessions and a certificate pinned only in the test browser process.
 
 For the route list, freshness rules and stable errors, see
 [restricted API reference](reference.md#restricted-viewer-api-foundation).
+
+## GitHub sign-in setup
+
+This is a setup worksheet for a future private installation. It does not create an
+OAuth application or change your network. The authentication endpoints are locally
+verified with a controlled provider; real GitHub callback and physical Android
+qualification are still required before treating the phone installation as ready.
+
+1. Choose the one private HTTPS origin your phone will use. For an origin such as
+   `https://memoryking.example.invalid`, the exact callback is
+   `https://memoryking.example.invalid/viewer/auth/github/callback`. The `.invalid`
+   name is a placeholder. Do not copy it into a real registration.
+2. Register a **dedicated login-only GitHub OAuth App** for that installation. Use
+   the exact origin for the homepage and the exact callback above; disable wildcard
+   callback matching if the registration offers it. Do not reuse a broad repository
+   integration. MemoryKing requests no repository, organization, email or offline
+   scopes and rejects a nonempty granted scope set.
+3. Put only the app client secret in a service-owner-owned regular file, mode 0600,
+   outside the checkout and public assets. A single trailing newline is accepted;
+   the value is limited to 16–256 ASCII letters, digits, `_` and `-`. Symlinks,
+   FIFOs, public permissions and extra trailing data are rejected. Mount this file
+   read-only when containerizing. Set `github_client_id` and `github_secret_file`
+   in the private viewer configuration. Never put the secret in an image,
+   JavaScript, URL, command argument or environment example.
+4. Through the owner channel, bind the intended account's verified numeric GitHub
+   ID to a dedicated viewer principal, then grant exact projects. A login name or
+   repository membership is insufficient. Share source content explicitly when
+   appropriate: a project grant cannot override an owner-only note's readers.
+5. Select the TLS mode and start the existing service with the viewer configuration.
+   Configure outbound verified HTTPS to GitHub; the provider hosts are fixed in
+   code. There is no test-provider URL, insecure TLS or proxy override in production
+   configuration. The phone dashboard interface is still under development.
+
+The server issues `__Host-memoryking-login` and `__Host-memoryking-viewer` cookies
+with Secure, HttpOnly, SameSite=Lax and Path=/, without Domain. Browser scripts
+receive neither the provider token nor the session cookie. Sessions are process
+local: restart forces sign-in. Default limits are 30 minutes idle and 8 hours total;
+re-authentication rotates the token. Policy changes and restore invalidate old
+contexts. Run one viewer-serving process per installation; independent workers do
+not share sessions.
+
+Logout and logout-all are CSRF-protected POST operations. Logout-all durably
+advances the account's MemoryKing generation. Revoking an OAuth grant at GitHub
+alone does **not** instantly end an existing MemoryKing session; use MemoryKing
+revoke/disable/logout-all when access must end, and retain the configured expiry
+limits. No provider refresh token or access token is stored after identity lookup.
+
+A failed, denied, expired or uncertain callback returns to the clean `/viewer/`
+path and requires a fresh login. The consumed code/state is never automatically
+retried. If login repeatedly fails, check the exact origin/callback, private secret
+file, clock, empty provider scopes, numeric binding and current project grant.
+Provider bodies, callbacks and cookie values are deliberately absent from logs.
+Transport counters and generic status codes cannot identify a hidden project.
+Pending-context pressure returns 503; retry after capacity recovers, using a new
+login context. Backward clock movement clears authentication state and blocks
+until the clock catches up to its prior high-water time.
+
+GitHub documents [state, PKCE and scope inheritance](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
+and [OAuth scopes](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
+The dedicated app and returned-scope check enforce this installation's login-only
+boundary; they do not synchronize GitHub repository permissions into MemoryKing.
 
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

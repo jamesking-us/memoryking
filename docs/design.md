@@ -184,3 +184,25 @@ An uncertain outcome requires an operator's currently accessible evidence and
 explicit reconciliation; provider acceptance remains separate from device arrival.
 
 [Back to README](../README.md) · [Security](../SECURITY.md) · [Deployment](deployment.md)
+
+
+## Browser authentication lifecycle
+
+The viewer's GitHub adapter exchanges one-use state/PKCE-bound codes at fixed
+verified HTTPS endpoints, checks empty scopes and the numeric User account ID,
+then discards provider tokens. Canonical MemoryKing bindings and current project
+grants decide whether a session can be issued. Store, tenant, incarnation and
+policy epoch are rechecked after the network call. Login itself never adds grants.
+
+Opaque session cookies map to hashed, process-local records. Idle and absolute
+lifetimes use both wall and monotonic time; restart logs out all sessions. Bound
+CSRF and exact Origin protect start/logout/logout-all. Logout-all advances the
+independently durable session generation for the current viewer. Each read still
+performs the complete canonical authorization and release path. Github-only OAuth
+revocation is separate from MemoryKing session revocation.
+
+The provider exchange runs in an isolated short-lived child so blocking DNS cannot
+escape the listener's deadline. Private client secrets enter only the child's
+standard input; output contains only the numeric identity. No configurable provider
+URL or environment proxy creates an alternate trust path. This adds no database
+migration and does not qualify the future phone UI or home network topology.

@@ -220,6 +220,7 @@ def run(args: Any) -> dict[str, Any]:
                         session.subject.credential,
                         request_deadline=deadline,
                     ),
+                    lambda deadline: service.viewer_auth_store(viewer_config["tenant"], deadline),
                 )
             if args.report_config is not None:
                 from memoryking.adapters.report_worker import Configuration, ReportWorker

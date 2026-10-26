@@ -283,3 +283,19 @@ class ViewerProgress(TypedDict):
     waived: int
     unknown: int
     total: int
+
+class ViewerAuthContext(TypedDict):
+    schema_version: Literal[1]
+    csrf: str
+    expires_ms: int
+
+class ViewerAuthPost(TypedDict):
+    csrf: str
+
+class ViewerAuthStart(TypedDict):
+    schema_version: Literal[1]
+    authorization_url: str
+
+class ViewerAuthResult(TypedDict):
+    schema_version: Literal[1]
+    status: Literal['signed_in', 'signed_out']

@@ -128,7 +128,8 @@ code; canonical project/content/dependency checks still execute on reads.
 Identity-specific errors include `viewer_binding_conflict`, `revision_conflict`,
 `viewer_policy_operation_required`, `invalid_viewer_request` and `viewer_limit`.
 The operator can inspect its own bindings; callers without owner authority receive
-no inventory. Login and viewer HTTP routes are not yet implemented. Do not expose the administrator dashboard as a substitute phone app.
+no inventory. The separate viewer HTTP/authentication routes are described below.
+Do not expose the administrator dashboard as a substitute phone app.
 
 ## Experimental report commands
 
@@ -238,9 +239,9 @@ transfer; importing them as accepted is invalid. See [sender transfer](deploymen
 
 ## Restricted viewer API foundation
 
-`memoryking serve --viewer-config FILE` and `memoryking-shared serve --viewer-config FILE` accept the closed `ViewerConfig` contract. Omit the option, or set `enabled` to false, to leave the listener disabled. The file must be a private regular file. The dedicated listener binds only configured loopback, requires its exact HTTPS public-origin Host, and supports either direct TLS with a private key or explicitly selected isolated proxy transport. This does not relax the shared agent transport's TLS rules. A production browser session cannot yet be issued in this build: public shell/assets work, while private requests remain unauthenticated. Do not expose this development foundation as a working phone installation.
+`memoryking serve --viewer-config FILE` and `memoryking-shared serve --viewer-config FILE` accept the closed `ViewerConfig` contract. Omit the option, or set `enabled` to false, to leave the listener disabled. The file must be a private regular file. The dedicated listener binds only configured loopback, requires its exact HTTPS public-origin Host, and supports either direct TLS with a private key or explicitly selected isolated proxy transport. This does not relax the shared agent transport's TLS rules. The server includes GitHub authentication and browser sessions with controlled-provider qualification. The phone UI and real GitHub/Android installation are still unqualified.
 
-The implemented read routes are GET/HEAD `/viewer/api/v1/session` and `/viewer/api/v1/projects/{project}/` followed by `overview`, `tasks`, `tasks/{task}`, `memories`, `memories/{handle}`, `graph`, `reports`, `reports/{report}/versions/{revision}`, and that report version's `sections/{index}` or `images/{name}`. No owner, agent, bootstrap, raw artifact, mutation or retry route is delegated. Internal integration tests supply a trusted synthetic session; no configuration field or HTTP header enables that test seam.
+The implemented read routes are GET/HEAD `/viewer/api/v1/session` and `/viewer/api/v1/projects/{project}/` followed by `overview`, `tasks`, `tasks/{task}`, `memories`, `memories/{handle}`, `graph`, `reports`, `reports/{report}/versions/{revision}`, and that report version's `sections/{index}` or `images/{name}`. No owner, agent, bootstrap, raw artifact, mutation or retry route is delegated. Read tests may supply an internal synthetic session; authentication tests run the actual issuance flow with a controlled provider. No configuration field or HTTP header enables a test identity or provider.
 
 Lists accept `limit` (maximum 50) and `cursor`; memories also accept `q` (maximum 256 characters). Lists default to 25 tasks/reports or 20 memories, capped by configured `list_items`. Tasks inspect at most 64 current task-stream candidates, preserve unknown criteria and state explicit coverage. Memory inspection combines permitted observations with currently eligible accepted knowledge; missing applicability inputs or incomplete mandatory policy block the view. Handles and cursors bind the session, principal, project, query, tenant policy/purge epochs, source frontier and history. Refresh after a changed context. Report sections are ordered, lossless JSON block fragments; a continuation cursor is required after section zero. Figure responses contain bounded verified raster chunks; the app never receives a filesystem path or raw report export.
 
@@ -264,3 +265,32 @@ revision records and returns 503 above that envelope. Limits can reduce a reques
 page size; every partial result declares coverage/truncation. These bounds are
 correctness limits, not a qualified throughput or latency promise. Physical Android,
 GitHub and Tailscale qualification remains pending.
+
+
+## Viewer authentication routes
+
+All routes use the configured fixed tenant and HTTPS authority. Every response is
+no-store with restrictive CSP and no-referrer. No CORS or forwarded identity trust
+is enabled. Bodies are JSON limited to 512 bytes; duplicate security headers,
+chunked transfer, bearer authorization and unknown fields are rejected.
+
+| Method and path | Contract |
+| --- | --- |
+| GET `/viewer/auth/context` | No cross-site fetch. Returns `ViewerAuthContext` (version, CSRF, expiry) and a short HttpOnly nonce cookie. A normal same-origin GET may omit Origin. |
+| POST `/viewer/auth/github/start` | Exact app Origin, nonce and `ViewerAuthPost` CSRF; consumes the context and returns `ViewerAuthStart` with a fixed GitHub authorization URL. Invalidates the previous local session. |
+| GET `/viewer/auth/github/callback` | One-use state, browser nonce and code; normal top-level GitHub navigation may omit Origin. A supplied Origin must be the app or `https://github.com`. No XHR callback. Returns 303 to `/viewer/` with a fresh cookie on success or cleared cookies on failure. |
+| POST `/viewer/auth/logout` | Exact app Origin and session CSRF from the current `/viewer/api/v1/session` response. Invalidates this local session. |
+| POST `/viewer/auth/logout-all` | Same protections; durably advances only the signed-in viewer's generation and invalidates that account's sessions. |
+
+GET/HEAD cannot log out or start authentication; unsupported methods fail. There
+is no return-URL parameter, account selector, project mutation or administrative
+route. Context, start and result DTOs are closed generated contracts. Raw cookies,
+state, nonce and CSRF are not server map keys; the PKCE verifier exists only for
+its pending transaction. Provider identity never replaces current content ACLs.
+
+The provider child uses fixed verified HTTPS endpoints, no redirects, 16 KiB/64-line
+response-header limits, 64 KiB JSON bodies and the request's total deadline,
+including DNS/TLS. It returns only a bounded numeric account ID. Timeout kills and
+reaps the child; unknown exchange outcome requires a new login instead of replay.
+Authorization validity uses the persisted evaluation instant and release deadline;
+the next read always checks current grant/time/history rather than trusting login.

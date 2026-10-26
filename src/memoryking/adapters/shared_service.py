@@ -44,6 +44,30 @@ class SharedService:
             store.report_mail = config.mail  # type: ignore[attr-defined]
         return store
 
+    def viewer_auth_store(self, tenant: str, deadline: float) -> PostgresStore:
+        """Internal identity-query connection; never a bearer/owner credential or route.
+
+        No grants are created. Only the closed auth adapter receives this factory.
+        Current incarnation is read for every checkout so restore cannot reuse a login.
+        """
+        from memoryking.adapters.local_store import identifier
+        from memoryking.adapters.shared_control import SharedControl
+
+        identifier(tenant)
+        control = SharedControl(self.control / tenant)
+        anchor = control.read_anchor()
+        token = control.sign(
+            {
+                "kind": "credential",
+                "store": control.store,
+                "incarnation": anchor["incarnation"],
+                "tenant": tenant,
+                "principal": "viewer-auth-internal",
+                "audience": self.audience,
+            }
+        )
+        return self.store(tenant, token, request_deadline=deadline)
+
     def execute(
         self, tenant: str, credential: str, request: dict[str, Any]
     ) -> dict[str, Any] | Released:

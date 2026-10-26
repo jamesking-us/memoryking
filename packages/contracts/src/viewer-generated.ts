@@ -315,3 +315,23 @@ export interface ViewerProgress {
   unknown: number;
   total: number;
 }
+
+export interface ViewerAuthContext {
+  schema_version: 1;
+  csrf: string;
+  expires_ms: number;
+}
+
+export interface ViewerAuthPost {
+  csrf: string;
+}
+
+export interface ViewerAuthStart {
+  schema_version: 1;
+  authorization_url: string;
+}
+
+export interface ViewerAuthResult {
+  schema_version: 1;
+  status: "signed_in" | "signed_out";
+}

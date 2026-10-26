@@ -7989,6 +7989,83 @@
             "unknown",
             "total"
           ]
+        },
+        "ViewerAuthContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "csrf": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}(?![\\s\\S])",
+              "minLength": 43,
+              "maxLength": 43
+            },
+            "expires_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "schema_version",
+            "csrf",
+            "expires_ms"
+          ]
+        },
+        "ViewerAuthPost": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "csrf": {
+              "type": "string",
+              "pattern": "^(?:[A-Za-z0-9_-]{43}|[a-f0-9]{64})(?![\\s\\S])",
+              "minLength": 43,
+              "maxLength": 64
+            }
+          },
+          "required": [
+            "csrf"
+          ]
+        },
+        "ViewerAuthStart": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "authorization_url": {
+              "type": "string",
+              "pattern": "^https://github\\.com/login/oauth/authorize\\?[A-Za-z0-9_%=&.+-]+(?![\\s\\S])",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "schema_version",
+            "authorization_url"
+          ]
+        },
+        "ViewerAuthResult": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": 1
+            },
+            "status": {
+              "enum": [
+                "signed_in",
+                "signed_out"
+              ]
+            }
+          },
+          "required": [
+            "schema_version",
+            "status"
+          ]
         }
       },
       "$ref": "#/$defs/Viewer/$defs/ViewerAdminCommand"

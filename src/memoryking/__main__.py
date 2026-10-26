@@ -138,7 +138,9 @@ def main() -> int:
                         from memoryking.adapters.viewer_http import ViewerListener
 
                         viewer_listener = ViewerListener(
-                            load_config(args.viewer_config), lambda _, deadline: nullcontext(store)
+                            load_config(args.viewer_config),
+                            lambda _, deadline: nullcontext(store),
+                            lambda deadline: nullcontext(store),
                         )
                     if args.report_config is not None:
                         from memoryking.adapters.report_worker import Configuration, ReportWorker

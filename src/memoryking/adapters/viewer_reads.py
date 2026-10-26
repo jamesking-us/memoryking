@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
-import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,47 +49,10 @@ class ViewerReads:
         *,
         deadline: float | None = None,
     ) -> Released:
-        if deadline is None:
+        from memoryking.adapters.viewer_budget import request_budget
+
+        with request_budget(self.s, deadline):
             return self._read(session, route, project, params)
-        remaining = deadline - time.monotonic()
-        if remaining <= 0 or not self.s.lock.acquire(timeout=remaining):
-            raise LocalError("service_unavailable")
-        timer = None
-        interrupted = False
-
-        def progress() -> int:
-            nonlocal interrupted
-            if not interrupted and time.monotonic() >= deadline:
-                interrupted = True
-                return 1
-            return 0
-
-        try:
-            if isinstance(self.db, sqlite3.Connection):
-                self.db.set_progress_handler(progress, 1000)
-            elif hasattr(self.s, "connection"):
-
-                def cancel() -> None:
-                    try:
-                        getattr(self.s, "connection").cancel_safe(timeout=1)
-                    except Exception:
-                        pass  # Private request connection is still withheld and returned safely.
-
-                timer = threading.Timer(max(0, deadline - time.monotonic()), cancel)
-                timer.daemon = True
-                timer.start()
-            return self._read(session, route, project, params)
-        except Exception as exc:
-            if time.monotonic() >= deadline:
-                raise LocalError("service_unavailable") from exc
-            raise
-        finally:
-            if timer is not None:
-                timer.cancel()
-                timer.join()  # Cancellation cannot reach a later borrower of this connection.
-            if isinstance(self.db, sqlite3.Connection):
-                self.db.set_progress_handler(None, 0)
-            self.s.lock.release()
 
     def _read(
         self, session: ViewerSession, route: str, project: str | None, params: dict[str, Any]

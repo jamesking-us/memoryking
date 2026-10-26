@@ -37,6 +37,10 @@ def rehearse(command, config, config_file, ready, *, exit_codes=(0,)):
         for k, v in os.environ.items()
         if k not in {"PYTHONPATH", "PYTHONHOME", "GMAIL_FROM", "GMAIL_APP_KEY", "KINDLE_TO"}
     }
+    secret = config_file.with_suffix(".secret")
+    secret.write_text("synthetic-local-fixture-client-secret")
+    secret.chmod(0o600)
+    config["github_secret_file"] = str(secret)
     results = []
     for mode in ("omitted", "disabled", "enabled"):
         config["enabled"] = mode == "enabled"

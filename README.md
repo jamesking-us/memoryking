@@ -85,15 +85,16 @@ project grants. A project grant never shares owner-only notes automatically.
 Change viewer permissions through the versioned owner operations; ordinary agent
 grant/revoke commands reject viewer principals to prevent stale permission updates.
 An optional, separate read-only listener now supplies bounded task, memory and report
-responses with current permission checks. Its production session resolver denies access
-until sign-in is implemented. The phone interface, browser sessions and real GitHub
-sign-in are not available yet; the existing dashboard is for the trusted local owner.
+responses with current permission checks. The server includes GitHub sign-in and
+expiring browser sessions, tested locally with a controlled provider. The phone
+interface and real GitHub/Android installation are still being built and validated.
+The existing dashboard is for the trusted local owner.
 
 To try the permission model safely, run `.venv/bin/python examples/viewer_identity.py`.
 Run `.venv/bin/python tools/viewer_demo.py` to check the optional listener's public
 shell, disabled mode and protected reads. Both examples use temporary stores and
 no external account. See [listener configuration](docs/deployment.md#restricted-viewer-listener)
-and
+, [GitHub setup](docs/deployment.md#github-sign-in-setup), and
 [viewer access](docs/deployment.md#viewer-access-foundation) for the owner operation
 and upgrade/recovery requirements. Experimental reporting can now store a complete
 report, build PDF and EPUB copies locally, record visual-review evidence and make
