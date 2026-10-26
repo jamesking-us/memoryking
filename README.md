@@ -94,7 +94,8 @@ which projects and sources you can read; repository membership alone does not
 share notes. The viewer is read-only. It clears private content when backgrounded,
 disconnected or signed out and checks access again before showing it.
 
-The interface has local browser coverage at phone-sized layouts. Real GitHub,
+The interface has local browser coverage at phone-sized layouts, and the home
+containers have been exercised locally with both databases. Real GitHub,
 physical Android installation and the private home hosting setup are still being
 qualified. The existing local dashboard remains the trusted owner's interface.
 

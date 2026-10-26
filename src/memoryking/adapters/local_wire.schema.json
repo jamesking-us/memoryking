@@ -6944,6 +6944,9 @@
             },
             "limits": {
               "$ref": "#/$defs/Viewer/$defs/ViewerLimits"
+            },
+            "trusted_proxy": {
+              "$ref": "#/$defs/Viewer/$defs/TrustedProxy"
             }
           },
           "required": [
@@ -8071,6 +8074,30 @@
           "required": [
             "schema_version",
             "status"
+          ]
+        },
+        "TrustedProxy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "tailscale_serve_v1"
+            },
+            "source_ips": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 45
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "source_ips"
           ]
         }
       },

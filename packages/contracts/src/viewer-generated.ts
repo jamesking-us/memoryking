@@ -122,6 +122,7 @@ export interface ViewerConfig {
   poll_seconds: number;
   display_lifetime_seconds: number;
   limits: ViewerLimits;
+  trusted_proxy?: TrustedProxy;
 }
 
 export interface ViewerSubject {
@@ -335,4 +336,9 @@ export interface ViewerAuthStart {
 export interface ViewerAuthResult {
   schema_version: 1;
   status: "signed_in" | "signed_out";
+}
+
+export interface TrustedProxy {
+  kind: "tailscale_serve_v1";
+  source_ips: Array<string>;
 }

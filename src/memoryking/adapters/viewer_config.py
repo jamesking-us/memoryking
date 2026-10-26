@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -41,6 +42,20 @@ def validate_config(value: dict[str, Any]) -> dict[str, Any]:
         raise LocalError("invalid_viewer_configuration")
     if not direct and (value["tls_cert_file"] is not None or value["tls_key_file"] is not None):
         raise LocalError("invalid_viewer_configuration")
+    proxy = value.get("trusted_proxy")
+    if proxy is not None:
+        if direct:
+            raise LocalError("invalid_viewer_configuration")
+        for text in proxy["source_ips"]:
+            try:
+                address = ip_address(text)
+                network = ip_network(
+                    "100.64.0.0/10" if address.version == 4 else "fd7a:115c:a1e0::/48"
+                )
+                if str(address) != text or address not in network:
+                    raise ValueError("noncanonical tailnet source")
+            except ValueError as exc:
+                raise LocalError("invalid_viewer_configuration") from exc
     return value
 
 

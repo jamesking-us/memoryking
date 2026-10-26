@@ -266,6 +266,14 @@ section-seeking bypass. Detail memory handles are replaced with each current rea
 
 `memoryking serve --viewer-config FILE` and `memoryking-shared serve --viewer-config FILE` accept the closed `ViewerConfig` contract. Omit the option, or set `enabled` to false, to leave the listener disabled. The file must be a private regular file. The dedicated listener binds only configured loopback, requires its exact HTTPS public-origin Host, and supports either direct TLS with a private key or explicitly selected isolated proxy transport. This does not relax the shared agent transport's TLS rules. The server includes GitHub authentication and browser sessions with controlled-provider qualification. The phone UI has local browser coverage; real GitHub/Android installation is still unqualified.
 
+An optional `trusted_proxy` object (`kind: tailscale_serve_v1`, `source_ips: [...]`)
+adds an exact device-address gate only in isolated-proxy mode. It accepts 1–16
+unique canonical Tailscale IPv4/IPv6 addresses, requires the pinned Serve headers
+on every route, and denies Funnel and ambiguous proxy chains. It grants no user
+identity or content rights. See the [deployment boundary and rollback](deployment.md#restrict-devices-at-an-isolated-serve-endpoint)
+before enabling it. Omission preserves existing transport behavior; direct TLS
+with this field is invalid.
+
 The implemented read routes are GET/HEAD `/viewer/api/v1/session` and `/viewer/api/v1/projects/{project}/` followed by `overview`, `tasks`, `tasks/{task}`, `memories`, `memories/{handle}`, `graph`, `reports`, `reports/{report}/versions/{revision}`, and that report version's `sections/{index}` or `images/{name}`. No owner, agent, bootstrap, raw artifact, mutation or retry route is delegated. Read tests may supply an internal synthetic session; authentication tests run the actual issuance flow with a controlled provider. No configuration field or HTTP header enables a test identity or provider.
 
 Lists accept `limit` (maximum 50) and `cursor`; memories also accept `q` (maximum 256 characters). Lists default to 25 tasks/reports or 20 memories, capped by configured `list_items`. Tasks inspect at most 64 current task-stream candidates, preserve unknown criteria and state explicit coverage. Memory inspection combines permitted observations with currently eligible accepted knowledge; missing applicability inputs or incomplete mandatory policy block the view. Handles and cursors bind the session, principal, project, query, tenant policy/purge epochs, source frontier and history. Refresh after a changed context. Report sections are ordered, lossless JSON block fragments; a continuation cursor is required after section zero. Figure responses contain bounded verified raster chunks; the app never receives a filesystem path or raw report export.

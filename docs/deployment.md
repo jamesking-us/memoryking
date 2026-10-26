@@ -276,6 +276,64 @@ For an immutable contributor job, use `tools/local_ci.py --revision FULL_GIT_SHA
 with its usual local runtime arguments plus `--home-containers` and, when needed,
 `--home-baseline PRIOR_FULL_GIT_SHA`.
 
+### Measure a synthetic viewer workload
+
+Contributors can run `tools/mobile_load_trial.py` against fresh disposable native
+SQLite and PostgreSQL stores. Supply `--output` with a new directory and
+`--postgres-bin` with an absolute PostgreSQL binary directory. The default
+`--duration 1800` runs each store sequentially for 30 minutes after seeding one
+project with 100 saved tasks and 2,000 observations. Five distinct viewer identities
+make staggered TLS reads at up to one read per second each, including bounded
+task, memory/search, pagination and graph reads. A mid-run grant reduction must
+deny an old session before access is explicitly restored.
+
+The output contains sanitized request timings, status/pressure counts, response
+body byte totals, session churn, resource samples and database admission timings.
+No cookies, OAuth tokens, response contents or real mail are retained. SQLite
+timings measure the canonical lock; PostgreSQL gate/clock timings include query
+overhead. RSS includes the harness/server and disposable PostgreSQL process tree.
+An explicit `--smoke --duration 10` uses a smaller corpus to check the runner; it
+does not qualify the full workload. The provider is controlled and the network is
+local direct TLS: neither run measures physical-phone refresh or a real tailnet.
+A finite run cannot establish unlimited-duration memory stability.
+
+Add `--mobile-load-seconds 1800` to the immutable `tools/local_ci.py` command to
+retain the full both-store run with the clean-checkout evidence. This requires
+`--postgres-bin`, runs locally, and adds at least an hour. It fails on unexpected
+read errors, pressure responses or a successful-read p95 of one second or more;
+the output retains failed measurements for investigation. Inspect all-status and
+per-route distributions as well as the aggregate before choosing a deployment.
+
+### Restrict devices at an isolated Serve endpoint
+
+If you keep an existing broad tailnet policy, the viewer can additionally reject
+HTTP requests from devices outside an explicit list. Add this optional field to
+the private viewer configuration, replacing the example addresses with the
+approved devices' actual Tailscale IPv4/IPv6 addresses:
+
+```json
+"trusted_proxy": {
+  "kind": "tailscale_serve_v1",
+  "source_ips": ["100.64.0.1", "fd7a:115c:a1e0::1"]
+}
+```
+
+This option requires `isolated_proxy` transport and the dedicated home namespace
+behind the pinned Tailscale Serve proxy. Keep the application loopback-only, with
+no published ports or other proxy in front. Serve supplies the actual source
+address; the viewer requires a single allowed address, exact forwarded authority
+and HTTPS, and rejects Funnel and alternate proxy chains. One to sixteen exact
+canonical Tailscale addresses are supported; ranges and wildcard identities are
+rejected. Missing or disallowed sources cannot load even the sign-in page.
+
+This is HTTP request denial at this endpoint, not a change to your tailnet ACL
+or a block on TLS handshakes. Same-namespace processes and the Docker owner are
+trusted; headers are forgeable if the listener is exposed elsewhere. The option
+never signs a user in: GitHub authentication and explicit MemoryKing grants still
+apply. Address changes require an operator update/restart. Requalify the proxy
+path after a gateway upgrade. Disable Serve/the viewer before removing the gate
+unless another verified network restriction is already in place.
+
 ## Shared Docker rehearsal
 
 The [Compose stack](../deploy/shared/compose.yaml) builds the application from source and pins its base images. It publishes only loopback HTTPS. PostgreSQL has no TCP listener; API/worker/operator communicate through a private Unix-socket volume. Content, current control state, database files, archives and role secrets are separate mounts.

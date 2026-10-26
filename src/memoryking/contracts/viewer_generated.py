@@ -1,7 +1,7 @@
 """Generated from closed authoritative mobile contracts."""
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 
 class BindArgs(TypedDict):
@@ -113,6 +113,7 @@ class ViewerConfig(TypedDict):
     poll_seconds: int
     display_lifetime_seconds: int
     limits: ViewerLimits
+    trusted_proxy: NotRequired[TrustedProxy]
 
 class ViewerSubject(TypedDict):
     store: str
@@ -300,3 +301,7 @@ class ViewerAuthStart(TypedDict):
 class ViewerAuthResult(TypedDict):
     schema_version: Literal[1]
     status: Literal['signed_in', 'signed_out']
+
+class TrustedProxy(TypedDict):
+    kind: Literal['tailscale_serve_v1']
+    source_ips: list[str]

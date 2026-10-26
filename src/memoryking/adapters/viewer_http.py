@@ -324,6 +324,28 @@ class Handler(BaseHTTPRequestHandler):
                     raise LocalError("invalid_request")
             if self.headers.get("Host") != self.server.authority:
                 raise LocalError("invalid_request")
+            proxy = self.server.config.get("trusted_proxy")
+            if proxy is not None:
+                # Only a dedicated loopback namespace behind pinned Serve may
+                # opt in. Serve replaces these values from the authenticated
+                # network connection; they NEVER authenticate a GitHub viewer.
+                expected = {"X-Forwarded-Host": self.server.authority, "X-Forwarded-Proto": "https"}
+                if any(self.headers.get_all(key, []) != [value] for key, value in expected.items()):
+                    raise LocalError("unavailable")
+                sources = self.headers.get_all("X-Forwarded-For", [])
+                if len(sources) != 1 or sources[0] not in proxy["source_ips"]:
+                    raise LocalError("unavailable")
+                if any(
+                    self.headers.get_all(key, [])
+                    for key in (
+                        "Forwarded",
+                        "X-Real-IP",
+                        "X-Forwarded-Server",
+                        "CF-Connecting-IP",
+                        "Tailscale-Funnel-Request",
+                    )
+                ):
+                    raise LocalError("unavailable")
             if (
                 self.headers.get("Transfer-Encoding") is not None
                 or self.headers.get("Authorization") is not None

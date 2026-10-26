@@ -31,8 +31,10 @@ class HttpAuthCases:
     deadline = AuthCases.deadline
 
     @contextmanager
-    def listener(self, tls=False, public_origin=None):
+    def listener(self, tls=False, public_origin=None, trusted_proxy=None):
         self.setup_auth()
+        if trusted_proxy is not None:
+            self.settings["trusted_proxy"] = trusted_proxy
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
@@ -126,6 +128,77 @@ class HttpAuthCases:
 
     def session_http(self):
         return self.request("/viewer/api/v1/session")
+
+    def test_opt_in_tailnet_sources_gate_assets_login_and_private_reads(self):
+        policy = {"kind": "tailscale_serve_v1", "source_ips": ["100.64.0.1", "fd7a:115c:a1e0::1"]}
+        with self.listener(trusted_proxy=policy):
+            forwarded = {
+                "X-Forwarded-Host": urlsplit(self.settings["public_origin"]).netloc,
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-For": "100.64.0.1",
+            }
+            for path in ("/viewer/", "/viewer/auth/context", "/viewer/api/v1/session"):
+                for extra in (
+                    {},
+                    {**forwarded, "X-Forwarded-For": "100.64.0.2"},
+                    {**forwarded, "X-Forwarded-For": "100.64.0.1, 100.64.0.2"},
+                    {**forwarded, "X-Forwarded-Proto": "http"},
+                    {**forwarded, "X-Forwarded-Host": "wrong.invalid"},
+                    {**forwarded, "Tailscale-Funnel-Request": "?1"},
+                    {**forwarded, "Forwarded": "for=100.64.0.1"},
+                    {**forwarded, "X-Real-IP": "100.64.0.1"},
+                ):
+                    self.assertEqual(self.request(path, extra=extra)[0], 404)
+            self.assertEqual(self.request("/viewer/", extra=forwarded)[0], 200)
+            for repeated in forwarded:
+                connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+                try:
+                    connection.putrequest("GET", "/viewer/", skip_host=True)
+                    connection.putheader("Host", urlsplit(self.settings["public_origin"]).netloc)
+                    for name, value in forwarded.items():
+                        connection.putheader(name, value)
+                    connection.putheader(repeated, forwarded[repeated])
+                    connection.endheaders()
+                    response = connection.getresponse()
+                    response.read()
+                    self.assertEqual(response.status, 404)
+                finally:
+                    connection.close()
+            self.assertEqual(
+                self.request(
+                    "/viewer/auth/context",
+                    extra={**forwarded, "X-Forwarded-For": "fd7a:115c:a1e0::1"},
+                )[0],
+                200,
+            )
+            # A permitted network source (even with invented identity headers)
+            # still has no application identity/session or content access.
+            self.assertEqual(
+                self.request(
+                    "/viewer/api/v1/session", extra={**forwarded, "Tailscale-User-Login": "owner"}
+                )[0],
+                401,
+            )
+            # Complete the existing real-HTTP login path through the same gate.
+            request = self.request
+
+            def through_proxy(target, method="GET", body=None, extra=None, origin=True):
+                return request(target, method, body, {**forwarded, **(extra or {})}, origin)
+
+            self.request = through_proxy
+            try:
+                self.login_http()
+                self.assertEqual(self.session_http()[0], 200)
+                self.assertEqual(
+                    request(
+                        "/viewer/api/v1/session",
+                        extra={**forwarded, "X-Forwarded-For": "100.64.0.2"},
+                    )[0],
+                    404,
+                )
+                self.assertEqual(self.session_http()[0], 200)
+            finally:
+                self.request = request
 
     def test_actual_login_cookie_flags_private_read_and_logout(self):
         with self.listener(tls=True):

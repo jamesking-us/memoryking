@@ -41,6 +41,36 @@ def config():
 
 
 class ViewerContractTests(unittest.TestCase):
+    def test_trusted_proxy_requires_explicit_canonical_tailnet_addresses(self):
+        valid = {
+            **config(),
+            "trusted_proxy": {
+                "kind": "tailscale_serve_v1",
+                "source_ips": ["100.64.0.1", "fd7a:115c:a1e0::1"],
+            },
+        }
+        self.assertEqual(validate_config(valid), valid)
+        for sources in (
+            [],
+            ["127.0.0.1"],
+            ["100.64.0.0/10"],
+            ["100.64.0.01"],
+            ["::1"],
+            ["FD7A:115C:A1E0::1"],
+            ["100.64.0.1", "100.64.0.1"],
+        ):
+            with self.subTest(sources=sources), self.assertRaises(LocalError):
+                validate_config(
+                    {
+                        **valid,
+                        "trusted_proxy": {"kind": "tailscale_serve_v1", "source_ips": sources},
+                    }
+                )
+        with self.assertRaises(LocalError):
+            validate_config(
+                {**valid, "transport": "direct_tls", "tls_cert_file": "cert", "tls_key_file": "key"}
+            )
+
     def test_closed_config_origin_tls_and_bounds(self):
         self.assertFalse(validate_config(config())["enabled"])
         for change in (

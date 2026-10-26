@@ -40,7 +40,12 @@ def generate(wire_bytes: bytes) -> dict[Path, bytes]:
             '"""Generated from closed authoritative mobile contracts."""',
             "from __future__ import annotations",
             "",
-            "from typing import Literal, TypedDict",
+            "from typing import Literal, NotRequired, TypedDict"
+            if any(
+                set(n.get("properties", {})) - set(n.get("required", []))
+                for n in schema["$defs"].values()
+            )
+            else "from typing import Literal, TypedDict",
             "",
             "",
         ]
@@ -52,8 +57,12 @@ def generate(wire_bytes: bytes) -> dict[Path, bytes]:
                     py.append("    pass")
                 ts.append(f"export interface {name} {{")
                 for field, value in node["properties"].items():
-                    py.append(f"    {field}: {kind(value, 'py')}")
-                    ts.append(f"  {field}: {kind(value, 'ts')};")
+                    optional = field not in node.get("required", [])
+                    pytype = kind(value, "py")
+                    if optional:
+                        pytype = f"NotRequired[{pytype}]"
+                    py.append(f"    {field}: {pytype}")
+                    ts.append(f"  {field}{'?' if optional else ''}: {kind(value, 'ts')};")
                 ts.append("}")
             else:
                 py.append(f"{name} = {kind(node, 'py')}")

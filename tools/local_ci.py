@@ -57,6 +57,11 @@ def main():
         help="Prior full product SHA for home packaged-core compatibility rehearsal",
     )
     parser.add_argument(
+        "--mobile-load-seconds",
+        type=int,
+        help="Run the synthetic five-viewer native TLS workload for 1800-3600 seconds per store",
+    )
+    parser.add_argument(
         "--chrome",
         type=Path,
         help="Explicit local Chrome executable for the four-way mobile browser matrix",
@@ -67,6 +72,10 @@ def main():
         help="Explicit local Playwright ES module; used with --chrome and --postgres-bin",
     )
     args = parser.parse_args()
+    if args.mobile_load_seconds is not None and (
+        not args.postgres_bin or not 1800 <= args.mobile_load_seconds <= 3600
+    ):
+        parser.error("--mobile-load-seconds requires --postgres-bin and 1800-3600 seconds")
     if args.home_baseline and not args.home_containers:
         parser.error("--home-baseline requires --home-containers")
     if bool(args.chrome) != bool(args.playwright) or (args.chrome and not args.postgres_bin):
@@ -281,6 +290,24 @@ def main():
                     checkout,
                 ),
             )
+        if args.mobile_load_seconds:
+            steps.insert(
+                -1,
+                (
+                    "mobile-load",
+                    [
+                        str(python),
+                        "tools/mobile_load_trial.py",
+                        "--output",
+                        "tmp/mobile-load",
+                        "--postgres-bin",
+                        str(pg_bin),
+                        "--duration",
+                        str(args.mobile_load_seconds),
+                    ],
+                    checkout,
+                ),
+            )
         for name, command, cwd in steps:
             started = time.monotonic()
             with (output / f"{name}.log").open("w") as log:
@@ -320,6 +347,7 @@ def main():
             "home-containers",
             "mobile-browser",
             "owner-browser",
+            "mobile-load",
         ):
             if (checkout / "tmp" / directory).exists():
                 shutil.copytree(checkout / "tmp" / directory, output / directory)
