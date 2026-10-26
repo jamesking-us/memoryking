@@ -381,6 +381,32 @@ try {
       .then((cells) => cells.join("|")),
     "unknown|New proof required",
   );
+  for (const width of [360, 412]) {
+    await page.setViewportSize({ width, height: 915 });
+    assert.equal(await page.locator(".report-body table").isVisible(), false);
+    assert.equal(await page.locator(".report-records").isVisible(), true);
+    assert.deepEqual(
+      await page.locator(".report-record dt").allTextContents(),
+      options.model.blocks.find((block) => block.kind === "table").headers,
+    );
+    assert.deepEqual(
+      await page.locator(".report-record dd").allTextContents(),
+      ["unknown", "New proof required"],
+    );
+    assert.equal(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+      true,
+    );
+  }
+  await page.setViewportSize({ width: 820, height: 915 });
+  assert.equal(await page.locator(".report-body table").isVisible(), true);
+  assert.equal(await page.locator(".report-records").isVisible(), false);
+  await page.setViewportSize({ width: 412, height: 915 });
+  checks.push(
+    "report tables reflow into native labeled records at phone widths; wider views retain semantic tables",
+  );
   await page.getByRole("button", { name: "Load figure", exact: true }).click();
   await page.locator("figure img").waitFor();
   assert.ok(

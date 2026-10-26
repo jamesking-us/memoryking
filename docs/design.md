@@ -235,4 +235,6 @@ can renew already verified blocks. An isolated section response cannot renew the
 rest of a report. Explicit figure loads reassemble bounded raster chunks and verify
 their SHA-256 before a local blob URL is rendered. CSP permits those local blobs,
 blocks workers/remote resources, and allows no inline executable content. Report
-text and captured Markdown remain inert. PDF/EPUB export stays outside the viewer.
+text and captured Markdown remain inert. Narrow report tables use native labeled
+records, with semantic tables retained on wider screens; only the active layout
+is exposed. PDF/EPUB export stays outside the viewer.

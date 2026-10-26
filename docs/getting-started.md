@@ -117,7 +117,8 @@ See [GitHub setup](deployment.md#github-sign-in-setup) for that operator procedu
 
 Open **Reports** from Overview or a task. Choose a published revision, use Contents
 to move between loaded headings, and read the complete narrative, ADRs, code and
-tables. Large documents load in bounded batches; the screen says when contents
+tables. Tables become labeled records on narrow screens; code scrolls within its
+own block. Large documents load in bounded batches; the screen says when contents
 are still incomplete. Figures load when selected. The app does not download the
 PDF or EPUB. A report's technical result, human review, app availability, Gmail
 submission and unverified Kindle arrival are separate facts.

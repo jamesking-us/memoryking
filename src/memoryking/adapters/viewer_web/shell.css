@@ -442,6 +442,33 @@ th {
 th {
   background: var(--panel-alt);
 }
+.report-records {
+  display: none;
+}
+.report-record {
+  margin: 0 0 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.report-record dt {
+  font-weight: 650;
+  color: var(--muted);
+}
+.report-record dd {
+  margin: 0.25rem 0 0.8rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+@media (max-width: 600px) {
+  .table-scroll table {
+    display: none;
+  }
+  .report-records {
+    display: block;
+  }
+}
 figure {
   margin: 1.2rem 0;
 }

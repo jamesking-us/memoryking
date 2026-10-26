@@ -493,7 +493,17 @@ export class Presentation {
                 body.append(row);
             }
             table.append(head, body);
-            wrapper.append(table);
+            const records = el("div", "", "report-records");
+            for (const cells of block.rows) {
+                const record = el("dl", "", "report-record");
+                cells.forEach((text, index) => {
+                    record.append(el("dt", block.headers[index]), el("dd", text));
+                });
+                records.append(record);
+            }
+            if (!block.rows.length)
+                records.append(el("p", `Table has no rows. Columns: ${block.headers.join(", ")}.`));
+            wrapper.append(table, records);
             return wrapper;
         }
         if (block.kind === "figure") {
