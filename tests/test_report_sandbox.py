@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,53 @@ Path('probe.json').write_text(json.dumps(result))
                 rss_limit_kib=32 * 1024,
             )
         self.assertEqual(memory.exception.code, "report_render_memory_limit")
+
+    def test_exit_between_resource_sample_and_waitpid_is_reaped(self):
+        original = subprocess.Popen
+
+        class Exiting:
+            def __init__(self, process):
+                self.process, self.polls = process, 0
+
+            @property
+            def pid(self):
+                return self.process.pid
+
+            @property
+            def returncode(self):
+                return self.process.returncode
+
+            def poll(self):
+                self.polls += 1
+                # Exercise the observed stale poll/resource disappearance order
+                # with a real confined child, without a timing-dependent test.
+                if self.polls <= 2:
+                    self.process.wait(timeout=10)
+                    return None
+                return self.process.poll()
+
+            def wait(self, **kwargs):
+                return self.process.wait(**kwargs)
+
+        def start(*args, **kwargs):
+            process = original(*args, **kwargs)
+            return Exiting(process) if kwargs.get("start_new_session") else process
+
+        with patch("memoryking.reporting.sandbox.subprocess.Popen", side_effect=start):
+            isolated_python(self.stage, ["-c", "pass"])
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux /proc monitor loss")
+    def test_missing_resource_monitor_does_not_allow_live_child_to_continue(self):
+        original = Path.read_text
+
+        def read(path, *args, **kwargs):
+            if str(path).startswith("/proc/") and path.name == "status":
+                return "State:\tR (running)\n"
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read), self.assertRaises(LocalError) as denied:
+            isolated_python(self.stage, ["-c", "import time;time.sleep(10)"])
+        self.assertEqual(denied.exception.code, "report_resource_monitor_unavailable")
 
     def test_unsafe_layout_symlink_and_unavailable_platform_fail_closed(self):
         with self.assertRaises(LocalError):

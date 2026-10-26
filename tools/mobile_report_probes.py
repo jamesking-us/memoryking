@@ -67,7 +67,10 @@ EXPECTED = {
         "test_failed_publication_journal_intent_cannot_send_an_unpublished_report",
         "test_crash_after_provider_reply_recovers_to_unknown",
     )
-    + ["test_report_sandbox.ReportSandboxTests.test_deadline_and_memory_monitor_stop_worker"],
+    + [
+        "test_report_sandbox.ReportSandboxTests.test_deadline_and_memory_monitor_stop_worker",
+        "test_report_sandbox.ReportSandboxTests.test_exit_between_resource_sample_and_waitpid_is_reaped",
+    ],
     "AC41": both(
         "test_report_delivery",
         DELIVERY,

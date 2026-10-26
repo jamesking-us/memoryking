@@ -188,7 +188,18 @@ def isolated_python(
             if rss is not None and rss > rss_limit_kib:
                 raise LocalError("report_render_memory_limit")
             if rss is None and process.poll() is None:
-                raise LocalError("report_resource_monitor_unavailable")
+                # Linux can remove VmRSS during exit before waitpid observes the
+                # child as waitable. Allow only a bounded reap, never another
+                # unmonitored work interval for a still-running process.
+                try:
+                    process.wait(timeout=min(0.05, max(0, timeout - (time.monotonic() - started))))
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - started >= timeout:
+                        raise LocalError("report_render_timeout") from None
+                    raise LocalError("report_resource_monitor_unavailable") from None
+                if time.monotonic() - started >= timeout:
+                    raise LocalError("report_render_timeout")
+                break
             time.sleep(0.05)
         if process.returncode:
             raise LocalError("report_render_failed")
