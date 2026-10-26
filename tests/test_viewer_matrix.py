@@ -126,7 +126,25 @@ def corpus(fixture, scenario):
             status, headers, raw = fixture.get("/viewer/api/v1/projects/p/" + path)
             fixture.assertEqual(headers["Cache-Control"], "no-store")
             fixture.assertNotIn(b"OWNER_ONLY_TASK", raw)
-            result[path] = {"status": status, "body": normalize(json.loads(raw))}
+            body = json.loads(raw)
+            if path == "graph" and status == 200:
+                # Opaque memory node identities are session-bound. Preserve their
+                # one-to-one topology and all semantic fields across store runs.
+                nodes = body["data"]["nodes"]
+                ids = {node["id"] for node in nodes}
+                fixture.assertEqual(len(ids), len(nodes))
+                opaque = {
+                    node["id"]: f"opaque-memory-{index}"
+                    for index, node in enumerate(nodes)
+                    if node["kind"] in {"observation", "claim"}
+                }
+                for node in nodes:
+                    node["id"] = opaque.get(node["id"], node["id"])
+                for edge in body["data"]["edges"]:
+                    fixture.assertTrue({edge["source"], edge["target"]} <= ids)
+                    for endpoint in ("source", "target"):
+                        edge[endpoint] = opaque.get(edge[endpoint], edge[endpoint])
+            result[path] = {"status": status, "body": normalize(body)}
         fixture.assertEqual(result["tasks/OWNER_ONLY_TASK"], result["tasks/missing"])
         fixture.assertNotIn("internal_error", server.counts)
         if scenario in {"unknown_constraint", "revoked_evidence", "missing_projection"}:
