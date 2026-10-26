@@ -17,9 +17,10 @@ with zipfile.ZipFile(wheel) as archive:
     assert "memoryking/contracts/experience_generated.py" in archive.namelist()
     for stem in ("viewer", "reporting"):
         assert f"memoryking/contracts/{stem}_generated.py" in archive.namelist()
-        assert archive.read(f"memoryking/contracts/{stem}.schema.json") == (
-            root / f"contracts/{stem}-v1.schema.json"
-        ).read_bytes()
+        assert (
+            archive.read(f"memoryking/contracts/{stem}.schema.json")
+            == (root / f"contracts/{stem}-v1.schema.json").read_bytes()
+        )
     assert (
         archive.read("memoryking/contracts/experience.schema.json")
         == (root / "contracts/experience-v1.schema.json").read_bytes()
