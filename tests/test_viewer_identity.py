@@ -163,20 +163,16 @@ class ViewerCases:
 
     def test_ac03_concurrent_expected_version_only_one_wins(self):
         self.bind()
-        barrier = threading.Barrier(2)
+        self.grant_viewer()
+        base = {"principal": "phone", "expected_version": 2}
         commands = [
-            self.command(
-                "grant",
-                {
-                    "principal": "phone",
-                    "project": p,
-                    "expected_version": 1,
-                    "starts": None,
-                    "expires": None,
-                },
-            )
-            for p in ("p", "q")
+            self.command("revoke", {**base, "project": "p"}),
+            self.command("disable", base),
+            self.command("rebind", {**base, "user_id": "55555"}),
+            self.command("logout_all", base),
+            self.command("grant", {**base, "project": "q", "starts": None, "expires": None}),
         ]
+        barrier = threading.Barrier(len(commands))
 
         def run(command):
             barrier.wait()
@@ -192,9 +188,12 @@ class ViewerCases:
             except LocalError as error:
                 return error.code
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=len(commands)) as pool:
             results = list(pool.map(run, commands))
-        self.assertCountEqual(results, ["committed", "revision_conflict"])
+        self.assertCountEqual(results, ["committed"] + ["revision_conflict"] * 4)
+        listing = ViewerIdentity(self.store).execute(self.owner, self.command("list", {}))
+        binding = listing["bindings"][0]
+        self.assertEqual((binding["version"], binding["generation"]), (3, 3))
 
     def test_ac03_after_journal_crash_replays_one_policy_result(self):
         command = self.command(
