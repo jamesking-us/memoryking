@@ -76,10 +76,10 @@ Configure through the embedding API with a current history, expected generation 
 | Dense retrieval | Exact authorized scan capped at 10,000 eligible vectors and 256 candidates; insufficient index/frontier is explicit. |
 | Processing usage | Up to 100,000 retained attempts per tenant; unknown costs stay null, with known lower bounds. |
 | Experience | 10,000 immutable records; up to 256 latest visible records per listing; no unbounded pagination/compaction. |
-| Browser | 60-second bootstrap, 15-minute session, five-second polling and 15-second snapshot freshness; hidden/expired views clear. |
+| Browser | 60-second bootstrap, 15-minute session, five-second polling and 15-second snapshot freshness. Active Memory reading views renew through current authorization; hidden, failed or expired views clear. Pause updates stops renewal. Destructive previews and command acknowledgments require explicit reload. |
 | Shared live updates | Eight streams, bounded samples/cursor history, resync/polling fallback. Not an unbounded event replay service. |
 
-The product has been exercised on macOS with Python 3.12 and native PostgreSQL 18.6, and through a single-host Linux-container rehearsal. A full native Linux matrix, Windows, physical touch, complete OS reduced-motion/browser coverage and third-party agent hosts remain unqualified. Intermittent dashboard scope refresh loss needs further investigation.
+The product has been exercised on macOS with Python 3.12 and native PostgreSQL 18.6, and through a single-host Linux-container rehearsal. A full native Linux matrix, Windows, physical touch, complete OS reduced-motion/browser coverage and third-party agent hosts remain unqualified. Connection or authorization changes clear the dashboard's selected scope; active Memory reads refresh while access remains valid.
 
 Measured local/shared workload targets have not been met. No real-task success, noninferiority, longitudinal-learning or full-cost savings result is established. Automatic failover, production PITR and disaster RPO/RTO are not promised. Benchmark commands are available to measure your environment; their successful exit alone is not proof that a target passed.
 

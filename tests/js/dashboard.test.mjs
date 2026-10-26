@@ -50,7 +50,6 @@ test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or r
   const handlers = {};
   let intersection,
     mediaChange,
-    toggle,
     active = null,
     starts = 0;
   const img = {
@@ -70,8 +69,8 @@ test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or r
   const button = {
     dataset: {},
     querySelector: () => img,
-    after(v) {
-      toggle = v;
+    after() {
+      assert.fail("The emblem must not add a separate motion control");
     },
   };
   const media = {
@@ -127,11 +126,6 @@ test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or r
     active.onfinish();
     assert.equal(active, null);
     assert.equal(button.dataset.animating, "false");
-    toggle.onclick();
-    button.onclick();
-    assert.equal(active, null);
-    assert.equal(toggle.textContent, "Motion off");
-    toggle.onclick();
     delete img.animate;
     button.onclick();
     assert.equal(button.dataset.animating, "false");

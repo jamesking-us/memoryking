@@ -198,6 +198,25 @@ def main():
             steps.insert(
                 -1,
                 (
+                    "owner-browser",
+                    [
+                        str(python),
+                        "tools/dashboard_memory_browser_probe.py",
+                        "--node",
+                        shutil.which("node"),
+                        "--chrome",
+                        str(args.chrome),
+                        "--playwright",
+                        str(args.playwright),
+                        "--output",
+                        "tmp/owner-browser/result.json",
+                    ],
+                    checkout,
+                ),
+            )
+            steps.insert(
+                -1,
+                (
                     "mobile-browser",
                     [
                         str(python),
@@ -267,7 +286,7 @@ def main():
             shutil.copytree(checkout / "tmp/runtime-install", output / "runtime-install")
         if (checkout / "tmp/contracts-package").exists():
             shutil.copytree(checkout / "tmp/contracts-package", output / "contracts-package")
-        for directory in ("supervision", "containers", "mobile-browser"):
+        for directory in ("supervision", "containers", "mobile-browser", "owner-browser"):
             if (checkout / "tmp" / directory).exists():
                 shutil.copytree(checkout / "tmp" / directory, output / directory)
         if (checkout / "dist").exists():

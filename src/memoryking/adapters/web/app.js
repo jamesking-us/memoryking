@@ -560,7 +560,7 @@ get("pause").addEventListener("click", () => {
 });
 get("theme").addEventListener("click", () => document.body.classList.toggle("light"));
 setInterval(() => {
-    observatory.tick();
+    observatory.tick(!paused);
     if (executionExpires && Date.now() >= executionExpires) {
         clearExecution("Task snapshot expired. Reconnect to check current permissions.");
     }

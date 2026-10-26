@@ -138,9 +138,13 @@ export class AtlasView {
                     y: 240 + 170 * Math.sin(i * 2.399),
                 });
         });
-        if (this.selected && !ids.has(this.selected))
+        if (this.selected &&
+            !ids.has(this.selected) &&
+            !this.data.edges.some((edge) => edge.id === this.selected))
             this.selected = null;
         this.inspector.replaceChildren();
+        if (this.selected)
+            this.inspect(this.selected);
         this.draw();
         this.settle();
     }

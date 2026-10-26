@@ -64,14 +64,14 @@ For a lasting installation and the browser dashboard, follow the [getting starte
 
 ## See what your agents are doing
 
-![MemoryKing dashboard showing a synthetic task, pending criteria and reported blockers](docs/images/dashboard.jpg)
+![MemoryKing dashboard showing a synthetic task, pending criteria and reported blockers](docs/images/dashboard.png)
 
 *Dashboard overview with synthetic example data. Progress reflects saved agent reports and evidence.*
 
 The dashboard helps you inspect recorded work without reading a long chat transcript:
 
 - **Task activity:** saved goals, completed and pending criteria, blockers and observed heartbeats.
-- **Memory:** an interactive graph and list of accessible memories and evidence.
+- **Memory:** an interactive graph and list of accessible memories and evidence. The active view refreshes automatically while you read, preserving access checks and your graph selection.
 - **History and review:** inspect changes, review proposals and preview affected content.
 - **Retrieval history:** see the exact briefing returned, its sources and recorded usage.
 - **Appearance:** textured dark and light themes, a crowned cybernetic elephant, and an optional depth-tilt animation that respects reduced motion.

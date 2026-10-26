@@ -1040,9 +1040,6 @@ summary:focus-visible,
   object-fit: contain;
   filter: drop-shadow(0 7px 10px #00000055);
 }
-.motion-toggle {
-  margin-bottom: 8px;
-}
 .tag,
 .controls,
 .nav-title,
@@ -1137,8 +1134,7 @@ aside {
 
 /* Compact header on phones: the full emblem remains in the desktop sidebar. */
 @media (max-width: 650px) {
-  aside .emblem-reveal,
-  aside .motion-toggle {
+  aside .emblem-reveal {
     display: none;
   }
   .brand img {

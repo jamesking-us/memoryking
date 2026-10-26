@@ -89,7 +89,15 @@ Passing implementation tests does not establish better real-task outcomes, cost 
 
 The dashboard uses a crowned cybernetic elephant emblem with gunmetal panels, restrained circuit-grid and brushed-metal CSS textures, and cyan accents. Content panels keep solid surfaces for legible labels and evidence. Dark and light themes share the same controls and semantic status indicators. No fonts, textures or artwork are fetched from external services at runtime.
 
-The optional logo interaction tilts a rendered image using perspective; it is not an interactive 3D model. It runs once for 1.8 seconds on request, stops when hidden or offscreen, and respects reduced motion and the Motion off control. The compact phone layout uses the small static emblem.
+The optional logo interaction tilts a rendered image using perspective; it is not an interactive 3D model. Clicking the emblem runs it once for 1.8 seconds. It stops when hidden or offscreen and respects the device's reduced-motion preference. There is no separate animation control. The compact phone layout uses the small static emblem.
+
+The owner dashboard renews the active Memory reading view every five seconds while
+updates run. Every contributing query must pass current authorization before the
+whole view receives another lease, capped at fifteen seconds. An unchanged view
+keeps its open details and reading position; a refreshed graph retains its selected
+node or edge if still present. A failed renewal, changed session/scope, clock rollback
+or expired lease clears private content. Exports cannot renew unrelated content,
+and mutations and destructive confirmations are never automatically replayed.
 
 The main [elephant artwork](../packages/dashboard-foundation/web/elephant.png) was created with the built-in image-generation tool; its [generation prompt](images/memoryking-emblem-prompt.txt) is retained alongside the documentation. The favicon is a simplified vector mark for small sizes.
 
