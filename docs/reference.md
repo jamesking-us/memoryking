@@ -150,7 +150,7 @@ content fails. The SDK does not automatically retry mutations.
 | `submit`, `build` | `report_author`: create an immutable revision or queue its build. |
 | `qa` | `report_qa`: attest exact source/artifact/README/evidence hashes and reviewed PDF page count. |
 | `publish`, `withdraw` | `report_publish`: publish a verified revision or remove its current visibility. |
-| `status`, `reader` | `read` plus all current report/dependency permissions. Drafts are visible only to their author or permitted QA/publish actors. |
+| `status`, `reader`, `list`, `image` | `read` plus all current report/dependency permissions. Drafts are visible only to their author or permitted QA/publish actors. |
 | `artifact` | `export` plus report/dependency permissions: bounded operator PDF/EPUB/reader export. Read-only viewers cannot use it. |
 | `delivery_status` | `report_delivery` plus project read: minimal outcome and reconciliation identity. |
 | `reconcile` | `report_policy` plus project read: exact delivery/attempt, explicit outcome and a currently permitted evidence dependency. |
@@ -158,8 +158,8 @@ content fails. The SDK does not automatically retry mutations.
 Report authoring never grants readers or chooses recipients. Policies default to `channel: app`, with null destination/recipient. Kindle/both
 requires a fixed destination supplied by the trusted embedding host; the policy
 records its recipient principal and fingerprint. The internal sender requires an
-explicit `report_delivery` credential and enabled host configuration. Startup
-configuration/scheduling and the legacy-sender handover are still under development. No report command enters the eight-tool model MCP
+explicit `report_delivery` credential and enabled host configuration. The optional `serve --report-config` worker schedules builds and sends; legacy-sender
+handover is still under development. No report command enters the eight-tool model MCP
 catalog.
 
 Inputs are `source.md`, `readme.md`, `evidence.json`, and identifier-named PNG/JPEG
@@ -175,13 +175,19 @@ The worker entry point is `build_one(store, credential, project)` in
 supplies an explicitly granted credential. A process lease permits one renderer
 per store root and the queue holds ten waiting builds per service tenant. Rendering
 runs outside canonical request transactions. Interrupted builds become failed;
-submit a new revision after correcting the cause. Automatic scheduling remains
-under development.
+submit a new revision after correcting the cause. Both service profiles can schedule this worker from explicit private configuration.
+A queued report unavailable to the worker does not block another permitted build.
 
 Each reader response is at most 64 KiB and carries a history-, principal-, policy-
 and revision-bound cursor. Fragments reassemble canonical block JSON in order;
 content must be rendered as data, never raw HTML. The phone reader is not yet
-implemented. Operator artifact exports carry a fixed hash, total length, offset
+implemented. `list` takes a limit of 1–50 and a nullable cursor; it returns only
+currently permitted published app reports, ordered by report/revision. It exposes
+no total or hidden identities. Cursors bind identity/history/policy and contain only
+the last visible report. Each page scans at most 512 candidates; an exhausted scan
+with no visible continuation fails explicitly. This is a live authorized page, not
+a frozen catalog snapshot. `image` reads only referenced, validated static PNG/JPEG
+inputs from a published app report in bounded chunks; it cannot export source files. Operator artifact exports carry a fixed hash, total length, offset
 and at most 32 KiB of base64-decoded bytes per response.
 
 Errors include `report_policy_required`, `report_source_binding_required`,

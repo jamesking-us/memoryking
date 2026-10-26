@@ -3,13 +3,14 @@
 import base64
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
-import threading
+import time
 from pathlib import Path
 
-from memoryking.adapters.local_ipc import Server
+from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_store import LocalStore
-from memoryking.adapters.report_build import build_one
 from memoryking.sdk import LocalClient
 
 
@@ -18,10 +19,48 @@ def main():
         root = Path(directory)
         credential = LocalStore.initialize(root / "data", root / "control")
         with LocalStore(root / "data", root / "control") as store:
-            server = Server(store)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
+            token = store.grant(
+                credential.read_text(), "report-worker", "example", ["read", "report_author"]
+            )
+            atomic(root / "worker.credential", token.encode())
+        atomic(
+            root / "worker.json",
+            json.dumps(
+                {
+                    "version": 1,
+                    "enabled": True,
+                    "tenant": "main",
+                    "project": "example",
+                    "credential_file": str(root / "worker.credential"),
+                    "mail_secret_file": None,
+                    "sender_enabled": False,
+                    "poll_seconds": 1,
+                }
+            ).encode(),
+        )
+        with (root / "service.log").open("wb") as log:
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "memoryking",
+                    "serve",
+                    "--store",
+                    str(root / "data"),
+                    "--control",
+                    str(root / "control"),
+                    "--report-config",
+                    str(root / "worker.json"),
+                ],
+                stdout=log,
+                stderr=log,
+            )
             try:
+                deadline = time.monotonic() + 10
+                while not (root / "data/service.sock").exists():
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError("Example service did not start")
+                    time.sleep(0.02)
                 client = LocalClient(root / "data/service.sock", credential, "example")
                 serial = 0
 
@@ -52,7 +91,7 @@ def main():
                         "require_visual_qa": True,
                         "require_evidence": True,
                         "classification": "internal",
-                        "readers": ["owner"],
+                        "readers": ["owner", "report-worker"],
                     },
                 )
                 source = "# Synthetic report example\n\n" + "\n\n".join(
@@ -75,7 +114,7 @@ def main():
                             binding={
                                 "id": binding_id,
                                 "sha256": digest,
-                                "readers": ["owner"],
+                                "readers": ["owner", "report-worker"],
                                 "classification": "internal",
                                 "enabled": True,
                                 "starts": None,
@@ -109,8 +148,14 @@ def main():
                     dependencies=dependencies,
                 )
                 command("build", report="example-report", revision=1)
-                build_one(store, credential.read_text(), "example")
-                status = command("status", report="example-report", revision=1)
+                deadline = time.monotonic() + 15
+                while True:
+                    status = command("status", report="example-report", revision=1)
+                    if status["state"] == "built":
+                        break
+                    if status["state"] == "failed" or time.monotonic() >= deadline:
+                        raise RuntimeError("Example report build failed or timed out")
+                    time.sleep(0.05)
                 print(
                     json.dumps(
                         {
@@ -124,9 +169,13 @@ def main():
                     )
                 )
             finally:
-                server.shutdown()
-                thread.join()
-                server.server_close()
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    raise
 
 
 if __name__ == "__main__":

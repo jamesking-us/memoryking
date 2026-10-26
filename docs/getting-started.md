@@ -101,8 +101,8 @@ GitHub sign-in or start the phone application.
 
 A report turns an agent's work into a document you can review later. The current
 SDK can store a complete phase report, build PDF/EPUB copies and publish a reviewed
-record for authorized readers. The smartphone screen and Kindle sender are still
-under development.
+record for authorized readers. An optional worker runs queued builds and fixed-destination
+Kindle submissions. The smartphone screen is still under development.
 
 On native macOS, install the optional locked renderer dependencies in the pinned
 project environment and run this disposable example:
@@ -112,10 +112,12 @@ project environment and run this disposable example:
 .venv/bin/python examples/report_draft.py
 ```
 
-It creates a temporary store, binds synthetic evidence to the owner, uploads a
-17-section document and builds its artifacts. The output says `built`, `qa: null`
+It creates a temporary store, grants a separate worker only read/build authority,
+starts the actual local service with a private configuration file, and submits a
+17-section synthetic document. The worker builds its artifacts in the background. The output says `built`, `qa: null`
 and `email_sent: false`. It does not attest visual review, publish a report or
-contact an external service. Linux rendering currently fails closed.
+contact an external service. Linux x86-64 rendering requires Landlock ABI 6 or later
+and seccomp; unsupported hosts fail closed. See the [deployment guide](deployment.md#report-worker-configuration).
 
 For real work, the operator first sets a project/program policy and binds external
 source permissions. An authorized author submits the narrative, README snapshot,

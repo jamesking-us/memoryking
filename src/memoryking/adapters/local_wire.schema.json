@@ -8868,6 +8868,214 @@
             "args"
           ]
         },
+        "ReportWorkerConfiguration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "tenant": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "credential_file": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              ]
+            },
+            "mail_secret_file": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              ]
+            },
+            "sender_enabled": {
+              "type": "boolean"
+            },
+            "poll_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60
+            }
+          },
+          "required": [
+            "version",
+            "enabled",
+            "tenant",
+            "project",
+            "credential_file",
+            "mail_secret_file",
+            "sender_enabled",
+            "poll_seconds"
+          ]
+        },
+        "ReportListArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "cursor": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "limit",
+            "cursor"
+          ]
+        },
+        "ReportListCommand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "action": {
+              "const": "list"
+            },
+            "args": {
+              "$ref": "#/$defs/Reporting/$defs/ReportListArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
+        "ReportImageArgs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "report": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 104,
+              "pattern": "^[A-Za-z0-9_-]{1,96}\\.(png|jpg|jpeg)(?![\\s\\S])"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 62914560
+            }
+          },
+          "required": [
+            "project",
+            "report",
+            "revision",
+            "name",
+            "offset"
+          ]
+        },
+        "ReportImageCommand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])",
+              "maxLength": 96,
+              "minLength": 1
+            },
+            "action": {
+              "const": "image"
+            },
+            "args": {
+              "$ref": "#/$defs/Reporting/$defs/ReportImageArgs"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "key",
+            "action",
+            "args"
+          ]
+        },
         "ReportCommand": {
           "oneOf": [
             {
@@ -8911,6 +9119,12 @@
             },
             {
               "$ref": "#/$defs/Reporting/$defs/ReportReconcileCommand"
+            },
+            {
+              "$ref": "#/$defs/Reporting/$defs/ReportListCommand"
+            },
+            {
+              "$ref": "#/$defs/Reporting/$defs/ReportImageCommand"
             }
           ]
         }

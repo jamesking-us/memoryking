@@ -98,6 +98,7 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--pool-size", type=int, default=8)
             item.add_argument("--plan-root", type=Path)
             item.add_argument("--dashboard-tenant")
+            item.add_argument("--report-config", type=Path)
     request = commands.add_parser("request")
     request.add_argument("--url", required=True)
     request.add_argument("--tenant", required=True)
@@ -204,6 +205,17 @@ def run(args: Any) -> dict[str, Any]:
             if args.tls_key:
                 private_file(args.tls_key)
             service = SharedService(pool, args.content, args.control, audience=args.audience)
+            report_worker = None
+            if args.report_config is not None:
+                from memoryking.adapters.report_worker import Configuration, ReportWorker
+
+                config = Configuration.from_file(args.report_config)
+                if config.enabled and args.pool_size < 2:
+                    raise LocalError("report_worker_pool_capacity_required")
+                service.report_configuration = config
+                report_worker = ReportWorker(
+                    config, lambda: service.store(config.tenant, config.credential)
+                )
             app = create_app(
                 service,
                 hosts=args.host,
@@ -212,16 +224,22 @@ def run(args: Any) -> dict[str, Any]:
                 plan_root=args.plan_root,
                 dashboard_tenant=args.dashboard_tenant,
             )
-            uvicorn.run(
-                app,
-                host=args.bind,
-                port=args.port,
-                access_log=False,
-                log_level="warning",
-                proxy_headers=False,
-                ssl_certfile=str(args.tls_cert) if args.tls_cert else None,
-                ssl_keyfile=str(args.tls_key) if args.tls_key else None,
-            )
+            try:
+                if report_worker:
+                    report_worker.start()
+                uvicorn.run(
+                    app,
+                    host=args.bind,
+                    port=args.port,
+                    access_log=False,
+                    log_level="warning",
+                    proxy_headers=False,
+                    ssl_certfile=str(args.tls_cert) if args.tls_cert else None,
+                    ssl_keyfile=str(args.tls_key) if args.tls_key else None,
+                )
+            finally:
+                if report_worker:
+                    report_worker.stop()
             return {"status": "stopped"}
         credential = secret(args.credential)
         with PostgresStore(

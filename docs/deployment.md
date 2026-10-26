@@ -237,4 +237,49 @@ on Linux 7.0.14 with Docker Engine 29.9.2, as a non-root user with a read-only r
 no network, no capabilities and no-new-privileges. That result does not qualify a
 mobile deployment or other architectures; there is no unrestricted fallback.
 
+
+## Report worker configuration
+
+Both `memoryking serve` and `memoryking.shared serve` accept `--report-config`.
+Omit it to leave scheduling and SMTP disabled. This private, owner-only JSON file
+uses the generated `ReportWorkerConfiguration` schema; every field is required:
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "tenant": "main",
+  "project": "example",
+  "credential_file": "/private/report-worker.credential",
+  "mail_secret_file": null,
+  "sender_enabled": false,
+  "poll_seconds": 5
+}
+```
+
+Paths above are setup placeholders. Use absolute regular-file paths and mode 0600;
+symlinks, extra fields, missing credentials and unsafe renderer-readable locations
+are rejected. Grant this worker only `read,report_author` in its project; include
+its principal in report/source readership. Add `report_delivery` only when sending
+is explicitly configured. A read-only phone credential cannot run the worker.
+The project and tenant are checked at startup, and every operation rechecks current
+authority. Shared scheduling needs a pool size of at least two so rendering does
+not occupy the only request connection. Default pool size remains eight.
+
+To configure mail, set `mail_secret_file` to a protected JSON file containing
+`version: 1`, an identifier `destination`, and the three string fields `GMAIL_FROM`,
+`GMAIL_APP_KEY`, `KINDLE_TO`. This destination is restricted to the configured tenant
+and project. The project/program policy must also explicitly select Kindle/both
+and bind a currently permitted recipient principal. Keep `sender_enabled: false`
+until ready; setting it true enables queued submissions. The product never reads
+a shell startup file. No mail secret is passed to the renderer or exposed in status.
+
+The poll interval is 1–60 seconds. There is one bounded build and at most one mail
+attempt per tick; inaccessible jobs do not prevent other queued work. Interrupted
+builds fail for explicit correction. Recovered mail claims become unknown and need
+evidenced reconciliation. Stop waits for an in-flight bounded operation before
+closing the store; restart loads changed configuration. Logs contain only worker
+state transitions. File configuration cannot grant a project permission, attest
+visual QA, publish a report or imply delivery to a device.
+
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

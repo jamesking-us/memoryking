@@ -8,6 +8,7 @@ from typing import Any
 from memoryking.adapters.local_contract import VALIDATOR
 from memoryking.adapters.local_ipc import StoreOperations
 from memoryking.adapters.postgres_store import PostgresStore
+from memoryking.adapters.report_worker import Configuration
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError, Released
 
@@ -18,9 +19,10 @@ class SharedService:
     ):
         self.pool, self.root, self.control, self.audience = pool, root, control, audience
         self.dashboard: Any = None
+        self.report_configuration: Configuration | None = None
 
     def store(self, tenant: str, credential: str, *, release_only: bool = False) -> PostgresStore:
-        return PostgresStore(
+        store = PostgresStore(
             self.pool,
             self.root,
             self.control,
@@ -29,6 +31,10 @@ class SharedService:
             audience=self.audience,
             release_only=release_only,
         )
+        config = self.report_configuration
+        if config is not None and config.enabled and tenant == config.tenant:
+            store.report_mail = config.mail  # type: ignore[attr-defined]
+        return store
 
     def execute(
         self, tenant: str, credential: str, request: dict[str, Any]

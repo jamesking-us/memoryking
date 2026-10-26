@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,9 @@ from memoryking.reporting.template import reader_pages
 OUTPUTS = {"report.pdf", "report.epub", "reader.json", "reader-pages.json"}
 
 
-def build_one(store: LocalStore, credential: str, project: str) -> dict[str, Any] | None:
+def build_one(
+    store: LocalStore, credential: str, project: str, *, protected: Sequence[Path] = ()
+) -> dict[str, Any] | None:
     """Trusted worker entry, using an explicitly granted report-author credential.
 
     Caller owns the store. A background service can invoke this without holding its
@@ -53,10 +56,20 @@ def build_one(store: LocalStore, credential: str, project: str) -> dict[str, Any
                     "UPDATE report_revisions SET state='failed',token=NULL,lease_until=NULL WHERE tenant=? AND state='building'",
                     (who["tenant"],),
                 )
-                row = store.db.execute(
-                    "SELECT * FROM report_revisions WHERE tenant=? AND project=? AND state='draft' AND lease_until=0 ORDER BY created,report,revision LIMIT 1",
+                rows = store.db.execute(
+                    "SELECT * FROM report_revisions WHERE tenant=? AND project=? AND state='draft' AND lease_until=0 ORDER BY created,report,revision LIMIT 10",
                     (who["tenant"], project),
-                ).fetchone()
+                ).fetchall()
+                row = None
+                for candidate in rows:
+                    if candidate["incarnation"] != store.incarnation or candidate["body"] is None:
+                        continue
+                    try:
+                        reports._allowed(who, json.loads(candidate["body"]), decision.evaluated_ms)
+                    except LocalError:
+                        continue
+                    row = candidate
+                    break
                 if row is None:
                     return None
                 body = json.loads(row["body"])
@@ -84,7 +97,7 @@ def build_one(store: LocalStore, credential: str, project: str) -> dict[str, Any
                 )
             store._expose()
             store.fault("report_after_claim")
-            render(stage, protected=(store.root, store.control_path))
+            render(stage, protected=(store.root, store.control_path, *protected))
             store.fault("report_after_render")
             # Renderer output remains untrusted: parent independently checks exact
             # regular-file names, byte lengths, hashes and the approved reader model.

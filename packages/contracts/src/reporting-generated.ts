@@ -300,4 +300,45 @@ export interface ReportReconcileCommand {
   args: ReportReconcileArgs;
 }
 
-export type ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand;
+export interface ReportWorkerConfiguration {
+  version: 1;
+  enabled: boolean;
+  tenant: string;
+  project: string;
+  credential_file: null | string;
+  mail_secret_file: null | string;
+  sender_enabled: boolean;
+  poll_seconds: number;
+}
+
+export interface ReportListArgs {
+  project: string;
+  limit: number;
+  cursor: string | null;
+}
+
+export interface ReportListCommand {
+  version: 1;
+  incarnation: string;
+  key: string;
+  action: "list";
+  args: ReportListArgs;
+}
+
+export interface ReportImageArgs {
+  project: string;
+  report: string;
+  revision: number;
+  name: string;
+  offset: number;
+}
+
+export interface ReportImageCommand {
+  version: 1;
+  incarnation: string;
+  key: string;
+  action: "image";
+  args: ReportImageArgs;
+}
+
+export type ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand | ReportListCommand | ReportImageCommand;

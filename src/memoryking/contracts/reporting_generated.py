@@ -271,4 +271,40 @@ class ReportReconcileCommand(TypedDict):
     action: Literal['reconcile']
     args: ReportReconcileArgs
 
-ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand
+class ReportWorkerConfiguration(TypedDict):
+    version: Literal[1]
+    enabled: bool
+    tenant: str
+    project: str
+    credential_file: None | str
+    mail_secret_file: None | str
+    sender_enabled: bool
+    poll_seconds: int
+
+class ReportListArgs(TypedDict):
+    project: str
+    limit: int
+    cursor: str | None
+
+class ReportListCommand(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    key: str
+    action: Literal['list']
+    args: ReportListArgs
+
+class ReportImageArgs(TypedDict):
+    project: str
+    report: str
+    revision: int
+    name: str
+    offset: int
+
+class ReportImageCommand(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    key: str
+    action: Literal['image']
+    args: ReportImageArgs
+
+ReportCommand = ReportBindSourceCommand | ReportPolicyCommand | ReportUploadCommand | ReportSubmitCommand | ReportBuildCommand | ReportQaCommand | ReportPublishCommand | ReportWithdrawCommand | ReportStatusCommand | ReportReaderCommand | ReportArtifactCommand | ReportDiscardUploadCommand | ReportDeliveryStatusCommand | ReportReconcileCommand | ReportListCommand | ReportImageCommand

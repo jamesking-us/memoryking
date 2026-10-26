@@ -54,7 +54,12 @@ def figure(source_path: Path, reference: str) -> tuple[Path, int, int]:
         raise ValueError("Figure must be a bounded local PNG/JPEG under the report directory")
     with Image.open(path) as image:
         width, height = image.size
-        if image.format not in {"PNG", "JPEG"} or width * height > 12_000_000:
+        expected = "PNG" if relative.suffix.lower() == ".png" else "JPEG"
+        if (
+            image.format != expected
+            or getattr(image, "n_frames", 1) != 1
+            or width * height > 12_000_000
+        ):
             raise ValueError("Figure encoding or dimensions exceed limits")
         image.verify()
     return path, width, height

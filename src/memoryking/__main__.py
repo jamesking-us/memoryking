@@ -6,6 +6,7 @@ import argparse
 import json
 import signal
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from memoryking.adapters.dashboard import Dashboard
@@ -28,6 +29,9 @@ def main() -> int:
                 "--dashboard-port", type=int, help="Opt-in loopback port; 0 chooses a free port"
             )
             cmd.add_argument("--plan-root", type=Path, help="Explicit trusted plan/report checkout")
+            cmd.add_argument(
+                "--report-config", type=Path, help="Private optional report worker configuration"
+            )
         if name == "init":
             cmd.add_argument("--tenant", default="main")
             cmd.add_argument("--principal", default="owner")
@@ -122,6 +126,13 @@ def main() -> int:
 
                     signal.signal(signal.SIGTERM, stop)
                     dashboard = None
+                    report_worker = None
+                    if args.report_config is not None:
+                        from memoryking.adapters.report_worker import Configuration, ReportWorker
+
+                        config = Configuration.from_file(args.report_config)
+                        config.attach(store)
+                        report_worker = ReportWorker(config, lambda: nullcontext(store))
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")
@@ -132,6 +143,8 @@ def main() -> int:
                         dashboard.start()
                     try:
                         with Server(store) as server:
+                            if report_worker:
+                                report_worker.start()
                             print(
                                 json.dumps({"ready": True, "socket": str(server.path)}), flush=True
                             )
@@ -139,6 +152,8 @@ def main() -> int:
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        if report_worker:
+                            report_worker.stop()
                         if dashboard:
                             dashboard.stop()
                 elif args.command == "backup":

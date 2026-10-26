@@ -23,7 +23,7 @@ from memoryking.reporting.template import model
 
 CLASS = {"public": 0, "internal": 1, "restricted": 2}
 CONTROL_ACTIONS = {"bind_source", "policy"}
-READ_ACTIONS = {"status", "reader", "artifact", "delivery_status"}
+READ_ACTIONS = {"status", "reader", "artifact", "delivery_status", "list", "image"}
 CAPABILITIES = {
     "bind_source": "report_policy",
     "policy": "report_policy",
@@ -88,6 +88,10 @@ class Reports:
                         result = self._submit(who, args, at)
                     elif action == "status":
                         result = self._status(target)
+                    elif action == "list":
+                        result = self._list(who, args, at)
+                    elif action == "image":
+                        result = self._image(who, target, args)
                     elif action == "reader":
                         result = self._reader(who, target, args)
                     elif action == "artifact":
@@ -194,7 +198,7 @@ class Reports:
             else:
                 from memoryking.adapters.report_delivery import configured
 
-                config = configured(self.s, body["destination"])
+                config = configured(self.s, body["destination"], args["project"])
                 if body["recipient_principal"] not in body["readers"]:
                     raise LocalError("invalid_report_policy")
                 body = {**body, "recipient_fingerprint": config.destination.fingerprint}
@@ -469,6 +473,9 @@ class Reports:
             raise LocalError("invalid_report_input") from exc
         if not isinstance(evidence, dict) or not evidence:
             raise LocalError("report_evidence_required")
+        figures = {block["reference"] for block in document["blocks"] if block["kind"] == "figure"}
+        if set(files) != {"source.md", "readme.md", "evidence.json"} | figures:
+            raise LocalError("report_figure_inputs_mismatch")
         hashes = {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}
         covered = {dep["sha256"] for dep in body["dependencies"]}
         if any(digest not in covered for name, digest in hashes.items() if name != "source.md"):
@@ -478,6 +485,7 @@ class Reports:
             model_sha256=canonical_hash(document),
             readme_sha256=hashes["readme.md"],
             evidence_sha256=hashes["evidence.json"],
+            figures=sorted(figures),
         )
         self.db.execute(
             "INSERT INTO report_revisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -555,10 +563,111 @@ class Reports:
             "qa": json.loads(row["qa"]) if row["qa"] else None,
         }
 
-    def _artifact(self, who: dict[str, Any], row: Any, args: dict[str, Any]) -> dict[str, Any]:
+    def _list(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        epochs = self.db.execute(
+            "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
+        ).fetchone()
+        binding = {
+            "tenant": who["tenant"],
+            "principal": who["principal"],
+            "project": args["project"],
+            "policy_epoch": epochs[0],
+            "purge_epoch": epochs[1],
+            "viewer": who.get("viewer"),
+            "limit": args["limit"],
+        }
+        after, revision = "", 0
+        if args["cursor"] is not None:
+            cursor = self.s._decode(args["cursor"], "report_catalog")
+            expected = {
+                "kind": "report_catalog",
+                "store": self.s.store_id,
+                "incarnation": self.s.incarnation,
+                **binding,
+            }
+            if {k: v for k, v in cursor.items() if k not in {"after", "revision"}} != expected:
+                raise LocalError("invalid_report_cursor")
+            after, revision = cursor["after"], cursor["revision"]
+        rows = self.db.execute(
+            "SELECT report,revision FROM report_revisions WHERE tenant=? AND project=? AND incarnation=? AND state='published' AND (report>? OR (report=? AND revision>?)) ORDER BY report,revision LIMIT 513",
+            (who["tenant"], args["project"], self.s.incarnation, after, after, revision),
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        more = False
+        for candidate in rows[:512]:
+            try:
+                row = self._target(
+                    who,
+                    {**args, "report": candidate["report"], "revision": candidate["revision"]},
+                    at,
+                )
+                body = json.loads(row["body"])
+                _, policy = self._policy(who["tenant"], args["project"], body["program"])
+                if policy["channel"] == "kindle":
+                    continue
+            except LocalError:
+                continue
+            if len(items) == args["limit"]:
+                more = True
+                break
+            deliveries = self.db.execute(
+                "SELECT state FROM report_deliveries WHERE tenant=? AND project=? AND report=? AND revision=?",
+                (who["tenant"], args["project"], row["report"], row["revision"]),
+            ).fetchall()
+            items.append(
+                {
+                    "report": row["report"],
+                    "revision": row["revision"],
+                    "title": body["title"],
+                    "program": body["program"],
+                    "phase": body["phase"],
+                    "task": body["task"],
+                    "created_ms": row["created"],
+                    "technical_status": body["technical_status"],
+                    "review_status": body["review_status"],
+                    "channel": policy["channel"],
+                    "delivery_states": sorted({d["state"] for d in deliveries}),
+                    "device_delivery": "unverified",
+                }
+            )
+            if len(canonical_bytes(items)) > 48 * 1024:
+                items.pop()
+                more = True
+                break
+        exhausted = len(rows) > 512 and not more
+        if exhausted and not items:
+            # Never issue a cursor containing a hidden report identity or claim
+            # that an incomplete authorization scan proves an empty catalog.
+            raise LocalError("report_catalog_scan_limit")
+        more = more or exhausted
+        next_cursor = None
+        if more:
+            last = items[-1]
+            next_cursor = self.s._token(
+                "report_catalog", **binding, after=last["report"], revision=last["revision"]
+            )
+        return {
+            "reports": items,
+            "next_cursor": next_cursor,
+            "consistency": "current_authorized_page",
+        }
+
+    def _image(self, who: dict[str, Any], row: Any, args: dict[str, Any]) -> dict[str, Any]:
+        if row["state"] != "published":
+            raise LocalError("unavailable")
+        _, policy = self._policy(who["tenant"], row["project"], json.loads(row["body"])["program"])
+        if policy["channel"] == "kindle":
+            raise LocalError("unavailable")
+        if args["name"] not in json.loads(row["body"]).get("figures", []):
+            raise LocalError("unavailable")
+        return self._artifact(who, row, args, kind="input")
+
+    def _artifact(
+        self, who: dict[str, Any], row: Any, args: dict[str, Any], *, kind: str = "artifact"
+    ) -> dict[str, Any]:
         file = self.db.execute(
-            "SELECT blob,bytes FROM report_files WHERE tenant=? AND project=? AND report=? AND revision=? AND name=? AND kind='artifact'",
-            (who["tenant"], row["project"], row["report"], row["revision"], args["name"]),
+            "SELECT blob,bytes FROM report_files WHERE tenant=? AND project=? AND report=? AND revision=? AND name=? AND kind=?",
+            (who["tenant"], row["project"], row["report"], row["revision"], args["name"], kind),
         ).fetchone()
         if file is None or args["offset"] >= file["bytes"]:
             raise LocalError("unavailable")

@@ -19,6 +19,33 @@ RSS_LIMIT_KIB = 512 * 1024
 MAX_INPUT_FILES = 64
 
 
+def validate_protected_paths(protected: Sequence[Path]) -> None:
+    """Reject service secrets under renderer-readable runtime paths at startup."""
+    roots = {
+        Path(sys.base_prefix).resolve(),
+        Path(sys.prefix).resolve(),
+        Path(memoryking.__file__).resolve().parent,
+        Path("/usr/lib").resolve(),
+    }
+    roots.update(
+        Path(p).resolve()
+        for p in (
+            (
+                "/System/Library",
+                "/Library/Apple/System/Library",
+                "/System/Volumes/Preboot",
+                "/private/var/db/dyld",
+            )
+            if sys.platform == "darwin"
+            else ("/lib", "/usr/share/fonts", "/usr/share/zoneinfo")
+        )
+    )
+    for private in protected:
+        private = private.resolve()
+        if any(private.is_relative_to(root) or root.is_relative_to(private) for root in roots):
+            raise LocalError("unsafe_renderer_layout")
+
+
 def macos_profile(stage: Path, protected: Sequence[Path] = ()) -> str:
     """Literal ancestor directories allow dyld traversal, never their file contents."""
     stage = stage.resolve(strict=True)

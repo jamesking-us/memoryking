@@ -24,11 +24,16 @@ from memoryking.reporting.smtp import GmailDestination, Outcome, message, submit
 class MailConfiguration:
     destination: GmailDestination
     enabled: bool = False
+    project: str | None = None
 
 
-def configured(store: LocalStore, destination: str | None) -> MailConfiguration:
+def configured(store: LocalStore, destination: str | None, project: str) -> MailConfiguration:
     value = getattr(store, "report_mail", None)
-    if not isinstance(value, MailConfiguration) or value.destination.id != destination:
+    if (
+        not isinstance(value, MailConfiguration)
+        or value.destination.id != destination
+        or (value.project is not None and value.project != project)
+    ):
         raise LocalError("report_delivery_unavailable")
     return value
 
@@ -103,7 +108,7 @@ class Deliveries:
         self, who: dict[str, Any], row: Any, policy: dict[str, Any], policy_version: int, at: int
     ) -> str:
         """Called only inside the canonical publish transaction; no network here."""
-        config = configured(self.s, policy["destination"])
+        config = configured(self.s, policy["destination"], row["project"])
         if policy.get("recipient_fingerprint") != config.destination.fingerprint:
             raise LocalError("report_destination_changed")
         file = self.db.execute(
@@ -172,7 +177,7 @@ class Deliveries:
     ) -> tuple[Any, MailConfiguration]:
         if body["source_incarnation"] != self.s.incarnation:
             raise LocalError("history_changed")
-        config = configured(self.s, body["destination"])
+        config = configured(self.s, body["destination"], body["project"])
         if not config.enabled:
             raise LocalError("report_sender_disabled")
         if config.destination.fingerprint != body["recipient_fingerprint"]:
