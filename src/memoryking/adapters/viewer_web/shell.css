@@ -482,31 +482,162 @@ figcaption {
   font-size: 0.9rem;
 }
 .graph {
-  background:
-    radial-gradient(ellipse at center, #76e9e210, transparent), var(--panel);
+  margin: 0 auto;
+  max-width: 52rem;
+}
+.graph-viewport {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  aspect-ratio: 640 / 440;
   border: 1px solid var(--line);
   border-radius: 16px;
-  max-width: 32rem;
-  margin: auto;
+  background:
+    radial-gradient(ellipse at center, #76e9e218, transparent), var(--panel);
+  touch-action: none;
+  user-select: none;
 }
-.graph svg {
+.graph-viewport svg {
   display: block;
   width: 100%;
+  height: 100%;
 }
 .graph line {
-  stroke: var(--line);
+  stroke: var(--muted);
   stroke-width: 1.5;
 }
-.graph circle {
-  fill: var(--accent);
-  stroke: var(--panel);
-  stroke-width: 2;
+.graph line.cites {
+  stroke-dasharray: 5 4;
 }
-.graph .criterion {
-  fill: var(--pending);
+.graph line.selected {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.graph-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel-alt);
+  color: var(--text);
+  font-weight: 700;
+  touch-action: none;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.graph-node.task {
+  border-color: var(--muted);
+}
+.graph-node.observation {
+  border-color: var(--accent);
+}
+.graph-node.claim {
+  border-color: var(--good);
+  border-radius: 10px;
+}
+.graph-node.criterion {
+  border-color: var(--pending);
+}
+.graph-node[aria-pressed="true"] {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  z-index: 1;
+}
+.graph-node-label {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 9rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  padding: 0.15rem 0.3rem;
+  color: var(--text);
+  background: var(--panel);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  font-weight: 400;
+}
+.labels-visible .graph-node-label,
+.graph-node[aria-pressed="true"] .graph-node-label,
+.graph-node:focus-visible .graph-node-label {
+  display: block;
+}
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  padding-block: 0.6rem;
+  font-size: 0.8rem;
+}
+.graph-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+  margin-right: 0.3rem;
+}
+.graph-legend .task::before {
+  border-color: var(--muted);
+}
+.graph-legend .observation::before {
+  border-color: var(--accent);
+}
+.graph-legend .claim::before {
+  border-color: var(--good);
+  border-radius: 2px;
+}
+.graph-legend .criterion::before {
+  border-color: var(--pending);
+}
+.graph-controls .button {
+  min-width: 44px;
+  padding-inline: 0.7rem;
+}
+.graph-controls {
+  align-items: center;
+}
+.graph-controls output {
+  min-width: 4ch;
+  color: var(--muted);
+}
+.graph-detail:empty {
+  display: none;
+}
+.graph-detail ul,
+.relationships ul {
+  list-style: none;
+  padding: 0;
+}
+.graph-detail li,
+.relationships li {
+  margin-block: 0.5rem;
+}
+.graph-detail li .button,
+.relationships .button {
+  text-align: left;
+  width: 100%;
+  overflow-wrap: anywhere;
 }
 .relationships {
-  padding-inline-start: 1.4rem;
+  margin-block: 1rem;
+}
+.relationships summary {
+  padding: 0.7rem 0;
+  font-weight: 600;
+}
+.relationships label {
+  display: grid;
+  gap: 0.4rem;
+  margin-block: 0.5rem;
 }
 .tabs {
   position: fixed;

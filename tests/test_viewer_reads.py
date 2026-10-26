@@ -182,12 +182,69 @@ class ReadCases:
             self.raw,
         )
         graph = self.read("graph")["data"]
-        self.assertEqual(len(graph["nodes"]), 2)
-        self.assertEqual(len(graph["edges"]), 1)
+        self.assertEqual(len(graph["nodes"]), 3)
+        self.assertEqual({e["kind"] for e in graph["edges"]}, {"declares", "uses"})
         self.store.purge(self.owner, self.obs["observation"])
         self.session = replace(self.session, subject=self.subject())
         with self.assertRaisesRegex(LocalError, "unavailable"):
             self.read("task", params={"task": "visible"})
+
+    def test_knowledge_graph_current_links_targets_and_bounded_private_sample(self):
+        self.setup_viewer()
+        accepted = self.review(self.propose(self.body("Visible accepted claim")))
+        self.propose(self.body("Unreviewed claim must not appear"), key="unreviewed")
+        self.review(self.propose(self.body("Owner-only claim", readers=["owner"]), key="private"))
+        for i in range(55):
+            self.store.capture(
+                self.owner,
+                self.ns,
+                f"graph-{i}",
+                {
+                    "version": 1,
+                    "project": "p",
+                    "source": "test",
+                    "source_event": f"graph-{i}",
+                    "text": "Owner-only sentinel" if i == 0 else f"Visible observation {i}",
+                    "readers": ["owner"] if i == 0 else ["owner", "phone"],
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+        self.session = replace(self.session, subject=self.subject())
+        response = self.read("graph")
+        graph = response["data"]
+        self.assertTrue(response["truncated"])
+        self.assertLessEqual(len(graph["nodes"]), 100)
+        self.assertLessEqual(len(graph["edges"]), 150)
+        self.assertNotIn("Owner-only", json.dumps(graph))
+        self.assertNotIn("Unreviewed", json.dumps(graph))
+        self.assertNotIn(accepted["revision"], json.dumps(graph))
+        claim = next(n for n in graph["nodes"] if n["kind"] == "claim")
+        observation = next(n for n in graph["nodes"] if n["label"] == self.raw)
+        self.assertIn(
+            {"source": claim["id"], "target": observation["id"], "kind": "cites"}, graph["edges"]
+        )
+        self.assertEqual(
+            self.read("memory", params={"handle": claim["handle"]})["data"]["memories"][0]["text"],
+            "Visible accepted claim",
+        )
+        with self.assertRaisesRegex(LocalError, "unavailable"):
+            self.read(
+                "memory",
+                params={"handle": claim["handle"]},
+                session=replace(self.session, identity="other"),
+            )
+        self.settings["limits"].update(graph_nodes=1, graph_edges=1)
+        tiny = self.read("graph")
+        self.assertEqual(len(tiny["data"]["nodes"]), 1)
+        self.assertEqual(tiny["data"]["edges"], [])
+        self.assertTrue(tiny["truncated"])
+        self.store.purge(self.owner, self.obs["observation"])
+        self.session = replace(self.session, subject=self.subject())
+        with self.assertRaisesRegex(LocalError, "unavailable"):
+            self.read("memory", params={"handle": claim["handle"]})
+        with self.assertRaisesRegex(LocalError, "unavailable"):
+            self.read("graph")  # Required knowledge reconciliation fails closed after purge.
 
     def test_unknown_constraint_blocks_without_hidden_identity(self):
         self.setup_viewer()

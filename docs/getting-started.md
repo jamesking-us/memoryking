@@ -108,10 +108,17 @@ See [GitHub setup](deployment.md#github-sign-in-setup) for that operator procedu
 1. **Overview** shows saved tasks and blockers. Counts describe the tasks shown,
    not the whole organization's work or proof that an agent is currently running.
 2. **Tasks** opens a checkpoint's criteria and permitted evidence. Passed, failed,
-   not evaluated, waived and unknown remain different states. The optional
-   Relationships view has both a graph and a readable list.
+   not evaluated, waived and unknown remain different states. Knowledge graph
+   offers another route to the task and its recorded evidence.
 3. **Memory** searches shared findings and shows their source and authority.
    Captured text is inert; external links open only when you choose one.
+   Choose **Knowledge graph** to explore memories, accepted claims, tasks and
+   criteria. Tap a node to see its recorded connections, then **Open memory** or
+   **Open task**. Drag the background to pan, drag a node to rearrange it, and
+   pinch to zoom. **Zoom in**, **Zoom out**, **Reset view** and **Labels** provide
+   simple controls. **Node list** offers keyboard navigation and searches the
+   nodes in this view; it does not search the whole store. Use Memory search for
+   that. The graph marks a bounded sample, and distance is not confidence.
 4. **Settings** changes the color theme or signs out this/all sessions. Only the
    appearance preference is saved locally.
 

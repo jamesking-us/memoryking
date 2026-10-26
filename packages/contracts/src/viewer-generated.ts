@@ -216,13 +216,15 @@ export interface ViewerMemoryData {
 export interface ViewerGraphNode {
   id: string;
   label: string;
-  kind: "task" | "criterion";
+  kind: "task" | "criterion" | "observation" | "claim";
+  task: string | null;
+  handle: string | null;
 }
 
 export interface ViewerGraphEdge {
   source: string;
   target: string;
-  kind: "declares";
+  kind: "declares" | "uses" | "cites";
 }
 
 export interface ViewerGraphData {

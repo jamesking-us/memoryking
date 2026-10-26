@@ -81,13 +81,17 @@ Agents must publish their state through the supported interfaces. A displayed he
 ### Check a project from your phone
 
 <img src="docs/images/mobile-dashboard.png" width="360" alt="MemoryKing phone viewer showing a synthetic blocked task and distinct criterion states" />
+<img src="docs/images/mobile-knowledge-graph.png" width="360" alt="MemoryKing phone knowledge graph showing memories, an accepted claim and recorded links to task criteria" />
 
-*Phone-sized browser view with synthetic data; physical Android qualification is pending.*
+*Phone-sized browser views with synthetic data; full physical Android qualification, including the new graph controls, is pending.*
 
 The optional phone viewer has four tabs: **Overview, Tasks, Memory and Settings**.
 For example, open a blocked task, inspect the evidence behind a completed check,
 then read its latest report. Reports include the full narrative, decisions, code,
-tables and figures. An optional relationship graph shows tasks and their criteria.
+tables and figures. In **Memory → Knowledge graph**, explore shared memories,
+accepted claims and the evidence connecting them to tasks. Tap a node to inspect
+its connections or open the source; drag to pan, pinch to zoom, or use the buttons
+and searchable node list. The graph shows a bounded sample of recorded links.
 
 Sign in with GitHub on an operator-configured installation. Your operator chooses
 which projects and sources you can read; repository membership alone does not

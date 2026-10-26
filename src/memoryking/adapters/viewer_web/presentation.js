@@ -29,6 +29,7 @@ export class Presentation {
     client;
     lastReadyGeneration = -1;
     lastReportKey = null;
+    lastGraphKey = null;
     contentsOpen = false;
     constructor(root) {
         this.root = root;
@@ -72,6 +73,26 @@ export class Presentation {
     render(state) {
         if (state.status === "ready" && !this.client.check())
             return;
+        const graphData = state.response?.data;
+        const graphKey = state.status === "ready" && graphData?.kind === "graph"
+            ? JSON.stringify({
+                generation: this.client.gate.generation,
+                project: state.project,
+                selection: state.selection,
+                position: state.response?.binding.observed_position,
+                coverage: state.response?.coverage,
+                truncated: state.response?.truncated,
+                nodes: graphData.nodes.map(({ handle: _handle, ...node }) => node),
+                edges: graphData.edges,
+            })
+            : null;
+        // Only lease-bound handles change on an ordinary refresh. Keep pan, zoom and
+        // selection, but resolve every open action from the CURRENT authorized DTO.
+        if (graphKey &&
+            graphKey === this.lastGraphKey &&
+            this.root.querySelector(".graph-viewport"))
+            return;
+        this.lastGraphKey = graphKey;
         const reportKey = state.status === "ready" &&
             state.response?.data.kind === "report" &&
             state.report?.complete
@@ -192,14 +213,14 @@ export class Presentation {
             : selection.kind === "reports"
                 ? "Reports"
                 : selection.kind === "graph"
-                    ? "Relationships"
+                    ? "Knowledge graph"
                     : labels[selection.tab];
         main.append(title(heading, selection.kind === "report"
             ? "Reviewed document and delivery status."
             : selection.kind === "reports"
                 ? "Published reports you have permission to read."
                 : selection.kind === "graph"
-                    ? "Visible tasks and their declared criteria."
+                    ? "Memories, accepted claims and recorded evidence connections."
                     : selection.tab === "overview"
                         ? "Saved progress and evidence for this project."
                         : selection.tab === "tasks"
@@ -219,8 +240,11 @@ export class Presentation {
                 kind: "reports",
                 ...(selection.kind === "task" ? { task: selection.id } : {}),
             }));
-        if (selection.kind === "tasks")
-            toolbar.append(this.open("Relationships", "graph", { tab: "tasks", kind: "graph" }));
+        if (selection.kind === "tasks" || selection.kind === "memories")
+            toolbar.append(this.open("Knowledge graph", "graph", {
+                tab: selection.tab,
+                kind: "graph",
+            }));
         if (selection.kind === "memories") {
             const form = el("form", "", "search");
             const searchLabel = el("label", "Search memory");
@@ -300,32 +324,51 @@ export class Presentation {
             this.reader(main, data, state);
         else if (data?.kind === "graph") {
             const canvas = el("div", "", "graph");
-            canvas.setAttribute("aria-hidden", "true");
             main.append(canvas);
             const generation = this.client.gate.generation, sequence = this.client.gate.sequence;
+            const allowed = () => this.client.check() &&
+                canvas.isConnected &&
+                this.client.gate.generation === generation &&
+                this.client.state.selection.kind === "graph";
+            const navigate = (id) => {
+                if (!allowed())
+                    return;
+                const current = this.client.state.response?.data;
+                if (current?.kind !== "graph")
+                    return;
+                const node = current.nodes.find((n) => n.id === id);
+                if (node?.handle)
+                    this.client.select({
+                        tab: "memories",
+                        kind: "memory",
+                        id: node.handle,
+                    });
+                else if (node?.task)
+                    this.client.select({ tab: "tasks", kind: "task", id: node.task });
+            };
+            // A semantic navigation list works even if the optional graph module fails.
+            const fallback = el("ul", "", "relationships graph-fallback");
+            for (const node of data.nodes) {
+                const item = el("li");
+                item.append(this.action(`${node.kind}: ${node.label}`, `graph-${node.id}`, () => navigate(node.id)));
+                const links = data.edges
+                    .filter((e) => e.source === node.id)
+                    .map((e) => `${e.kind}: ${data.nodes.find((n) => n.id === e.target)?.label ?? ""}`);
+                if (links.length)
+                    item.append(el("p", links.join("; "), "muted"));
+                fallback.append(item);
+            }
+            canvas.append(fallback);
             void import("./graph.js")
                 .then(({ drawGraph }) => {
-                if (generation === this.client.gate.generation &&
-                    sequence === this.client.gate.sequence &&
-                    this.client.check() &&
-                    canvas.isConnected)
-                    drawGraph(canvas, data);
+                if (sequence !== this.client.gate.sequence || !allowed())
+                    return;
+                drawGraph(canvas, data, allowed, navigate);
             })
                 .catch(() => {
-                /* The equivalent list remains usable without visualization. */
+                if (allowed())
+                    canvas.prepend(el("p", "Graph unavailable. Browse the node list below."));
             });
-            const list = el("ul", "", "relationships");
-            for (const node of data.nodes) {
-                const item = el("li", `${node.kind === "task" ? "Task" : "Criterion"}: ${node.label}`);
-                const children = data.edges
-                    .filter((edge) => edge.source === node.id)
-                    .map((edge) => data.nodes.find((n) => n.id === edge.target)?.label)
-                    .filter(Boolean);
-                if (children.length)
-                    item.append(el("p", `Declares: ${children.join("; ")}`, "muted"));
-                list.append(item);
-            }
-            main.append(el("h2", "Relationship list"), list);
         }
         if (state.response) {
             const coverage = el("details", "", "coverage");

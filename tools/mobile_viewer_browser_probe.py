@@ -48,6 +48,54 @@ def seed(fixture):
             "observed_at_ms": 1793000000000,
         },
     )
+    from test_knowledge import KnowledgeTests
+
+    def knowledge_command(action, args):
+        output = []
+        fixture.k.execute(
+            fixture.owner,
+            {
+                "version": 1,
+                "incarnation": fixture.store.incarnation,
+                "action": action,
+                "key": "mobile-graph-" + action,
+                "args": args,
+            },
+        ).emit(output.append)
+        return json.loads(output[0])
+
+    claim = knowledge_command(
+        "propose",
+        {
+            "project": "p",
+            "logical_key": "mobile-graph-claim",
+            "expected_version": 0,
+            "body": KnowledgeTests.body(
+                fixture,
+                "Retry behavior is supported by the recorded regression evidence.",
+                evidence=[
+                    {
+                        "observation": obs["observation"],
+                        "start_byte": 0,
+                        "end_byte": len(raw.encode()),
+                        "content_hash": hashlib.sha256(raw.encode()).hexdigest(),
+                    }
+                ],
+                readers=["owner", "phone"],
+            ),
+        },
+    )
+    knowledge_command(
+        "review",
+        {
+            "project": "p",
+            "revision": claim["revision"],
+            "expected_version": claim["family_version"],
+            "decision": "accept",
+            "reason": "synthetic_browser_evidence",
+            "breadth_reviewed": True,
+        },
+    )
     body = checkpoint()
     body.update(
         objective="Fix checkout retry handling",

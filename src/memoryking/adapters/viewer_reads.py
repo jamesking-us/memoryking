@@ -373,34 +373,10 @@ class ViewerReads:
         limit = min(
             params.get("limit", 20 if route == "memories" else 25), self.limits["list_items"]
         )
-        if route in {"overview", "tasks", "task", "graph"}:
+        if route == "graph":
+            return self._graph(who, project, at, identity, fresh)
+        if route in {"overview", "tasks", "task"}:
             tasks, more = self._tasks(who, project, at, limit, resume or "", task, identity, fresh)
-            if route == "graph":
-                # V1 relationship view is task/criterion containment, never invented dependencies.
-                nodes: list[dict[str, str]] = []
-                edges: list[dict[str, str]] = []
-                for item in tasks:
-                    if len(nodes) >= self.limits["graph_nodes"]:
-                        more = True
-                        break
-                    parent = "task:" + item["id"]
-                    nodes.append({"id": parent, "label": item["objective"], "kind": "task"})
-                    for criterion in item["criteria"]:
-                        if (
-                            len(nodes) >= self.limits["graph_nodes"]
-                            or len(edges) >= self.limits["graph_edges"]
-                        ):
-                            more = True
-                            break
-                        child = parent + ":" + criterion["id"]
-                        nodes.append({"id": child, "label": criterion["text"], "kind": "criterion"})
-                        edges.append({"source": parent, "target": child, "kind": "declares"})
-                return (
-                    {"kind": "graph", "nodes": nodes, "edges": edges},
-                    None,
-                    more,
-                    "visible_task_criterion_containment; bounded_equivalent_node_list",
-                )
             continuation = tasks[-1]["id"] if more and route == "tasks" else None
             return (
                 {"kind": route, "tasks": tasks},
@@ -414,6 +390,111 @@ class ViewerReads:
             return self._reports(who, project, params, resume, at, route, limit)
         raise LocalError("invalid_request")
 
+    def _graph(
+        self,
+        who: dict[str, Any],
+        project: str,
+        at: int,
+        identity: dict[str, Any],
+        fresh: int,
+    ) -> tuple[dict[str, Any], Any, bool, str]:
+        # Reuse the canonical memory projection: accepted knowledge must satisfy
+        # its current evidence, applicability and review rules before becoming a node.
+        cap = self.limits["graph_nodes"]
+        memory_limit = min(self.limits["list_items"], max(1, cap // 2))
+        memories, _, more, _ = self._memories(
+            who, project, {}, None, at, identity, fresh, memory_limit, "memories", graph_sample=True
+        )
+        tasks, task_more = self._tasks(
+            who, project, at, min(25, self.limits["list_items"]), identity=identity, fresh=fresh
+        )
+        more |= task_more
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, str]] = []
+        memory_nodes: dict[str, str] = {}
+        seen_edges: set[tuple[str, str, str]] = set()
+
+        def label(text: str) -> str:
+            value, truncated = clipped(text, 160)
+            return (value.strip() or "Untitled") + ("…" if truncated else "")
+
+        def link(source: str, target: str, kind: str) -> None:
+            nonlocal more
+            key = (source, target, kind)
+            if key in seen_edges:
+                return
+            if len(edges) >= self.limits["graph_edges"]:
+                more = True
+                return
+            seen_edges.add(key)
+            edges.append({"source": source, "target": target, "kind": kind})
+
+        for memory in memories["memories"]:
+            identifier = self.s._decode(memory["handle"], "viewer_memory")["id"]
+            # Stable only inside this viewer session; never expose canonical memory IDs.
+            node_id = "memory:" + canonical_hash({"session": identity["session"], "id": identifier})
+            memory_nodes[identifier] = node_id
+            nodes.append(
+                {
+                    "id": node_id,
+                    "label": label(memory["text"]),
+                    "kind": "claim" if memory["authority"] == "accepted" else "observation",
+                    "task": None,
+                    "handle": memory["handle"],
+                }
+            )
+        # A relationship is emitted only when both currently permitted endpoints
+        # are in this bounded view. No inferred similarity, hidden IDs or hidden totals.
+        for memory in memories["memories"]:
+            if memory["authority"] != "accepted":
+                continue
+            identifier = self.s._decode(memory["handle"], "viewer_memory")["id"]
+            for span in Knowledge(self.s)._evidence(who["tenant"], identifier):
+                target = memory_nodes.get(span["observation"])
+                if target is not None:
+                    link(memory_nodes[identifier], target, "cites")
+        for item in tasks:
+            if len(nodes) >= cap:
+                more = True
+                break
+            parent = "task:" + item["id"]
+            nodes.append(
+                {
+                    "id": parent,
+                    "label": label(item["objective"]),
+                    "kind": "task",
+                    "task": item["id"],
+                    "handle": None,
+                }
+            )
+            for criterion in item["criteria"]:
+                if len(nodes) >= cap:
+                    more = True
+                    break
+                child = parent + ":" + criterion["id"]
+                nodes.append(
+                    {
+                        "id": child,
+                        "label": label(criterion["text"]),
+                        "kind": "criterion",
+                        "task": item["id"],
+                        "handle": None,
+                    }
+                )
+                link(parent, child, "declares")
+                more |= criterion["evidence_truncated"]
+                for reference in criterion["evidence"]:
+                    identifier = self.s._decode(reference["handle"], "viewer_memory")["id"]
+                    target = memory_nodes.get(identifier)
+                    if target is not None:
+                        link(child, target, "uses")
+        return (
+            {"kind": "graph", "nodes": nodes, "edges": edges},
+            None,
+            more,
+            "bounded_current_memories_accepted_claims_tasks_criteria; recorded_links_between_shown_nodes_only; no_hidden_totals_or_similarity",
+        )
+
     def _memories(
         self,
         who: dict[str, Any],
@@ -425,6 +506,8 @@ class ViewerReads:
         fresh: int,
         limit: int,
         route: str,
+        *,
+        graph_sample: bool = False,
     ) -> tuple[dict[str, Any], Any, bool, str]:
         wanted = None
         if route == "memory":
@@ -475,6 +558,16 @@ class ViewerReads:
             ) > (after["position"], after["id"]):
                 candidates.append((item["created_position"], item["revision"], item, True))
         candidates.sort(key=lambda candidate: candidate[:2])
+        if graph_sample:
+            # This is a bounded sample, not a paginated memory-list continuation.
+            # Alternate kinds so an old observation backlog cannot hide every claim.
+            observed_items = [c for c in candidates if not c[3]]
+            accepted_items = [c for c in candidates if c[3]]
+            candidates = []
+            for i in range(max(len(observed_items), len(accepted_items))):
+                for group in (observed_items, accepted_items):
+                    if i < len(group):
+                        candidates.append(group[i])
         result: list[dict[str, Any]] = []
         last, more = None, len(candidates) > 64 or len(rows) == 65
         for position, identifier, row, derived in candidates[:64]:

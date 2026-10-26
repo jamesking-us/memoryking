@@ -220,8 +220,13 @@ migration and does not qualify physical Android or home network topology.
 
 The separate TypeScript viewer package uses plain DOM APIs and the generated
 read-only contracts. Four tabs present saved state; reports are reached from
-Overview/task detail. A bounded force layout loads only on demand, alongside its
-semantic relationship list. The installed wheel includes all public assets and
+Overview/task detail. A bounded force layout loads only on demand from Memory or Tasks, alongside its
+semantic node list. Current memory/claim eligibility and task evidence determine
+its nodes and edges. Pan, pinch, node drag, selected connections and ordinary
+zoom/reset/open buttons provide navigation without continuous animation.
+Unchanged successful renewals preserve the graph DOM and view transform; each
+open action resolves the newly issued target from the current response. No
+previous memory handle can bypass a fresh detail check. The installed wheel includes all public assets and
 optimized existing logo icons. There is no new runtime framework or service worker.
 
 Each client request carries an internal generation and sequence. Results must

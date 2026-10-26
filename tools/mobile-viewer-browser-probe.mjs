@@ -309,21 +309,154 @@ try {
     JSON.stringify(contrast),
   );
   await page.getByLabel("Color theme").selectOption("dark");
-  await tab("Tasks");
+  await tab("Memory");
   await page
-    .getByRole("button", { name: "Relationships", exact: true })
+    .getByRole("button", { name: "Knowledge graph", exact: true })
     .click();
-  await wait("Relationship list");
-  await page.locator(".graph svg").waitFor();
-  assert.equal(await page.locator(".graph circle").count(), 6);
-  assert.equal(await page.locator(".relationships > li").count(), 6);
+  await page.locator(".graph-viewport").waitFor();
+  assert.equal(await page.locator(".graph-node").count(), 9);
+  assert.equal(await page.locator(".relationships li").count(), 9);
   assert.equal(traffic.filter((r) => r.path === "/viewer/graph.js").length, 1);
-  await page.screenshot({
-    path: options.output + "/relationships.png",
-    fullPage: true,
+  await page.locator(".graph-node.claim").click();
+  assert.ok(
+    (await page.locator(".graph-detail").textContent()).includes("cites:"),
+  );
+  await page
+    .locator(".graph-detail")
+    .getByRole("button", { name: "Open memory", exact: true })
+    .click();
+  await wait("Source: accepted_knowledge");
+  await tab("Memory");
+  await page
+    .getByRole("button", { name: "Knowledge graph", exact: true })
+    .click();
+  await page.locator(".graph-viewport").waitFor();
+  const memoryNode = page
+    .locator(".graph-node.observation")
+    .filter({ hasText: "Synthetic finding" });
+  await memoryNode.click();
+  await page
+    .locator(".graph-detail")
+    .getByRole("button", { name: "Open memory", exact: true })
+    .waitFor();
+  assert.ok(
+    (await page.locator(".graph-detail").textContent()).includes("used by"),
+  );
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  assert.equal(await page.getByLabel("Graph zoom").textContent(), "130%");
+  const retainedGraph = await page.locator(".graph-viewport").elementHandle();
+  const previousGraphReads = traffic.filter((r) =>
+    r.path.endsWith("/graph"),
+  ).length;
+  await page.waitForFunction(
+    () => document.querySelector(".graph-node") !== null,
+  );
+  for (
+    let attempt = 0;
+    attempt < 140 &&
+    traffic.filter((r) => r.path.endsWith("/graph")).length ===
+      previousGraphReads;
+    attempt++
+  )
+    await page.waitForTimeout(100);
+  assert.ok(
+    traffic.filter((r) => r.path.endsWith("/graph")).length >
+      previousGraphReads,
+  );
+  assert.equal(await retainedGraph.evaluate((n) => n.isConnected), true);
+  assert.equal(await page.getByLabel("Graph zoom").textContent(), "130%");
+  const graphBox = await page.locator(".graph-viewport").boundingBox();
+  const beforeDrag = await memoryNode.getAttribute("style");
+  const nodeBox = await memoryNode.boundingBox();
+  await page.mouse.move(nodeBox.x + 22, nodeBox.y + 22);
+  await page.mouse.down();
+  await page.mouse.move(nodeBox.x + 48, nodeBox.y + 40, { steps: 4 });
+  await page.mouse.up();
+  assert.notEqual(await memoryNode.getAttribute("style"), beforeDrag);
+  await page.mouse.move(graphBox.x + 8, graphBox.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(graphBox.x + 35, graphBox.y + 25, { steps: 4 });
+  await page.mouse.up();
+  const cdp = await context.newCDPSession(page);
+  const cx = graphBox.x + graphBox.width / 2,
+    cy = graphBox.y + graphBox.height / 2;
+  const beforePinch = Number(
+    await page.locator(".graph-viewport").getAttribute("data-zoom"),
+  );
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [
+      { x: cx - 30, y: cy, id: 1 },
+      { x: cx + 30, y: cy, id: 2 },
+    ],
   });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchMove",
+    touchPoints: [
+      { x: cx - 60, y: cy, id: 1 },
+      { x: cx + 60, y: cy, id: 2 },
+    ],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  assert.ok(
+    Number(await page.locator(".graph-viewport").getAttribute("data-zoom")) >
+      beforePinch,
+  );
+  await cdp.detach();
+  await page.getByRole("button", { name: "Reset view", exact: true }).click();
+  assert.equal(await page.getByLabel("Graph zoom").textContent(), "100%");
+  assert.ok((await memoryNode.boundingBox()).width >= 44);
+
+  await page
+    .locator(".graph-detail")
+    .getByRole("button", { name: "Open memory", exact: true })
+    .click();
+  await page
+    .locator(".source-text p")
+    .filter({ hasText: options.marker })
+    .first()
+    .waitFor();
+  await tab("Memory");
+  await page
+    .getByRole("button", { name: "Knowledge graph", exact: true })
+    .click();
+  await page.locator(".graph-viewport").waitFor();
+  await page.locator(".relationships summary").click();
+  await page.getByLabel("Find in this view").fill("Fix checkout");
+  assert.equal(await page.locator(".relationships li button").count(), 1);
+  await page.locator(".relationships li button").focus();
+  await page.keyboard.press("Enter");
+  await page.locator(".relationships summary").click();
+  await page.evaluate(() => {
+    document.activeElement?.blur();
+    window.scrollTo(0, 0);
+  });
+  await page.screenshot({
+    path: options.output + "/knowledge-graph.png",
+    fullPage: false,
+  });
+  await page
+    .locator(".graph-detail")
+    .getByRole("button", { name: "Open task", exact: true })
+    .click();
+  await wait("Retry regression recorded");
+  await tab("Memory");
+  await page
+    .getByRole("button", { name: "Knowledge graph", exact: true })
+    .click();
+  await page.locator(".graph-viewport").waitFor();
+  await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+  assert.equal(
+    await page.locator(".graph-node,.graph-detail,.relationships").count(),
+    0,
+  );
+  await page.reload();
+  await wait("Fix checkout retry handling");
   checks.push(
-    "four tabs, actual criterion states/blocker/evidence/search/settings; inert source text; lazy bounded graph and semantic list",
+    "knowledge graph: actual permitted memories and evidence edges, touch pinch/pan/drag, selection/current-target detail, retained layout after renewal, keyboard list,44px targets and offline clearing; browser gesture synthesis is not physical Android qualification",
   );
   await tab("Overview");
   await page.getByRole("button", { name: "Reports", exact: true }).click();
