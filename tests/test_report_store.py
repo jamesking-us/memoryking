@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import os
 import platform
 import threading
 import unittest
@@ -23,7 +24,14 @@ from memoryking.domain.reporting import CHUNK_LIMIT
 
 
 class ReportCases:
-    @unittest.skipUnless(platform.system() == "Darwin", "native macOS renderer")
+    @unittest.skipUnless(
+        platform.system() == "Darwin"
+        or (
+            platform.system() == "Linux"
+            and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"
+        ),
+        "native renderer not selected",
+    )
     def test_renderer_releases_request_gate_and_duplicate_worker_is_excluded(self):
         self.submitted()
         self.command("build", {"report": "phase", "revision": 1})
@@ -50,7 +58,14 @@ class ReportCases:
                 proceed.set()
             self.assertEqual(future.result(timeout=10)["state"], "built")
 
-    @unittest.skipUnless(platform.system() == "Darwin", "native macOS renderer")
+    @unittest.skipUnless(
+        platform.system() == "Darwin"
+        or (
+            platform.system() == "Linux"
+            and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"
+        ),
+        "native renderer not selected",
+    )
     def test_exact_qa_and_corrupted_artifact_block_publication(self):
         self.submitted()
         self.build()
@@ -298,7 +313,14 @@ class ReportCases:
             self.store.db.execute("SELECT COUNT(*) FROM report_revisions").fetchone()[0], 0
         )
 
-    @unittest.skipUnless(platform.system() == "Darwin", "native macOS renderer")
+    @unittest.skipUnless(
+        platform.system() == "Darwin"
+        or (
+            platform.system() == "Linux"
+            and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"
+        ),
+        "native renderer not selected",
+    )
     def test_real_bundle_qa_publish_reader_and_revocation(self):
         phone = self.store.grant(self.owner, "phone", "p", ["read"])
         self.submitted(["owner", "phone"])
@@ -339,7 +361,14 @@ class ReportCases:
             with self.assertRaises(LocalError):
                 self.command(action, args, phone)
 
-    @unittest.skipUnless(platform.system() == "Darwin", "native macOS renderer")
+    @unittest.skipUnless(
+        platform.system() == "Darwin"
+        or (
+            platform.system() == "Linux"
+            and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"
+        ),
+        "native renderer not selected",
+    )
     def test_manifest_failure_does_not_publish_partial_bundle(self):
         self.submitted()
         self.command("build", {"report": "phase", "revision": 1})
@@ -364,7 +393,14 @@ class ReportCases:
         )
         self.store.gc()
 
-    @unittest.skipUnless(platform.system() == "Darwin", "native macOS renderer")
+    @unittest.skipUnless(
+        platform.system() == "Darwin"
+        or (
+            platform.system() == "Linux"
+            and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"
+        ),
+        "native renderer not selected",
+    )
     def test_withdrawal_fences_worker_and_purge_erases_all_derived_refs(self):
         self.submitted()
         self.command("build", {"report": "phase", "revision": 1})

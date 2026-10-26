@@ -6,6 +6,7 @@
 !requirements-dev.lock
 !requirements-build.lock
 !requirements-shared.lock
+!requirements-reports.lock
 !README.md
 !src/
 !src/**

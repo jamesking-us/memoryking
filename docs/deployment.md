@@ -197,8 +197,8 @@ roll-forward/fresh-history recovery before adoption. There is no reverse migrati
 No running store has to be adopted to try the disposable example.
 
 Viewer/report JSON schemas and generated types are available now. They define
-future listener/session/report boundaries; they do not implement OAuth, a PWA,
-report rendering, publication or email delivery. Viewer configuration is rejected
+viewer listener/session boundaries and implemented report operations. OAuth and
+the phone PWA are not implemented yet; reporting is described below. Viewer configuration is rejected
 for non-HTTPS public origins, non-loopback listeners, invalid TLS-mode combinations,
 invalid limits or unknown fields. A configuration file does not start a listener
 in this version.
@@ -228,7 +228,13 @@ keep secrets and store data outside runtime/package paths. Rendering is denied
 if those paths overlap. It has no network or mail configuration. The supervisor
 limits RSS to 512 MiB and wall time to 120 seconds; a worker alarm also bounds an
 orphaned render before its durable 130-second lease expires. Outputs are private,
-hashed and fsynced before manifest commit. Linux isolation and container reporting
-qualification remain pending; there is no unrestricted fallback.
+hashed and fsynced before manifest commit. Linux x86-64 rendering requires Landlock
+ABI 6 or later and seccomp. It denies network access, child processes, executable
+launches, inherited descriptors, permission changes and unknown syscalls. Unsupported
+kernels and architectures fail closed. The shared Dockerfile includes locked report
+libraries and pinned DejaVu fonts. Container checks exercised real PDF/EPUB output
+on Linux 7.0.14 with Docker Engine 29.9.2, as a non-root user with a read-only root,
+no network, no capabilities and no-new-privileges. That result does not qualify a
+mobile deployment or other architectures; there is no unrestricted fallback.
 
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

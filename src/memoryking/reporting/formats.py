@@ -97,6 +97,24 @@ def render_pdf(
     title = title or plain(source.splitlines()[0].lstrip("# "))
     font = "Helvetica"
     font_dir = Path("/System/Library/Fonts/Supplemental")
+    linux_fonts = Path("/usr/share/fonts/truetype/dejavu")
+    if (linux_fonts / "DejaVuSans.ttf").exists():
+        for name, filename in [
+            ("ReportDejaVu", "DejaVuSans.ttf"),
+            ("ReportDejaVu-Bold", "DejaVuSans-Bold.ttf"),
+            ("ReportDejaVu-Italic", "DejaVuSans-Oblique.ttf"),
+            ("ReportDejaVu-BoldItalic", "DejaVuSans-BoldOblique.ttf"),
+            ("Courier", "DejaVuSansMono.ttf"),
+        ]:
+            pdfmetrics.registerFont(TTFont(name, str(linux_fonts / filename)))
+        pdfmetrics.registerFontFamily(
+            "ReportDejaVu",
+            normal="ReportDejaVu",
+            bold="ReportDejaVu-Bold",
+            italic="ReportDejaVu-Italic",
+            boldItalic="ReportDejaVu-BoldItalic",
+        )
+        font = "ReportDejaVu"
     if (font_dir / "Arial.ttf").exists():
         for name, filename in [
             ("ReportArial", "Arial.ttf"),

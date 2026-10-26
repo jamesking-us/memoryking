@@ -12,7 +12,11 @@ from memoryking.domain.local import LocalError
 from memoryking.reporting.sandbox import isolated_python, macos_profile, render
 
 
-@unittest.skipUnless(sys.platform == "darwin", "Native macOS isolation probe")
+@unittest.skipUnless(
+    sys.platform == "darwin"
+    or (sys.platform == "linux" and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"),
+    "Native renderer isolation not selected",
+)
 class ReportSandboxTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="memoryking-report-test-")
@@ -36,6 +40,28 @@ class ReportSandboxTests(unittest.TestCase):
         text = "\n".join(p.extract_text() for p in PdfReader(self.stage / "report.pdf").pages)
         for i in range(1, 18):
             self.assertIn(f"Measured result {i}.", text)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux syscall filter")
+    def test_linux_metadata_changes_unknown_syscalls_and_alternate_abi_are_denied(self):
+        secret = self.root / "outside-secret"
+        secret.write_text("synthetic marker")
+        code = """
+import ctypes,errno,json,os,sys
+from pathlib import Path
+libc=ctypes.CDLL(None,use_errno=True)
+results={}
+for name,number in [('alternate_abi',0x40000002),('unknown',0x3fffffff),('ptrace',101),('process_memory',310),('memfd',319)]:
+    value=libc.syscall(number,0,0,0,0,0,0)
+    results[name]=[value,ctypes.get_errno()]
+for name,operation in [('chmod',lambda:os.chmod(sys.argv[1],0o644)),('timestamps',lambda:os.utime(sys.argv[1],None)),('exec',lambda:os.execv('/bin/true',['true']))]:
+    try: operation();results[name]='unexpected'
+    except OSError as error: results[name]=[-1,error.errno]
+Path('syscalls.json').write_text(json.dumps(results))
+"""
+        isolated_python(self.stage, ["-c", code, str(secret)], protected=[secret])
+        values = json.loads((self.stage / "syscalls.json").read_text())
+        self.assertEqual(len(values), 8)
+        self.assertTrue(all(value == [-1, 1] for value in values.values()), values)
 
     def test_no_outside_files_network_child_process_environment_or_inherited_descriptor(self):
         secret = self.root / "synthetic-mail-secret"

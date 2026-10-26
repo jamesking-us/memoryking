@@ -170,7 +170,7 @@ binding. Unfinished inputs are bounded to 50 MiB per author/project; discard the
 when abandoned. The service verifies bytes and permissions, not the truth of an
 author's evidence claims.
 
-The native worker entry point is `build_one(store, credential, project)` in
+The worker entry point is `build_one(store, credential, project)` in
 `memoryking.adapters.report_build`. The embedding service owns the store and
 supplies an explicitly granted credential. A process lease permits one renderer
 per store root and the queue holds ten waiting builds per service tenant. Rendering

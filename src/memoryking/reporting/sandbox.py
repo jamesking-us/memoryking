@@ -74,10 +74,12 @@ def isolated_python(
 ) -> None:
     """Run a trusted Python entry point. Report content must never supply arguments.
 
-    Linux isolation is deliberately unavailable until its separate implementation
-    and negative tests exist. A platform failure never falls back to an open process.
+    macOS uses a deny-default native profile; Linux uses a fixed confined bootstrap.
+    A platform failure never falls back to an open process.
     """
-    if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
+    if sys.platform not in {"darwin", "linux"} or (
+        sys.platform == "darwin" and not Path("/usr/bin/sandbox-exec").is_file()
+    ):
         raise LocalError("report_sandbox_unavailable")
     stage = stage.resolve(strict=True)
     if not stage.is_dir() or stage.stat().st_mode & 0o077:
@@ -91,15 +93,28 @@ def isolated_python(
         size += path.stat().st_size
     if size > INPUT_LIMIT:
         raise LocalError("report_input_limit")
-    command = [
-        "/usr/bin/sandbox-exec",
-        "-p",
-        macos_profile(stage, protected),
-        sys.executable,
-        "-I",
-        "-B",
-        *arguments,
-    ]
+    if sys.platform == "darwin":
+        command = [
+            "/usr/bin/sandbox-exec",
+            "-p",
+            macos_profile(stage, protected),
+            sys.executable,
+            "-I",
+            "-B",
+            *arguments,
+        ]
+    else:
+        command = [
+            sys.executable,
+            "-I",
+            "-B",
+            "-m",
+            "memoryking.reporting.linux_worker",
+            str(stage),
+            str(os.getpid()),
+            json.dumps([str(path.resolve()) for path in protected]),
+            *arguments,
+        ]
     # No shell startup environment, mail settings, database descriptors or stdin.
     environment = {"HOME": str(stage), "TMPDIR": str(stage), "PATH": "/usr/bin:/bin"}
     process = subprocess.Popen(
@@ -117,17 +132,35 @@ def isolated_python(
         while process.poll() is None:
             if time.monotonic() - started >= timeout:
                 raise LocalError("report_render_timeout")
-            usage = subprocess.run(
-                ["/bin/ps", "-o", "rss=", "-p", str(process.pid)],
-                capture_output=True,
-                text=True,
-                timeout=2,
-                check=False,
-            )
-            if usage.returncode == 0 and usage.stdout.strip():
-                if int(usage.stdout.strip()) > rss_limit_kib:
-                    raise LocalError("report_render_memory_limit")
-            elif process.poll() is None:
+            if sys.platform == "linux":
+                try:
+                    status = Path(f"/proc/{process.pid}/status").read_text()
+                    rss = next(
+                        (
+                            int(line.split()[1])
+                            for line in status.splitlines()
+                            if line.startswith("VmRSS:")
+                        ),
+                        None,
+                    )
+                except (OSError, ValueError):
+                    rss = None
+            else:
+                usage = subprocess.run(
+                    ["/bin/ps", "-o", "rss=", "-p", str(process.pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+                rss = (
+                    int(usage.stdout.strip())
+                    if usage.returncode == 0 and usage.stdout.strip()
+                    else None
+                )
+            if rss is not None and rss > rss_limit_kib:
+                raise LocalError("report_render_memory_limit")
+            if rss is None and process.poll() is None:
                 raise LocalError("report_resource_monitor_unavailable")
             time.sleep(0.05)
         if process.returncode:

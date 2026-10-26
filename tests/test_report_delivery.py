@@ -1,6 +1,7 @@
 """Native stores and independent control history with fake SMTP only."""
 
 import json
+import os
 import platform
 import unittest
 from contextlib import contextmanager
@@ -259,7 +260,13 @@ class DeliveryCases:
         self.assertEqual(client.events, [])
 
 
-@unittest.skipUnless(platform.system() == "Darwin", "native macOS renderer")
+@unittest.skipUnless(
+    platform.system() == "Darwin"
+    or (
+        platform.system() == "Linux" and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"
+    ),
+    "native renderer not selected",
+)
 class LocalDelivery(DeliveryCases, unittest.TestCase):
     setUp = knowledge.KnowledgeTests.setUp
     tearDown = knowledge.KnowledgeTests.tearDown
@@ -269,6 +276,12 @@ class LocalDelivery(DeliveryCases, unittest.TestCase):
         yield self.store
 
 
-@unittest.skipUnless(platform.system() == "Darwin", "native macOS renderer")
+@unittest.skipUnless(
+    platform.system() == "Darwin"
+    or (
+        platform.system() == "Linux" and os.environ.get("MEMORYKING_REQUIRE_REPORT_SANDBOX") == "1"
+    ),
+    "native renderer not selected",
+)
 class NativeDelivery(DeliveryCases, NativeFixture):
     pass
