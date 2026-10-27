@@ -482,21 +482,18 @@ class ViewerReads:
         identity: dict[str, Any],
         fresh: int,
     ) -> tuple[dict[str, Any], Any, bool, str]:
-        # Reuse the canonical memory projection: accepted knowledge must satisfy
-        # its current evidence, applicability and review rules before becoming a node.
+        from memoryking.adapters.working import Working
+
         cap = self.limits["graph_nodes"]
-        memory_limit = min(self.limits["list_items"], max(1, cap // 2))
-        memories, _, more, _ = self._memories(
-            who, project, {}, None, at, identity, fresh, memory_limit, "memories", graph_sample=True
-        )
-        tasks, task_more = self._tasks(
+        tasks, more = self._tasks(
             who, project, at, min(25, self.limits["list_items"]), identity=identity, fresh=fresh
         )
-        more |= task_more
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, str]] = []
-        memory_nodes: dict[str, str] = {}
         seen_edges: set[tuple[str, str, str]] = set()
+        references: list[tuple[str, str]] = []
+        children: list[list[dict[str, Any]]] = []
+        dependencies: list[tuple[str, str]] = []
 
         def label(text: str) -> str:
             value, truncated = clipped(text, 160)
@@ -513,9 +510,117 @@ class ViewerReads:
             seen_edges.add(key)
             edges.append({"source": source, "target": target, "kind": kind})
 
+        # Reserve room for memory endpoints. Every shown task/plan gets a root
+        # before round-robin children, so one large plan cannot hide all others.
+        structural_cap = max(1, cap // 2)
+        for item in tasks:
+            if len(nodes) >= structural_cap:
+                more = True
+                break
+            is_plan = "plan_id" in item
+            parent = ("plan:" if is_plan else "task:") + item["id"]
+            entries = []
+            if is_plan:
+                row = Working(self.s)._checkpoint(
+                    who,
+                    {"project": project, "task": item["id"], "run": None, "checkpoint": None},
+                    at,
+                )
+                plan = json.loads(row["body"])["plan"]
+                title = plan["title"]
+                for ref in plan["lessons"][:8]:
+                    references.append((parent, ref["id"]))
+                more |= len(plan["lessons"]) > 8
+                for step in plan["steps"]:
+                    child = parent + ":" + step["id"]
+                    entries.append(
+                        {
+                            "node": {
+                                "id": child,
+                                "label": label(step["description"]),
+                                "kind": "step",
+                                "task": item["id"],
+                                "handle": None,
+                                "phase": step["phase"],
+                            },
+                            "parent": parent,
+                            "references": [r["id"] for r in step["evidence"][:8]],
+                            "dependencies": [parent + ":" + d for d in step["depends_on"]],
+                            "truncated": len(step["evidence"]) > 8,
+                        }
+                    )
+            else:
+                title = item["objective"]
+                for criterion in item["criteria"]:
+                    child = parent + ":" + criterion["id"]
+                    entries.append(
+                        {
+                            "node": {
+                                "id": child,
+                                "label": label(criterion["text"]),
+                                "kind": "criterion",
+                                "task": item["id"],
+                                "handle": None,
+                            },
+                            "parent": parent,
+                            "references": [
+                                self.s._decode(r["handle"], "viewer_memory")["id"]
+                                for r in criterion["evidence"]
+                            ],
+                            "dependencies": [],
+                            "truncated": criterion["evidence_truncated"],
+                        }
+                    )
+            nodes.append(
+                {
+                    "id": parent,
+                    "label": label(title),
+                    "kind": "plan" if is_plan else "task",
+                    "task": item["id"],
+                    "handle": None,
+                }
+            )
+            children.append(entries)
+        for index in range(max((len(group) for group in children), default=0)):
+            for group in children:
+                if index >= len(group):
+                    continue
+                if len(nodes) >= structural_cap:
+                    more = True
+                    continue
+                entry = group[index]
+                node = entry["node"]
+                nodes.append(node)
+                link(entry["parent"], node["id"], "declares")
+                references.extend((node["id"], identifier) for identifier in entry["references"])
+                dependencies.extend((node["id"], target) for target in entry["dependencies"])
+                more |= entry["truncated"]
+        # Prefer recorded evidence over an unrelated old-observation backlog.
+        # Canonical memory projection still rechecks visibility and accepted claims.
+        preferred = list(dict.fromkeys(identifier for _, identifier in references))[:64]
+        more |= len(set(identifier for _, identifier in references)) > 64
+        memory_nodes: dict[str, str] = {}
+        memories: dict[str, Any] = {"memories": []}
+        memory_limit = min(self.limits["list_items"], cap - len(nodes))
+        if memory_limit:
+            memories, _, memory_more, _ = self._memories(
+                who,
+                project,
+                {},
+                None,
+                at,
+                identity,
+                fresh,
+                memory_limit,
+                "memories",
+                graph_sample=True,
+                preferred=preferred,
+            )
+            more |= memory_more
+        else:
+            more = True
         for memory in memories["memories"]:
             identifier = self.s._decode(memory["handle"], "viewer_memory")["id"]
-            # Stable only inside this viewer session; never expose canonical memory IDs.
             node_id = "memory:" + canonical_hash({"session": identity["session"], "id": identifier})
             memory_nodes[identifier] = node_id
             nodes.append(
@@ -527,56 +632,30 @@ class ViewerReads:
                     "handle": memory["handle"],
                 }
             )
-        # A relationship is emitted only when both currently permitted endpoints
-        # are in this bounded view. No inferred similarity, hidden IDs or hidden totals.
+        shown = {n["id"] for n in nodes}
+        for source, target in dependencies:
+            if target in shown:
+                link(source, target, "depends_on")
+            else:
+                more = True
+        for source, identifier in references:
+            if identifier in memory_nodes:
+                link(source, memory_nodes[identifier], "uses")
+            else:
+                more = True
         for memory in memories["memories"]:
             if memory["authority"] != "accepted":
                 continue
             identifier = self.s._decode(memory["handle"], "viewer_memory")["id"]
             for span in Knowledge(self.s)._evidence(who["tenant"], identifier):
-                target = memory_nodes.get(span["observation"])
-                if target is not None:
-                    link(memory_nodes[identifier], target, "cites")
-        for item in tasks:
-            if len(nodes) >= cap:
-                more = True
-                break
-            parent = "task:" + item["id"]
-            nodes.append(
-                {
-                    "id": parent,
-                    "label": label(item["objective"]),
-                    "kind": "task",
-                    "task": item["id"],
-                    "handle": None,
-                }
-            )
-            for criterion in item["criteria"]:
-                if len(nodes) >= cap:
-                    more = True
-                    break
-                child = parent + ":" + criterion["id"]
-                nodes.append(
-                    {
-                        "id": child,
-                        "label": label(criterion["text"]),
-                        "kind": "criterion",
-                        "task": item["id"],
-                        "handle": None,
-                    }
-                )
-                link(parent, child, "declares")
-                more |= criterion["evidence_truncated"]
-                for reference in criterion["evidence"]:
-                    identifier = self.s._decode(reference["handle"], "viewer_memory")["id"]
-                    target = memory_nodes.get(identifier)
-                    if target is not None:
-                        link(child, target, "uses")
+                citation_target = memory_nodes.get(span["observation"])
+                if citation_target is not None:
+                    link(memory_nodes[identifier], citation_target, "cites")
         return (
             {"kind": "graph", "nodes": nodes, "edges": edges},
             None,
             more,
-            "bounded_current_memories_accepted_claims_tasks_criteria; recorded_links_between_shown_nodes_only; no_hidden_totals_or_similarity",
+            "bounded_current_memories_claims_tasks_criteria_plans_steps; recorded_links_between_shown_nodes_only; no_hidden_totals_or_similarity",
         )
 
     def _memories(
@@ -592,6 +671,7 @@ class ViewerReads:
         route: str,
         *,
         graph_sample: bool = False,
+        preferred: list[str] | None = None,
     ) -> tuple[dict[str, Any], Any, bool, str]:
         wanted = None
         if route == "memory":
@@ -621,6 +701,16 @@ class ViewerReads:
         sql += " AND (readers='null' OR EXISTS(SELECT 1 FROM json_each(observations.readers) WHERE value=?)) ORDER BY position,id LIMIT 65"
         values += (who["principal"],)
         rows = self.db.execute(sql, values).fetchall()
+        if graph_sample and preferred:
+            # At most 64 explicit IDs, scoped to this project. Visibility below
+            # is identical to ordinary memory reads; never synthesize evidence.
+            selected = self.db.execute(
+                "SELECT * FROM observations WHERE tenant=? AND project=? AND deleted=0 AND id IN ("
+                + ",".join("?" for _ in preferred[:64])
+                + ")",
+                (who["tenant"], project, *preferred[:64]),
+            ).fetchall()
+            rows = list({r["id"]: r for r in [*rows, *selected]}.values())
         candidates: list[tuple[int, str, Any, bool]] = [
             (r["position"], r["id"], r, False)
             for r in rows
@@ -652,8 +742,11 @@ class ViewerReads:
                 for group in (observed_items, accepted_items):
                     if i < len(group):
                         candidates.append(group[i])
+        if graph_sample and preferred:
+            rank = {identifier: i for i, identifier in enumerate(preferred[:64])}
+            candidates.sort(key=lambda c: rank.get(c[1], 64))
         result: list[dict[str, Any]] = []
-        last, more = None, len(candidates) > 64 or len(rows) == 65
+        last, more = None, len(candidates) > 64 or len(rows) >= 65
         for position, identifier, row, derived in candidates[:64]:
             if len(result) == limit:
                 more = True

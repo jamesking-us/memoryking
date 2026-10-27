@@ -98,7 +98,7 @@ tables and figures. In **Memory → Knowledge graph**, explore shared memories,
 accepted claims and the evidence connecting them to tasks. Tap a node to inspect
 its connections or open the source; drag to pan, pinch to zoom, or use the buttons
 and searchable node list. **Back to graph** returns from details to your selected
-node, zoom and layout. The graph shows a bounded sample of recorded links.
+node, zoom and layout. The graph connects plan steps to their prerequisites and supporting memories. It shows a bounded sample of recorded links.
 
 Sign in with GitHub on an operator-configured installation. Your operator chooses
 which projects and sources you can read; repository membership alone does not

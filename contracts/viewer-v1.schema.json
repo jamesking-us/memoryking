@@ -1094,7 +1094,9 @@
             "task",
             "criterion",
             "observation",
-            "claim"
+            "claim",
+            "plan",
+            "step"
           ]
         },
         "task": {
@@ -1120,6 +1122,11 @@
               "type": "null"
             }
           ]
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
         }
       },
       "required": [
@@ -1148,7 +1155,8 @@
           "enum": [
             "declares",
             "uses",
-            "cites"
+            "cites",
+            "depends_on"
           ]
         }
       },

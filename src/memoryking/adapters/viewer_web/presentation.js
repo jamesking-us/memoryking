@@ -397,6 +397,13 @@ export class Presentation {
                         kind: "memory",
                         id: node.handle,
                     });
+                else if (node?.task && ["plan", "step"].includes(node.kind))
+                    this.client.openGraphDetail({
+                        tab: "tasks",
+                        kind: "plan",
+                        id: node.task,
+                        phase: node.phase,
+                    });
                 else if (node?.task)
                     this.client.openGraphDetail({
                         tab: "tasks",

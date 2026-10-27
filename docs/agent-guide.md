@@ -152,3 +152,11 @@ Plan commands always include `version: 1`, the current `incarnation`, `action` a
 Step statuses are `todo`, `doing`, `done`, `blocked`, `skipped` and `unknown`. `doing`/`done` require resolved prerequisites. `blocked` needs a note; `skipped` needs both a note and a scope decision. A skipped step does not count as completed work. Changing the objective, a completed step’s definition or its prerequisites requires fresh evidence or reopening the affected work. If a prerequisite changes, revise affected steps together in one full-plan write. Reusing an old proof after reopening cannot rehabilitate a changed definition. Reordering, duplicating or removing old evidence links is not fresh proof.
 
 Progress uses equal step counts, rounded down to a whole percent: completed steps / current total. Empty plans have no percentage. The separate resolved count includes justified skipped work. Adding scope can lower progress. The declared plan lifecycle is separate from effective completion; inaccessible or unverifiable history cannot silently become a pass. Recorded evidence is an agent report, not independent certification.
+
+## Resuming with a replacement agent
+
+Before stopping, capture findings and failed attempts, then save a checkpoint with the exact repository revision, dirty files, outstanding tests, next actions and operation IDs. Update the structured plan with evidence-backed progress. Read the saved checkpoint back; a successful write alone does not establish that the next agent can read it.
+
+Give the replacement agent the project/task IDs, repository locations and applicable instructions. Stop the previous writer first. The new agent uses its own authorized identity to resume the current checkpoint, read the plan and inspect Git state, running processes and durable job results. It must reconcile any newer local work and uncertain external operation before retrying. Never treat a missing chat response as proof that a build, write or delivery did not happen.
+
+A checkpoint preserves recorded working state, not a running process or unrestricted access. It does not grant permission to another principal. Plan progress does not prove test success. Keep approvals, current source hashes and verification evidence separate, and use compare-and-swap revisions when saving the next checkpoint.

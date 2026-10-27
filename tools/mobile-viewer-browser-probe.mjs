@@ -282,14 +282,18 @@ try {
   await page
     .getByRole("button", { name: "Knowledge graph", exact: true })
     .click();
-  await page.locator(".graph-node.task").click();
+  await page.locator(".graph-node.plan").waitFor();
+  assert.equal(await page.locator(".graph-node.plan").count(), 1);
+  assert.equal(await page.locator(".graph-node.step").count(), 2);
+  await page.locator(".graph-node.step").last().click();
+  assert.match(await page.locator(".graph-detail").textContent(), /depends_on/);
+  await page.screenshot({
+    path: options.output + "/plan-graph.png",
+    fullPage: false,
+  });
   await page
     .locator(".graph-detail")
-    .getByRole("button", { name: "Open task", exact: true })
-    .click();
-  await page
-    .locator(".graph-drilldown")
-    .getByRole("button", { name: "View plan", exact: true })
+    .getByRole("button", { name: "Open plan", exact: true })
     .click();
   await page.locator(".graph-drilldown .plan").waitFor();
   await page

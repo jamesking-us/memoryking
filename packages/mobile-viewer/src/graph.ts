@@ -6,6 +6,8 @@ export const nodeNames: Record<ViewerGraphNode["kind"], string> = {
   claim: "Accepted claim",
   task: "Task",
   criterion: "Criterion",
+  plan: "Plan",
+  step: "Plan step",
 };
 const W = 640,
   H = 440;
@@ -114,7 +116,14 @@ export function drawGraph(
   const buttons = nodes.map((node) => {
     const b = el(
       "button",
-      { observation: "M", claim: "A", task: "T", criterion: "C" }[node.kind],
+      {
+        observation: "M",
+        claim: "A",
+        task: "T",
+        criterion: "C",
+        plan: "P",
+        step: "S",
+      }[node.kind],
       `graph-node ${node.kind}`,
     );
     b.type = "button";
@@ -180,9 +189,11 @@ export function drawGraph(
     detail.replaceChildren(el("h2", nodeNames[node.kind]), el("p", node.label));
     detail.append(
       button(
-        node.kind === "task" || node.kind === "criterion"
-          ? "Open task"
-          : "Open memory",
+        node.kind === "plan" || node.kind === "step"
+          ? "Open plan"
+          : node.kind === "task" || node.kind === "criterion"
+            ? "Open task"
+            : "Open memory",
         () => open(id),
       ),
     );
@@ -198,9 +209,12 @@ export function drawGraph(
           other = byId.get(outgoing ? edge.target : edge.source)!;
         const relation = outgoing
           ? edge.kind
-          : { declares: "declared by", uses: "used by", cites: "cited by" }[
-              edge.kind
-            ];
+          : {
+              declares: "declared by",
+              uses: "used by",
+              cites: "cited by",
+              depends_on: "prerequisite for",
+            }[edge.kind];
         const li = el("li");
         li.append(
           button(`${relation}: ${other.label}`, () => choose(other.id)),

@@ -197,14 +197,15 @@ class ViewerMemoryData(TypedDict):
 class ViewerGraphNode(TypedDict):
     id: str
     label: str
-    kind: Literal['task', 'criterion', 'observation', 'claim']
+    kind: Literal['task', 'criterion', 'observation', 'claim', 'plan', 'step']
     task: str | None
     handle: str | None
+    phase: NotRequired[str]
 
 class ViewerGraphEdge(TypedDict):
     source: str
     target: str
-    kind: Literal['declares', 'uses', 'cites']
+    kind: Literal['declares', 'uses', 'cites', 'depends_on']
 
 class ViewerGraphData(TypedDict):
     kind: Literal['graph']

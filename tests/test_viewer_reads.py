@@ -246,6 +246,95 @@ class ReadCases:
         with self.assertRaisesRegex(LocalError, "unavailable"):
             self.read("graph")  # Required knowledge reconciliation fails closed after purge.
 
+    def test_plan_graph_includes_recorded_links_and_late_evidence(self):
+        from test_plans import plan
+
+        from memoryking.adapters.working import Working
+
+        self.setup_viewer()
+        for i in range(70):
+            self.store.capture(
+                self.owner,
+                self.ns,
+                f"backlog-{i}",
+                {
+                    "version": 1,
+                    "project": "p",
+                    "source": "test",
+                    "source_event": f"backlog-{i}",
+                    "text": f"Unlinked backlog {i}",
+                    "readers": ["owner", "phone"],
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+        evidence = self.store.capture(
+            self.owner,
+            self.ns,
+            "late-proof",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "late-proof",
+                "text": "Actual late plan evidence",
+                "readers": ["owner", "phone"],
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        value = plan()
+        value["steps"][0]["evidence"] = [{"kind": "observation", "id": evidence["observation"]}]
+        value["lessons"] = [{"kind": "observation", "id": self.obs["observation"]}]
+        for task, readers in [("checkout", ["owner", "phone"]), ("secret-plan", ["owner"])]:
+            Working(self.store).execute(
+                self.owner,
+                {
+                    "version": 1,
+                    "incarnation": self.store.incarnation,
+                    "action": "plan_save",
+                    "key": task,
+                    "args": {
+                        "project": "p",
+                        "task": task,
+                        "expected_revision": 0,
+                        "readers": readers,
+                        "plan": value,
+                    },
+                },
+            )
+        graph = self.read("graph")["data"]
+        by_id = {n["id"]: n for n in graph["nodes"]}
+        self.assertNotIn("secret-plan", json.dumps(graph))
+        self.assertEqual(by_id["plan:checkout"]["kind"], "plan")
+        self.assertEqual(by_id["plan:checkout:inspect"]["phase"], "design")
+        self.assertIn(
+            {
+                "source": "plan:checkout:test",
+                "target": "plan:checkout:inspect",
+                "kind": "depends_on",
+            },
+            graph["edges"],
+        )
+        proof = next(n for n in graph["nodes"] if n["label"] == "Actual late plan evidence")
+        self.assertIn(
+            {"source": "plan:checkout:inspect", "target": proof["id"], "kind": "uses"},
+            graph["edges"],
+        )
+        self.assertEqual(
+            self.read("memory", params={"handle": proof["handle"]})["data"]["memories"][0]["text"],
+            proof["label"],
+        )
+        self.assertTrue(all(e["source"] in by_id and e["target"] in by_id for e in graph["edges"]))
+        self.settings["limits"].update(graph_nodes=5, graph_edges=1)
+        small = self.read("graph")
+        self.assertLessEqual(len(small["data"]["nodes"]), 5)
+        self.assertLessEqual(len(small["data"]["edges"]), 1)
+        self.assertTrue(small["truncated"])
+        self.policy("revoke", {"principal": "phone", "project": "p", "expected_version": 2})
+        with self.assertRaisesRegex(LocalError, "context_changed"):
+            self.read("graph")
+
     def test_unknown_constraint_blocks_without_hidden_identity(self):
         self.setup_viewer()
         proposed = self.propose(
