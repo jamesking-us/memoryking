@@ -162,6 +162,49 @@ def seed(fixture):
             },
         )
 
+    # A separate synthetic project keeps the existing task/graph corpus stable.
+    from test_plans import plan
+
+    fixture.store.namespace(fixture.owner, "plans")
+    fixture.grant_viewer(version=3, project="plans")
+    value = plan()
+    plan_obs = fixture.store.capture(
+        fixture.owner,
+        fixture.store.namespace(fixture.owner, "plans"),
+        "plan-proof",
+        {
+            "version": 1,
+            "project": "plans",
+            "source": "plan-regression",
+            "source_event": "proof",
+            "text": "Inspected synthetic retry handling. Verification is still pending.",
+            "readers": ["owner", "phone"],
+            "classification": "internal",
+            "observed_at_ms": 1,
+        },
+    )
+    value["steps"][0].update(
+        status="done",
+        notes="Inspection recorded",
+        evidence=[{"kind": "observation", "id": plan_obs["observation"]}],
+    )
+    Working(fixture.store).execute(
+        fixture.owner,
+        {
+            "version": 1,
+            "incarnation": fixture.store.incarnation,
+            "action": "plan_save",
+            "key": "mobile-plan",
+            "args": {
+                "project": "plans",
+                "task": "checkout-plan",
+                "expected_revision": 0,
+                "readers": ["owner", "phone"],
+                "plan": value,
+            },
+        },
+    )
+
     class Catalog(CatalogCases):
         def command(self, action, args, credential=None, key=None):
             if action == "submit":

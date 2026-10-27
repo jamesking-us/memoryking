@@ -1142,3 +1142,30 @@ aside {
     height: 48px;
   }
 }
+
+.structured-plan-progress {
+  display: grid;
+  gap: 0.6rem;
+  margin: 1rem 0;
+}
+.structured-plan-progress progress {
+  width: 100%;
+  height: 0.65rem;
+  accent-color: #5fe5cf;
+}
+.structured-plan .plan-phase {
+  border: 1px solid #304153;
+  border-radius: 0.65rem;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+.structured-plan .plan-step {
+  border-top: 1px solid #304153;
+  padding: 1rem 0;
+  overflow-wrap: anywhere;
+}
+.source-evidence {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 0.5rem 0;
+}

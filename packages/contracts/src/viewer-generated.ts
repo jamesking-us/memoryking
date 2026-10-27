@@ -160,6 +160,7 @@ export interface ViewerTask {
   checkpoint_revision: number;
   progress: ViewerProgress;
   text_truncated: boolean;
+  plan_id?: string;
 }
 
 export interface ViewerMemory {
@@ -295,7 +296,83 @@ export interface ViewerReportImageData {
   next_offset: number | null;
 }
 
-export type ViewerData = ViewerSessionData | ViewerTaskData | ViewerMemoryData | ViewerGraphData | ViewerReportListData | ViewerReportData | ViewerReportSectionData | ViewerReportImageData;
+export interface ViewerPlanCounts {
+  total: number;
+  todo: number;
+  doing: number;
+  done: number;
+  blocked: number;
+  skipped: number;
+  unknown: number;
+  completed: number;
+  resolved: number;
+  work_percent: number | null;
+  resolved_percent: number | null;
+}
+
+export interface ViewerPlanPhase {
+  id: string;
+  title: string;
+  state: "empty" | "resolved" | "blocked" | "in_progress" | "not_started";
+  progress: ViewerPlanCounts;
+}
+
+export interface ViewerPlanStep {
+  id: string;
+  phase: string;
+  description: string;
+  status: "todo" | "doing" | "done" | "blocked" | "skipped" | "unknown";
+  notes: string;
+  depends_on: Array<string>;
+  evidence: Array<ViewerEvidence>;
+  decision: string | null;
+  evidence_truncated: boolean;
+  reported_status: "todo" | "doing" | "done" | "blocked" | "skipped" | "unknown";
+}
+
+export interface ViewerPlanSummary {
+  id: string;
+  title: string;
+  objective: string;
+  status: "draft" | "active" | "done" | "abandoned";
+  revision: number;
+  updated_ms: number;
+  progress: ViewerPlanCounts;
+  current_phase: string | null;
+  phase_count: number;
+  history_complete: boolean;
+}
+
+export interface ViewerPlanDetail {
+  id: string;
+  title: string;
+  objective: string;
+  status: "draft" | "active" | "done" | "abandoned";
+  revision: number;
+  updated_ms: number;
+  progress: ViewerPlanCounts;
+  current_phase: string | null;
+  phase_count: number;
+  history_complete: boolean;
+  context: string;
+  closure_note: string;
+  phases: Array<ViewerPlanPhase>;
+  steps: Array<ViewerPlanStep>;
+  lessons: Array<ViewerEvidence>;
+  lessons_truncated: boolean;
+}
+
+export interface ViewerPlanListData {
+  kind: "plans";
+  plans: Array<ViewerPlanSummary>;
+}
+
+export interface ViewerPlanData {
+  kind: "plan";
+  plan: ViewerPlanDetail;
+}
+
+export type ViewerData = ViewerSessionData | ViewerTaskData | ViewerMemoryData | ViewerGraphData | ViewerReportListData | ViewerReportData | ViewerReportSectionData | ViewerReportImageData | ViewerPlanListData | ViewerPlanData;
 
 export interface ViewerResponse {
   schema_version: 1;

@@ -126,3 +126,29 @@ unchanged. See the [disposable permission example](../examples/viewer_identity.p
 and [owner setup](deployment.md#viewer-access-foundation).
 
 [Back to README](../README.md) · [Design](design.md) · [API reference](reference.md)
+
+## Structured plans
+
+A plan records **what the agents intend to do and what they have actually reported doing**. It has a title, objective, optional context, ordered phases and stable step IDs. Each step has a description, status, notes, prerequisite IDs and evidence references. This complements the detailed checkpoint used to resume an individual agent. It does not dispatch agents or authorize builds, merges or external actions.
+
+The normal flow is:
+
+1. Create a plan with `plan_save`, `expected_revision: 0`, an explicit reader audience and a stable retry key.
+2. Read the current write revision (`current_revision`) with `plan_get`. Mark a ready step `doing` using `plan_step` and that revision.
+3. Capture the actual result as an observation, then mark the step `done` with its evidence reference. Use `blocked` plus a reason when work cannot proceed.
+4. Revise the full plan with `plan_save` to add or reorder phases/steps. Preserve IDs. Resolve revision conflicts by reading and reconciling the current plan.
+5. Close the plan explicitly as `done` or `abandoned`, with a closure note and a captured lesson. `done` requires a nonempty plan whose steps are done or explicitly skipped.
+
+All four actions—`plan_save`, `plan_step`, `plan_get`, `plan_list`—are available through **`memory_plan`** in MCP and through `client.working(command)` in both Python clients. CLI users send the same command to the `working` operation with `memoryking request`. The [closed command schema](../contracts/working-v1.schema.json) is authoritative; [example plan](../examples/plan.json) contains a complete input object.
+
+```sh
+.venv/bin/python tools/plans_demo.py
+```
+
+This disposable example uses the real local service and model-tool contract. It creates two steps, captures inspection evidence, records one completed step, reads the original revision and lists the current plan. It makes no model calls or network changes. The same exercise is tested over the shared HTTP service with native PostgreSQL.
+
+Plan commands always include `version: 1`, the current `incarnation`, `action` and `args.project`. Writes additionally include `key` and `args.expected_revision`. A plan uses a task-level stream, identified by `args.task`; use a separate ID from an ordinary agent checkpoint. `plan_step` requires `step`, `status`, `notes`, `evidence` and nullable `decision`. It changes only those fields. A full `plan_save` replaces the plan stream’s complete plan document; use ordinary task checkpoints in a separate stream. The `revision` field identifies the returned content snapshot, while `current_revision` is the CAS revision to use after an operator reassigns the writer. `plan_get` takes nullable `revision`; `null` selects current state. `plan_list` takes `limit` (1–50) and nullable `cursor`. Read responses include derived progress and effective status: they are **not** valid full-plan write bodies without removing projection-only fields such as `reported_status`.
+
+Step statuses are `todo`, `doing`, `done`, `blocked`, `skipped` and `unknown`. `doing`/`done` require resolved prerequisites. `blocked` needs a note; `skipped` needs both a note and a scope decision. A skipped step does not count as completed work. Changing the objective, a completed step’s definition or its prerequisites requires fresh evidence or reopening the affected work. If a prerequisite changes, revise affected steps together in one full-plan write. Reusing an old proof after reopening cannot rehabilitate a changed definition. Reordering, duplicating or removing old evidence links is not fresh proof.
+
+Progress uses equal step counts, rounded down to a whole percent: completed steps / current total. Empty plans have no percentage. The separate resolved count includes justified skipped work. Adding scope can lower progress. The declared plan lifecycle is separate from effective completion; inaccessible or unverifiable history cannot silently become a pass. Recorded evidence is an agent report, not independent certification.

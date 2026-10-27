@@ -177,3 +177,7 @@ then checks every intended reader's current access. A frozen report becomes
 unavailable if any supporting source is later revoked or purged.
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)
+
+## Follow a plan
+
+Run `.venv/bin/python tools/plans_demo.py` in the contributor environment for a disposable example. For a lasting plan, connect an agent to your running installation and use the `memory_plan` tool described in the [agent guide](agent-guide.md#structured-plans). In the desktop dashboard, enter the project in **Task activity**, then open **Plans**. In the phone viewer, use **Overview → Plans** or **Tasks → Plans**. Selecting a phase shows its steps and progress; opening evidence provides a direct return to the plan. A report document alone does not create an execution plan.

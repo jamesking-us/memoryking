@@ -678,3 +678,7 @@ The dedicated app and returned-scope check enforce this installation's login-onl
 boundary; they do not synchronize GitHub repository permissions into MemoryKing.
 
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)
+
+### Enabling plan tracking
+
+Structured plans use the existing core store, checkpoint permissions and viewer listener; there is no additional service, port, paid provider or configuration flag. Upgrade the service and its bundled dashboard/viewer assets together, then reconnect MCP clients so their tool catalog includes `memory_plan`. The installed server must support the new working commands; updating a client alone is insufficient. Back up using the normal procedure before an upgrade. Existing ordinary checkpoints remain compatible, and historical plan revisions use the same archive/restore and purge paths. An older binary can reject plan-bearing checkpoints; retain the matching service version when restoring an archive that contains plans. Upgrade staging and verify a read/write/read cycle before changing live agent routing.

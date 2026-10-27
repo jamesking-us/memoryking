@@ -114,11 +114,18 @@ def route(target: str) -> tuple[str, str | None, dict[str, Any]]:
         raise LocalError("unavailable")
     project, suffix = match.groups()
     parameters: dict[str, Any] = {}
-    if suffix in {"overview", "tasks", "memories", "graph", "reports"}:
+    if suffix in {"overview", "tasks", "memories", "graph", "reports", "plans"}:
         name = suffix
-        allowed = {"limit", "cursor"} if name in {"tasks", "memories", "reports"} else set()
+        allowed = (
+            {"limit", "cursor"} if name in {"tasks", "memories", "reports", "plans"} else set()
+        )
         if name == "memories":
             allowed.add("q")
+    elif (match := re.fullmatch(rf"plans/({IDENT})", suffix)) is not None:
+        name, allowed = "plan", {"limit", "cursor", "phase"}
+        parameters["plan"] = match[1]
+        if "phase" in query and re.fullmatch(IDENT, query["phase"]) is None:
+            raise LocalError("invalid_request")
     elif (match := re.fullmatch(rf"tasks/({IDENT})", suffix)) is not None:
         name, allowed = "task", set()
         parameters["task"] = match[1]

@@ -9,7 +9,7 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 | Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, JSON requests and offline recovery. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
-| MCP stdio | `python -m memoryking.adapters.stdio` | Eight model-facing memory tools; daemon must already run. |
+| MCP stdio | `python -m memoryking.adapters.stdio` | Nine model-facing memory tools; daemon must already run. |
 | Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp` | Authenticated Streamable HTTP transport. |
 | Reference agent | `python -m memoryking.reference_agent --help` | Create-file/readback task harness, checkpoint/recovery and local recording provider. |
 | Repository worker | `python -m memoryking.repository_worker --help` | One bounded passive repository validation job. |
@@ -119,7 +119,7 @@ Generated Python/TypeScript and packaged schemas accompany these sources. Python
 `memoryking.contracts.viewer.validate_viewer` validates a named definition; it does
 not authenticate a provider subject or grant permissions.
 
-`viewer-admin` is an owner-only CLI/IPC operation, outside the eight MCP tools. Its
+`viewer-admin` is an owner-only CLI/IPC operation, outside the nine MCP tools. Its
 commands are listed in [viewer access](deployment.md#viewer-access-foundation).
 `ViewerIdentity.resolve_authenticated_subject` is an internal trusted-adapter lookup,
 not a browser login API. Its signed read-only context is never returned to browser
@@ -160,7 +160,7 @@ content fails. The SDK does not automatically retry mutations.
 Report authoring never grants readers or chooses recipients. Policies default to `channel: app`, with null destination/recipient. Kindle/both
 requires a fixed destination supplied by the trusted embedding host; the policy
 records its recipient principal and fingerprint. The internal sender requires an
-explicit `report_delivery` credential and enabled host configuration. The optional `serve --report-config` worker schedules builds and sends. Operator import preserves accepted legacy identities; the installation's trusted collector must verify old receipts and permanently disable its previous sender before activation. No report command enters the eight-tool model MCP
+explicit `report_delivery` credential and enabled host configuration. The optional `serve --report-config` worker schedules builds and sends. Operator import preserves accepted legacy identities; the installation's trusted collector must verify old receipts and permanently disable its previous sender before activation. No report command enters the nine-tool model MCP
 catalog.
 
 Inputs are `source.md`, `readme.md`, `evidence.json`, and identifier-named PNG/JPEG
@@ -327,3 +327,15 @@ including DNS/TLS. It returns only a bounded numeric account ID. Timeout kills a
 reaps the child; unknown exchange outcome requires a new login instead of replay.
 Authorization validity uses the persisted evaluation instant and release deadline;
 the next read always checks current grant/time/history rather than trusting login.
+
+## Plan tracking contracts
+
+`memory_plan` groups four working-state actions. `plan_save` creates/revises a typed plan; `plan_step` updates one step; `plan_get` reads current or historical revision; `plan_list` pages current plans. Read/checkpoint capabilities, current project/audience authorization, writer ownership, CAS, durable retry keys and history incarnation are enforced by the existing working-state transaction. An ordinary task stream cannot change into a plan, or vice versa. No schema migration or second plan database is required.
+
+Limits are 32 ordered phases, 256 steps, 64 prerequisite IDs per step, 16 evidence references per step, 32 lesson references and 128 distinct dependencies per checkpoint. The working request limit remains 128 KiB, so maximal fields cannot all be used simultaneously. The tenant’s 4,096-checkpoint capacity also bounds plan revision history. Reads verify available history up to that capacity; missing/unreadable historical proof conservatively makes affected completion unknown. Native catalogs inspect at most 64 task streams per page, return at most 50 plans and stop before their accumulated entries exceed 96 KiB. Continue an opaque cursor even when a page is empty. A changed frontier, authorization or history invalidates the cursor; restart the catalog.
+
+Owner dashboard reads are `GET /api/plans/{project}` (optional `cursor`) and `GET /api/plans/{project}/{plan}`. They require the current dashboard session, Host/Origin checks and project access. They accept no mutations. Current project plans appear in Task activity beside ordinary checkpoints; existing file-backed development phase views remain a separate compatibility view.
+
+Phone reads are `GET /viewer/api/v1/projects/{project}/plans` and `/plans/{plan}`. The list accepts `limit`/`cursor`; detail also accepts a stable `phase` ID. Detail returns the full permitted denominator and phase counts, with at most 25 steps per page and four evidence links per step/lesson list. Truncation is explicit. A selected phase filters the step page, not the plan denominator. Evidence opens through a short-lived session-bound handle. Opening a plan from a graph node retains a direct Back to graph control and renews both views together. Session, project, phase, query, frontier and current authority bind continuation. Every view retains the existing 15-second maximum display lease, current dependency checks, bounded release deadline and private-content clearing rules. No plan or private progress is stored for offline use.
+
+The dashboard and app display agent-reported lifecycle separately from computed progress. Percent complete is not an estimate of elapsed time, cost or remaining effort. No orchestrator integration advances plans automatically; agents must call the plan commands with recorded results.

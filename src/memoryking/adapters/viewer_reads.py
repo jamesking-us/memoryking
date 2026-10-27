@@ -292,6 +292,7 @@ class ViewerReads:
             # Restrict the phone projection: no operations, producer payloads or repository paths.
             tasks.append(
                 {
+                    **({"plan_id": item["plan_id"]} if "plan_id" in item else {}),
                     "id": item["task"],
                     "objective": item["objective"]
                     if detail is None
@@ -368,13 +369,21 @@ class ViewerReads:
             )
         if project is None:
             raise LocalError("invalid_request")
-        task = params.get("task") if route == "task" else None
+        task = (
+            params.get("task")
+            if route == "task"
+            else params.get("plan")
+            if route == "plan"
+            else None
+        )
         self._policy(who, project, task, at)
         limit = min(
             params.get("limit", 20 if route == "memories" else 25), self.limits["list_items"]
         )
         if route == "graph":
             return self._graph(who, project, at, identity, fresh)
+        if route in {"plans", "plan"}:
+            return self._plans(who, project, params, resume, at, identity, fresh, limit, route)
         if route in {"overview", "tasks", "task"}:
             tasks, more = self._tasks(who, project, at, limit, resume or "", task, identity, fresh)
             continuation = tasks[-1]["id"] if more and route == "tasks" else None
@@ -389,6 +398,81 @@ class ViewerReads:
         if route.startswith("report"):
             return self._reports(who, project, params, resume, at, route, limit)
         raise LocalError("invalid_request")
+
+    def _plans(
+        self,
+        who: dict[str, Any],
+        project: str,
+        params: dict[str, Any],
+        resume: Any,
+        at: int,
+        identity: dict[str, Any],
+        fresh: int,
+        limit: int,
+        route: str,
+    ) -> tuple[dict[str, Any], Any, bool, str]:
+        from memoryking.adapters.plans import Plans
+        from memoryking.adapters.working import Working
+
+        plans = Plans(Working(self.s))
+
+        def summary(item: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+            p = item["progress"]
+            return {
+                **{k: item[k] for k in ("id", "revision", "updated_ms", "history_complete")},
+                **{k: body[k] for k in ("title", "objective", "status")},
+                "progress": {k: v for k, v in p.items() if k not in {"phases", "current_phase"}},
+                "current_phase": p["current_phase"],
+                "phase_count": len(p["phases"]),
+            }
+
+        coverage = "current_authorized_plan; equal_step_counts; skipped_separate; recorded_evidence_not_independent_certification"
+        if route == "plans":
+            result = plans.listing(who, {"project": project, "cursor": resume, "limit": limit}, at)
+            return (
+                {"kind": route, "plans": [summary(i, i) for i in result["plans"]]},
+                result["cursor"],
+                not result["complete"],
+                coverage,
+            )
+        item = plans.get(who, {"project": project, "task": params["plan"], "revision": None}, at)
+        body = item["plan"]
+        phase = params.get("phase")
+        if phase is not None and phase not in {p["id"] for p in body["phases"]}:
+            raise LocalError("unavailable")
+        steps = [s for s in body["steps"] if phase is None or s["phase"] == phase]
+        offset = 0 if resume is None else resume
+        if type(offset) is not int or not 0 <= offset <= len(steps):
+            raise LocalError("invalid_cursor")
+        page = steps[offset : offset + min(limit, 25)]
+
+        def evidence(deps: list[dict[str, str]]) -> list[dict[str, str]]:
+            return [
+                {
+                    "kind": d["kind"],
+                    "handle": self.s._token("viewer_memory", **identity, until=fresh, id=d["id"]),
+                }
+                for d in deps[:4]
+            ]
+
+        detail = {
+            **summary(item, body),
+            **{k: body[k] for k in ("context", "closure_note")},
+            "phases": item["progress"]["phases"],
+            "steps": [
+                {
+                    **s,
+                    "evidence": evidence(s["evidence"]),
+                    "evidence_truncated": len(s["evidence"]) > 4,
+                }
+                for s in page
+            ],
+            "lessons": evidence(body["lessons"]),
+            "lessons_truncated": len(body["lessons"]) > 4,
+        }
+        end = offset + len(page)
+        more = end < len(steps)
+        return {"kind": route, "plan": detail}, end if more else None, more, coverage
 
     def _graph(
         self,

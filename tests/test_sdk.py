@@ -85,6 +85,7 @@ class SDKTests(unittest.TestCase):
             "invalid_tool_arguments",
             lambda: self.client.tool(
                 "memory_feedback",
+                "memory_plan",
                 {
                     "version": 1,
                     "incarnation": self.store.incarnation,
@@ -277,6 +278,7 @@ class SDKTests(unittest.TestCase):
                 "memory_resume",
                 "memory_handoff",
                 "memory_feedback",
+                "memory_plan",
             },
         )
         raw = responses[5]["result"]["content"][0]["text"].encode()

@@ -174,6 +174,36 @@ try {
     path: dirname(options.output) + "/dashboard.png",
     fullPage: false,
   });
+  await page
+    .locator("#execution-plans")
+    .getByRole("button", { name: "View plan", exact: true })
+    .click();
+  const phase = page.locator(
+    '#execution-plans details[data-task="plan-checkout-plan-design"]',
+  );
+  await phase.locator("summary").click();
+  await page.waitForTimeout(11000);
+  assert.equal(await phase.getAttribute("open"), "");
+  assert.match(
+    await page.locator("#execution-plans").innerText(),
+    /50% · 1 of 2 steps completed/,
+  );
+  await page.locator("#execution-panel").scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: dirname(options.output) + "/desktop-plans.png",
+    fullPage: false,
+  });
+  await page
+    .locator("#execution-plans")
+    .getByRole("button", { name: "Back to plans", exact: true })
+    .click();
+  await page
+    .locator("#execution-plans")
+    .getByRole("button", { name: "View plan", exact: true })
+    .waitFor();
+  checks.push(
+    "owner structured plans: canonical phase/step progress, detail and direct return, expanded phase retained through renewal",
+  );
   const form = page.locator("#observatory > form");
   await form.locator("input").fill("demo");
   await form.getByRole("button", { name: "Load current view" }).click();

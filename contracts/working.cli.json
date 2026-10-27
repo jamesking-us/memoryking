@@ -199,6 +199,116 @@
           "args"
         ],
         "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "plan_save"
+          },
+          "args": {
+            "$ref": "#/$defs/PlanSave"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "plan_step"
+          },
+          "args": {
+            "$ref": "#/$defs/PlanStepUpdate"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "plan_get"
+          },
+          "args": {
+            "$ref": "#/$defs/PlanGet"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "plan_list"
+          },
+          "args": {
+            "$ref": "#/$defs/PlanList"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ],
+        "additionalProperties": false
       }
     ],
     "$defs": {
@@ -679,6 +789,9 @@
           },
           "capture": {
             "$ref": "#/$defs/Capture"
+          },
+          "plan": {
+            "$ref": "#/$defs/Plan"
           }
         },
         "required": [
@@ -1132,6 +1245,331 @@
           "model_session",
           "context_epoch"
         ]
+      },
+      "PlanPhase": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "PlanStep": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "phase": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "status": {
+            "enum": [
+              "todo",
+              "doing",
+              "done",
+              "blocked",
+              "skipped",
+              "unknown"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2048
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "maxItems": 64,
+            "uniqueItems": true
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Dependency"
+            },
+            "maxItems": 16
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "phase",
+          "description",
+          "status",
+          "notes",
+          "depends_on",
+          "evidence",
+          "decision"
+        ],
+        "additionalProperties": false
+      },
+      "Plan": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "context": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 4096
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "active",
+              "done",
+              "abandoned"
+            ]
+          },
+          "closure_note": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2048
+          },
+          "phases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/PlanPhase"
+            },
+            "maxItems": 32
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/PlanStep"
+            },
+            "maxItems": 256
+          },
+          "lessons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Dependency"
+            },
+            "maxItems": 32
+          }
+        },
+        "required": [
+          "title",
+          "objective",
+          "context",
+          "status",
+          "closure_note",
+          "phases",
+          "steps",
+          "lessons"
+        ],
+        "additionalProperties": false
+      },
+      "PlanSave": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740990
+          },
+          "readers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "plan": {
+            "$ref": "#/$defs/Plan"
+          }
+        },
+        "required": [
+          "project",
+          "task",
+          "expected_revision",
+          "readers",
+          "plan"
+        ],
+        "additionalProperties": false
+      },
+      "PlanStepUpdate": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740990
+          },
+          "step": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "status": {
+            "enum": [
+              "todo",
+              "doing",
+              "done",
+              "blocked",
+              "skipped",
+              "unknown"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 2048
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Dependency"
+            },
+            "maxItems": 16
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "project",
+          "task",
+          "expected_revision",
+          "step",
+          "status",
+          "notes",
+          "evidence",
+          "decision"
+        ],
+        "additionalProperties": false
+      },
+      "PlanGet": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "project",
+          "task",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "PlanList": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "project",
+          "cursor",
+          "limit"
+        ],
+        "additionalProperties": false
       }
     }
   }

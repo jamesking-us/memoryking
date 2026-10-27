@@ -147,6 +147,7 @@ class ViewerTask(TypedDict):
     checkpoint_revision: int
     progress: ViewerProgress
     text_truncated: bool
+    plan_id: NotRequired[str]
 
 class ViewerMemory(TypedDict):
     handle: str
@@ -266,7 +267,76 @@ class ViewerReportImageData(TypedDict):
     data_base64: str
     next_offset: int | None
 
-ViewerData = ViewerSessionData | ViewerTaskData | ViewerMemoryData | ViewerGraphData | ViewerReportListData | ViewerReportData | ViewerReportSectionData | ViewerReportImageData
+class ViewerPlanCounts(TypedDict):
+    total: int
+    todo: int
+    doing: int
+    done: int
+    blocked: int
+    skipped: int
+    unknown: int
+    completed: int
+    resolved: int
+    work_percent: int | None
+    resolved_percent: int | None
+
+class ViewerPlanPhase(TypedDict):
+    id: str
+    title: str
+    state: Literal['empty', 'resolved', 'blocked', 'in_progress', 'not_started']
+    progress: ViewerPlanCounts
+
+class ViewerPlanStep(TypedDict):
+    id: str
+    phase: str
+    description: str
+    status: Literal['todo', 'doing', 'done', 'blocked', 'skipped', 'unknown']
+    notes: str
+    depends_on: list[str]
+    evidence: list[ViewerEvidence]
+    decision: str | None
+    evidence_truncated: bool
+    reported_status: Literal['todo', 'doing', 'done', 'blocked', 'skipped', 'unknown']
+
+class ViewerPlanSummary(TypedDict):
+    id: str
+    title: str
+    objective: str
+    status: Literal['draft', 'active', 'done', 'abandoned']
+    revision: int
+    updated_ms: int
+    progress: ViewerPlanCounts
+    current_phase: str | None
+    phase_count: int
+    history_complete: bool
+
+class ViewerPlanDetail(TypedDict):
+    id: str
+    title: str
+    objective: str
+    status: Literal['draft', 'active', 'done', 'abandoned']
+    revision: int
+    updated_ms: int
+    progress: ViewerPlanCounts
+    current_phase: str | None
+    phase_count: int
+    history_complete: bool
+    context: str
+    closure_note: str
+    phases: list[ViewerPlanPhase]
+    steps: list[ViewerPlanStep]
+    lessons: list[ViewerEvidence]
+    lessons_truncated: bool
+
+class ViewerPlanListData(TypedDict):
+    kind: Literal['plans']
+    plans: list[ViewerPlanSummary]
+
+class ViewerPlanData(TypedDict):
+    kind: Literal['plan']
+    plan: ViewerPlanDetail
+
+ViewerData = ViewerSessionData | ViewerTaskData | ViewerMemoryData | ViewerGraphData | ViewerReportListData | ViewerReportData | ViewerReportSectionData | ViewerReportImageData | ViewerPlanListData | ViewerPlanData
 
 class ViewerResponse(TypedDict):
     schema_version: Literal[1]

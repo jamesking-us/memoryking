@@ -50,7 +50,14 @@ def generate():
                 ("memory_fetch", {"fetch", "receipt", "replay", "receipts"}, True),
             ],
         ),
-        ("working", [("memory_checkpoint", {"save"}, False), ("memory_resume", {"resume"}, True)]),
+        (
+            "working",
+            [
+                ("memory_checkpoint", {"save"}, False),
+                ("memory_resume", {"resume"}, True),
+                ("memory_plan", {"plan_save", "plan_step", "plan_get", "plan_list"}, False),
+            ],
+        ),
         ("experience", [("memory_feedback", {"outcome", "feedback"}, False)]),
     ]:
         schema = json.loads((ROOT / f"contracts/{source}-v1.schema.json").read_text())

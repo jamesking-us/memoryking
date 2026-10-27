@@ -466,3 +466,31 @@ test("returning to graph or invalidating authority fences a delayed drilldown", 
     else assert.equal(f.client.state.response, null);
   }
 });
+
+test("plan phase and paging follow the selected resource, with normal expiry clearing", async () => {
+  const f = setup();
+  await f.client.refresh();
+  f.next = async (path) =>
+    path.endsWith("/session")
+      ? session()
+      : response("plan", { plan: { title: "PRIVATE_PLAN", steps: [] } });
+  f.client.select({
+    tab: "tasks",
+    kind: "plan",
+    id: "checkout",
+    phase: "verify",
+    cursor: "opaque",
+  });
+  await tick();
+  assert.equal(
+    f.calls.at(-1),
+    "/viewer/api/v1/projects/p/plans/checkout?phase=verify&cursor=opaque",
+  );
+  assert.equal(f.client.state.response.data.plan.title, "PRIVATE_PLAN");
+  await f.client.refresh();
+  assert.equal(f.client.state.selection.phase, "verify");
+  f.time.mono += 16000;
+  f.time.utc += 16000;
+  assert.equal(f.client.check(), false);
+  assert.equal(f.client.state.response, null);
+});

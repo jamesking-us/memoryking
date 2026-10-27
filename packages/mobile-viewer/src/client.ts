@@ -18,6 +18,8 @@ export interface Selection {
     | "overview"
     | "tasks"
     | "task"
+    | "plans"
+    | "plan"
     | "memories"
     | "memory"
     | "reports"
@@ -29,6 +31,8 @@ export interface Selection {
   query?: string;
   cursor?: string;
   task?: string;
+  phase?: string;
+  plan?: string;
 }
 export interface State {
   status:
@@ -214,9 +218,12 @@ export class ViewerClient {
     if (s.kind === "task" || s.kind === "memory")
       return `${base}${s.kind === "task" ? "tasks" : "memories"}/${encodeURIComponent(s.id ?? "")}`;
     const query = new URLSearchParams();
+    if (s.kind === "plan" && s.phase) query.set("phase", s.phase);
     if (s.kind === "memories" && s.query) query.set("q", s.query);
     if (s.cursor) query.set("cursor", s.cursor);
-    return base + s.kind + (query.size ? `?${query}` : "");
+    const resource =
+      s.kind === "plan" ? `plans/${encodeURIComponent(s.id ?? "")}` : s.kind;
+    return base + resource + (query.size ? `?${query}` : "");
   }
   async refresh(): Promise<void> {
     if (!this.env.visible() || !this.env.online() || this.signingOut) return;
@@ -424,7 +431,7 @@ export class ViewerClient {
     if (
       !this.check() ||
       this.state.selection.kind !== "graph" ||
-      !["memory", "task"].includes(selection.kind)
+      !["memory", "task", "plan"].includes(selection.kind)
     )
       return;
     this.state.graphDetail = { ...selection };

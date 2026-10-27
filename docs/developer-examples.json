@@ -232,5 +232,14 @@
     ],
     "exit_code": 0,
     "contains": "\"viewer_shell_only\": true"
+  },
+  {
+    "id": "structured-plans",
+    "command": [
+      "{python}",
+      "tools/plans_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "Plan progress: 1 of 2 steps completed (50%)"
   }
 ]

@@ -816,7 +816,211 @@ interface TaskCriterion {
   reverification_required: boolean;
   reopened: boolean;
 }
+interface PlanCounts {
+  total: number;
+  completed: number;
+  resolved: number;
+  doing: number;
+  todo: number;
+  blocked: number;
+  skipped: number;
+  unknown: number;
+  work_percent: number | null;
+}
+interface PlanStep {
+  id: string;
+  phase: string;
+  description: string;
+  status: string;
+  reported_status: string;
+  notes: string;
+  decision: string | null;
+  depends_on: string[];
+  evidence: EvidenceRef[];
+}
+interface EvidenceRef {
+  kind: string;
+  id: string;
+}
+interface PlanProgress extends PlanCounts {
+  current_phase: string | null;
+  phases: { id: string; title: string; state: string; progress: PlanCounts }[];
+}
+interface PlanSummary {
+  id: string;
+  title: string;
+  objective: string;
+  status: string;
+  revision: number;
+  updated_ms: number;
+  history_complete: boolean;
+  progress: PlanProgress;
+}
+interface PlanSnapshot {
+  schema_version: number;
+  project: string;
+  tenant: string;
+  principal: string;
+  incarnation: string;
+  fresh_until_ms: number;
+  kind: "plan" | "plans";
+  plans?: PlanSummary[];
+  cursor?: string | null;
+  detail?: {
+    id: string;
+    revision: number;
+    updated_ms: number;
+    history_complete: boolean;
+    progress: PlanProgress;
+    plan: {
+      title: string;
+      objective: string;
+      status: string;
+      context: string;
+      closure_note: string;
+      steps: PlanStep[];
+      lessons: EvidenceRef[];
+    };
+  };
+}
+let selectedPlan = "";
+let planCursor: string | null = null;
+function planAction(text: string, action: () => void): HTMLButtonElement {
+  const button = el("button", text);
+  button.type = "button";
+  button.addEventListener("click", () => {
+    if (!snapshot || Date.now() >= executionExpires) return;
+    executionGeneration++;
+    get("execution-plans").replaceChildren(
+      el("p", "Loading current plan view…"),
+    );
+    action();
+    void refreshExecution();
+  });
+  return button;
+}
+function planMeter(p: PlanCounts, title: string): HTMLElement {
+  const box = el("div", "", "structured-plan-progress");
+  const meter = el("progress");
+  meter.max = Math.max(1, p.total);
+  meter.value = p.completed;
+  meter.setAttribute(
+    "aria-label",
+    `${title}: ${p.completed} of ${p.total} steps completed`,
+  );
+  box.append(
+    el(
+      "strong",
+      p.total
+        ? `${p.work_percent}% · ${p.completed} of ${p.total} steps completed`
+        : "No steps defined",
+    ),
+    meter,
+    el(
+      "p",
+      `${p.doing} in progress · ${p.todo} to do · ${p.blocked} blocked · ${p.skipped} skipped · ${p.unknown} need verification`,
+    ),
+  );
+  if (p.skipped)
+    box.append(
+      el(
+        "p",
+        `${p.resolved} resolved including skipped work. Skipped steps do not count as completed.`,
+      ),
+    );
+  return box;
+}
+function renderPlans(value: PlanSnapshot): void {
+  const root = get("execution-plans");
+  root.replaceChildren();
+  const detail = value.detail;
+  const items = detail ? [{ ...detail, ...detail.plan }] : (value.plans ?? []);
+  if (detail || planCursor)
+    root.append(
+      planAction("Back to plans", () => {
+        selectedPlan = "";
+        planCursor = null;
+      }),
+    );
+  if (!items.length) root.append(el("p", "No structured plans on this page."));
+  for (const p of items) {
+    const card = el("article", "", "task-card structured-plan");
+    card.append(
+      el("h3", p.title),
+      el("p", p.objective),
+      el(
+        "p",
+        `${p.status} · Revision ${p.revision} · Updated ${new Date(p.updated_ms).toLocaleString()}`,
+        "eyebrow",
+      ),
+      planMeter(p.progress, p.title),
+    );
+    if (!p.history_complete)
+      card.append(
+        el(
+          "p",
+          "Incomplete history: affected completion requires verification.",
+        ),
+      );
+    if (!detail)
+      card.append(
+        planAction("View plan", () => {
+          selectedPlan = p.id;
+          planCursor = null;
+        }),
+      );
+    else {
+      if (detail.plan.context) card.append(el("p", detail.plan.context));
+      for (const phase of p.progress.phases) {
+        const box = el("details", "", "plan-phase");
+        box.dataset.task = `plan-${p.id}-${phase.id}`;
+        const summary = el(
+          "summary",
+          `${phase.id} · ${phase.title} · ${phase.progress.completed}/${phase.progress.total} completed`,
+        );
+        box.append(summary, planMeter(phase.progress, phase.title));
+        for (const step of detail.plan.steps.filter(
+          (s) => s.phase === phase.id,
+        )) {
+          const row = el("section", "", "plan-step");
+          row.append(
+            el("h4", step.description),
+            el("p", `${step.id} · ${step.status}`),
+          );
+          if (step.depends_on.length)
+            row.append(el("p", `Depends on: ${step.depends_on.join(", ")}`));
+          if (step.notes) row.append(el("p", step.notes));
+          if (step.decision)
+            row.append(el("p", `Scope decision: ${step.decision}`));
+          if (step.reported_status !== step.status)
+            row.append(
+              el(
+                "p",
+                `Reported ${step.reported_status}; current evidence requires verification.`,
+              ),
+            );
+          for (const e of step.evidence)
+            row.append(el("code", `${e.kind}: ${e.id}`, "source-evidence"));
+          box.append(row);
+        }
+        card.append(box);
+      }
+      if (detail.plan.closure_note)
+        card.append(el("h4", "Closure"), el("p", detail.plan.closure_note));
+      for (const e of detail.plan.lessons)
+        card.append(el("code", `Lesson ${e.kind}: ${e.id}`, "source-evidence"));
+    }
+    root.append(card);
+  }
+  if (value.cursor)
+    root.append(
+      planAction("More plans", () => {
+        planCursor = value.cursor ?? null;
+      }),
+    );
+}
 interface ExecutionTask {
+  plan_id?: string;
   task: string;
   run: string | null;
   checkpoint: string;
@@ -888,6 +1092,9 @@ function clearExecution(message = "Enter a project to load its tasks."): void {
   executionExpires = 0;
   executionProject = "";
   get("execution-tasks").replaceChildren();
+  get("execution-plans").replaceChildren();
+  selectedPlan = "";
+  planCursor = null;
   get("execution-events").replaceChildren();
   get("execution-provenance").textContent = "";
   get("execution-notice").textContent = message;
@@ -899,6 +1106,7 @@ function renderExecution(value: ExecutionSnapshot): void {
     ? `${value.tasks.length} task record${value.tasks.length === 1 ? "" : "s"} · refreshed every 5s while updates run`
     : "No tasks in the current project view.";
   for (const task of value.tasks) {
+    if (task.plan_id) continue;
     const card = el("article", "", "task-card");
     card.append(
       el(
@@ -1069,9 +1277,23 @@ async function refreshExecution(): Promise<void> {
     const value = (await api(
       "/api/execution/" + encodeURIComponent(project),
     )) as unknown as ExecutionSnapshot;
+    const plans = (await api(
+      "/api/plans/" +
+        encodeURIComponent(project) +
+        (selectedPlan
+          ? "/" + encodeURIComponent(selectedPlan)
+          : planCursor
+            ? "?cursor=" + encodeURIComponent(planCursor)
+            : ""),
+    )) as unknown as PlanSnapshot;
     if (ticket !== executionGeneration || context !== generation || !snapshot)
       return;
     if (
+      plans.schema_version !== 1 ||
+      plans.project !== project ||
+      plans.tenant !== snapshot.tenant ||
+      plans.principal !== snapshot.principal ||
+      plans.incarnation !== snapshot.incarnation ||
       value.schema_version !== 1 ||
       value.status !== "available" ||
       value.project !== project ||
@@ -1081,12 +1303,16 @@ async function refreshExecution(): Promise<void> {
       Date.now() >= started + 15000
     )
       throw new Error("Current task authorization or evidence unavailable");
-    executionExpires = Math.min(started + 15000, value.fresh_until_ms);
+    executionExpires = Math.min(
+      started + 15000,
+      value.fresh_until_ms,
+      plans.fresh_until_ms,
+    );
     if (Date.now() >= executionExpires) throw new Error("Snapshot expired");
     // Preserve disclosure state and keyboard position across observational polling.
     const open = new Set(
       Array.from(
-        get("execution-tasks").querySelectorAll<HTMLDetailsElement>(
+        get("execution-panel").querySelectorAll<HTMLDetailsElement>(
           "details[open]",
         ),
         (d) => d.dataset.task,
@@ -1096,7 +1322,8 @@ async function refreshExecution(): Promise<void> {
       document.activeElement?.closest("details") as HTMLDetailsElement | null
     )?.dataset.task;
     renderExecution(value);
-    for (const d of get("execution-tasks").querySelectorAll<HTMLDetailsElement>(
+    renderPlans(plans);
+    for (const d of get("execution-panel").querySelectorAll<HTMLDetailsElement>(
       "details",
     )) {
       d.open = open.has(d.dataset.task);

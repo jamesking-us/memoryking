@@ -185,6 +185,71 @@ try {
   checks.push(
     "native keyboard navigation and focus, reduced-motion logo, task-linked report entry",
   );
+  await page.locator("#project").selectOption("plans");
+  await page.getByRole("button", { name: "Plans", exact: true }).click();
+  await wait("Reliable checkout");
+  await wait("50% · 1 of 2 steps completed");
+  await page.getByRole("button", { name: "View plan", exact: true }).click();
+  await wait("Inspect retry behavior");
+  await page.screenshot({
+    path: options.output + "/structured-plan-412.png",
+    fullPage: false,
+  });
+  await page
+    .getByRole("button", { name: "View phase steps", exact: true })
+    .last()
+    .click();
+  await wait("Steps · verify");
+  await wait("Test duplicate retry");
+  assert.equal(await page.locator(".plan-step").count(), 1);
+  const planPolls = traffic.filter((r) =>
+    r.path.includes("/plans/checkout-plan"),
+  ).length;
+  await page.waitForTimeout(11000);
+  await wait("Steps · verify");
+  assert.ok(
+    traffic.filter((r) => r.path.includes("/plans/checkout-plan")).length >
+      planPolls,
+  );
+  await page.getByRole("button", { name: "All steps", exact: true }).click();
+  await page.getByRole("button", { name: "Evidence 1", exact: true }).click();
+  await wait("Source: plan-regression");
+  await page.getByRole("button", { name: "Back to plan", exact: true }).click();
+  await wait("Inspect retry behavior");
+  await page
+    .getByRole("button", { name: "Back to plans", exact: true })
+    .click();
+  await wait("Reliable checkout");
+  await tab("Tasks");
+  await page
+    .getByRole("button", { name: "Knowledge graph", exact: true })
+    .click();
+  await page.locator(".graph-node.task").click();
+  await page
+    .locator(".graph-detail")
+    .getByRole("button", { name: "View task", exact: true })
+    .click();
+  await page
+    .locator(".graph-drilldown")
+    .getByRole("button", { name: "View plan", exact: true })
+    .click();
+  await page.locator(".graph-drilldown .plan").waitFor();
+  await page
+    .getByRole("button", { name: "Back to graph", exact: true })
+    .click();
+  await page.locator(".graph-viewport").waitFor();
+  checks.push(
+    "plan opened from graph retains a direct Back to graph with the same authorized graph",
+  );
+  await context.setOffline(true);
+  await page.waitForTimeout(1000);
+  assert.equal(await page.locator(".plan,.plan-step").count(), 0);
+  await context.setOffline(false);
+  await page.goto(options.origin + "/viewer/");
+  await wait("Fix checkout retry handling");
+  checks.push(
+    "structured plans: equal-step progress, phase filtering retained through renewal, current evidence and direct return, list navigation and offline clearing",
+  );
   const layout = [];
   for (const width of [360, 412]) {
     await page.setViewportSize({ width, height: 915 });

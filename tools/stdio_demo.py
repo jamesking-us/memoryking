@@ -76,6 +76,38 @@ def main():
                         "params": {"name": "memory_brief", "arguments": brief},
                     },
                 ]
+                plan_body = json.loads(
+                    (Path(__file__).resolve().parents[1] / "examples/plan.json").read_text()
+                )
+                for ident, action, arguments in [
+                    (
+                        4,
+                        "plan_save",
+                        {
+                            "task": "stdio-plan",
+                            "expected_revision": 0,
+                            "readers": ["owner"],
+                            "plan": plan_body,
+                        },
+                    ),
+                    (5, "plan_get", {"task": "stdio-plan", "revision": None}),
+                ]:
+                    command = {
+                        "version": 1,
+                        "incarnation": context["incarnation"],
+                        "action": action,
+                        "args": {"project": "demo", **arguments},
+                    }
+                    if action == "plan_save":
+                        command["key"] = "stdio-plan"
+                    messages.append(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": ident,
+                            "method": "tools/call",
+                            "params": {"name": "memory_plan", "arguments": command},
+                        }
+                    )
                 run = subprocess.run(
                     [
                         sys.executable,
@@ -106,8 +138,13 @@ def main():
                     },
                 )
                 responses = [json.loads(line) for line in run.stdout.splitlines()]
-                assert len(responses) == 3 and not run.stderr
-                assert len(responses[1]["result"]["tools"]) == 8
+                assert len(responses) == 5 and not run.stderr
+                assert len(responses[1]["result"]["tools"]) == 9
+                assert not responses[-1]["result"]["isError"]
+                assert (
+                    json.loads(responses[-1]["result"]["content"][0]["text"])["progress"]["total"]
+                    == 2
+                )
                 raw = responses[2]["result"]["content"][0]["text"].encode()
                 result = json.loads(raw)
                 assert canonical_bytes(result) == raw and result["guidance"]
@@ -120,7 +157,7 @@ def main():
                             "checks": [
                                 "bound_python_sdk",
                                 "real_mcp_stdio_subprocess",
-                                "eight_implemented_tools",
+                                "nine_implemented_tools",
                                 "canonical_counted_text",
                             ],
                             "provider_calls": 0,

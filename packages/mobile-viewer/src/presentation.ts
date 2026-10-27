@@ -3,6 +3,9 @@ import type {
   ViewerMemory,
   ViewerReportItem,
   ViewerReportData,
+  ViewerPlanSummary,
+  ViewerPlanDetail,
+  ViewerPlanCounts,
 } from "@memoryking/contracts";
 import {
   ViewerClient,
@@ -73,7 +76,7 @@ export class Presentation {
     return this.action(text, key, () => {
       if (
         this.client.state.selection.kind === "graph" &&
-        ["memory", "task"].includes(selection.kind)
+        ["memory", "task", "plan"].includes(selection.kind)
       )
         this.client.openGraphDetail(selection);
       else this.client.select(selection);
@@ -271,45 +274,78 @@ export class Presentation {
     const data = state.response?.data,
       selection = state.selection;
     const heading =
-      selection.kind === "report"
-        ? "Report"
-        : selection.kind === "reports"
-          ? "Reports"
-          : selection.kind === "graph"
-            ? "Knowledge graph"
-            : labels[selection.tab];
+      selection.kind === "plans" || selection.kind === "plan"
+        ? "Plans"
+        : selection.kind === "report"
+          ? "Report"
+          : selection.kind === "reports"
+            ? "Reports"
+            : selection.kind === "graph"
+              ? "Knowledge graph"
+              : labels[selection.tab];
     main.append(
       title(
         heading,
-        selection.kind === "report"
-          ? "Reviewed document and delivery status."
-          : selection.kind === "reports"
-            ? "Published reports you have permission to read."
-            : selection.kind === "graph"
-              ? "Memories, accepted claims and recorded evidence connections."
-              : selection.tab === "overview"
-                ? "Saved progress and evidence for this project."
-                : selection.tab === "tasks"
-                  ? "Agent-reported state, criteria and blockers."
-                  : selection.tab === "memories"
-                    ? "Source-attributed findings shared with you."
-                    : "Session, display and installation.",
+        selection.kind === "plans" || selection.kind === "plan"
+          ? "Phases, work completed and remaining steps."
+          : selection.kind === "report"
+            ? "Reviewed document and delivery status."
+            : selection.kind === "reports"
+              ? "Published reports you have permission to read."
+              : selection.kind === "graph"
+                ? "Memories, accepted claims and recorded evidence connections."
+                : selection.tab === "overview"
+                  ? "Saved progress and evidence for this project."
+                  : selection.tab === "tasks"
+                    ? "Agent-reported state, criteria and blockers."
+                    : selection.tab === "memories"
+                      ? "Source-attributed findings shared with you."
+                      : "Session, display and installation.",
       ),
     );
     const toolbar = el("div", "", "toolbar view-actions");
-    if (selection.kind !== selection.tab)
+    if (selection.plan)
+      toolbar.append(
+        this.open("Back to plan", "back-plan", {
+          tab: "tasks",
+          kind: "plan",
+          id: selection.plan,
+          phase: selection.phase,
+        }),
+      );
+    else if (selection.kind === "plan")
+      toolbar.append(
+        this.open("Back to plans", "back-plans", {
+          tab: "tasks",
+          kind: "plans",
+        }),
+      );
+    else if (selection.kind !== selection.tab)
       toolbar.append(
         this.open(`Back to ${labels[selection.tab]}`, "back", {
           tab: selection.tab,
           kind: selection.tab,
         }),
       );
-    if (selection.kind === "overview" || selection.kind === "task")
+    if (selection.kind === "overview" || selection.kind === "tasks")
+      toolbar.append(
+        this.open("Plans", "plans", { tab: "tasks", kind: "plans" }),
+      );
+    if (
+      selection.kind === "overview" ||
+      selection.kind === "task" ||
+      selection.kind === "plan"
+    )
       toolbar.append(
         this.open("Reports", "reports", {
           tab: selection.tab,
           kind: "reports",
-          ...(selection.kind === "task" ? { task: selection.id } : {}),
+          ...(["task", "plan"].includes(selection.kind)
+            ? { task: selection.id }
+            : {}),
+          ...(selection.kind === "plan"
+            ? { plan: selection.id, phase: selection.phase }
+            : {}),
         }),
       );
     if (selection.kind === "tasks" || selection.kind === "memories")
@@ -380,6 +416,12 @@ export class Presentation {
         );
       for (const task of data.tasks)
         main.append(this.task(task, data.kind === "task"));
+    } else if (data?.kind === "plans") {
+      if (!data.plans.length)
+        main.append(el("p", "No structured plans on this page.", "empty"));
+      for (const plan of data.plans) main.append(this.plan(plan));
+    } else if (data?.kind === "plan") {
+      main.append(this.plan(data.plan, data.plan));
     } else if (data?.kind === "memories" || data?.kind === "memory") {
       if (!data.memories.length)
         main.append(
@@ -416,6 +458,8 @@ export class Presentation {
               kind: "report",
               id: report.report,
               revision: report.revision,
+              plan: selection.plan,
+              phase: selection.phase,
             },
           ),
         );
@@ -501,7 +545,9 @@ export class Presentation {
       main.append(coverage);
       if (
         state.response.next_cursor &&
-        ["tasks", "memories", "reports"].includes(selection.kind)
+        ["tasks", "memories", "reports", "plans", "plan"].includes(
+          selection.kind,
+        )
       )
         main.append(
           this.open("Next page", "next", {
@@ -532,6 +578,170 @@ export class Presentation {
         .find((node) => node.dataset.focus === focused)
         ?.focus({ preventScroll: true });
   }
+  private planProgress(p: ViewerPlanCounts, name: string): HTMLElement {
+    const box = el("div", "", "plan-progress");
+    const meter = el("progress");
+    meter.max = Math.max(p.total, 1);
+    meter.value = p.completed;
+    meter.setAttribute(
+      "aria-label",
+      `${name}: ${p.completed} of ${p.total} steps completed`,
+    );
+    box.append(
+      el(
+        "strong",
+        p.total
+          ? `${p.work_percent}% · ${p.completed} of ${p.total} steps completed`
+          : "No steps defined",
+      ),
+      meter,
+    );
+    const badges = el("div", "", "plan-counts");
+    for (const [key, label] of [
+      ["doing", "In progress"],
+      ["todo", "To do"],
+      ["blocked", "Blocked"],
+      ["skipped", "Skipped"],
+      ["unknown", "Needs verification"],
+    ] as const)
+      if (p[key])
+        badges.append(
+          pill(`${p[key]} ${label}`, key === "blocked" ? "failed" : "muted"),
+        );
+    box.append(badges);
+    if (p.skipped)
+      box.append(
+        el(
+          "p",
+          `${p.resolved} resolved including ${p.skipped} skipped. Skipped steps do not count as completed work.`,
+          "muted",
+        ),
+      );
+    return box;
+  }
+  private plan(
+    plan: ViewerPlanSummary,
+    detail?: ViewerPlanDetail,
+  ): HTMLElement {
+    const card = el("article", "", "panel plan");
+    const heading = el("div", "", "card-heading");
+    heading.append(el("h2", plan.title), pill(plan.status, "muted"));
+    card.append(
+      heading,
+      this.paragraph(plan.objective),
+      this.planProgress(plan.progress, plan.title),
+      el(
+        "p",
+        `${plan.phase_count} phases · Revision ${plan.revision} · Updated ${new Date(plan.updated_ms).toLocaleString()}`,
+        "muted",
+      ),
+    );
+    if (!plan.history_complete)
+      card.append(
+        el(
+          "p",
+          "Some history cannot be verified. Affected completion is shown as unknown.",
+          "notice",
+        ),
+      );
+    if (!detail) {
+      card.append(
+        this.open("View plan", `plan-${plan.id}`, {
+          tab: "tasks",
+          kind: "plan",
+          id: plan.id,
+        }),
+      );
+      return card;
+    }
+    const selection =
+      this.client.state.graphDetail ?? this.client.state.selection;
+    if (detail.context) card.append(this.paragraph(detail.context));
+    const phases = el("section", "", "plan-phases");
+    phases.setAttribute("aria-label", "Plan phases");
+    phases.append(
+      el("h3", "Phases"),
+      this.open("All steps", "all-steps", {
+        tab: "tasks",
+        kind: "plan",
+        id: plan.id,
+      }),
+    );
+    for (const phase of detail.phases) {
+      const box = el("section", "", "plan-phase");
+      box.append(
+        el("h4", `${phase.id} · ${phase.title}`),
+        this.planProgress(phase.progress, phase.title),
+        this.open("View phase steps", `phase-${phase.id}`, {
+          tab: "tasks",
+          kind: "plan",
+          id: plan.id,
+          phase: phase.id,
+        }),
+      );
+      if (selection.phase === phase.id)
+        box.setAttribute("aria-current", "true");
+      phases.append(box);
+    }
+    card.append(
+      phases,
+      el("h3", selection.phase ? `Steps · ${selection.phase}` : "Steps"),
+    );
+    if (!detail.steps.length)
+      card.append(el("p", "No steps in this view.", "empty"));
+    for (const step of detail.steps) {
+      const box = el("section", "", "plan-step");
+      box.append(
+        el("h4", step.description),
+        pill(
+          step.status === "unknown" ? "Needs verification" : step.status,
+          step.status,
+        ),
+        el("p", `${step.id} · ${step.phase}`, "muted"),
+      );
+      if (step.depends_on.length)
+        box.append(el("p", `Depends on: ${step.depends_on.join(", ")}`));
+      if (step.notes) box.append(this.paragraph(step.notes));
+      if (step.decision)
+        box.append(this.paragraph(`Scope decision: ${step.decision}`));
+      if (step.reported_status !== step.status)
+        box.append(
+          el(
+            "p",
+            `Reported ${step.reported_status}; current proof requires verification.`,
+            "notice",
+          ),
+        );
+      for (const [i, proof] of step.evidence.entries())
+        box.append(
+          this.open(`Evidence ${i + 1}`, `plan-${step.id}-evidence-${i}`, {
+            tab: "tasks",
+            kind: "memory",
+            id: proof.handle,
+            plan: plan.id,
+            phase: selection.phase,
+          }),
+        );
+      if (step.evidence_truncated)
+        box.append(el("p", "Showing the first four evidence links.", "muted"));
+      card.append(box);
+    }
+    if (detail.closure_note)
+      card.append(el("h3", "Closure"), this.paragraph(detail.closure_note));
+    for (const [i, proof] of detail.lessons.entries())
+      card.append(
+        this.open(`Lesson ${i + 1}`, `plan-lesson-${i}`, {
+          tab: "tasks",
+          kind: "memory",
+          id: proof.handle,
+          plan: plan.id,
+          phase: selection.phase,
+        }),
+      );
+    if (detail.lessons_truncated)
+      card.append(el("p", "Showing the first four lesson links.", "muted"));
+    return card;
+  }
   private graphDrilldown(state: State): void {
     const graph = this.root.querySelector<HTMLElement>(".graph"),
       detail = this.root.querySelector<HTMLElement>(".graph-drilldown"),
@@ -556,9 +766,11 @@ export class Presentation {
       detail.append(
         el(
           "h2",
-          state.graphDetail?.kind === "task"
-            ? "Task details"
-            : "Memory details",
+          state.graphDetail?.kind === "plan"
+            ? "Plan details"
+            : state.graphDetail?.kind === "task"
+              ? "Task details"
+              : "Memory details",
         ),
       );
       const data = state.graphDetailResponse?.data;
@@ -567,6 +779,8 @@ export class Presentation {
           detail.append(this.memory(memory, true));
       else if (data?.kind === "task")
         for (const task of data.tasks) detail.append(this.task(task, true));
+      else if (data?.kind === "plan")
+        detail.append(this.plan(data.plan, data.plan));
       else {
         const loading = el("p", "Loading current detail…");
         loading.setAttribute("role", "status");
@@ -592,6 +806,19 @@ export class Presentation {
     this.graphDetailOpen = open;
   }
   private task(task: ViewerTask, detail: boolean): HTMLElement {
+    if (task.plan_id) {
+      const panel = el("article", "", "panel plan-task");
+      panel.append(
+        el("h3", task.objective),
+        el("p", "Structured plan · phases and step progress"),
+        this.open("View plan", `plan-${task.plan_id}`, {
+          tab: "tasks",
+          kind: "plan",
+          id: task.plan_id,
+        }),
+      );
+      return panel;
+    }
     const card = el("article", "", "panel task");
     const row = el("div", "", "card-heading");
     row.append(

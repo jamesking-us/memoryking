@@ -163,6 +163,24 @@ def main():
                     },
                     f"checkpoint{revision}",
                 )
+            plan_body = json.loads((ROOT / "examples/plan.json").read_text())
+            plan_body["steps"][0].update(
+                status="done",
+                notes="Inspection saved in the synthetic fixture.",
+                evidence=[{"kind": "observation", "id": observations[0]}],
+            )
+            command(
+                w,
+                "plan_save",
+                {
+                    "project": "demo",
+                    "task": "checkout-plan",
+                    "expected_revision": 0,
+                    "readers": ["owner"],
+                    "plan": plan_body,
+                },
+                "demo-plan",
+            )
             if args.count == 1:
                 command(
                     k,

@@ -257,3 +257,9 @@ blocks workers/remote resources, and allows no inline executable content. Report
 text and captured Markdown remain inert. Narrow report tables use native labeled
 records, with semantic tables retained on wider screens; only the active layout
 is exposed. PDF/EPUB export stays outside the viewer.
+
+## Structured execution plans
+
+Plans are typed work records stored on task-level checkpoint streams. Stable phase and step IDs preserve identity through reorderings; a bounded acyclic prerequisite graph rejects undefined or cyclic references. Each revision is immutable. Writes use existing writer ownership, CAS and history-aware retries; reads use current permissions and dependency availability. Full-plan revisions record scope changes without rewriting older versions.
+
+The pure progress calculation is shared by both stores and both dashboards. Completed work counts effective done steps against declared scope. Skips remain distinct; unresolved historical proof becomes unknown. The objective, step definition and transitive prerequisite state/evidence bind completion evidence. A reopen followed by an old proof cannot turn a changed definition back into verified completion. This remains source-attributed reported work, not a substitute for an orchestrator’s independent test/review gates.

@@ -75,6 +75,7 @@ class Checkpoint(TypedDict):
     references: list[Dependency]
     operation_ids: list[str]
     capture: Capture
+    plan: NotRequired[Plan]
 
 class Save(TypedDict):
     project: str
@@ -146,6 +147,57 @@ class AdapterContext(TypedDict):
     model_session: str
     context_epoch: int
 
+class PlanPhase(TypedDict):
+    id: str
+    title: str
+
+class PlanStep(TypedDict):
+    id: str
+    phase: str
+    description: str
+    status: Literal["todo", "doing", "done", "blocked", "skipped", "unknown"]
+    notes: str
+    depends_on: list[str]
+    evidence: list[Dependency]
+    decision: str | None
+
+class Plan(TypedDict):
+    title: str
+    objective: str
+    context: str
+    status: Literal["draft", "active", "done", "abandoned"]
+    closure_note: str
+    phases: list[PlanPhase]
+    steps: list[PlanStep]
+    lessons: list[Dependency]
+
+class PlanSave(TypedDict):
+    project: str
+    task: str
+    expected_revision: int
+    readers: list[str]
+    plan: Plan
+
+class PlanStepUpdate(TypedDict):
+    project: str
+    task: str
+    expected_revision: int
+    step: str
+    status: Literal["todo", "doing", "done", "blocked", "skipped", "unknown"]
+    notes: str
+    evidence: list[Dependency]
+    decision: str | None
+
+class PlanGet(TypedDict):
+    project: str
+    task: str
+    revision: int | None
+
+class PlanList(TypedDict):
+    project: str
+    cursor: str | None
+    limit: int
+
 class Command0(TypedDict):
     version: Literal[1]
     incarnation: str
@@ -192,4 +244,30 @@ class Command6(TypedDict):
     action: Literal["adapter_resume"]
     args: AdapterResume
 
-WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6
+class Command7(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    action: Literal["plan_save"]
+    args: PlanSave
+    key: str
+
+class Command8(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    action: Literal["plan_step"]
+    args: PlanStepUpdate
+    key: str
+
+class Command9(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    action: Literal["plan_get"]
+    args: PlanGet
+
+class Command10(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    action: Literal["plan_list"]
+    args: PlanList
+
+WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7 | Command8 | Command9 | Command10

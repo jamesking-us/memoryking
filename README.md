@@ -36,6 +36,7 @@ flowchart LR
 | Need | What MemoryKing provides |
 | --- | --- |
 | Remember useful findings | Searchable observations with source attribution; reviewed knowledge stays distinct from unverified notes. |
+| Follow a plan | Named plans with phases, dependencies, completed steps and blockers; the same progress is available on desktop and phone. |
 | Resume unfinished work | Checkpoints containing the objective, constraints, failed attempts, verification gaps and next actions. |
 | Work together | Handoffs bound to the recipient's current permissions. |
 | Keep context manageable | Focused briefings with explicit output budgets and links back to evidence. |
@@ -64,12 +65,13 @@ For a lasting installation and the browser dashboard, follow the [getting starte
 
 ## See what your agents are doing
 
-![MemoryKing dashboard showing a synthetic task, pending criteria and reported blockers](docs/images/dashboard.png)
+![MemoryKing dashboard showing a plan at 50 percent, its expanded design phase, and a task with pending verification](docs/images/dashboard.png)
 
-*Dashboard overview with synthetic example data. Progress reflects saved agent reports and evidence.*
+*Dashboard with a synthetic plan and task. Progress reflects saved agent reports and evidence.*
 
 The dashboard helps you inspect recorded work without reading a long chat transcript:
 
+- **Plans:** see how much work is complete, which phase needs attention and what remains. Open a phase for steps, notes, dependencies and evidence. Skipped work is shown separately.
 - **Task activity:** saved goals, completed and pending criteria, blockers and observed heartbeats.
 - **Memory:** an interactive graph and list of accessible memories and evidence. The active view refreshes automatically while you read, preserving access checks and your graph selection.
 - **History and review:** inspect changes, review proposals and preview affected content.
@@ -80,12 +82,16 @@ Agents must publish their state through the supported interfaces. A displayed he
 
 ### Check a project from your phone
 
+<img src="docs/images/mobile-plans.png" width="360" alt="MemoryKing phone plan showing one of two steps completed and phase progress" />
 <img src="docs/images/mobile-dashboard.png" width="360" alt="MemoryKing phone viewer showing a synthetic blocked task and distinct criterion states" />
 <img src="docs/images/mobile-knowledge-graph.png" width="360" alt="MemoryKing phone knowledge graph showing memories, an accepted claim and recorded links to task criteria" />
 
-*Phone-sized browser views with synthetic data; full physical Android qualification, including the new graph controls, is pending.*
+*Phone-sized browser views with synthetic data; full physical Android qualification, including plan navigation and graph controls, is pending.*
+
+A plan can say “inspect the retry logic, then verify the fix.” When an agent records the inspection and its evidence, the plan shows **1 of 2 steps complete**. The remaining verification stays visible for the next agent—and for you. Run [the plan example](tools/plans_demo.py) or read the [agent guide](docs/agent-guide.md#structured-plans).
 
 The optional phone viewer has four tabs: **Overview, Tasks, Memory and Settings**.
+Open **Overview → Plans** or **Tasks → Plans** to browse the project’s plans and phase progress. Select a phase to see its steps; **Back to plan** returns directly from evidence.
 For example, open a blocked task, inspect the evidence behind a completed check,
 then read its latest report. Reports include the full narrative, decisions, code,
 tables and figures. In **Memory → Knowledge graph**, explore shared memories,

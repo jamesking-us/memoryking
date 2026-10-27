@@ -141,11 +141,14 @@ export class ViewerClient {
         if (s.kind === "task" || s.kind === "memory")
             return `${base}${s.kind === "task" ? "tasks" : "memories"}/${encodeURIComponent(s.id ?? "")}`;
         const query = new URLSearchParams();
+        if (s.kind === "plan" && s.phase)
+            query.set("phase", s.phase);
         if (s.kind === "memories" && s.query)
             query.set("q", s.query);
         if (s.cursor)
             query.set("cursor", s.cursor);
-        return base + s.kind + (query.size ? `?${query}` : "");
+        const resource = s.kind === "plan" ? `plans/${encodeURIComponent(s.id ?? "")}` : s.kind;
+        return base + resource + (query.size ? `?${query}` : "");
     }
     async refresh() {
         if (!this.env.visible() || !this.env.online() || this.signingOut)
@@ -298,7 +301,7 @@ export class ViewerClient {
     openGraphDetail(selection) {
         if (!this.check() ||
             this.state.selection.kind !== "graph" ||
-            !["memory", "task"].includes(selection.kind))
+            !["memory", "task", "plan"].includes(selection.kind))
             return;
         this.state.graphDetail = { ...selection };
         this.state.graphDetailResponse = null;
