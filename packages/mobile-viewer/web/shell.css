@@ -722,6 +722,9 @@ figcaption {
   margin-top: 0.8rem;
   overflow-wrap: anywhere;
 }
+.plan-steps-heading {
+  scroll-margin-top: 1rem;
+}
 .plan-phase[aria-current] {
   border-color: #58e5d4;
 }

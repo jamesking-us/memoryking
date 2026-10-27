@@ -91,7 +91,7 @@ Agents must publish their state through the supported interfaces. A displayed he
 A plan can say “inspect the retry logic, then verify the fix.” When an agent records the inspection and its evidence, the plan shows **1 of 2 steps complete**. The remaining verification stays visible for the next agent—and for you. Run [the plan example](tools/plans_demo.py) or read the [agent guide](docs/agent-guide.md#structured-plans).
 
 The optional phone viewer has four tabs: **Overview, Tasks, Memory and Settings**.
-Open **Overview → Plans** or **Tasks → Plans** to browse the project’s plans and phase progress. Select a phase to see its steps; **Back to plan** returns directly from evidence.
+Open **Overview → Plans** or **Tasks → Plans** to browse the project’s plans and phase progress. Select **View phase steps** to jump to that phase’s steps; **Back to plan** returns directly from evidence to the selected phase.
 For example, open a blocked task, inspect the evidence behind a completed check,
 then read its latest report. Reports include the full narrative, decisions, code,
 tables and figures. In **Memory → Knowledge graph**, explore shared memories,

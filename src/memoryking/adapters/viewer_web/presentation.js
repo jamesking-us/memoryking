@@ -30,6 +30,7 @@ export class Presentation {
     lastReadyGeneration = -1;
     lastReportKey = null;
     lastGraphKey = null;
+    lastPlanStepsKey = null;
     graphDetailOpen = false;
     graphScroll = 0;
     contentsOpen = false;
@@ -100,6 +101,7 @@ export class Presentation {
             graphKey === this.lastGraphKey &&
             this.root.querySelector(".graph-viewport")) {
             this.graphDrilldown(state);
+            this.focusPlanSteps(state);
             return;
         }
         this.lastGraphKey = graphKey;
@@ -461,6 +463,30 @@ export class Presentation {
             [...this.root.querySelectorAll("[data-focus]")]
                 .find((node) => node.dataset.focus === focused)
                 ?.focus({ preventScroll: true });
+        this.focusPlanSteps(state);
+    }
+    focusPlanSteps(state) {
+        const selection = state.graphDetail ?? state.selection;
+        const response = state.graphDetail
+            ? state.graphDetailResponse
+            : state.response;
+        const key = response?.data.kind === "plan" && selection.phase
+            ? JSON.stringify([
+                this.client.gate.generation,
+                state.project,
+                selection,
+            ])
+            : null;
+        if (key === this.lastPlanStepsKey)
+            return;
+        this.lastPlanStepsKey = key;
+        if (!key)
+            return;
+        // Phase results follow the phase list. Reveal them after navigation without
+        // pulling the reader back on the ordinary access-refresh cycle.
+        const heading = this.root.querySelector(".plan-steps-heading");
+        heading?.focus({ preventScroll: true });
+        heading?.scrollIntoView({ block: "start" });
     }
     planProgress(p, name) {
         const box = el("div", "", "plan-progress");
@@ -523,7 +549,10 @@ export class Presentation {
                 box.setAttribute("aria-current", "true");
             phases.append(box);
         }
-        card.append(phases, el("h3", selection.phase ? `Steps · ${selection.phase}` : "Steps"));
+        const stepsHeading = el("h3", selection.phase ? `Steps · ${selection.phase}` : "Steps", "plan-steps-heading");
+        stepsHeading.tabIndex = -1;
+        stepsHeading.dataset.focus = "plan-steps";
+        card.append(phases, stepsHeading);
         if (!detail.steps.length)
             card.append(el("p", "No steps in this view.", "empty"));
         for (const step of detail.steps) {

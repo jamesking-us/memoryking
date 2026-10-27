@@ -133,6 +133,35 @@ try {
       .getByRole("button", { name: text, exact: true })
       .click();
   };
+  async function assertPhaseStepsVisible(phase, scope = page) {
+    const heading = scope.getByRole("heading", {
+      name: `Steps · ${phase}`,
+      exact: true,
+    });
+    await heading.waitFor();
+    assert.ok(
+      await heading.evaluate((node) => {
+        const rect = node.getBoundingClientRect();
+        return (
+          document.activeElement === node &&
+          rect.top >= 0 &&
+          rect.bottom <= innerHeight
+        );
+      }),
+      "Phase navigation focuses and reveals the steps heading",
+    );
+    assert.ok(
+      await scope
+        .locator(".plan-step h4")
+        .first()
+        .evaluate((node) => {
+          const rect = node.getBoundingClientRect();
+          const tabs = document.querySelector(".tabs").getBoundingClientRect();
+          return rect.top >= 0 && rect.bottom <= tabs.top;
+        }),
+      "The selected phase's first step is visible above the navigation tabs",
+    );
+  }
   async function login() {
     await page.goto(options.origin + "/viewer/");
     await page.getByRole("button", { name: "Continue with GitHub" }).click();
@@ -213,6 +242,12 @@ try {
   await wait("Steps · verify");
   await wait("Test duplicate retry");
   assert.equal(await page.locator(".plan-step").count(), 1);
+  await assertPhaseStepsVisible("verify");
+  await page.screenshot({
+    path: options.output + "/phase-steps-click-412.png",
+    fullPage: false,
+  });
+  await page.evaluate(() => window.scrollTo(0, 0));
   const planPolls = traffic.filter((r) =>
     r.path.includes("/plans/checkout-plan"),
   ).length;
@@ -222,11 +257,23 @@ try {
     traffic.filter((r) => r.path.includes("/plans/checkout-plan")).length >
       planPolls,
   );
-  await page.getByRole("button", { name: "All steps", exact: true }).click();
+  assert.equal(await page.evaluate(() => scrollY), 0);
+  await page
+    .getByRole("button", { name: "View phase steps", exact: true })
+    .first()
+    .click();
+  await assertPhaseStepsVisible("design");
   await page.getByRole("button", { name: "Evidence 1", exact: true }).click();
   await wait("Source: plan-regression");
   await page.getByRole("button", { name: "Back to plan", exact: true }).click();
   await wait("Inspect retry behavior");
+  await assertPhaseStepsVisible("design");
+  await page.getByRole("button", { name: "All steps", exact: true }).click();
+  await wait("Test duplicate retry");
+  assert.equal(await page.locator(".plan-step").count(), 2);
+  checks.push(
+    "phase clicks reveal steps and keyboard focus; refresh preserves reading position; evidence returns to the selected phase",
+  );
   await page
     .getByRole("button", { name: "Back to plans", exact: true })
     .click();
@@ -245,6 +292,24 @@ try {
     .getByRole("button", { name: "View plan", exact: true })
     .click();
   await page.locator(".graph-drilldown .plan").waitFor();
+  await page
+    .locator(".graph-drilldown")
+    .getByRole("button", { name: "View phase steps", exact: true })
+    .last()
+    .focus();
+  await page.keyboard.press("Enter");
+  await assertPhaseStepsVisible("verify", page.locator(".graph-drilldown"));
+  await page.screenshot({
+    path: options.output + "/graph-phase-steps-412.png",
+    fullPage: false,
+  });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(11000);
+  await wait("Steps · verify");
+  assert.equal(await page.evaluate(() => scrollY), 0);
+  checks.push(
+    "phase steps opened by keyboard from a graph stay visible without polling scroll jumps",
+  );
   await page
     .getByRole("button", { name: "Back to graph", exact: true })
     .click();
