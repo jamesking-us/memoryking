@@ -326,6 +326,15 @@ class ReadCases:
             proof["label"],
         )
         self.assertTrue(all(e["source"] in by_id and e["target"] in by_id for e in graph["edges"]))
+        # Evidence links must survive a bounded graph even when prerequisite
+        # links would otherwise consume every remaining edge slot.
+        self.settings["limits"]["graph_edges"] = 4
+        capped = self.read("graph")
+        self.assertTrue(capped["truncated"])
+        self.assertIn(
+            {"source": "plan:checkout:inspect", "target": proof["id"], "kind": "uses"},
+            capped["data"]["edges"],
+        )
         self.settings["limits"].update(graph_nodes=5, graph_edges=1)
         small = self.read("graph")
         self.assertLessEqual(len(small["data"]["nodes"]), 5)

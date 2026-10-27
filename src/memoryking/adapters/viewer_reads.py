@@ -633,11 +633,6 @@ class ViewerReads:
                 }
             )
         shown = {n["id"] for n in nodes}
-        for source, target in dependencies:
-            if target in shown:
-                link(source, target, "depends_on")
-            else:
-                more = True
         for source, identifier in references:
             if identifier in memory_nodes:
                 link(source, memory_nodes[identifier], "uses")
@@ -651,6 +646,13 @@ class ViewerReads:
                 citation_target = memory_nodes.get(span["observation"])
                 if citation_target is not None:
                     link(memory_nodes[identifier], citation_target, "cites")
+        # A dense prerequisite DAG must not starve recorded evidence links.
+        # Bounds still apply; omitted edges keep the view explicitly partial.
+        for source, target in dependencies:
+            if target in shown:
+                link(source, target, "depends_on")
+            else:
+                more = True
         return (
             {"kind": "graph", "nodes": nodes, "edges": edges},
             None,
