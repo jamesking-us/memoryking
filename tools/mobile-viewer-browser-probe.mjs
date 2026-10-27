@@ -385,6 +385,9 @@ try {
     JSON.stringify(contrast),
   );
   await page.getByLabel("Color theme").selectOption("dark");
+  const priorGraphAssets = traffic.filter(
+    (r) => r.path === "/viewer/graph.js",
+  ).length;
   await tab("Memory");
   await page
     .getByRole("button", { name: "Knowledge graph", exact: true })
@@ -392,7 +395,10 @@ try {
   await page.locator(".graph-viewport").waitFor();
   assert.equal(await page.locator(".graph-node").count(), 9);
   assert.equal(await page.locator(".relationships li").count(), 9);
-  assert.equal(traffic.filter((r) => r.path === "/viewer/graph.js").length, 1);
+  assert.equal(
+    traffic.filter((r) => r.path === "/viewer/graph.js").length,
+    priorGraphAssets + 1,
+  );
   await page.locator(".graph-node.claim").click();
   assert.ok(
     (await page.locator(".graph-detail").textContent()).includes("cites:"),
