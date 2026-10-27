@@ -85,7 +85,6 @@ class SDKTests(unittest.TestCase):
             "invalid_tool_arguments",
             lambda: self.client.tool(
                 "memory_feedback",
-                "memory_plan",
                 {
                     "version": 1,
                     "incarnation": self.store.incarnation,

@@ -191,6 +191,17 @@ try {
   await wait("50% · 1 of 2 steps completed");
   await page.getByRole("button", { name: "View plan", exact: true }).click();
   await wait("Inspect retry behavior");
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "200%";
+  });
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+  });
   await page.screenshot({
     path: options.output + "/structured-plan-412.png",
     fullPage: false,
@@ -227,7 +238,7 @@ try {
   await page.locator(".graph-node.task").click();
   await page
     .locator(".graph-detail")
-    .getByRole("button", { name: "View task", exact: true })
+    .getByRole("button", { name: "Open task", exact: true })
     .click();
   await page
     .locator(".graph-drilldown")
