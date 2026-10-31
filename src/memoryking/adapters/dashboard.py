@@ -427,6 +427,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def route(self) -> None:
         self.guard()
         dashboard, store = self.server, self.server.store
+        if self.path == "/metrics" and self.command == "GET":
+            from memoryking.observability_metrics import render
+
+            authorization = self.headers.get_all("Authorization", [])
+            if len(authorization) != 1 or not authorization[0].startswith("Bearer "):
+                raise LocalError("bearer_required")
+            if self.headers.get("Cookie"):
+                raise LocalError("mixed_authentication")
+            status = store.status(authorization[0][7:], "metrics")
+            self.send(200, render(store.counters, status).encode(), "text/plain; version=0.0.4")
+            return
         if self.path == "/api/v1/retrieval" and self.command == "POST":
             from memoryking.adapters.retrieval import Retrieval
 
@@ -532,6 +543,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     capacity=store._capacity(value["tenant"]),
                 )
                 raw = canonical_bytes(result)
+            elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/timeline/"):
+                from memoryking.adapters.local_store import identifier
+                from memoryking.adapters.timeline import timeline
+
+                parts = self.path.split("/")
+                if len(parts) not in {4, 5}:
+                    raise LocalError("invalid_request")
+                project = identifier(parts[3])
+                before = None
+                if len(parts) == 5:
+                    if not parts[4].isdigit():
+                        raise LocalError("invalid_request")
+                    before = int(parts[4])
+                who = store._auth(value["credential"], "read", project, decision.evaluated_ms)
+                raw = canonical_bytes(timeline(store, who, project, before=before))
             elif self.command in {"GET", "HEAD"} and self.path == "/api/projects":
                 from memoryking.adapters.projects import visible_projects
 

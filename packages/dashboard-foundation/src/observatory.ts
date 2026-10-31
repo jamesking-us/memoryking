@@ -142,6 +142,7 @@ export class Observatory {
     this.view.setAttribute("aria-label", "View");
     for (const [id, name] of [
       ["brief", "Ask for a briefing"],
+      ["timeline", "Timeline"],
       ["atlas", "Memory graph"],
       ["history", "Checkpoint history"],
       ["review", "Review & conflicts"],
@@ -295,6 +296,9 @@ export class Observatory {
       switch (this.view.value) {
         case "brief":
           this.brief();
+          break;
+        case "timeline":
+          await this.timeline();
           break;
         case "atlas":
           await this.atlas();
@@ -1032,6 +1036,46 @@ export class Observatory {
       });
     };
     this.output.append(f, result);
+  }
+  private async timeline(before?: number): Promise<void> {
+    const project = this.project.value;
+    const data = await this.api(
+      "/api/timeline/" +
+        encodeURIComponent(project) +
+        (before === undefined ? "" : "/" + String(before)),
+    );
+    const items = (data.items ?? []) as Doc[];
+    const rows = items.map((item) => ({
+      position: item.position,
+      when: new Date(Number(item.at_ms)).toLocaleString(),
+      event: item.kind,
+      subject: `${String(item.subject_kind)} ${String(item.subject)}`,
+      actor: item.actor,
+    }));
+    const body = [
+      e("h3", "Timeline"),
+      e(
+        "p",
+        "Every recorded event whose subject belongs to this project, newest first: captures, claims, reviews, checkpoints, handoffs and purges, with the principal that caused each.",
+        "integrity",
+      ),
+      rows.length
+        ? table(rows, ["position", "when", "event", "subject", "actor"])
+        : e("p", "No events recorded for this project yet."),
+    ];
+    if (before === undefined) this.output.replaceChildren(...body);
+    else {
+      this.output.querySelector("[data-earlier]")?.remove();
+      this.output.append(...body.slice(2));
+    }
+    if (data.next_before !== null && data.next_before !== undefined) {
+      const more = e("button", "Load earlier");
+      more.type = "button";
+      more.dataset.earlier = "1";
+      more.onclick = () =>
+        void this.run(() => this.timeline(Number(data.next_before)));
+      this.output.append(more);
+    }
   }
   private brief(): void {
     this.status.textContent =

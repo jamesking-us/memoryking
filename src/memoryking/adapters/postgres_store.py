@@ -27,6 +27,7 @@ from memoryking.adapters.local_store import (
 from memoryking.adapters.postgres_sql import PostgresSQL
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.domain.local import Clock, Decision, LocalError, SystemClock
+from memoryking.observability_metrics import Metrics
 
 
 class PostgresStore(LocalStore):
@@ -101,6 +102,7 @@ class PostgresStore(LocalStore):
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
+        self.counters = Metrics()
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
         self.active = False

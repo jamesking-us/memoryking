@@ -7,6 +7,7 @@ import socket
 import socketserver
 import stat
 import threading
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -35,6 +36,23 @@ class StoreOperations:
         self.store = store
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
+        """Dispatch and record the operation's latency and outcome for `/metrics`."""
+        operation = request.get("operation") if isinstance(request, dict) else None
+        name = operation if isinstance(operation, str) else "invalid"
+        started = time.monotonic()
+        error: str | None = None
+        try:
+            return self._execute(request)
+        except LocalError as exc:
+            error = exc.code
+            raise
+        except Exception:
+            error = "internal_error"
+            raise
+        finally:
+            self.store.counters.observe(name, (time.monotonic() - started) * 1000, error)
+
+    def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
         if not VALIDATOR.is_valid(request):
             raise LocalError("invalid_request")
         op, args, credential = request["operation"], request["args"], request["credential"]
