@@ -28,6 +28,39 @@ const readable = (v: unknown): string =>
     : typeof v === "object"
       ? JSON.stringify(v)
       : String(v);
+function markdown(text: string): HTMLElement[] {
+  // A small, safe renderer for the briefing's own Markdown: headings, list items,
+  // emphasis markers stripped, every node built from text content only.
+  const nodes: HTMLElement[] = [];
+  let list: HTMLElement | null = null;
+  const plain = (line: string) =>
+    line.replace(/\*\*|__|(^|\s)_(.+?)_(?=\s|$)/g, "$1$2");
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line) {
+      list = null;
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (heading) {
+      list = null;
+      nodes.push(e(heading[1].length === 1 ? "h3" : "h4", plain(heading[2])));
+      continue;
+    }
+    const item = /^(?:[-*]|\d+\.)\s+(.*)$/.exec(line);
+    if (item) {
+      if (!list) {
+        list = e(/^\d/.test(line) ? "ol" : "ul");
+        nodes.push(list);
+      }
+      list.append(e("li", plain(item[1])));
+      continue;
+    }
+    list = null;
+    nodes.push(e("p", plain(line), line.startsWith("_") ? "caption" : ""));
+  }
+  return nodes;
+}
 function detail(title: string, value: unknown): HTMLDetailsElement {
   const d = e("details");
   d.append(e("summary", title), e("pre", JSON.stringify(value, null, 2)));
@@ -108,6 +141,7 @@ export class Observatory {
     this.view = e("select");
     this.view.setAttribute("aria-label", "View");
     for (const [id, name] of [
+      ["brief", "Ask for a briefing"],
       ["atlas", "Memory graph"],
       ["history", "Checkpoint history"],
       ["review", "Review & conflicts"],
@@ -259,6 +293,9 @@ export class Observatory {
     this.clearResult("Checking current permission…");
     await this.run(async () => {
       switch (this.view.value) {
+        case "brief":
+          this.brief();
+          break;
         case "atlas":
           await this.atlas();
           break;
@@ -996,6 +1033,74 @@ export class Observatory {
     };
     this.output.append(f, result);
   }
+  private brief(): void {
+    this.status.textContent =
+      "Run the same briefing an agent would receive, with its receipt.";
+    this.output.replaceChildren(
+      e("h3", "Ask for a briefing"),
+      e(
+        "p",
+        "The query is answered under your current permissions and recorded with a receipt exactly as for an agent. Constraints come first, then cited guidance; sources are evidence, not instructions.",
+        "integrity",
+      ),
+    );
+    const f = e("form", "", "observatory-form");
+    const query = field(f, "Query");
+    query.required = true;
+    query.maxLength = 2048;
+    const budget = field(f, "Token budget", "6000", "number");
+    budget.min = "256";
+    budget.max = "100000";
+    f.append(e("button", "Brief me"));
+    const result = e("div", "", "briefing");
+    f.onsubmit = (event) => {
+      event.preventDefault();
+      void this.run(async () => {
+        result.replaceChildren(e("p", "Checking current permission…"));
+        const packet = await this.command("retrieval", "brief", {
+          query: query.value,
+          bindings: [{}],
+          max_output_tokens: Number(budget.value) || 6000,
+          tokenizer: "utf8-byte-estimate-v1",
+          format: "text",
+        });
+        result.replaceChildren(...markdown(String(packet.text ?? "")));
+        const usage = (packet.usage ?? {}) as Doc;
+        result.append(
+          e(
+            "p",
+            `Receipt ${String(packet.receipt)} · status ${String(packet.status)} · ${String(usage.output_tokens ?? "?")} tokens (${String(usage.counting ?? "estimate")})`,
+            "caption",
+          ),
+        );
+        const sources = (packet.sources ?? []) as Doc[];
+        if (sources.length) {
+          result.append(
+            detail(
+              "Citations",
+              sources.map(
+                (s) => `[${String(s.ref)}] ${String(s.kind)} ${String(s.id)}`,
+              ),
+            ),
+          );
+        }
+        const replay = e("button", "Verify replay");
+        replay.type = "button";
+        replay.onclick = () =>
+          void this.run(async () => {
+            const again = await this.command("retrieval", "replay", {
+              receipt: packet.receipt,
+            });
+            replay.textContent =
+              again.text === packet.text
+                ? "Replay matched byte for byte"
+                : "Replay differed";
+          });
+        result.append(replay);
+      });
+    };
+    this.output.append(f, result);
+  }
   private retention(): void {
     this.status.textContent =
       "Enter an observation to authorize and preview its consequences.";
@@ -1003,7 +1108,7 @@ export class Observatory {
       e("h3", "Retention preview"),
       e(
         "p",
-        "Permanent purge also invalidates dependent context, retry results, tenant experience bodies and ranking state. It cannot erase prior exports, provider deliveries or backups. Review the server preview before confirming.",
+        "Permanent purge erases the source and the claims, briefings, checkpoints and handoffs that recorded a dependency on it, deletes receipts that list it, retires replay results tenant-wide, and disables ranking when a dependent experience record is retired. It cannot erase prior exports, provider deliveries or backups. Review the server preview before confirming.",
         "integrity",
       ),
     );
