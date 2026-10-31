@@ -147,6 +147,7 @@ class LocalStore:
         self.lock = threading.RLock()
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
+        self._last_housekeeping = 0
         try:
             self.control = Control(control)
             self.anchor = self.control.read_anchor()
@@ -1015,7 +1016,24 @@ class LocalStore:
             self.db.execute(
                 "DELETE FROM processing_usage WHERE expires<=?", (decision.evaluated_ms,)
             )
+            # Access receipts are evidence for 30 days; the dashboard writes one per poll.
+            self.db.execute(
+                "DELETE FROM receipts WHERE evaluated<=?", (decision.evaluated_ms - RETRY_MS,)
+            )
         return int(count)
+
+    def housekeeping(self, interval_ms: int = 3_600_000) -> bool:
+        """Expire results, artifacts, usage rows and receipts at most once per interval.
+
+        The serving daemon calls this between requests so retention never depends on an
+        operator remembering to run `gc`.
+        """
+        now = self.clock.utc_ms()
+        if now - self._last_housekeeping < interval_ms:
+            return False
+        self._last_housekeeping = now
+        self.expire_results()
+        return True
 
     def gc(self) -> int:
         with self.lock:
@@ -1297,14 +1315,20 @@ class LocalStore:
         completed = 0
         with self.lock:
             # A plain read keeps idle polling free of write transactions and fsyncs.
-            if (
-                self.healthy
-                and self.db.execute(
-                    "SELECT 1 FROM jobs WHERE state='pending' AND available<=? LIMIT 1",
-                    (self.clock.utc_ms(),),
-                ).fetchone()
-                is None
-            ):
+            try:
+                idle = (
+                    self.healthy
+                    and self.db.execute(
+                        "SELECT 1 FROM jobs WHERE state='pending' AND available<=? LIMIT 1",
+                        (self.clock.utc_ms(),),
+                    ).fetchone()
+                    is None
+                )
+            except LocalError as exc:
+                if exc.code != "database_transaction_required":
+                    raise
+                idle = False  # Backends that gate reads check inside the transaction.
+            if idle:
                 return 0
         with self.transaction() as decision:
             at = decision.evaluated_ms

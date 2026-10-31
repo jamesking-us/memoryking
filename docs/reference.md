@@ -94,6 +94,7 @@ Every per-tenant bound has a release path and is reported by `status` under `cap
 | `rendered_bytes` | 128 MiB of retained artifact bodies | tenant | As above. | As above |
 | `operation_intents` | 4,096 open intents per tenant and 32 per task stream | tenant and stream | Transitioning an intent to `succeeded` or `failed`. Resolved intents keep their consumed identity but no longer count. | `operation_capacity`, `operation_scope_capacity` |
 | `processing_usage` | 100,000 attempts | tenant | 30-day retention: expired rows are pruned by `gc` and when the cap is reached. | `usage_retention_limit` |
+| access receipts | unbounded | tenant | 30-day retention, pruned by `gc` and by the daemon's hourly housekeeping, which also expires replay results and artifacts. | none |
 
 The product has been exercised on macOS with Python 3.12 and native PostgreSQL 18.6, and through a single-host Linux-container rehearsal. A full native Linux matrix, Windows, physical touch, complete OS reduced-motion/browser coverage and third-party agent hosts remain unqualified. Intermittent dashboard scope refresh loss needs further investigation.
 

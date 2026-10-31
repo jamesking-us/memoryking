@@ -108,7 +108,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    for path, data in generate().items():
+    # Some generators read artifacts that earlier generators write, so a change can take
+    # two passes to settle; keep generating until the outputs stop changing.
+    outputs = generate()
+    for _ in range(4):
+        if args.check:
+            break
+        for path, data in outputs.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        again = generate()
+        if again == outputs:
+            break
+        outputs = again
+    for path, data in outputs.items():
         if args.check:
             if not path.exists() or path.read_bytes() != data:
                 raise SystemExit(f"Generated artifact drift: {path.relative_to(ROOT)}")

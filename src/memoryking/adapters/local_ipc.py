@@ -165,6 +165,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         """Between requests, complete trivial audit jobs so the queue never fills."""
         try:
             self.store.drain()
+            self.store.housekeeping()
         except LocalError:
             pass  # A fenced or unhealthy store reports its state on the next request.
 

@@ -100,6 +100,7 @@ class PostgresStore(LocalStore):
         self.lock = threading.RLock()
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
+        self._last_housekeeping = 0
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
         self.active = False
