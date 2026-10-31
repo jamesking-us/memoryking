@@ -13,6 +13,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -146,6 +147,8 @@ class LocalStore:
         self.clock = clock or SystemClock()
         self.fault = fault or (lambda _: None)
         self.lock = threading.RLock()
+        # Per-thread transaction timings, collected only while a traced request runs.
+        self.timings = threading.local()
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
@@ -312,43 +315,58 @@ class LocalStore:
 
     @contextmanager
     def transaction(self) -> Iterator[Decision]:
+        spans = getattr(self.timings, "items", None)
+        waited = time.monotonic() if spans is not None else 0.0
         with self.lock:
-            self.owner.check()
-            if not self.healthy:
-                raise LocalError("recovery_required")
-            self.db.execute("BEGIN IMMEDIATE")
+            acquired = time.monotonic() if spans is not None else 0.0
             try:
-                decision = self._now()
-                yield decision
-                self.fault("before_commit")
-                decision.check(self.clock)
-                if (
-                    int(
-                        self.db.execute(
-                            "SELECT value FROM meta WHERE key='commit_serial'"
-                        ).fetchone()[0]
+                yield from self._transaction()
+            finally:
+                if spans is not None:
+                    spans.append(
+                        {
+                            "lock_wait_ms": (acquired - waited) * 1000,
+                            "transaction_ms": (time.monotonic() - acquired) * 1000,
+                        }
                     )
-                    >= MAX_COUNTER
-                ):
-                    raise LocalError("counter_exhausted")
-                self.db.execute(
-                    "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
+
+    def _transaction(self) -> Iterator[Decision]:
+        self.owner.check()
+        if not self.healthy:
+            raise LocalError("recovery_required")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            decision = self._now()
+            yield decision
+            self.fault("before_commit")
+            decision.check(self.clock)
+            if (
+                int(
+                    self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[
+                        0
+                    ]
                 )
-                self.db.commit()
-                self.fault("after_commit")
-                decision.check(self.clock)
-            except BaseException:
-                try:
-                    self.db.rollback()
-                    applied = int(
-                        self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
-                    )
-                    if self.anchor["journal_sequence"] > applied:
-                        self.healthy = False
-                except Exception:
-                    # Never let cleanup mask the original failure; fail closed instead.
+                >= MAX_COUNTER
+            ):
+                raise LocalError("counter_exhausted")
+            self.db.execute(
+                "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
+            )
+            self.db.commit()
+            self.fault("after_commit")
+            decision.check(self.clock)
+        except BaseException:
+            try:
+                self.db.rollback()
+                applied = int(
+                    self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
+                )
+                if self.anchor["journal_sequence"] > applied:
                     self.healthy = False
-                raise
+            except Exception:
+                # Never let cleanup mask the original failure; fail closed instead.
+                self.healthy = False
+            raise
 
     def _token(self, kind: str, **fields: Any) -> str:
         return self.control.sign(

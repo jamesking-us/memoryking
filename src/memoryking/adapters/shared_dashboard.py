@@ -6,6 +6,7 @@ import hashlib
 import json
 import secrets
 import threading
+import time
 from collections import OrderedDict, deque
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
 from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
-from memoryking.observability import failure
+from memoryking.observability import failure, trace, tracing
 
 
 def stable(value: Any) -> Any:
@@ -333,6 +334,20 @@ class SharedDashboard:
             return execute(store, value, body, lambda: self.current(session))
 
     async def route(self, request: Request) -> Response:
+        if not tracing():
+            return await self._route(request)
+        started = time.monotonic()
+        response = await self._route(request)
+        trace(
+            "shared_dashboard",
+            method=request.method,
+            route="/".join(request.url.path.split("/")[:3]),
+            status=response.status_code,
+            elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+        )
+        return response
+
+    async def _route(self, request: Request) -> Response:
         from memoryking.adapters.shared_http import ReleaseResponse, error
 
         try:

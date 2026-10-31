@@ -103,6 +103,7 @@ class PostgresStore(LocalStore):
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
         self.counters = Metrics()
+        self.timings = threading.local()
         self.embedder: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
@@ -317,6 +318,14 @@ class PostgresStore(LocalStore):
                 if clock_started is not None and clock_locked is not None:
                     metric["clock_wait_ms"] = (clock_locked - clock_started) * 1000
                 self.metrics.append(metric)
+                spans = getattr(self.timings, "items", None)
+                if spans is not None:
+                    spans.append(
+                        {
+                            "lock_wait_ms": metric.get("gate_wait_ms", 0.0),
+                            "transaction_ms": metric["transaction_ms"],
+                        }
+                    )
 
     def _event(self, tenant: str, kind: str, subject: str, at: int, actor: str = "system") -> int:
         if self.release_only or tenant != self.tenant:

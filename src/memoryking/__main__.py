@@ -284,6 +284,12 @@ def main() -> int:
                 choices=LEVELS,
                 help="Redacted operator log level on stderr; request ids link replies to lines",
             )
+            cmd.add_argument(
+                "--trace",
+                action="store_true",
+                help="Log one timing line per request (operation, action, outcome, elapsed, "
+                "lock wait, transaction time, response size); implies --log-level info",
+            )
         if name == "init":
             cmd.add_argument("--tenant", default="main")
             cmd.add_argument("--principal", default="owner")
@@ -609,7 +615,7 @@ def main() -> int:
         else:
             with LocalStore(args.store, args.control) as store:
                 if args.command == "serve":
-                    configure(args.log_level)
+                    configure(args.log_level, trace=args.trace)
 
                     def stop(signum: int, frame: object) -> None:
                         raise KeyboardInterrupt

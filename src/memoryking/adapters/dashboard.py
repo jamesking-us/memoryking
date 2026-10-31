@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import threading
+import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,7 +18,7 @@ from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load
 from memoryking.domain.hints import hint
 from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
-from memoryking.observability import failure
+from memoryking.observability import failure, summarize, timings, trace, tracing
 
 STATIC = Path(__file__).with_name("web")
 ASSETS = {
@@ -368,6 +369,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         cookie: str | None = None,
         access_receipt: str | None = None,
     ) -> None:
+        self.trace_status = status
         self.send_response(status)
         for name, value in SAFE_HEADERS.items():
             self.send_header(name, value)
@@ -655,6 +657,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
         Released(raw, decision, store.clock).emit(lambda b: self.send(200, b, content_type, cookie))
 
     def do_GET(self) -> None:
+        if not tracing():
+            self._serve()
+            return
+        started = time.monotonic()
+        self.trace_status = 0
+        spans = timings(self.server.store)
+        try:
+            self._serve()
+        finally:
+            self.server.store.timings.items = None
+            trace(
+                "dashboard",
+                method=self.command,
+                route="/".join(self.path.split("?")[0].split("/")[:3]),
+                status=self.trace_status,
+                **summarize((time.monotonic() - started) * 1000, spans),
+            )
+
+    def _serve(self) -> None:
         try:
             self.route()
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
