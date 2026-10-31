@@ -262,6 +262,16 @@ p {
 .metric .eyebrow {
   letter-spacing: 1px;
 }
+.comparison {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+.comparison h4,
+.comparison h5 {
+  margin: 0 0 6px;
+}
 .capacity {
   margin-bottom: 22px;
 }

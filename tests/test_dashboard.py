@@ -377,6 +377,62 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(status, 200, replayed)
         self.assertEqual(json.loads(replayed)["text"], packet["text"])
 
+    def test_two_receipts_expose_comparable_selected_references(self):
+        namespace = self.store.namespace(self.owner, "p")
+        for number, text in enumerate(("deadline exceeded on retry", "deadline fixed by backoff")):
+            self.store.capture(
+                self.owner,
+                namespace,
+                f"cmp{number}",
+                {
+                    "version": 1,
+                    "project": "p",
+                    "source": "test",
+                    "source_event": f"cmp{number}",
+                    "text": text,
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": number + 1,
+                },
+            )
+            self.login()
+            csrf = json.loads(self.call("GET", "/api/snapshot")[2])["csrf"]
+            status, _, raw = self.call(
+                "POST",
+                "/api/command",
+                {
+                    "csrf": csrf,
+                    "operation": "retrieval",
+                    "command": {
+                        "version": 1,
+                        "incarnation": self.store.incarnation,
+                        "action": "brief",
+                        "args": {
+                            "project": "p",
+                            "query": "deadline",
+                            "bindings": [{}],
+                            "max_output_tokens": 6000,
+                            "tokenizer": "utf8-byte-estimate-v1",
+                        },
+                    },
+                },
+                {"Origin": self.web.origin},
+            )
+            self.assertEqual(status, 200, raw)
+        listed = json.loads(self.call("GET", "/api/receipts/p")[2])["items"]
+        self.assertEqual(len(listed), 2)
+        newest, older = listed[0], listed[1]
+        self.assertGreaterEqual(newest["created_ms"], older["created_ms"])
+        details = [
+            json.loads(self.call("GET", f"/api/receipt/p/{item['receipt']}")[2])["diagnostics"]
+            for item in (older, newest)
+        ]
+        before = {s["reference"] for s in details[0]["selected"]}
+        after = {s["reference"] for s in details[1]["selected"]}
+        self.assertEqual(len(before), 1)
+        self.assertEqual(len(after), 2)
+        self.assertTrue(before <= after, "the second briefing adds a reference and keeps the first")
+
     def test_timeline_lists_project_events_newest_first_with_paging(self):
         namespace = self.store.namespace(self.owner, "p")
         captured = []

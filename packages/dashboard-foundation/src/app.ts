@@ -55,6 +55,73 @@ const CAPACITY_LABELS: Record<string, [string, string]> = {
   operation_intents: ["Open operations", "Released when an operation resolves"],
   processing_usage: ["Usage attempts", "Pruned after 30 days"],
 };
+interface ReceiptDiagnostics {
+  status: string;
+  usage: {
+    output_tokens?: number;
+    max_output_tokens?: number;
+    counting?: string;
+  };
+  selected?: Array<{ reference: string; authority: string; reason: string }>;
+  omissions?: string[];
+}
+function renderComparison(
+  before: ReceiptDiagnostics,
+  after: ReceiptDiagnostics,
+  beforeId: string,
+  afterId: string,
+): HTMLElement {
+  // What changed between two briefings: references added, dropped or kept,
+  // status, and token cost. Diagnostics carry references, not content.
+  const box = el("div", "", "comparison");
+  box.append(el("h4", "Compared with the previous briefing"));
+  box.append(el("p", `${beforeId} → ${afterId}`, "caption"));
+  const refs = (d: ReceiptDiagnostics) =>
+    new Map((d.selected ?? []).map((s) => [s.reference, s]));
+  const was = refs(before),
+    now = refs(after);
+  const added = [...now.keys()].filter((r) => !was.has(r));
+  const dropped = [...was.keys()].filter((r) => !now.has(r));
+  const kept = [...now.keys()].filter((r) => was.has(r));
+  const facts = el("ul");
+  facts.append(
+    el("li", `Status ${label(before.status)} → ${label(after.status)}`),
+    el(
+      "li",
+      `Tokens ${String(before.usage?.output_tokens ?? "?")} → ${String(after.usage?.output_tokens ?? "?")} (budget ${String(after.usage?.max_output_tokens ?? "?")})`,
+    ),
+    el(
+      "li",
+      `${kept.length} references kept · ${added.length} added · ${dropped.length} dropped`,
+    ),
+  );
+  box.append(facts);
+  for (const [title, list, source] of [
+    ["Added", added, now],
+    ["Dropped", dropped, was],
+  ] as const) {
+    if (!list.length) continue;
+    box.append(el("h5", title));
+    const ul = el("ul");
+    for (const reference of list) {
+      const entry = source.get(reference);
+      ul.append(
+        el(
+          "li",
+          `${reference} · ${label(entry?.authority ?? "")} · ${label(entry?.reason ?? "")}`,
+        ),
+      );
+    }
+    box.append(ul);
+  }
+  const beforeOmissions = (before.omissions ?? []).join(", ") || "none";
+  const afterOmissions = (after.omissions ?? []).join(", ") || "none";
+  if (beforeOmissions !== afterOmissions)
+    box.append(
+      el("p", `Omissions ${beforeOmissions} → ${afterOmissions}`, "caption"),
+    );
+  return box;
+}
 const PROJECT_KEY = "memoryking.project";
 let projectsLoadedFor = -1;
 function rememberedProject(): string {
@@ -786,6 +853,54 @@ get<HTMLFormElement>("receipt-form").addEventListener(
                 "caption",
               ),
             );
+            const compare = el("button", "Compare with previous briefing");
+            compare.type = "button";
+            compare.addEventListener("click", async () => {
+              const older = items.filter(
+                (other) => other.created_ms < item.created_ms,
+              );
+              if (!older.length) {
+                compare.replaceWith(
+                  el("p", "No earlier receipt to compare with.", "caption"),
+                );
+                return;
+              }
+              const previous = older[0];
+              try {
+                const before = await api(
+                  "/api/receipt/" +
+                    encodeURIComponent(project) +
+                    "/" +
+                    encodeURIComponent(previous.receipt),
+                );
+                if (
+                  !snapshot ||
+                  ticket !== receiptGeneration ||
+                  context !== generation
+                )
+                  return;
+                compare.replaceWith(
+                  renderComparison(
+                    before.diagnostics as ReceiptDiagnostics,
+                    diag as ReceiptDiagnostics,
+                    previous.receipt,
+                    item.receipt,
+                  ),
+                );
+              } catch (error) {
+                compare.replaceWith(
+                  el(
+                    "p",
+                    "Comparison unavailable: " +
+                      (error instanceof Error
+                        ? label(error.message)
+                        : "request failed"),
+                    "caption",
+                  ),
+                );
+              }
+            });
+            panel.append(compare);
             const replay = el("button", "Exact retained replay"),
               rerun = el("button", "Rerun retrieval with these inputs"),
               inputs = el("textarea"),
