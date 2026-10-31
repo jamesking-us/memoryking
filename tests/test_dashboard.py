@@ -377,6 +377,63 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(status, 200, replayed)
         self.assertEqual(json.loads(replayed)["text"], packet["text"])
 
+    def test_citations_route_lists_the_receipts_that_used_a_record(self):
+        namespace = self.store.namespace(self.owner, "p")
+        captured = self.store.capture(
+            self.owner,
+            namespace,
+            "cite-me",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "cite-me",
+                "text": "the retry deadline was exceeded in staging",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )["observation"]
+        self.login()
+        csrf = json.loads(self.call("GET", "/api/snapshot")[2])["csrf"]
+        status, _, raw = self.call(
+            "POST",
+            "/api/command",
+            {
+                "csrf": csrf,
+                "operation": "retrieval",
+                "command": {
+                    "version": 1,
+                    "incarnation": self.store.incarnation,
+                    "action": "brief",
+                    "args": {
+                        "project": "p",
+                        "query": "deadline",
+                        "bindings": [{}],
+                        "max_output_tokens": 6000,
+                        "tokenizer": "utf8-byte-estimate-v1",
+                    },
+                },
+            },
+            {"Origin": self.web.origin},
+        )
+        self.assertEqual(status, 200, raw)
+        receipt = json.loads(raw)["receipt"]
+        status, _, raw = self.call("GET", "/api/citations/p/" + captured)
+        self.assertEqual(status, 200, raw)
+        trail = json.loads(raw)
+        self.assertEqual(trail["node"], captured)
+        self.assertEqual([t["receipt"] for t in trail["items"]], [receipt])
+        self.assertEqual(trail["items"][0]["dependency_kind"], "observation")
+        status, _, raw = self.call("GET", "/api/citations/p/attestation%3Arev_x%3A7")
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(json.loads(raw), {"items": [], "node": "attestation:rev_x:7"})
+        self.assertEqual(self.call("GET", "/api/citations/p/bad%20id")[0], 403)
+        self.assertEqual(self.call("GET", "/api/citations/p")[0], 403)
+        self.assertEqual(
+            json.loads(self.call("GET", "/api/citations/other/" + captured)[2])["items"], []
+        )
+
     def test_two_receipts_expose_comparable_selected_references(self):
         namespace = self.store.namespace(self.owner, "p")
         for number, text in enumerate(("deadline exceeded on retry", "deadline fixed by backoff")):

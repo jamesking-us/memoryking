@@ -85,6 +85,7 @@ function table(items, keys) {
 export class Observatory {
     api;
     current;
+    openReceipt;
     root;
     status;
     output;
@@ -98,9 +99,10 @@ export class Observatory {
     confirmed = null;
     writing = false;
     lastRead = null;
-    constructor(root, api, current) {
+    constructor(root, api, current, openReceipt = () => { }) {
         this.api = api;
         this.current = current;
+        this.openReceipt = openReceipt;
         this.root = root;
         root.append(e("h2", "Memory"), e("p", "Browse stored memories, checkpoints, reviews and processing usage. Records reflect your current permissions; views expire after 15 seconds."));
         const form = e("form", "", "observatory-form");
@@ -308,7 +310,17 @@ export class Observatory {
             this.output.replaceChildren(e("h3", "Memory relationships"));
             const host = e("div");
             this.output.append(host);
-            this.graph = new AtlasView(host, (id) => void this.run(() => this.atlas(id)));
+            this.graph = new AtlasView(host, (id) => void this.run(() => this.atlas(id)), {
+                load: async (id) => {
+                    const project = this.project.value;
+                    const data = await this.api("/api/citations/" +
+                        encodeURIComponent(project) +
+                        "/" +
+                        encodeURIComponent(id));
+                    return (Array.isArray(data.items) ? data.items : []);
+                },
+                open: (receipt) => this.openReceipt(this.project.value, receipt),
+            });
         }
         this.graph.set(data);
         this.output.querySelector(".atlas-footer")?.remove();

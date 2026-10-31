@@ -1,4 +1,4 @@
-import { AtlasView, type GraphData } from "./graph.js";
+import { AtlasView, type Citation, type GraphData } from "./graph.js";
 
 type Doc = Record<string, unknown>;
 export interface AuthContext {
@@ -124,6 +124,7 @@ export class Observatory {
     root: HTMLElement,
     private api: Request,
     private current: () => AuthContext | null,
+    private openReceipt: (project: string, receipt: string) => void = () => {},
   ) {
     this.root = root;
     root.append(
@@ -384,6 +385,19 @@ export class Observatory {
       this.graph = new AtlasView(
         host,
         (id) => void this.run(() => this.atlas(id)),
+        {
+          load: async (id) => {
+            const project = this.project.value;
+            const data = await this.api(
+              "/api/citations/" +
+                encodeURIComponent(project) +
+                "/" +
+                encodeURIComponent(id),
+            );
+            return (Array.isArray(data.items) ? data.items : []) as Citation[];
+          },
+          open: (receipt) => this.openReceipt(this.project.value, receipt),
+        },
       );
     }
     this.graph.set(data as unknown as GraphData);

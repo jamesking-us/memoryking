@@ -135,6 +135,21 @@ function label(value) {
     return value.replaceAll("_", " ");
 }
 let snapshot = null;
+let pendingReceipt = null;
+/** Jump from a graph node to one of the receipts that used it, in Retrieval history. */
+function openReceipt(project, receipt) {
+    const select = get("receipt-project");
+    if (!Array.from(select.options).some((o) => o.value === project)) {
+        get("receipt-notice").textContent =
+            "That project is not in your readable list; reload the project picker.";
+        return;
+    }
+    select.value = project;
+    rememberProject(project);
+    pendingReceipt = receipt;
+    get("retrieval-lab").scrollIntoView();
+    get("receipt-form").requestSubmit();
+}
 const observatory = new Observatory(get("observatory"), api, () => snapshot
     ? {
         csrf: snapshot.csrf,
@@ -143,7 +158,7 @@ const observatory = new Observatory(get("observatory"), api, () => snapshot
         incarnation: snapshot.incarnation,
         authorization_epoch: snapshot.authorization_epoch,
     }
-    : null);
+    : null, openReceipt);
 installEmblem(get("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
 let selected = "P05";
@@ -563,6 +578,7 @@ get("receipt-form").addEventListener("submit", async (event) => {
             : "No currently available receipts for this owner and project.";
         for (const item of items) {
             const button = el("button", "", "receipt-row");
+            button.dataset.receipt = item.receipt;
             button.append(el("strong", label(item.status)), el("small", `${item.usage.output_tokens ?? "Unknown"} tokens · ${item.usage.counting ?? "not counted"} · cache ${item.cache}`), el("small", new Date(item.created_ms).toLocaleString()));
             button.addEventListener("click", async () => {
                 try {
@@ -703,6 +719,16 @@ get("receipt-form").addEventListener("submit", async (event) => {
                 }
             });
             get("receipt-list").append(button);
+        }
+        if (pendingReceipt) {
+            const wanted = pendingReceipt;
+            pendingReceipt = null;
+            const row = get("receipt-list").querySelector(`[data-receipt="${CSS.escape(wanted)}"]`);
+            if (row)
+                row.click();
+            else
+                get("receipt-notice").textContent +=
+                    " · the cited receipt is no longer retained for this account";
         }
     }
     catch {

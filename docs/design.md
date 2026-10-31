@@ -89,7 +89,9 @@ Passing implementation tests does not establish better real-task outcomes, cost 
 
 The dashboard uses a crowned cybernetic elephant emblem with gunmetal panels, restrained circuit-grid and brushed-metal CSS textures, and cyan accents. Content panels keep solid surfaces for legible labels and evidence. Dark and light themes share the same controls and semantic status indicators. No fonts, textures or artwork are fetched from external services at runtime.
 
-The optional logo interaction tilts a rendered image using perspective; it is not an interactive 3D model. It runs once for 1.8 seconds on request, stops when hidden or offscreen, and respects reduced motion and the Motion off control. The compact phone layout uses the small static emblem.
+The optional logo interaction tilts a rendered image using perspective; it is not an interactive 3D model. It runs once for 1.8 seconds on request, stops when hidden or offscreen, and respects reduced motion and the Motion off control. The compact phone layout uses the small static emblem in a sticky bar that holds the views, stacks every card in one column and shows the memory graph as a list by default; the drawing is one tap away and the page never scrolls sideways.
+
+The memory graph encodes recorded facts only: a node's colour is the authority the store holds for it (observation, accepted, proposed, quarantined, rejected or deprecated, mandatory constraint, attestation, procedure, working state), its size is the number of the viewer's own retained receipts that cited it, and selecting it lists those receipts. Layout distance carries no meaning, and a receipt trail is private to the principal that holds the receipts.
 
 The main [elephant artwork](../packages/dashboard-foundation/web/elephant.png) was created with the built-in image-generation tool; its [generation prompt](images/memoryking-emblem-prompt.txt) is retained alongside the documentation. The favicon is a simplified vector mark for small sizes.
 

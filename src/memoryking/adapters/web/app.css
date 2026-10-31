@@ -10,6 +10,9 @@
   --cyan: #70c6ed;
   --good: #8fddaf;
   --amber: #f0c481;
+  --bad: #ef8a86;
+  --violet: #c7aef5;
+  --steel: #9fb3bf;
 }
 * {
   box-sizing: border-box;
@@ -47,6 +50,9 @@ body.light {
   --cyan: #185d8b;
   --good: #236840;
   --amber: #875d17;
+  --bad: #a3302b;
+  --violet: #5a3d9c;
+  --steel: #55707e;
 }
 button,
 input {
@@ -587,31 +593,8 @@ footer {
   }
 }
 @media (max-width: 650px) {
-  .shell {
-    display: block;
-  }
-  aside {
-    position: static;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-    display: block;
-    padding: 18px;
-  }
-  .nav,
-  .nav-title,
-  .side-note {
-    display: none;
-  }
-  aside > .quiet {
-    position: absolute;
-    right: 14px;
-    top: 20px;
-    max-width: 110px;
-    font-size: 10px;
-  }
   main {
-    padding: 24px 14px;
+    padding: 18px 14px;
   }
   h1 {
     font-size: 24px;
@@ -1004,18 +987,98 @@ summary:focus-visible,
   stroke: var(--bg);
   stroke-width: 2;
 }
-.atlas-node.observation circle {
-  fill: var(--cyan);
+/* Colour is recorded authority. The same tokens drive the legend and the list. */
+[data-authority="observation"] {
+  --authority: var(--cyan);
 }
-.atlas-node.attestation circle {
-  fill: var(--good);
+[data-authority="accepted"] {
+  --authority: var(--good);
 }
-.atlas-node.procedure circle {
-  fill: var(--amber);
+[data-authority="proposed"] {
+  --authority: var(--amber);
 }
-.atlas-node.task circle,
-.atlas-node.run circle {
-  fill: var(--good);
+[data-authority="quarantined"] {
+  --authority: var(--bad);
+}
+[data-authority="retired"] {
+  --authority: var(--muted);
+}
+[data-authority="constraint"] {
+  --authority: var(--violet);
+}
+[data-authority="attestation"] {
+  --authority: var(--good);
+}
+[data-authority="procedure"] {
+  --authority: var(--violet);
+}
+[data-authority="working"] {
+  --authority: var(--steel);
+}
+.atlas-node[data-authority] circle {
+  fill: var(--authority);
+}
+.atlas-node[data-authority="attestation"] circle,
+.atlas-node[data-authority="procedure"] circle,
+.atlas-node[data-authority="proposed"] circle {
+  fill: var(--panel);
+  stroke: var(--authority);
+  stroke-width: 3;
+}
+.atlas-node[data-authority="quarantined"] circle,
+.atlas-node[data-authority="retired"] circle {
+  stroke: var(--authority);
+  stroke-dasharray: 3 2;
+}
+.graph-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 0;
+  margin: 10px 0 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.graph-legend li::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: -1px;
+  background: var(--authority);
+  border: 2px solid var(--authority);
+}
+.graph-legend li[data-authority="proposed"]::before,
+.graph-legend li[data-authority="procedure"]::before,
+.graph-legend li[data-authority="attestation"]::before {
+  background: var(--panel);
+}
+.graph-legend li[data-authority="quarantined"]::before,
+.graph-legend li[data-authority="retired"]::before {
+  border-style: dashed;
+}
+.graph-list button[data-authority] {
+  box-shadow: inset 3px 0 var(--authority);
+}
+.graph-trail {
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.graph-trail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.graph-trail-item {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.graph-drawing-toggle {
+  display: none;
 }
 .atlas-node text {
   fill: var(--text);
@@ -1160,39 +1223,101 @@ main,
 footer {
   overflow-wrap: anywhere;
 }
-@media (max-width: 650px) {
-  aside .nav {
-    display: inline-flex;
-    font-size: 11px;
-    margin: 4px;
-    padding: 7px;
-  }
-  aside .brand {
-    margin-bottom: 14px;
-  }
-  aside > .quiet {
-    position: static;
-    max-width: none;
-    margin: 4px;
-  }
-  aside .emblem-reveal {
-    display: inline-flex;
-    vertical-align: middle;
-    margin: 6px;
-  }
-}
 aside {
   overflow-y: auto;
 }
 
-/* Compact header on phones: the full emblem remains in the desktop sidebar. */
+/* Phones: the sidebar becomes a sticky bar with the views in a row, cards stack,
+   and the memory graph shows its list unless the drawing is asked for. */
 @media (max-width: 650px) {
+  .shell {
+    display: block;
+  }
+  aside {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    height: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    scrollbar-width: none;
+  }
+  aside::-webkit-scrollbar {
+    display: none;
+  }
+  .brand {
+    font-size: 15px;
+    gap: 6px;
+    margin-right: 6px;
+    flex-shrink: 0;
+  }
+  .brand img {
+    width: 32px;
+    height: 32px;
+  }
+  .brand small {
+    display: none;
+  }
+  .nav-title,
+  .side-note,
   aside .emblem-reveal,
   aside .motion-toggle {
     display: none;
   }
-  .brand img {
-    width: 48px;
-    height: 48px;
+  aside .nav {
+    display: inline-flex;
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-size: 11px;
+    margin: 0;
+    padding: 7px 9px;
+  }
+  aside > .quiet {
+    flex-shrink: 0;
+    white-space: nowrap;
+    margin: 0 0 0 auto;
+    font-size: 11px;
+    padding: 7px 9px;
+  }
+  header {
+    margin-bottom: 16px;
+    padding-bottom: 14px;
+  }
+  .section-head {
+    flex-wrap: wrap;
+  }
+  .receipt-workspace,
+  .execution-workspace,
+  .capacity-list,
+  .graph-details {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+  .receipt-form,
+  .execution-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .graph-drawing-toggle {
+    display: inline-block;
+  }
+  .atlas-workspace:not(.graph-shown) .graph-panes > svg {
+    display: none;
+  }
+  .graph-list {
+    max-height: 60vh;
+  }
+  .graph-controls button {
+    font-size: 12px;
+    padding: 7px;
+  }
+  .graph-legend {
+    gap: 2px 10px;
   }
 }

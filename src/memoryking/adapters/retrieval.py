@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -312,6 +313,64 @@ class Retrieval:
                     "cache": diag.get("cache", "not_applicable"),
                 }
             )
+        return items
+
+    def citations(self, who: dict[str, Any], project: str, at: int) -> dict[str, int]:
+        """How many of the caller's retained briefings, fetches and reruns depend on each record.
+
+        Atlas pages depend on every node they show, so they are not citations. Only the
+        caller's own artifacts count: a receipt is private to the principal that holds it.
+        """
+        counts: dict[str, int] = {}
+        for row in self.db.execute(
+            "SELECT diagnostics,dependencies FROM rendered_artifacts WHERE tenant=? AND principal=? AND project=? AND incarnation=? AND state='retained' AND expires>?",
+            (who["tenant"], who["principal"], project, self.s.incarnation, at),
+        ).fetchall():
+            if json.loads(row["diagnostics"]).get("kind") == "atlas":
+                continue
+            for dep in json.loads(row["dependencies"]):
+                counts[dep["id"]] = counts.get(dep["id"], 0) + 1
+        return counts
+
+    def list_citations(
+        self, who: dict[str, Any], project: str, node: str, at: int
+    ) -> list[dict[str, Any]]:
+        """The caller's retained receipts that depend on one record, newest first.
+
+        Each receipt is re-authorized exactly as `receipts` does, so a record whose
+        evidence the caller may no longer read yields no receipt.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_.:|-]{1,256}", node):
+            raise LocalError("invalid_request")
+        items = []
+        for candidate in self.db.execute(
+            "SELECT id,diagnostics,dependencies FROM rendered_artifacts WHERE tenant=? AND principal=? AND project=? AND incarnation=? AND state='retained' AND expires>? ORDER BY created DESC,id DESC",
+            (who["tenant"], who["principal"], project, self.s.incarnation, at),
+        ).fetchall():
+            if json.loads(candidate["diagnostics"]).get("kind") == "atlas":
+                continue
+            kinds = [d["kind"] for d in json.loads(candidate["dependencies"]) if d["id"] == node]
+            if not kinds:
+                continue
+            try:
+                row = self._artifact(who, project, candidate["id"], at)
+            except LocalError:
+                continue
+            diag = json.loads(row["diagnostics"])
+            items.append(
+                {
+                    "receipt": row["id"],
+                    "created_ms": row["created"],
+                    "expires_ms": row["expires"],
+                    "rendered_hash": row["body_hash"],
+                    "status": diag["status"],
+                    "usage": diag["usage"],
+                    "dependency_kind": kinds[0],
+                    "format": diag.get("format", "json"),
+                }
+            )
+            if len(items) >= 32:
+                break
         return items
 
     def _retain(

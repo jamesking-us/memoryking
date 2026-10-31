@@ -232,6 +232,22 @@ class SharedDashboard:
                         )
                     else:
                         raise LocalError("route_unavailable")
+                elif route.startswith("/api/citations/"):
+                    from urllib.parse import unquote
+
+                    parts = route.split("/")
+                    if len(parts) != 5:
+                        raise LocalError("invalid_request")
+                    project = identifier(parts[3])
+                    store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(
+                        {
+                            "node": unquote(parts[4]),
+                            "items": Retrieval(store).list_citations(
+                                who, project, unquote(parts[4]), at
+                            ),
+                        }
+                    )
                 elif route.startswith("/api/artifact/"):
                     artifact = self.files.artifacts().get(route.removeprefix("/api/artifact/"))
                     if artifact is None:
@@ -519,6 +535,7 @@ class SharedDashboard:
                 ("/api/execution/{project}", ["GET", "HEAD"]),
                 ("/api/receipts/{project}", ["GET", "HEAD"]),
                 ("/api/receipt/{project}/{receipt}", ["GET", "HEAD"]),
+                ("/api/citations/{project}/{node}", ["GET", "HEAD"]),
                 ("/api/artifact/{artifact}", ["GET", "HEAD"]),
             ]
         ]
