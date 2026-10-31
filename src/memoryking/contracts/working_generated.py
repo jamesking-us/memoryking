@@ -92,6 +92,7 @@ class Resume(TypedDict):
     bindings: list[dict[str, Any]]
     max_output_tokens: int
     tokenizer: str
+    format: NotRequired[Literal["json", "text"]]
 
 class AssignWriter(TypedDict):
     project: str

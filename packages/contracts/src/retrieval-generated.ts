@@ -14,6 +14,7 @@ export interface Brief {
   consistency?: Record<string, unknown>;
   freshness?: "any" | "attested";
   dense?: DenseQuery;
+  format?: "json" | "text";
 }
 
 export interface Fetch {

@@ -32,6 +32,7 @@ from memoryking.domain.briefing import (
     term_window,
     terms,
 )
+from memoryking.domain.briefing_text import textualize
 from memoryking.domain.local import Decision, LocalError, Released
 from memoryking.domain.selectors import bindings
 
@@ -82,6 +83,7 @@ class Retrieval:
                     raw, diag, deps = query(self, who, args, decision, access_id)
                 elif action == "brief":
                     raw, diag, deps = self._brief(who, args, decision, access_id)
+                    raw, diag = self.textual(args, "brief", raw, diag)
                 else:
                     raw, diag, deps = self._fetch(who, args, decision, access_id)
                 diag["predecessor"] = predecessor
@@ -131,6 +133,26 @@ class Retrieval:
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, access_id)
+
+    def textual(
+        self, args: dict[str, Any], kind: str, raw: bytes, diag: dict[str, Any]
+    ) -> tuple[bytes, dict[str, Any]]:
+        """Render the packet as cited Markdown when the caller asked for text."""
+        if args.get("format") != "text":
+            return raw, diag
+        count, _ = counter(args["tokenizer"])
+        envelope = textualize(json.loads(raw), kind, count)
+        raw = canonical_bytes(envelope)
+        diag = {
+            **diag,
+            "format": "text",
+            "usage": {
+                **diag.get("usage", {}),
+                "output_tokens": envelope["usage"]["output_tokens"],
+                "serialized_bytes": len(raw),
+            },
+        }
+        return raw, diag
 
     def _make_room(self, who: dict[str, Any], incoming: int) -> int:
         """Evict the oldest retained artifacts at capacity, the caller's own first.

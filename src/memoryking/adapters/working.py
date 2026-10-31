@@ -564,6 +564,7 @@ class Working:
         if result["checkpoint"] is not None:
             deps.append({"kind": "checkpoint", "id": row["id"]})
         if retain:
+            raw, diag = self.r.textual(args, "resume", raw, diag)
             self.r._retain(who, args, receipt, raw, diag, deps, at)
         return raw, deps
 

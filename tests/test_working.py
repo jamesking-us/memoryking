@@ -557,6 +557,30 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
         self.save()
         self.assertEqual(self.resume()["status"], "ready")
 
+    def test_text_resume_reads_as_a_handover_note(self):
+        body = checkpoint()
+        body["failed_attempts"] = [
+            {
+                "action": "Increase every timeout",
+                "outcome": "Exceeded the deadline",
+                "do_not_repeat_when": "the total deadline is unchanged",
+            }
+        ]
+        saved = self.save(body)
+        packet = self.resume(format="text")
+        self.assertEqual(packet["format"], "text")
+        text = packet["text"]
+        self.assertTrue(text.startswith("# Resume: " + body["objective"]))
+        self.assertIn("## Where it stands", text)
+        self.assertIn(body["current_state"], text)
+        self.assertIn("## Next actions", text)
+        self.assertIn("1. " + body["next_actions"][0], text)
+        self.assertIn("## Do not repeat", text)
+        self.assertIn("Increase every timeout", text)
+        self.assertIn("## Blockers", text)
+        self.assertIn(saved["checkpoint"], text)
+        self.assertNotIn("checkpoint", {k for k in packet if k != "receipt"})
+
     def test_capacity_rejects_before_a_stream_becomes_unresumable(self):
         self.save()
         for number in range(32):

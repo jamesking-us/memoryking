@@ -99,6 +99,7 @@ export interface Resume {
   bindings: Array<Record<string, unknown>>;
   max_output_tokens: number;
   tokenizer: string;
+  format?: "json" | "text";
 }
 
 export interface AssignWriter {

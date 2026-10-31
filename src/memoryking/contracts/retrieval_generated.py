@@ -18,6 +18,7 @@ class Brief(TypedDict):
     consistency: NotRequired[dict[str, Any]]
     freshness: NotRequired[Literal["any", "attested"]]
     dense: NotRequired[DenseQuery]
+    format: NotRequired[Literal["json", "text"]]
 
 class Fetch(TypedDict):
     project: str
