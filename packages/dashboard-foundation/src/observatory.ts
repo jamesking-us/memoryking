@@ -136,7 +136,7 @@ export class Observatory {
     const form = e("form", "", "observatory-form");
     this.project = field(form, "Project", "", "text");
     this.project.required = true;
-    this.project.pattern = "[A-Za-z0-9_-]{1,96}";
+    this.project.pattern = "[A-Za-z0-9_\\-]{1,96}";
     const label = e("label", "View");
     this.view = e("select");
     this.view.setAttribute("aria-label", "View");
@@ -668,7 +668,7 @@ export class Observatory {
       "reviewed_in_dashboard",
     );
     reason.required = true;
-    reason.pattern = "[A-Za-z0-9_-]{1,96}";
+    reason.pattern = "[A-Za-z0-9_\\-]{1,96}";
     const breadth = field(
       form,
       "I reviewed the applicability breadth",
