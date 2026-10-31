@@ -6,6 +6,7 @@ import unittest
 import test_knowledge as knowledge
 import test_retrieval as retrieval
 
+from memoryking.adapters.retrieval import Retrieval
 from memoryking.domain.local import LocalError
 
 
@@ -42,6 +43,52 @@ class AtlasCases:
         self.assertEqual(result, replay)
         receipts = self.run_r("receipts", {"project": "p"})
         self.assertEqual(receipts["items"][0]["status"], "partial")
+
+    def test_citations_count_the_callers_briefings_but_not_atlas_pages(self):
+        claim = self.accepted()
+        first = self.atlas()
+        nodes = {n["id"]: n for n in first["nodes"]}
+        self.assertEqual(nodes[claim["revision"]]["citations"], 0)
+        self.assertEqual(nodes[self.obs["observation"]]["citations"], 0)
+        briefing = self.run_r("brief", retrieval.RetrievalTests.brief_args(self))
+        self.assertIn(briefing["status"], {"complete", "partial"})
+        self.atlas()  # looking is not citing
+        second = self.atlas()
+        nodes = {n["id"]: n for n in second["nodes"]}
+        self.assertEqual(nodes[claim["revision"]]["citations"], 1)
+        self.assertEqual(nodes[self.obs["observation"]]["citations"], 1)
+        trail = Retrieval(self.store).list_citations(
+            self.store._auth(self.owner, "read", "p", self.store.clock.utc_ms()),
+            "p",
+            claim["revision"],
+            self.store.clock.utc_ms(),
+        )
+        self.assertEqual([t["receipt"] for t in trail], [briefing["receipt"]])
+        self.assertEqual(trail[0]["dependency_kind"], "revision")
+        self.assertEqual(trail[0]["status"], briefing["status"])
+        reader = self.store.grant(self.owner, "reader", "p", ["read"])
+        # Receipts are private to the principal that holds them.
+        self.assertEqual({n["citations"] for n in self.atlas(reader)["nodes"]}, {0})
+        self.fails(
+            "invalid_request",
+            lambda: Retrieval(self.store).list_citations(
+                self.store._auth(self.owner, "read", "p", 0), "p", "bad id", 0
+            ),
+        )
+
+    def test_reviewer_sees_proposed_and_quarantined_claims_but_a_reader_does_not(self):
+        proposed = self.propose(self.body(text="proposed pear"), key="pear")
+        quarantined = self.propose(self.body(text="quarantined quince"), key="quince")
+        self.review(self.review(quarantined), decision="quarantine")
+        nodes = {n["id"]: n for n in self.atlas()["nodes"]}
+        self.assertEqual(nodes[proposed["revision"]]["state"], "proposed")
+        self.assertFalse(nodes[proposed["revision"]]["quarantined"])
+        self.assertEqual(nodes[quarantined["revision"]]["state"], "accepted")
+        self.assertTrue(nodes[quarantined["revision"]]["quarantined"])
+        reader = self.store.grant(self.owner, "reader", "p", ["read"])
+        shown = json.dumps(self.atlas(reader))
+        self.assertNotIn(proposed["revision"], shown)
+        self.assertNotIn("quince", shown)
 
     def test_hidden_claim_has_no_node_edge_label_count_or_focus_signal(self):
         secret = self.accepted(text="restricted pineapple", readers=["owner"])

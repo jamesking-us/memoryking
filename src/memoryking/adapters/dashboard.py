@@ -604,6 +604,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                 else:
                     raise LocalError("route_unavailable")
+            elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/citations/"):
+                from urllib.parse import unquote
+
+                from memoryking.adapters.local_store import identifier
+                from memoryking.adapters.retrieval import Retrieval
+
+                parts = self.path.split("/")
+                if len(parts) != 5:
+                    raise LocalError("invalid_request")
+                project = identifier(parts[3])
+                who = store._auth(value["credential"], "read", project, decision.evaluated_ms)
+                raw = canonical_bytes(
+                    {
+                        "node": unquote(parts[4]),
+                        "items": Retrieval(store).list_citations(
+                            who, project, unquote(parts[4]), decision.evaluated_ms
+                        ),
+                    }
+                )
             elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/artifact/"):
                 name = self.path.removeprefix("/api/artifact/")
                 entry = dashboard.files.artifacts().get(name)

@@ -44,7 +44,7 @@ Authoritative contracts:
 
 **Repository context.** Registration and snapshots are trusted-host operations. Git/dirty artifact identity and supported passive source projections inform dependency checks. No repository code is executed. Shallow or incomplete ancestry and unsupported coverage remain unknown rather than current.
 
-**Dashboard.** Task activity, criteria/history, current authorized evidence, force-directed graph/list, source impact, receipts, usage inspection, review and retention previews are implemented. Nodes and counts represent bounded visible results, not the whole corpus. Layout distance is not confidence. The crowned cybernetic elephant has an optional 1.8-second depth tilt, with a static fallback when reduced motion is enabled. The animation stops when hidden or offscreen. Gunmetal panels, subtle CSS textures and cyan accents are available in dark and light themes; assets are served locally. Ordinary use requires no development reports.
+**Dashboard.** Task activity, criteria/history, current authorized evidence, force-directed graph/list, source impact, receipts, usage inspection, review and retention previews are implemented. Nodes and counts represent bounded visible results, not the whole corpus. Layout distance is not confidence. In the memory graph, colour is the recorded authority of each node (observation, accepted, proposed, quarantined, rejected or deprecated, mandatory constraint, attestation, procedure, working state) and size grows with the number of the viewer's own retained receipts that cited the record; selecting a node lists those receipts and opens one in Retrieval history. A reviewer sees proposed and quarantined claims in the graph; a reader sees accepted ones only. On a phone the sidebar becomes a bar, cards stack and the graph shows its list unless the drawing is requested. The crowned cybernetic elephant has an optional 1.8-second depth tilt, with a static fallback when reduced motion is enabled. The animation stops when hidden or offscreen. Gunmetal panels, subtle CSS textures and cyan accents are available in dark and light themes; assets are served locally. Ordinary use requires no development reports.
 
 **Procedures and learning.** Procedures require separate review and activation. Outcomes and helpfulness are actor reports tied to evidence/receipts. Feedback ranking is disabled by default; an administrator may run a frozen bounded comparison and explicitly activate or roll back a configuration. It cannot add candidates, override policy or prove a causal quality improvement. There is no autonomous learner or scheduler.
 
@@ -77,7 +77,7 @@ The model installer command is `python -m memoryking.model_install --destination
 | Idempotency | Replay bodies retained for 30 days; expired/deleted results do not free a consumed identity. |
 | Generic jobs | 30-second leases, five attempts, bounded retry backoff, 1,000 unfinished jobs and four live leases per tenant. The local daemon completes `audit_probe` jobs itself between requests, so a default installation never needs a worker to keep capturing. |
 | Mandatory resolution | 256 candidate revisions/bindings and 65,536 atom-binding work units; overflow blocks. |
-| Atlas | Default 200 nodes/400 edges; maxima 500/1,500; 196,608-byte response; cursor expires after 60 seconds. Counts describe only the returned window. |
+| Atlas | Default 200 nodes/400 edges; maxima 500/1,500; 196,608-byte response; cursor expires after 60 seconds. Counts describe only the returned window. Each node carries `citations`, the number of the caller's retained briefings, fetches and reruns that depended on it; atlas pages themselves never count. A new citation changes the view, so an open cursor then needs a resync. |
 | Dense retrieval | Exact authorized scan capped at 10,000 eligible vectors and 256 candidates; insufficient index/frontier is explicit. |
 | Processing usage | Up to 100,000 retained attempts per tenant; unknown costs stay null, with known lower bounds. Attempts past their 30-day retention are pruned by `gc` and when the cap is reached. |
 | Experience | 10,000 immutable records; up to 256 latest visible records per listing; no unbounded pagination/compaction. |
@@ -122,6 +122,10 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 ### Dashboard timeline
 
 `GET /api/timeline/{project}` and `GET /api/timeline/{project}/{before}` on a signed-in session list the project's events newest first (captures, claims, reviews, checkpoints, handoffs, purges) with the principal that caused each, up to 100 per page; `next_before` pages further back. The Memory view's **Timeline** shows the same.
+
+### Dashboard receipt trail
+
+`GET /api/citations/{project}/{node}` on a signed-in session lists the session principal's retained receipts (briefings, fetches and reruns, newest first, up to 32) whose recorded dependencies include the node: an observation id, a claim revision or a checkpoint id, URL-encoded. Each item has the same fields as the receipts listing plus `dependency_kind`. A receipt the principal may no longer replay is omitted, exactly as in the receipts listing. The memory graph uses this route when a node is selected.
 
 ### Metrics
 

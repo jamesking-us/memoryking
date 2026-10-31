@@ -59,12 +59,35 @@ def query(
             edges.append({"id": canonical_hash(item), **item})
 
     attestation_count = 0
+    # A reviewer also sees proposed, rejected, deprecated and quarantined claims, in the
+    # same diagnostic mode the review queue uses; a plain reader sees accepted ones only.
+    try:
+        s._subject_auth(
+            s._token("credential", tenant=tenant, principal=who["principal"]),
+            "review",
+            args["project"],
+            at,
+        )
+        reviewer = True
+    except LocalError:
+        reviewer = False
     for constraints in (False, True):
-        result = k.query(who, scope, at, constraints=constraints, attestation_limit=33)
+        result = k.query(
+            who,
+            {**scope, "diagnostic": True} if reviewer and not constraints else scope,
+            at,
+            constraints=constraints,
+            attestation_limit=33,
+        )
         if result["status"] != "complete":
             limits.add("claim_resolution_incomplete")
         for item in result["items"]:
             ident, body = item["revision"], item["body"]
+            if "created_position" not in item:
+                # A claim whose selector the store cannot evaluate has no recorded
+                # position in this result; it is listed in the review queue instead.
+                limits.add("unsupported_selector_claims_omitted")
+                continue
             nodes[ident] = {
                 "id": ident,
                 "type": "claim",
@@ -73,6 +96,7 @@ def query(
                 "content_hash": item["body_hash"],
                 "family": item["family"],
                 "state": item["state"],
+                "quarantined": bool(item.get("quarantined", False)),
                 "applicability": item["applicability"],
                 "position": item["created_position"],
             }
@@ -209,6 +233,11 @@ def query(
                 },
             )
     limits.add("checkpoint_window")
+    # Size by citation: how many of the caller's own retained briefings, fetches and
+    # reruns depended on the record. Atlas pages are excluded, so looking never cites.
+    cited = retrieval.citations(who, args["project"], at)
+    for ident, node in nodes.items():
+        node["citations"] = cited.get(ident, 0)
     wanted_types = set(
         args.get(
             "types",

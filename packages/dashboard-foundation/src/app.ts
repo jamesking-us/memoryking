@@ -230,16 +230,35 @@ function label(value: string): string {
   return value.replaceAll("_", " ");
 }
 let snapshot: Snapshot | null = null;
-const observatory = new Observatory(get("observatory"), api, () =>
-  snapshot
-    ? {
-        csrf: snapshot.csrf,
-        tenant: snapshot.tenant,
-        principal: snapshot.principal,
-        incarnation: snapshot.incarnation,
-        authorization_epoch: snapshot.authorization_epoch,
-      }
-    : null,
+let pendingReceipt: string | null = null;
+/** Jump from a graph node to one of the receipts that used it, in Retrieval history. */
+function openReceipt(project: string, receipt: string): void {
+  const select = get<HTMLSelectElement>("receipt-project");
+  if (!Array.from(select.options).some((o) => o.value === project)) {
+    get("receipt-notice").textContent =
+      "That project is not in your readable list; reload the project picker.";
+    return;
+  }
+  select.value = project;
+  rememberProject(project);
+  pendingReceipt = receipt;
+  get("retrieval-lab").scrollIntoView();
+  get<HTMLFormElement>("receipt-form").requestSubmit();
+}
+const observatory = new Observatory(
+  get("observatory"),
+  api,
+  () =>
+    snapshot
+      ? {
+          csrf: snapshot.csrf,
+          tenant: snapshot.tenant,
+          principal: snapshot.principal,
+          incarnation: snapshot.incarnation,
+          authorization_epoch: snapshot.authorization_epoch,
+        }
+      : null,
+  openReceipt,
 );
 installEmblem(get<HTMLButtonElement>("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
@@ -731,6 +750,7 @@ get<HTMLFormElement>("receipt-form").addEventListener(
         : "No currently available receipts for this owner and project.";
       for (const item of items) {
         const button = el("button", "", "receipt-row");
+        button.dataset.receipt = item.receipt;
         button.append(
           el("strong", label(item.status)),
           el(
@@ -981,6 +1001,17 @@ get<HTMLFormElement>("receipt-form").addEventListener(
           }
         });
         get("receipt-list").append(button);
+      }
+      if (pendingReceipt) {
+        const wanted = pendingReceipt;
+        pendingReceipt = null;
+        const row = get("receipt-list").querySelector<HTMLButtonElement>(
+          `[data-receipt="${CSS.escape(wanted)}"]`,
+        );
+        if (row) row.click();
+        else
+          get("receipt-notice").textContent +=
+            " · the cited receipt is no longer retained for this account";
       }
     } catch {
       if (ticket !== receiptGeneration || context !== generation) return;
