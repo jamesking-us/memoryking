@@ -107,6 +107,18 @@ The bridge is a plain stdio MCP server, so any host that launches one works the 
 
 Hosts differ in how they surface tool descriptions and how many tools they tolerate; the lean profile is the safer default for a model-driven host. No host is a certified integration; test yours with `tools/stdio_demo.py`.
 
+## Capturing automatically
+
+MemoryKing never reads a conversation on its own, but it is easy to feed from the places where evidence appears. Every route below uses the ordinary authorized capture with a deterministic event id, so re-running a hook replays instead of duplicating, and all of them work whatever model drives the agent.
+
+- **From any model, on any host:** the `remember` tool in the lean profile, or `memory_capture` in the full one. This is the one path that needs no shell access.
+- **From a shell:** `memoryking --profile home capture --project demo --source git --event "commit-$(git rev-parse HEAD)" --text "$(git log -1 --format=%s)"`, or pipe text on stdin. `memoryking recall --project demo --query "retry deadline"` prints the cited Markdown briefing. Connection details also come from `MEMORYKING_PROFILE`, or `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL`, with `MEMORYKING_PROJECT`.
+- **From pytest:** `pytest -p memoryking.pytest_plugin` with those environment variables set records each failing test's id and report tail under source `pytest`. Without the variables it stays silent, and a capture error never fails the run.
+- **From git:** a `post-commit` hook that runs the capture command above records each commit as an observation.
+- **From Claude Code:** a `PostToolUse` hook on `Bash` that pipes the tool's output into `memoryking capture --source claude-code` when the command was a test or build. Codex and other hosts with shell hooks use the same command; hosts without hooks rely on the model calling `remember`.
+
+Hook captures record the observation time to the day unless `--observed-ms` is given, so a rerun sends identical bytes and replays; the store's own event log keeps the exact time of each capture. Hook captures are evidence like any other: a briefing cites them with their source, and a reviewer can promote or quarantine what they contain.
+
 ## What the host must do
 
 1. Supply accurate project/task identity and applicability bindings.
