@@ -239,7 +239,8 @@ class Working:
         scope = self._scope(who, args)
         stream = self._stream(who, args)
         current = stream["revision"] if stream is not None else 0
-        if args["expected_revision"] != current:
+        # None opts out of compare-and-set: the caller accepts the current revision.
+        if args["expected_revision"] is not None and args["expected_revision"] != current:
             raise LocalError("checkpoint_revision_conflict")
         total, size = self.db.execute(
             "SELECT count(*),coalesce(sum(length(CAST(body AS BLOB))),0) FROM checkpoints WHERE tenant=?",

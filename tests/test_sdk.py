@@ -204,6 +204,55 @@ class SDKTests(unittest.TestCase):
         )
         self.assertEqual(explicit["usage"]["max_output_tokens"], 2000)
 
+    def test_minimal_checkpoint_saves_in_one_call_and_resume_names_the_gaps(self):
+        saved = self.client.tool(
+            "memory_checkpoint",
+            {
+                "action": "save",
+                "args": {
+                    "task": "quick",
+                    "checkpoint": {
+                        "objective": "Finish the retry fix",
+                        "current_state": "Patch drafted; tests not run",
+                        "next_actions": ["Run the regression"],
+                    },
+                },
+            },
+        )
+        self.assertEqual(saved["revision"], 1)
+        # A second minimal save without expected_revision accepts the current revision.
+        again = self.client.tool(
+            "memory_checkpoint",
+            {
+                "action": "save",
+                "args": {
+                    "task": "quick",
+                    "checkpoint": {
+                        "objective": "Finish the retry fix",
+                        "current_state": "Regression passed",
+                    },
+                },
+            },
+        )
+        self.assertEqual(again["revision"], 2)
+        resumed = self.client.tool(
+            "memory_resume",
+            {"action": "resume", "args": {"task": "quick", "checkpoint": again["checkpoint"]}},
+        )
+        state = resumed["checkpoint"]["state"]
+        gaps = resumed.get("recovery_gaps") or state["capture"]["gaps"]
+        self.assertIn("defaulted:findings", gaps)
+        self.assertIn("defaulted:repository", gaps)
+        self.assertIn("defaulted:next_actions", gaps)
+        self.assertEqual(state["objective"], "Finish the retry fix")
+        self.assertEqual(state["current_state"], "Regression passed")
+        with self.assertRaises(LocalError) as caught:
+            self.client.tool(
+                "memory_checkpoint",
+                {"action": "save", "args": {"task": "quick", "checkpoint": {"objective": "x"}}},
+            )
+        self.assertEqual("invalid_tool_arguments", caught.exception.code)
+
     def test_bridge_binds_incarnation_when_a_tool_call_omits_it(self):
         result = self.client.tool(
             "memory_brief",

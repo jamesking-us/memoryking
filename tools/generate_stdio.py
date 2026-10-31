@@ -8,6 +8,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 DEFAULTED = ("project", "bindings", "max_output_tokens", "tokenizer")
+# Per tool, further fields the bridge fills: a checkpoint saves from a minimal body.
+TOOL_DEFAULTED = {
+    "memory_checkpoint": ("run", "readers", "expected_revision", "checkpoint_sections"),
+    "memory_resume": ("run",),
+}
 
 DESCRIPTIONS = {
     "memory_status": (
@@ -61,7 +66,7 @@ DESCRIPTIONS = {
 }
 
 
-def relax(node: dict, defs: dict, seen: set | None = None) -> None:
+def relax(node: dict, defs: dict, extra: tuple = (), seen: set | None = None) -> None:
     """Make fields the bridge can default optional, following $ref and a nested brief."""
     seen = seen if seen is not None else set()
     ref = node.get("$ref")
@@ -70,16 +75,29 @@ def relax(node: dict, defs: dict, seen: set | None = None) -> None:
         if name in seen:
             return
         seen.add(name)
-        relax(defs[name], defs, seen)
+        relax(defs[name], defs, extra, seen)
         return
     required = node.get("required")
     if isinstance(required, list):
-        for field in DEFAULTED:
+        for field in DEFAULTED + extra:
             if field in required:
                 required.remove(field)
     nested = node.get("properties", {}).get("brief")
     if isinstance(nested, dict):
-        relax(nested, defs, seen)
+        relax(nested, defs, extra, seen)
+    if "checkpoint_sections" in extra:
+        checkpoint = node.get("properties", {}).get("checkpoint")
+        if isinstance(checkpoint, dict):
+            relax_checkpoint(checkpoint, defs)
+
+
+def relax_checkpoint(node: dict, defs: dict) -> None:
+    """Only objective and current_state stay required; the bridge completes the rest."""
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        node = defs[ref.removeprefix("#/$defs/")]
+    if isinstance(node.get("required"), list):
+        node["required"] = [f for f in node["required"] if f in ("objective", "current_state")]
 
 
 def generate():
@@ -146,10 +164,12 @@ def generate():
                 # one, and a stale value is rejected as history_changed like everywhere else.
                 # Likewise version, project, bindings, token budget and tokenizer default
                 # to the binding and the installed tokenizer when omitted.
-                for field in ("incarnation", "version"):
+                # A missing retry key is minted by the bridge; callers who need an exact
+                # replay on retry still pass their own.
+                for field in ("incarnation", "version", "key"):
                     if field in branch.get("required", []):
                         branch["required"].remove(field)
-                relax(branch["properties"].get("args", {}), defs)
+                relax(branch["properties"].get("args", {}), defs, TOOL_DEFAULTED.get(name, ()))
                 branches.append(branch)
             selected = {"type": "object", "oneOf": branches, "$defs": defs}
             tools.append(
