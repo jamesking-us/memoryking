@@ -662,6 +662,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `profile_config_invalid` | The profiles file must hold `[profiles.NAME]` tables with absolute store and control paths. |
 | `profile_unknown` | No profile with that name; run `memoryking profile list` or `profile add`. |
 
+## project
+
+| Code | What to do |
+| --- | --- |
+| `project_required` | Pass `--project NAME` or set `MEMORYKING_PROJECT`. |
+
 ## provider
 
 | Code | What to do |

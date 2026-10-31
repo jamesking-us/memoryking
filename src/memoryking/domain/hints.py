@@ -72,6 +72,7 @@ HINTS: dict[str, str] = {
     "control_required": "Pass `--control PATH` or use `--profile NAME`.",
     "socket_required": "Pass `--socket PATH` or use `--profile NAME`.",
     "credential_required_path": "Pass `--credential FILE` or use `--profile NAME`.",
+    "project_required": "Pass `--project NAME` or set `MEMORYKING_PROJECT`.",
     # Capacity and timing
     "queue_full": "The tenant has 1,000 unfinished jobs; the daemon drains them between requests, so retry shortly or run a worker.",
     "concurrency_limit": "Four job leases are already live; finish or let them expire before claiming more.",
