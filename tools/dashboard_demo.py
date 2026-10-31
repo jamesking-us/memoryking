@@ -24,6 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=24, choices=range(1, 241), metavar="1..240")
+    parser.add_argument(
+        "--dashboard-port", type=int, default=0, help="Loopback port; 0 picks a free one"
+    )
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="mk-dashboard-demo-") as directory:
         base = Path(directory)
@@ -258,7 +261,7 @@ def main():
                     "tokenizer": "cl100k_base",
                 },
             )
-            web = Dashboard(store, ROOT)
+            web = Dashboard(store, ROOT, args.dashboard_port)
             web.start()
 
             def bootstrap():

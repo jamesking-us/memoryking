@@ -41,7 +41,9 @@ flowchart LR
 | Keep context manageable | Focused briefings with explicit output budgets and links back to evidence. |
 | Avoid stale advice | Repository identity, applicability rules and freshness checks for guidance tied to code. |
 | Recover safely | Records of uncertain operations and history-aware backup/restore, so a restart does not silently authorize repeating an action. |
-| Understand what happened | A dashboard with task progress, evidence, history, a force-directed memory graph and retrieval receipts. |
+| Understand what happened | A dashboard with capacity, task progress, a per-project timeline, a memory graph, on-demand briefings with their receipts, and retrieval history. |
+| Fit any agent host | A lean five-tool MCP profile with defaults for Claude Code, Codex, Grok or any stdio host; cited Markdown briefings; capture from the CLI, pytest or git hooks. |
+| Know what to do when something is refused | Every error reply carries a one-line hint, and a [generated page](docs/error-codes.md) lists them all. |
 
 The core runs locally **without a model account, GPU or paid API**. A shared PostgreSQL profile supports multiple agents and tenants. Optional local embeddings add semantic search.
 
@@ -60,18 +62,19 @@ python3.12 -m venv .venv
 
 The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
 
-For a lasting installation and the browser dashboard, follow the [getting started guide](docs/getting-started.md). If you are evaluating the idea rather than installing software, start with the [agent workflows](docs/agent-guide.md).
+For a lasting installation and the browser dashboard, follow the [getting started guide](docs/getting-started.md): name your store once with `memoryking profile add`, then `status`, `doctor`, `dashboard open` and `credential issue` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](docs/agent-guide.md).
 
 ## See what your agents are doing
 
-![MemoryKing dashboard showing a synthetic task, pending criteria and reported blockers](docs/images/dashboard.jpg)
+![MemoryKing dashboard overview showing capacity for each bounded resource, a project picker with record counts, and a synthetic task with pending criteria](docs/images/dashboard.jpg)
 
-*Dashboard overview with synthetic example data. Progress reflects saved agent reports and evidence.*
+*Dashboard overview with synthetic example data: capacity first, then the project's task activity. Progress reflects saved agent reports and evidence.*
 
-The dashboard helps you inspect recorded work without reading a long chat transcript:
+The dashboard helps you inspect recorded work without reading a long chat transcript. Projects you can read are listed with their record counts; pick one and every view follows it.
 
+- **Overview:** capacity use for each bounded resource, with a warning from 80 percent.
 - **Task activity:** saved goals, completed and pending criteria, blockers and observed heartbeats.
-- **Memory:** an interactive graph and list of accessible memories and evidence.
+- **Memory:** ask for the briefing an agent would receive and verify its replay, browse the project timeline, review proposed knowledge, preview a purge, and explore an interactive graph of memories and evidence.
 - **History and review:** inspect changes, review proposals and preview affected content.
 - **Retrieval history:** see the exact briefing returned, its sources and recorded usage.
 - **Appearance:** textured dark and light themes, a crowned cybernetic elephant, and an optional depth-tilt animation that respects reduced motion.
@@ -93,10 +96,11 @@ See [deployment and configuration](docs/deployment.md) for commands, prerequisit
 | Guide | What you will learn |
 | --- | --- |
 | [Getting started](docs/getting-started.md) | Install, run the demo, create a store and open the dashboard. |
-| [Using MemoryKing with agents](docs/agent-guide.md) | Capture → brief → checkpoint → resume → handoff, Python and MCP integration. |
+| [Using MemoryKing with agents](docs/agent-guide.md) | Capture → brief → checkpoint → resume → handoff; Python, lean and full MCP profiles for any host, and automatic capture from hooks. |
 | [Deployment and configuration](docs/deployment.md) | Local/shared/Docker setups, credentials, configuration, upgrades and recovery. |
 | [How it is designed](docs/design.md) | Storage, knowledge review, retrieval, permissions and recovery guarantees. |
-| [Feature and API reference](docs/reference.md) | Interfaces, optional capabilities, limits, migration and troubleshooting. |
+| [Feature and API reference](docs/reference.md) | Interfaces, optional capabilities, limits and capacity, metrics, migration and troubleshooting. |
+| [Error codes](docs/error-codes.md) | Every error code with the next move, generated from the service's own table. |
 | [Contributing](CONTRIBUTING.md) | Build, test and maintain the project locally. |
 
 ## Current status
