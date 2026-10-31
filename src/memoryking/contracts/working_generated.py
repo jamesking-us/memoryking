@@ -80,7 +80,7 @@ class Save(TypedDict):
     project: str
     task: str
     run: str | None
-    expected_revision: int
+    expected_revision: int | None
     readers: list[str]
     checkpoint: Checkpoint
 

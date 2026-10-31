@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+import time
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,7 @@ from memoryking.contracts.validation import (
     validate_retrieval,
     validate_working,
 )
+from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError
 
 CATALOG = json.loads(Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text())
@@ -27,6 +30,7 @@ TOOL_VALIDATORS = {
     item["name"]: Draft202012Validator(item["inputSchema"]) for item in CATALOG["tools"]
 }
 DEFAULT_BUDGET = 6000
+MUTATION_TOOLS = {"memory_checkpoint", "memory_handoff", "memory_feedback"}
 
 
 def _resolve(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
@@ -220,6 +224,10 @@ class LocalClient:
                 arguments["request"] = {"version": 1, "project": self.project, **request}
             return arguments
         arguments = {"version": 1, "incarnation": self.binding[-1], **arguments}
+        if name in MUTATION_TOOLS and "key" not in arguments:
+            # Without a caller-supplied key there is nothing to replay, so a fresh key
+            # keeps the call valid; supply a stable key to make retries idempotent.
+            arguments["key"] = "auto-" + secrets.token_hex(12)
         args = arguments.get("args")
         if isinstance(args, dict):
             arguments["args"] = self._default_args(name, arguments.get("action"), args)
@@ -228,6 +236,16 @@ class LocalClient:
     def _default_args(self, name: str, action: Any, args: dict[str, Any]) -> dict[str, Any]:
         args = {**args}
         fields = TOOL_ARGS.get((name, action), set())
+        if name == "memory_checkpoint" and action == "save":
+            # Progressive checkpoints: a minimal body saves in one call, the gaps are
+            # recorded, and a missing expected_revision accepts the current one.
+            args.setdefault("run", None)
+            args.setdefault("readers", [self.binding[2]])
+            args.setdefault("expected_revision", None)
+            if isinstance(args.get("checkpoint"), dict):
+                args["checkpoint"] = complete(args["checkpoint"], int(time.time() * 1000))
+        if name == "memory_resume" and action == "resume":
+            args.setdefault("run", None)
         if "project" in fields:
             args.setdefault("project", self.project)
         if "bindings" in fields:

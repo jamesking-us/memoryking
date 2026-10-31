@@ -53,3 +53,59 @@ def operation_transition(current: str, target: str, reconciled: bool) -> None:
         raise LocalError("operation_reconciliation_required")
     if reconciled and target not in {"succeeded", "failed"}:
         raise LocalError("operation_transition_invalid")
+
+
+MINIMAL_SECTIONS = ("objective", "current_state")
+DEFAULT_SECTIONS: dict[str, Any] = {
+    "acceptance": [],
+    "hard_constraints": [],
+    "findings": [],
+    "failed_attempts": [],
+    "verification": [],
+    "blockers": [],
+    "next_actions": [],
+    "references": [],
+    "operation_ids": [],
+}
+
+
+def complete(body: Any, observed_ms: int) -> dict[str, Any]:
+    """Fill a partial checkpoint so it can be saved in one call.
+
+    `objective` and `current_state` must be supplied. Every other section defaults to
+    empty, the repository to "none recorded", and each defaulted section is listed in
+    `capture.gaps` as `defaulted:<section>` so a resume states what was never written
+    rather than presenting an empty list as a finding of nothing.
+    """
+    if not isinstance(body, dict) or any(
+        not isinstance(body.get(field), str) or not body[field] for field in MINIMAL_SECTIONS
+    ):
+        raise LocalError("invalid_checkpoint")
+    completed = dict(body)
+    gaps: list[str] = []
+    for section, default in DEFAULT_SECTIONS.items():
+        if section not in completed:
+            completed[section] = list(default)
+            gaps.append("defaulted:" + section)
+    if "repository" not in completed:
+        completed["repository"] = {
+            "repository": None,
+            "base_commit": None,
+            "current_commit": None,
+            "dirty": False,
+            "artifacts": [],
+        }
+        gaps.append("defaulted:repository")
+    capture = completed.get("capture")
+    if not isinstance(capture, dict):
+        capture = {"last_event": None, "observed_ms": observed_ms, "gaps": []}
+        gaps.append("defaulted:capture")
+    else:
+        capture = dict(capture)
+        capture.setdefault("last_event", None)
+        capture.setdefault("observed_ms", observed_ms)
+        capture.setdefault("gaps", [])
+    existing = capture["gaps"] if isinstance(capture["gaps"], list) else []
+    capture["gaps"] = list(existing) + [g for g in gaps if g not in existing]
+    completed["capture"] = capture
+    return completed
