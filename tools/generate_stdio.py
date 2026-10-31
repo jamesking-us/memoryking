@@ -2,6 +2,7 @@
 
 import copy
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -191,7 +192,12 @@ def generate():
         )
         + "\n"
     ).encode()
+    sys.path.insert(0, str(ROOT / "src"))
+    from memoryking import lean
+
+    lean_raw = (json.dumps(lean.CATALOG, indent=2) + "\n").encode()
     return {
         ROOT / "contracts/stdio.tools.json": raw,
         ROOT / "src/memoryking/adapters/stdio.tools.json": raw,
+        ROOT / "contracts/stdio.tools.lean.json": lean_raw,
     }

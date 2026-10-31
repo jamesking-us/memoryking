@@ -253,6 +253,93 @@ class SDKTests(unittest.TestCase):
             )
         self.assertEqual("invalid_tool_arguments", caught.exception.code)
 
+    def test_lean_profile_round_trip_through_five_flat_tools(self):
+        from memoryking import lean
+        from memoryking.adapters.stdio import LEAN_VALIDATORS
+
+        self.assertEqual(
+            [t["name"] for t in lean.TOOLS],
+            ["remember", "recall", "save_progress", "resume", "hand_off"],
+        )
+        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 8192)
+        for tool in lean.TOOLS:
+            self.assertNotIn("oneOf", json.dumps(tool["inputSchema"]))
+        first = lean.call(
+            self.client,
+            "remember",
+            {"text": "retry backoff exceeded the deadline", "source": "pytest"},
+        )
+        again = lean.call(
+            self.client,
+            "remember",
+            {"text": "retry backoff exceeded the deadline", "source": "pytest"},
+        )
+        self.assertEqual(first, again)
+        brief = lean.call(self.client, "recall", {"query": "deadline"})
+        self.assertEqual(brief["format"], "text")
+        self.assertIn("retry backoff exceeded the deadline", brief["text"])
+        saved = lean.call(
+            self.client,
+            "save_progress",
+            {
+                "task": "lean-task",
+                "objective": "Fix the retry deadline",
+                "current_state": "Investigating",
+                "next_actions": ["Run the regression"],
+                "failed_attempts": [{"action": "Raise every timeout", "outcome": "Still failed"}],
+                "blockers": ["Need a full regression result"],
+                "share_with": ["reviewer"],
+            },
+        )
+        self.assertEqual(saved["revision"], 1)
+        resumed = lean.call(self.client, "resume", {"task": "lean-task"})
+        self.assertEqual(resumed["format"], "text")
+        self.assertIn("# Resume: Fix the retry deadline", resumed["text"])
+        self.assertIn("## Do not repeat", resumed["text"])
+        self.assertIn("Need a full regression result", resumed["text"])
+        self.assertIn("defaulted:references", resumed["text"])
+        self.store.grant(self.owner, "reviewer", "p", ["read"])
+        handed = lean.call(self.client, "hand_off", {"task": "lean-task", "to": "reviewer"})
+        self.assertEqual(handed["status"], "prepared")
+        self.assertTrue(LEAN_VALIDATORS["recall"].is_valid({"query": "x"}))
+        self.assertFalse(LEAN_VALIDATORS["recall"].is_valid({"query": "x", "extra": 1}))
+
+    def test_lean_bridge_lists_five_tools_over_stdio(self):
+        frames = [
+            initialize(),
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            rpc(2, "tools/list"),
+            rpc(
+                3, "tools/call", {"name": "remember", "arguments": {"text": "from the lean bridge"}}
+            ),
+            rpc(4, "tools/call", {"name": "recall", "arguments": {"query": "lean bridge"}}),
+        ]
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(self.credential),
+                "--project",
+                "p",
+                "--profile",
+                "lean",
+            ],
+            input=b"".join(canonical_bytes(frame) + b"\n" for frame in frames),
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        replies = [json.loads(line) for line in run.stdout.splitlines()]
+        listed = next(r for r in replies if r.get("id") == 2)["result"]["tools"]
+        self.assertEqual(len(listed), 5)
+        recalled = next(r for r in replies if r.get("id") == 4)["result"]
+        self.assertFalse(recalled["isError"])
+        self.assertIn("from the lean bridge", json.loads(recalled["content"][0]["text"])["text"])
+
     def test_bridge_binds_incarnation_when_a_tool_call_omits_it(self):
         result = self.client.tool(
             "memory_brief",

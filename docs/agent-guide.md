@@ -93,6 +93,20 @@ The bridge fills what the session already knows, so a minimal call works: `versi
 
 The shared profile also exposes authenticated Streamable HTTP MCP at `/v1/tenants/{tenant}/projects/{project}/mcp`. Configure the tenant/project URL and bearer credential according to your host's supported transport; see [deployment](deployment.md).
 
+### Lean profile for any host
+
+Add `--profile lean` to the bridge command and the host sees five flat tools instead of eight schema-heavy ones: `remember`, `recall`, `save_progress`, `resume` and `hand_off`. Their catalog is under 8 KB with no `oneOf`, every call has defaults, briefings and resumes come back as cited Markdown, and each tool maps onto the full profile through the same client, so authorization, receipts and idempotency are unchanged. The catalog is in [`contracts/stdio.tools.lean.json`](../contracts/stdio.tools.lean.json). Use the full profile when a program, not a model, drives the tools.
+
+The bridge is a plain stdio MCP server, so any host that launches one works the same way. Where the configuration lives differs by host:
+
+| Host | Where to configure | Shape |
+| --- | --- | --- |
+| Claude Code | `claude mcp add memoryking -- /absolute/path/.venv/bin/python -m memoryking.adapters.stdio --socket ... --credential ... --project demo --profile lean`, or the `mcpServers` block in its settings. | command and args |
+| Codex CLI | `~/.codex/config.toml`: `[mcp_servers.memoryking]` with `command = "/absolute/path/.venv/bin/python"` and `args = ["-m", "memoryking.adapters.stdio", "--socket", "...", "--credential", "...", "--project", "demo", "--profile", "lean"]`. | command and args |
+| Grok and other hosts | The host's stdio MCP server setting; supply the same command and args. | command and args |
+
+Hosts differ in how they surface tool descriptions and how many tools they tolerate; the lean profile is the safer default for a model-driven host. No host is a certified integration; test yours with `tools/stdio_demo.py`.
+
 ## What the host must do
 
 1. Supply accurate project/task identity and applicability bindings.
