@@ -277,6 +277,32 @@ def main() -> int:
     opener.add_argument(
         "--print-only", action="store_true", help="Print the sign-in link instead of opening it"
     )
+    cap = commands.add_parser("capture", help="Save one observation from text or stdin")
+    cap.add_argument("--socket", type=Path)
+    cap.add_argument("--credential", type=Path)
+    cap.add_argument("--project", required=True)
+    cap.add_argument("--text", help="The observation; omit to read it from stdin")
+    cap.add_argument("--source", default="cli", help="Where it came from, e.g. git or pytest")
+    cap.add_argument("--event", help="Stable event id so a rerun replays; default: a text hash")
+    cap.add_argument(
+        "--readers", help="Comma-separated principals; default everyone in the project"
+    )
+    cap.add_argument(
+        "--classification", default="internal", choices=("public", "internal", "restricted")
+    )
+    cap.add_argument(
+        "--observed-ms",
+        type=int,
+        help="Observation time in Unix ms; default is today to the day so a rerun replays",
+    )
+    rec = commands.add_parser("recall", help="Print a cited Markdown briefing for a query")
+    rec.add_argument("--socket", type=Path)
+    rec.add_argument("--credential", type=Path)
+    rec.add_argument("--project", required=True)
+    rec.add_argument("--query", required=True)
+    rec.add_argument("--budget", type=int, default=6000)
+    rec.add_argument("--task")
+    rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     rpc = commands.add_parser(
         "request", help="Read a versioned operation/args JSON object from stdin"
     )
@@ -316,7 +342,9 @@ def main() -> int:
                         print(f"  {field} = {value}")
             return 0
         profiles.apply(args, args.profile, args.config)
-        optional = {"socket", "credential"} if args.command == "doctor" else set()
+        optional = (
+            {"socket", "credential"} if args.command in {"doctor", "capture", "recall"} else set()
+        )
         for field in ("store", "control", "socket", "credential"):
             if hasattr(args, field) and getattr(args, field) is None and field not in optional:
                 raise LocalError(field + "_required")
@@ -341,6 +369,38 @@ def main() -> int:
             )
             atomic(args.output, json.dumps(result).encode())
             print(json.dumps({"bootstrap_file": str(args.output), "url": result["url"]}))
+        elif args.command == "capture":
+            from memoryking import hooks
+
+            text = args.text if args.text is not None else sys.stdin.read()
+            result = hooks.capture(
+                text,
+                source=args.source,
+                event=args.event,
+                readers=args.readers.split(",") if args.readers else None,
+                classification=args.classification,
+                observed_ms=args.observed_ms,
+                socket=args.socket,
+                credential=args.credential,
+                project=args.project,
+            )
+            print(json.dumps({k: result[k] for k in ("observation", "position") if k in result}))
+        elif args.command == "recall":
+            from memoryking import hooks
+
+            packet = hooks.recall(
+                args.query,
+                budget=args.budget,
+                text=not args.json,
+                task=args.task,
+                socket=args.socket,
+                credential=args.credential,
+                project=args.project,
+            )
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(packet) + b"\n")
+            else:
+                print(packet["text"], end="")
         elif args.command == "doctor":
             findings = doctor(args.store, args.control, args.socket, args.credential)
             width = max(len(name) for _, name, _ in findings)

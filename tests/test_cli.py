@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from memoryking import __version__
 from memoryking.__main__ import doctor, duration_ms, render_grants, render_status
@@ -273,3 +274,122 @@ class ProfileTests(OperatorCommandTests):
         self.config.chmod(0o600)
         with self.assertRaises(LocalError):
             profiles.load(self.config)
+
+
+class CaptureCommandTests(OperatorCommandTests):
+    def test_capture_and_recall_through_the_cli_and_hooks(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        out = json.loads(
+            self.cli(
+                "capture",
+                "--project",
+                "demo",
+                "--source",
+                "git",
+                "--event",
+                "commit-abc",
+                "--text",
+                "Commit abc fixed the retry deadline",
+                *common,
+            )
+        )
+        self.assertIn("observation", out)
+        again = json.loads(
+            self.cli(
+                "capture",
+                "--project",
+                "demo",
+                "--source",
+                "git",
+                "--event",
+                "commit-abc",
+                "--text",
+                "Commit abc fixed the retry deadline",
+                *common,
+            )
+        )
+        self.assertEqual(out, again)
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking",
+                "capture",
+                "--project",
+                "demo",
+                "--source",
+                "stdin",
+                *common,
+            ],
+            input="A note piped from stdin about the deadline",
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        text = self.cli("recall", "--project", "demo", "--query", "deadline", *common)
+        self.assertTrue(text.startswith("# Briefing: deadline"))
+        self.assertIn("fixed the retry deadline", text)
+        self.assertIn("piped from stdin", text)
+        packet = json.loads(
+            self.cli("recall", "--project", "demo", "--query", "deadline", "--json", *common)
+        )
+        self.assertIn("guidance", packet)
+        # Environment-driven connection, as hooks use it.
+        env = {
+            **os.environ,
+            "MEMORYKING_SOCKET": str(self.server.path),
+            "MEMORYKING_CREDENTIAL": str(self.credential),
+            "MEMORYKING_PROJECT": "demo",
+        }
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking",
+                "capture",
+                "--project",
+                "demo",
+                "--text",
+                "from env",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_pytest_plugin_records_failures_only_when_configured(self):
+        from memoryking import pytest_plugin
+
+        class Report:
+            nodeid = "tests/test_x.py::test_y"
+            when = "call"
+            failed = True
+            longreprtext = "assert 1 == 2\nAssertionError"
+
+        with patch.dict(os.environ, {"MEMORYKING_PROJECT": ""}, clear=False):
+            self.assertIsNone(pytest_plugin.record_failure(Report()))
+        env = {
+            "MEMORYKING_SOCKET": str(self.server.path),
+            "MEMORYKING_CREDENTIAL": str(self.credential),
+            "MEMORYKING_PROJECT": "demo",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            first = pytest_plugin.record_failure(Report())
+            self.assertIn("observation", first)
+            self.assertEqual(first, pytest_plugin.record_failure(Report()))
+            passed = Report()
+            passed.failed = False
+            self.assertIsNone(pytest_plugin.record_failure(passed))
+        text = self.cli(
+            "recall",
+            "--project",
+            "demo",
+            "--query",
+            "AssertionError",
+            "--socket",
+            str(self.server.path),
+            "--credential",
+            str(self.credential),
+        )
+        self.assertIn("pytest call failed: tests/test_x.py::test_y", text)
