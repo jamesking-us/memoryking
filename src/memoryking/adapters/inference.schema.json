@@ -189,7 +189,7 @@
           "items": {
             "$ref": "#/$defs/Message"
           },
-          "maxItems": 32,
+          "maxItems": 128,
           "minItems": 1
         },
         "state_handles": {

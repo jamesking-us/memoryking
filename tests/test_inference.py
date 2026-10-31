@@ -182,7 +182,7 @@ class InferenceTests(unittest.TestCase):
                 modified["binding"]["context_epoch"] += 1
             self.fails(
                 "inference_permit_mismatch",
-                lambda: self.call("consume", {**modified, "permit": permit}),
+                lambda modified=modified: self.call("consume", {**modified, "permit": permit}),
             )
         other = self.store.grant(self.owner, "other", "p", ["read", "inference"])
         fresh = copy.deepcopy(args)

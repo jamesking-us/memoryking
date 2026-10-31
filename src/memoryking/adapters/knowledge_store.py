@@ -747,7 +747,7 @@ class Knowledge:
 
             item["code_validation"] = [
                 proof
-                for b, match in zip(points, matches)
+                for b, match in zip(points, matches, strict=True)
                 if match == "true"
                 and (proof := Repository(self.s).proof(who, row, b, at)) is not None
             ]

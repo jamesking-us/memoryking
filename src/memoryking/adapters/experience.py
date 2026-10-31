@@ -333,7 +333,7 @@ class Experience:
             elif any(m != "true" for m in matches):
                 reason = "applicability_or_validation_unavailable"
             if reason is None:
-                for other, obody, ostate, oq, oa, _, om in values:
+                for other, _obody, ostate, _oq, oa, _, om in values:
                     if other["id"] == row["id"] or other["family"] != row["family"]:
                         continue
                     # Hidden/quarantined disagreement never becomes a clean active procedure.

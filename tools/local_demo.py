@@ -81,8 +81,11 @@ def main():
             fetched = rpc("read", {"project": "demo", "observation": item["handle"]})
             assert fetched["items"][0]["text"] == capture["request"]["text"]
             checks.append("authorized_receipt_and_evidence")
+            # The daemon drains audit jobs itself between requests; an explicit worker may
+            # still claim one that is pending.
             lease = rpc("claim", {"project": "demo"})["job"]
-            rpc("finish", {"project": "demo", "lease": lease["lease"], "outcome": "complete"})
+            if lease is not None:
+                rpc("finish", {"project": "demo", "lease": lease["lease"], "outcome": "complete"})
             assert rpc("status", {"project": "demo", "watermark": item["watermark"]})["satisfied"]
             checks.append("fenced_job_and_contiguous_frontier")
             delegated = control / "reader.credential"

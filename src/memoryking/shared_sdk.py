@@ -32,7 +32,9 @@ class SharedClient(LocalClient):
         *,
         ca_file: Path | None = None,
         loopback_http: bool = False,
+        namespace: str = "sdk",
     ):
+        self.namespace = namespace
         parsed = urllib.parse.urlsplit(url)
         if (
             parsed.username

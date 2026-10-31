@@ -68,9 +68,32 @@ class PostgresDatabaseTests(unittest.TestCase):
         with self.connection("mk_worker") as worker:
             with worker.transaction():
                 worker.execute("SELECT set_config('memoryking.tenant','alpha',true)")
-                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
-                    with worker.transaction():
-                        worker.execute("DELETE FROM grants")
+                for statement in (
+                    "DELETE FROM grants",
+                    "UPDATE tenant_meta SET value='0' WHERE key='commit_serial'",
+                    "DELETE FROM tenant_meta",
+                    "DELETE FROM receipts",
+                    "UPDATE receipts SET principal='other'",
+                ):
+                    with self.assertRaises(psycopg.errors.InsufficientPrivilege, msg=statement):
+                        with worker.transaction():
+                            worker.execute(statement)
+                # The owner-run function is the only counter path, bound to the session tenant.
+                before = worker.execute(
+                    "SELECT value FROM tenant_meta WHERE tenant='alpha' AND key='commit_serial'"
+                ).fetchone()[0]
+                advanced = worker.execute(
+                    "SELECT memoryking.next_commit_serial('alpha', 9007199254740991)"
+                ).fetchone()[0]
+                self.assertEqual(int(before) + 1, advanced)
+                self.assertIsNone(
+                    worker.execute(
+                        "SELECT memoryking.next_commit_serial('beta', 9007199254740991)"
+                    ).fetchone()[0]
+                )
+        with self.connection("mk_backup") as backup:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                backup.execute("SELECT memoryking.next_commit_serial('alpha', 9007199254740991)")
         with self.connection("mk_backup") as backup:
             self.assertEqual(
                 [("alpha",), ("beta",)],

@@ -25,6 +25,10 @@
             "project": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
             }
           },
           "required": [
@@ -3165,7 +3169,7 @@
               "items": {
                 "$ref": "#/$defs/Inference/$defs/Message"
               },
-              "maxItems": 32,
+              "maxItems": 128,
               "minItems": 1
             },
             "state_handles": {

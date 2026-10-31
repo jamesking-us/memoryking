@@ -57,7 +57,7 @@ Use a scoped agent credential for real integrations; the owner credential is for
 
 Client methods include `capture`, `retrieval`, `working`, `handoff`, `repository`, `embedding`, `processing` and `experience`. Requests use versioned JSON schemas, not free-form option dictionaries. See the [API reference](reference.md#interfaces) and executable examples for full request bodies.
 
-For capture, keep a stable key and stable source-event identity for the same event. Changed bytes with the same identity produce a conflict. Save the exact request before dispatch; do not create a new identity merely to make an uncertain retry succeed. After a history change, reconcile first.
+For capture, keep a stable key and stable source-event identity for the same event. Changed bytes with the same identity produce a conflict. Save the exact request before dispatch; do not create a new identity merely to make an uncertain retry succeed. After a history change, reconcile first. The client captures in a named namespace (`namespace="sdk"` by default) that is deterministic for the principal, so the same key from any process replays the same result or reports `idempotency_conflict`; pass a different `namespace` to keep two integrations' keys apart.
 
 `SharedClient` in `memoryking.shared_sdk` provides the shared HTTP transport with tenant/project binding and verified TLS. It rejects redirects and does not automatically retry mutations.
 
@@ -96,9 +96,9 @@ The shared profile also exposes authenticated Streamable HTTP MCP at `/v1/tenant
 5. Reconcile uncertain external operations before repeating them.
 6. Recheck authorization before sending retained context to a model.
 
-For the last step, use `AuthorizedConversation` from `memoryking.harness_context`. It binds retained content and derived messages to authorization, checks current status before dispatch and rebuilds or blocks when dependencies become unavailable. Ordinary capture/retrieval calls cannot remove restricted text from an unrelated host's old chat transcript. Provider requests already delivered cannot be recalled.
+For the last step, use `AuthorizedConversation` from `memoryking.harness_context`. It binds retained content and derived messages to authorization, checks current status before dispatch and rebuilds or blocks when dependencies become unavailable. Retrieved memory enters the conversation as user-role content whose bytes the store verifies against the receipt, never as a system instruction. A dispatch carries up to 128 messages within a 96 KiB request. Ordinary capture/retrieval calls cannot remove restricted text from an unrelated host's old chat transcript. Provider requests already delivered cannot be recalled.
 
-The packaged reference agent and inference examples use a local recording provider. There is no production commercial-model connector or autonomous scheduling service included.
+The packaged reference agent and inference examples use a local recording provider, and `AuthorizedConversation` accepts only that provider today: forwarding to a commercial model needs a reviewed adapter with an explicit egress policy, which is not included. There is no production commercial-model connector or autonomous scheduling service included.
 
 ## Recipes
 

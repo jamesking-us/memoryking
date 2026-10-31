@@ -187,6 +187,22 @@ class RankingCases:
     def test_stale_shadow_and_concurrent_version_fail(self):
         self.seed()
         shadow = self.evaluate()
+        # Activity elsewhere in the tenant does not invalidate this project's evaluation.
+        self.store.capture(
+            self.owner,
+            self.ns,
+            "elsewhere",
+            {
+                "version": 1,
+                "project": "q",
+                "source": "test",
+                "source_event": "elsewhere",
+                "text": "unrelated project activity",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
         self.feedback(reference=self.target, version=1, use="used", usefulness="helpful")
         with self.assertRaisesRegex(LocalError, "ranking_shadow_stale"):
             self.activate(shadow)

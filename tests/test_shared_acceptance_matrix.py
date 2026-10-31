@@ -231,13 +231,13 @@ class ReleaseCases:
                     validated, proceed, revoking, revoked = (threading.Event() for _ in range(4))
                     output = []
 
-                    def pause(point):
+                    def pause(point, validated=validated, proceed=proceed):
                         if point == "after_validation" and not validated.is_set():
                             validated.set()
                             if not proceed.wait(3):
                                 raise RuntimeError("Test did not release validation pause")
 
-                    def revoke():
+                    def revoke(revoking=revoking, surface=surface, revoked=revoked):
                         revoking.set()
                         self.store.revoke(self.owner, "r_" + surface, "p")
                         revoked.set()
@@ -313,7 +313,7 @@ class ReleaseCases:
                     with self.reader(reader) as store:
                         triggered = []
 
-                        def stall(point):
+                        def stall(point, triggered=triggered, delay=delay):
                             if point == "after_validation" and not triggered:
                                 triggered.append(point)
                                 clock.advance(delay)

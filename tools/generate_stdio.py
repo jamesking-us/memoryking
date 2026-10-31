@@ -55,15 +55,17 @@ def generate():
     ]:
         schema = json.loads((ROOT / f"contracts/{source}-v1.schema.json").read_text())
         for name, actions, read_only in groups:
-            selected = {
-                "type": "object",
-                "oneOf": [
-                    branch
-                    for branch in schema["oneOf"]
-                    if branch["properties"]["action"]["const"] in actions
-                ],
-                "$defs": schema["$defs"],
-            }
+            branches = []
+            for branch in schema["oneOf"]:
+                if branch["properties"]["action"]["const"] not in actions:
+                    continue
+                branch = copy.deepcopy(branch)
+                # The bridge fills the incarnation it is bound to; a caller may still send
+                # one, and a stale value is rejected as history_changed like everywhere else.
+                if "incarnation" in branch.get("required", []):
+                    branch["required"].remove("incarnation")
+                branches.append(branch)
+            selected = {"type": "object", "oneOf": branches, "$defs": schema["$defs"]}
             tools.append(
                 {
                     "name": name,

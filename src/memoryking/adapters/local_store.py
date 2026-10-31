@@ -57,6 +57,35 @@ QUEUE_LIMIT = 1000
 CONCURRENCY_LIMIT = 4
 MAX_ATTEMPTS = 5
 MAX_COUNTER = 9_007_199_254_740_991
+# Per-tenant capacity bounds. Each has a release path: the daemon drains audit jobs,
+# retained artifacts evict oldest-first, only open intents count, and expired usage rows
+# are pruned. `status` reports utilisation for every entry of CAPACITY_LIMITS.
+ARTIFACT_LIMIT = 1024
+ARTIFACT_BYTES_LIMIT = 134217728
+INTENT_LIMIT = 4096
+INTENT_SCOPE_LIMIT = 32
+USAGE_LIMIT = 100000
+OPEN_INTENT_STATES = ("intent_recorded", "dispatching", "unknown")
+CAPACITY_LIMITS = {
+    "jobs": QUEUE_LIMIT,
+    "rendered_artifacts": ARTIFACT_LIMIT,
+    "rendered_bytes": ARTIFACT_BYTES_LIMIT,
+    "operation_intents": INTENT_LIMIT,
+    "processing_usage": USAGE_LIMIT,
+}
+
+
+def recovery_admin(db: Any, at: int) -> tuple[str, str] | None:
+    """The first tenant-wide grant that holds a currently valid admin capability."""
+    for row in db.execute(
+        "SELECT tenant,principal,capabilities,starts,expires FROM grants WHERE project='*' ORDER BY tenant,principal"
+    ).fetchall():
+        capabilities = row["capabilities"]
+        if isinstance(capabilities, str):
+            capabilities = json.loads(capabilities)
+        if "admin" in capabilities and temporal_valid(at, row["starts"], row["expires"]):
+            return str(row["tenant"]), str(row["principal"])
+    return None
 
 
 def identifier(value: str) -> str:
@@ -167,7 +196,9 @@ class LocalStore:
             self.db.executescript(Path(__file__).with_name("optional_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7}:
             self.db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
-        elif version != 8:
+        if version in {1, 2, 3, 4, 5, 6, 7, 8}:
+            self.db.executescript(Path(__file__).with_name("index_schema.sql").read_text())
+        elif version != 9:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         self.store_id, self.incarnation = meta["store"], meta["incarnation"]
@@ -223,6 +254,7 @@ class LocalStore:
             db.executescript(Path(__file__).with_name("repository_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("optional_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
+            db.executescript(Path(__file__).with_name("index_schema.sql").read_text())
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             db.close()
@@ -299,10 +331,15 @@ class LocalStore:
                 self.fault("after_commit")
                 decision.check(self.clock)
             except BaseException:
-                self.db.rollback()
-                if self.anchor["journal_sequence"] > int(
-                    self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
-                ):
+                try:
+                    self.db.rollback()
+                    applied = int(
+                        self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
+                    )
+                    if self.anchor["journal_sequence"] > applied:
+                        self.healthy = False
+                except Exception:
+                    # Never let cleanup mask the original failure; fail closed instead.
                     self.healthy = False
                 raise
 
@@ -361,14 +398,20 @@ class LocalStore:
             self.healthy = False
             raise
 
-    def namespace(self, credential: str, project: str) -> str:
+    def namespace(self, credential: str, project: str, name: str | None = None) -> str:
+        """A capture namespace token.
+
+        A named namespace is deterministic for the principal, so a retry with the same
+        key from any process replays or conflicts exactly as documented. An unnamed
+        namespace is fresh and random.
+        """
         with self.transaction() as decision:
             identity = self._auth(credential, "capture", project, decision.evaluated_ms)
             token = self._token(
                 "namespace",
                 tenant=identity["tenant"],
                 principal=identity["principal"],
-                id=uid("ns"),
+                id="nsn_" + identifier(name) if name is not None else uid("ns"),
             )
         self._expose()
         return token
@@ -732,9 +775,91 @@ class LocalStore:
             record = self.control.append(self.anchor, action)
             self.fault("after_journal")
             return record
+        except LocalError as exc:
+            if exc.code != "journal_record_limit":
+                # Nothing was written for a refused oversized record; the store stays usable.
+                self.healthy = False
+            raise
         except BaseException:
             self.healthy = False
             raise
+
+    def _purge_dependents(self, tenant: str, observation: str) -> None:
+        """Erase derived copies along recorded dependencies.
+
+        Rendered artifacts, checkpoints, handoffs and experience records record the
+        observations and claims they were built from, so only those built from the purged
+        source or its dependent claims are retired. Replay results carry no dependency
+        index and are retired tenant-wide; ranking is disabled when any experience record
+        was retired, because its evaluation may have scored the purged material.
+        """
+        from memoryking.adapters.knowledge_store import Knowledge
+
+        purged = {observation}
+        purged.update(
+            row[0]
+            for row in self.db.execute(
+                "SELECT revision FROM evidence_spans WHERE tenant=? AND observation=?",
+                (tenant, observation),
+            ).fetchall()
+        )
+        Knowledge(self).purge_dependencies(tenant, observation)
+
+        def depends(raw: Any) -> bool:
+            try:
+                deps = json.loads(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                return True
+            if not isinstance(deps, list):
+                return True
+            return any(isinstance(d, dict) and d.get("id") in purged for d in deps)
+
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM rendered_artifacts WHERE tenant=? AND state='retained'",
+            (tenant,),
+        ).fetchall():
+            if depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+        checkpoints = [
+            row["id"]
+            for row in self.db.execute(
+                "SELECT id,dependencies FROM checkpoints WHERE tenant=? AND state!='purged'",
+                (tenant,),
+            ).fetchall()
+            if depends(row["dependencies"])
+        ]
+        for checkpoint in checkpoints:
+            self.db.execute(
+                "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                (tenant, checkpoint),
+            )
+            self.db.execute(
+                "UPDATE handoffs SET state='purged' WHERE tenant=? AND checkpoint=?",
+                (tenant, checkpoint),
+            )
+        self.db.execute(
+            "UPDATE retries SET result=NULL WHERE tenant=? AND namespace IN ('working-v1','handoff-v1','experience-v1')",
+            (tenant,),
+        )
+        retired = 0
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL",
+            (tenant,),
+        ).fetchall():
+            if depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+                retired += 1
+        if retired:
+            self.db.execute(
+                "UPDATE ranking_state SET configuration=NULL,version=version+1,reconciliation=0 WHERE tenant=?",
+                (tenant,),
+            )
 
     def _apply(self, record: dict[str, Any], at: int) -> None:
         sequence = int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0])
@@ -791,7 +916,11 @@ class LocalStore:
                 "UPDATE jobs SET state='noop',fence=fence+1 WHERE tenant=? AND observation=?",
                 (tenant, obs),
             )
-            self.db.execute("DELETE FROM receipts WHERE tenant=?", (tenant,))
+            # Receipts that list the source are deleted; the epoch bump retires the rest.
+            self.db.execute(
+                "DELETE FROM receipts WHERE tenant=? AND observation_ids LIKE ?",
+                (tenant, '%"' + obs + '"%'),
+            )
             self.db.execute(
                 "UPDATE tenants SET purge_epoch=purge_epoch+1 WHERE tenant=?", (tenant,)
             )
@@ -814,37 +943,7 @@ class LocalStore:
         else:
             raise LocalError("journal_invalid")
         if kind == "purge":
-            from memoryking.adapters.knowledge_store import Knowledge
-
-            Knowledge(self).purge_dependencies(tenant, action["observation"])
-            # Conservatively erase all tenant rendered copies, including dependent promotions.
-            self.db.execute(
-                "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE retries SET result=NULL WHERE tenant=? AND namespace IN ('working-v1','handoff-v1')",
-                (tenant,),
-            )
-            self.db.execute("UPDATE handoffs SET state='purged' WHERE tenant=?", (tenant,))
-            # Outcomes and frozen experiments may retain quotations or judgments about
-            # the purged material. Conservative tenant erasure avoids a derived copy.
-            self.db.execute(
-                "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE ranking_state SET configuration=NULL,version=version+1,reconciliation=0 WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE retries SET result=NULL WHERE tenant=? AND namespace='experience-v1'",
-                (tenant,),
-            )
+            self._purge_dependents(tenant, action["observation"])
         if kind != "operation":
             self.db.execute(
                 "UPDATE tenants SET policy_epoch=policy_epoch+1 WHERE tenant=?", (tenant,)
@@ -885,6 +984,10 @@ class LocalStore:
             self.db.execute(
                 "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?",
                 (decision.evaluated_ms,),
+            )
+            # Usage rows keep their 30-day retention; expired rows release capacity.
+            self.db.execute(
+                "DELETE FROM processing_usage WHERE expires<=?", (decision.evaluated_ms,)
             )
         return int(count)
 
@@ -1127,9 +1230,96 @@ class LocalStore:
                         "SELECT state,count(*) FROM jobs WHERE tenant=? GROUP BY state", (tenant,)
                     )
                 ),
+                "capacity": self._capacity(tenant),
             }
         self._expose()
         return result
+
+    def _capacity(self, tenant: str) -> dict[str, dict[str, Any]]:
+        """Utilisation of every bounded per-tenant resource; warning at 80 percent."""
+
+        def count(statement: str) -> int:
+            return int(self.db.execute(statement, (tenant,)).fetchone()[0])
+
+        artifacts, artifact_bytes = self.db.execute(
+            "SELECT count(*),coalesce(sum(length(body)),0) FROM rendered_artifacts WHERE tenant=? AND state='retained'",
+            (tenant,),
+        ).fetchone()
+        used = {
+            "jobs": count(
+                "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')"
+            ),
+            "rendered_artifacts": int(artifacts),
+            "rendered_bytes": int(artifact_bytes),
+            "operation_intents": count(
+                "SELECT count(*) FROM operation_intents WHERE tenant=? AND state IN ('intent_recorded','dispatching','unknown')"
+            ),
+            "processing_usage": count("SELECT count(*) FROM processing_usage WHERE tenant=?"),
+        }
+        return {
+            name: {"used": used[name], "limit": limit, "warning": used[name] * 5 >= limit * 4}
+            for name, limit in CAPACITY_LIMITS.items()
+        }
+
+    def drain(self, limit: int = 256) -> int:
+        """Complete pending audit_probe jobs in-process.
+
+        The serving daemon calls this between requests, so a default installation never
+        needs a separate worker to keep accepting captures. Explicit claim/finish workers
+        remain valid for the same jobs.
+        """
+        completed = 0
+        with self.lock:
+            # A plain read keeps idle polling free of write transactions and fsyncs.
+            if (
+                self.healthy
+                and self.db.execute(
+                    "SELECT 1 FROM jobs WHERE state='pending' AND available<=? LIMIT 1",
+                    (self.clock.utc_ms(),),
+                ).fetchone()
+                is None
+            ):
+                return 0
+        with self.transaction() as decision:
+            at = decision.evaluated_ms
+            for tenant_row in self.db.execute(
+                "SELECT tenant FROM tenants ORDER BY tenant"
+            ).fetchall():
+                tenant = tenant_row[0]
+                rows = self.db.execute(
+                    "SELECT j.id,j.generation,o.id AS observation,o.blob,o.revision FROM jobs j JOIN observations o ON j.tenant=o.tenant AND j.observation=o.id WHERE j.tenant=? AND j.state='pending' AND j.available<=? AND j.attempts<? AND o.deleted=0 ORDER BY j.position LIMIT ?",
+                    (tenant, at, MAX_ATTEMPTS, limit - completed),
+                ).fetchall()
+                for row in rows:
+                    path = self.root / "blobs" / tenant / row["blob"]
+                    private_file(path)
+                    raw = path.read_bytes()
+                    if hashlib.sha256(raw).hexdigest() != row["blob"]:
+                        raise LocalError("blob_corrupt")
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO projection_items VALUES (?,?,?,?,?,?,?)",
+                        (
+                            tenant,
+                            row["observation"],
+                            self.incarnation,
+                            row["generation"],
+                            row["revision"],
+                            row["blob"],
+                            len(raw),
+                        ),
+                    )
+                    self.db.execute(
+                        "UPDATE jobs SET state='complete',fence=fence+1,attempts=attempts+1 WHERE tenant=? AND id=?",
+                        (tenant, row["id"]),
+                    )
+                    completed += 1
+                if rows:
+                    self._advance(tenant)
+                if completed >= limit:
+                    break
+        if completed:
+            self._expose()
+        return completed
 
     def reindex(self, credential: str) -> None:
         with self.transaction() as decision:
@@ -1327,10 +1517,9 @@ class LocalStore:
                         ),
                     }
                 )
-                # Only the independent OS owner can recover administrative credentials.
-                admin = recovery.db.execute(
-                    "SELECT tenant,principal FROM grants WHERE project='*' ORDER BY tenant,principal LIMIT 1"
-                ).fetchone()
+                # Only the independent OS owner can recover administrative credentials,
+                # and only a grant that currently carries admin rights may receive one.
+                admin = recovery_admin(recovery.db, recovery.clock.utc_ms())
                 if admin is None:
                     raise LocalError("recovery_admin_missing")
                 token = recovery._token("credential", tenant=admin[0], principal=admin[1])

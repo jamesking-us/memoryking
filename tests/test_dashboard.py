@@ -92,7 +92,7 @@ class DashboardTests(unittest.TestCase):
             403, self.call("POST", "/api/command", {**body, "csrf": "bad"}, headers)[0]
         )
         self.store.grant(self.owner, "other", "demo", ["read"])
-        self.assertEqual(403, self.call("POST", "/api/command", body, headers)[0])
+        self.assertEqual(409, self.call("POST", "/api/command", body, headers)[0])
 
     def test_browser_command_delayed_release_and_session_expiry(self):
         self.login()
@@ -116,7 +116,7 @@ class DashboardTests(unittest.TestCase):
         self.store.fault = lambda _: None
         self.clock.offset = 900001
         self.assertEqual(
-            403, self.call("POST", "/api/command", body, {"Origin": self.web.origin})[0]
+            409, self.call("POST", "/api/command", body, {"Origin": self.web.origin})[0]
         )
 
     def test_packaged_modules_are_public_bootstrap_assets_but_never_arbitrary_files(self):
@@ -214,7 +214,7 @@ class DashboardTests(unittest.TestCase):
         self.login()
         self.assertEqual(self.call("GET", "/api/receipt/demo/" + result["receipt"])[0], 403)
         self.store.revoke(self.owner, "reader", "demo")
-        self.assertEqual(self.call("GET", "/api/receipts/demo")[0], 403)
+        self.assertEqual(self.call("GET", "/api/receipts/demo")[0], 409)
 
     def test_host_origin_fetch_metadata_and_mutation_guards(self):
         issued = self.web.issue(self.owner)
@@ -275,7 +275,7 @@ class DashboardTests(unittest.TestCase):
             403,
         )
         self.store.grant(self.owner, "reader", "p", ["read"])
-        self.assertEqual(self.call("GET", "/api/snapshot")[0], 403)
+        self.assertEqual(self.call("GET", "/api/snapshot")[0], 409)
         old = self.web.issue(self.owner)
         self.clock.offset = 60001
         self.assertEqual(
@@ -322,7 +322,28 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn(b"Synthetic protected document", result[2])
         self.store.fault = lambda _: None
 
+    def test_snapshot_reports_capacity_for_every_bounded_resource(self):
+        self.login()
+        status, _, raw = self.call("GET", "/api/snapshot")
+        self.assertEqual(status, 200)
+        capacity = json.loads(raw)["capacity"]
+        self.assertEqual(
+            set(capacity),
+            {
+                "jobs",
+                "rendered_artifacts",
+                "rendered_bytes",
+                "operation_intents",
+                "processing_usage",
+            },
+        )
+        self.assertEqual(capacity["jobs"]["limit"], 1000)
+        self.assertFalse(any(v["warning"] for v in capacity.values()))
+
     def test_workspace_snapshot_needs_no_development_files(self):
+        self.assertEqual(PlanFiles(None).snapshot(5)["phases"], [])
+        with self.assertRaises(LocalError):
+            PlanFiles(None).read("docs/IMPLEMENTATION-ROADMAP.md")
         root = self.root / "product"
         root.mkdir()
         state = PlanFiles(root).snapshot(123)

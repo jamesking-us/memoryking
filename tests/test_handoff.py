@@ -393,11 +393,18 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(self.view(prepared)["status"], "ready")
 
     def test_purge_erases_handoff_copies_and_restore_retires_old_history(self):
+        # Purge follows recorded dependencies: this handoff's checkpoint cites the source.
+        body = helpers.checkpoint()
+        body["references"] = [{"kind": "observation", "id": self.obs["observation"]}]
+        self.saved = self.save(body, revision=1, readers=["owner", "reviewer"])
         prepared = self.prepare()
         raw = self.view(prepared, raw=True)
         backup = self.root / "backup"
         self.store.backup(backup)
         self.store.purge(self.owner, self.obs["observation"])
+        self.assertEqual(
+            [r[0] for r in self.store.db.execute("SELECT state FROM handoffs")], ["purged"]
+        )
         self.fails("handoff_unavailable", lambda: self.view(prepared))
         self.fails("replay_purged", lambda: self.replay(json.loads(raw)["receipt"]))
         self.store.close()
@@ -439,5 +446,5 @@ class HandoffTests(unittest.TestCase):
             historical_inventory(db, 4)
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 8)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
         self.assertEqual(self.view(self.prepare())["checkpoint"]["id"], self.saved["checkpoint"])

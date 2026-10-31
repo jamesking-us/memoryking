@@ -13,10 +13,25 @@ from jsonschema import Draft202012Validator
 from memoryking.adapters.dense_search import search as dense_search
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import (
+    ARTIFACT_BYTES_LIMIT,
+    ARTIFACT_LIMIT,
+    RETRY_MS,
+    LocalStore,
+    uid,
+)
 from memoryking.adapters.token_count import counter
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
-from memoryking.domain.briefing import COMPILER, CONFIGURATION, counted, pack, relevance, terms
+from memoryking.domain.briefing import (
+    COMPILER,
+    CONFIGURATION,
+    QUERY_TERM_LIMIT,
+    counted,
+    pack,
+    relevance,
+    term_window,
+    terms,
+)
 from memoryking.domain.local import Decision, LocalError, Released
 from memoryking.domain.selectors import bindings
 
@@ -117,6 +132,40 @@ class Retrieval:
         self.s._expose()
         return Released(raw, decision, self.s.clock, access_id)
 
+    def _make_room(self, who: dict[str, Any], incoming: int) -> int:
+        """Evict the oldest retained artifacts at capacity, the caller's own first.
+
+        Replay of an evicted receipt reports replay_expired. A caller looping on brief
+        therefore consumes its own retention before anyone else's.
+        """
+        if incoming > ARTIFACT_BYTES_LIMIT:
+            raise LocalError("retention_capacity")
+        evicted = 0
+        while True:
+            count, size = self.db.execute(
+                "SELECT count(*),coalesce(sum(length(body)),0) FROM rendered_artifacts WHERE tenant=? AND state='retained'",
+                (who["tenant"],),
+            ).fetchone()
+            if count < ARTIFACT_LIMIT and size + incoming <= ARTIFACT_BYTES_LIMIT:
+                return evicted
+            oldest = (
+                self.db.execute(
+                    "SELECT id FROM rendered_artifacts WHERE tenant=? AND principal=? AND state='retained' ORDER BY created,id LIMIT 1",
+                    (who["tenant"], who["principal"]),
+                ).fetchone()
+                or self.db.execute(
+                    "SELECT id FROM rendered_artifacts WHERE tenant=? AND state='retained' ORDER BY created,id LIMIT 1",
+                    (who["tenant"],),
+                ).fetchone()
+            )
+            if oldest is None:
+                raise LocalError("retention_capacity")
+            self.db.execute(
+                "UPDATE rendered_artifacts SET state='evicted',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                (who["tenant"], oldest["id"]),
+            )
+            evicted += 1
+
     def _expire(self, at: int) -> None:
         self.db.execute(
             "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?",
@@ -134,7 +183,7 @@ class Retrieval:
             raise LocalError("history_changed")
         if row["state"] == "purged":
             raise LocalError("replay_purged")
-        if row["state"] == "expired" or at >= row["expires"]:
+        if row["state"] in {"expired", "evicted"} or at >= row["expires"]:
             raise LocalError("replay_expired")
         if row["body"] is None or hashlib.sha256(row["body"]).hexdigest() != row["body_hash"]:
             raise LocalError("replay_integrity_failure")
@@ -224,12 +273,7 @@ class Retrieval:
         deps: list[dict[str, str]],
         at: int,
     ) -> None:
-        count, size = self.db.execute(
-            "SELECT count(*),coalesce(sum(length(body)),0) FROM rendered_artifacts WHERE tenant=? AND state='retained'",
-            (who["tenant"],),
-        ).fetchone()
-        if count >= 1024 or size + len(raw) > 134217728:
-            raise LocalError("retention_capacity")
+        self._make_room(who, len(raw))
         if len(canonical_bytes(diag)) > 65536:
             raise LocalError("diagnostic_limit")
         self.db.execute(
@@ -376,6 +420,9 @@ class Retrieval:
             "cache": "not_used",
             "trace": [],
         }
+        if term_window(args["query"])[1]:
+            # Long queries are searched on their leading terms; the cut is disclosed.
+            diag["query_terms_truncated"] = QUERY_TERM_LIMIT
         groups: list[list[dict[str, Any]]] = []
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
@@ -547,9 +594,11 @@ class Retrieval:
         else:
             ids = []
             if query and args.get("freshness", "any") != "attested":
-                # Tenant/scope/audience filtering precedes the candidate limit.
+                # Tenant/scope/audience filtering precedes the candidate limit. The window
+                # is newest-first so recent memories are never crowded out by old matches;
+                # relevance scoring then ranks within the window.
                 rows = self.db.execute(
-                    "SELECT o.id FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM lexical WHERE tenant=? AND lexical MATCH ?) ORDER BY o.position,o.id LIMIT 257",
+                    "SELECT o.id FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM lexical WHERE tenant=? AND lexical MATCH ?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
                     (
                         who["tenant"],
                         args["project"],

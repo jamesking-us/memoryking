@@ -17,7 +17,9 @@ from starlette.routing import Route
 
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure
 
 
 class ReleaseResponse(Response):
@@ -51,9 +53,12 @@ class ReleaseResponse(Response):
         await super().__call__(scope, receive, guarded)
 
 
-def error(code: str, status: int = 400) -> Response:
+def error(code: str, status: int = 400, request_id: str | None = None) -> Response:
+    body: dict[str, str] = {"error": code}
+    if request_id is not None:
+        body["request_id"] = request_id
     return Response(
-        canonical_bytes({"error": code}),
+        canonical_bytes(body),
         status_code=503 if code in {"service_busy", "service_unavailable"} else status,
         media_type="application/json",
         headers={"Cache-Control": "no-store"},
@@ -166,12 +171,13 @@ def create_app(
             return ReleaseResponse(result)
         except (LocalError, ContractError) as exc:
             code = exc.code if isinstance(exc, LocalError) else "invalid_request"
-            return error(code, 403 if code in {"denied", "credential_required"} else 400)
+            default = 403 if code in {"denied", "credential_required"} else 400
+            return error(code, http_status(code, default))
         except TimeoutError:
             return error("request_timeout", 408)
-        except Exception:
+        except Exception as exc:
             # No SQL, supplied content, filesystem paths or credentials in responses.
-            return error("service_unavailable", 503)
+            return error("service_unavailable", 503, failure("shared_http", exc))
 
     from memoryking.adapters.shared_mcp import SharedMCP
 

@@ -7,7 +7,6 @@ import re
 from typing import Any, Callable
 
 from memoryking.contracts.canonical import ContractError, canonical_bytes
-from memoryking.domain.local import LocalError
 
 CONFIGURATION = "lexical-v1"
 COMPILER = "brief-json-v1"
@@ -16,11 +15,24 @@ STOP = frozenset(
 )
 
 
+QUERY_TERM_LIMIT = 32
+
+
+def term_window(text: str) -> tuple[list[str], bool]:
+    """The first QUERY_TERM_LIMIT distinct searchable terms, sorted, plus a truncation flag.
+
+    Earlier words win because a query reads most important first; the caller discloses
+    truncation instead of failing a long query.
+    """
+    seen: dict[str, None] = {}
+    for term in re.findall(r"[^\W_]+", text.casefold()):
+        if term not in STOP:
+            seen.setdefault(term, None)
+    return sorted(list(seen)[:QUERY_TERM_LIMIT]), len(seen) > QUERY_TERM_LIMIT
+
+
 def terms(text: str) -> list[str]:
-    result = sorted({t for t in re.findall(r"[^\W_]+", text.casefold()) if t not in STOP})
-    if len(result) > 32:
-        raise LocalError("query_term_limit")
-    return result
+    return term_window(text)[0]
 
 
 def relevance(query: list[str], text: str) -> int:

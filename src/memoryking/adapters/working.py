@@ -10,7 +10,13 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import (
+    INTENT_LIMIT,
+    INTENT_SCOPE_LIMIT,
+    RETRY_MS,
+    LocalStore,
+    uid,
+)
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.token_count import counter
 from memoryking.contracts.canonical import ContractError, canonical_bytes, canonical_hash
@@ -570,19 +576,21 @@ class Working:
                 (who["tenant"], args["operation"]),
             ).fetchone():
                 raise LocalError("operation_identity_consumed")
+            # Resolved intents keep their consumed identity but release capacity.
             if (
                 self.db.execute(
-                    "SELECT count(*) FROM operation_intents WHERE tenant=?", (who["tenant"],)
+                    "SELECT count(*) FROM operation_intents WHERE tenant=? AND state IN ('intent_recorded','dispatching','unknown')",
+                    (who["tenant"],),
                 ).fetchone()[0]
-                >= 4096
+                >= INTENT_LIMIT
             ):
                 raise LocalError("operation_capacity")
             if (
                 self.db.execute(
-                    "SELECT count(*) FROM operation_intents WHERE tenant=? AND project=? AND task=? AND stream=?",
+                    "SELECT count(*) FROM operation_intents WHERE tenant=? AND project=? AND task=? AND stream=? AND state IN ('intent_recorded','dispatching','unknown')",
                     self._scope(who, args),
                 ).fetchone()[0]
-                >= 32
+                >= INTENT_SCOPE_LIMIT
             ):
                 raise LocalError("operation_scope_capacity")
             record = {

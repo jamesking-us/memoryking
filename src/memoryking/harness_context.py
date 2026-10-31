@@ -93,6 +93,10 @@ class LocalRecordingProvider:
         }
 
 
+# Messages per dispatch; the request as a whole is also bounded at 96 KiB by the store.
+MESSAGE_LIMIT = 128
+
+
 class AuthorizedConversation:
     """A full-context reference dispatcher. No automatic retry or implicit rebinding."""
 
@@ -196,8 +200,11 @@ class AuthorizedConversation:
             ):
                 raise LocalError("essential_context_unavailable")
             raw = canonical_bytes(packet)
+            # Retrieved memory is data the model reads, never an instruction channel: the
+            # exact retained packet travels as user content, not in the system role. The
+            # store verifies these bytes against the receipt, so no framing is added here.
             self._append(
-                "system",
+                "user",
                 raw.decode(),
                 {
                     "origin": "memory",
@@ -208,7 +215,7 @@ class AuthorizedConversation:
             )
 
     def _append(self, role: str, content: str, proof: dict[str, Any]) -> None:
-        if not content or len(content) > 65536 or len(self._messages) >= 31:
+        if not content or len(content) > 65536 or len(self._messages) >= MESSAGE_LIMIT:
             raise LocalError("inference_request_limit")
         self._messages.append({"role": role, "content": content})
         self._proofs.append(proof)
@@ -240,7 +247,7 @@ class AuthorizedConversation:
             args = self._args(self._sync())
             if not args["request"]["messages"]:
                 raise LocalError("context_rebuild_required")
-            if len(args["request"]["messages"]) >= 31:
+            if len(args["request"]["messages"]) >= MESSAGE_LIMIT:
                 raise LocalError("inference_request_limit")
             closure = self._inherited(
                 args["manifest"]["segments"] + args["manifest"]["handles"], b""

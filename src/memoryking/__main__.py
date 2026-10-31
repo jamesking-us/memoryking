@@ -14,6 +14,7 @@ from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import LocalStore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.local import LocalError
+from memoryking.observability import LEVELS, configure, event
 
 
 def main() -> int:
@@ -28,6 +29,12 @@ def main() -> int:
                 "--dashboard-port", type=int, help="Opt-in loopback port; 0 chooses a free port"
             )
             cmd.add_argument("--plan-root", type=Path, help="Explicit trusted plan/report checkout")
+            cmd.add_argument(
+                "--log-level",
+                default="warning",
+                choices=LEVELS,
+                help="Redacted operator log level on stderr; request ids link replies to lines",
+            )
         if name == "init":
             cmd.add_argument("--tenant", default="main")
             cmd.add_argument("--principal", default="owner")
@@ -96,6 +103,7 @@ def main() -> int:
         else:
             with LocalStore(args.store, args.control) as store:
                 if args.command == "serve":
+                    configure(args.log_level)
 
                     def stop(signum: int, frame: object) -> None:
                         raise KeyboardInterrupt
@@ -105,9 +113,7 @@ def main() -> int:
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")
-                        dashboard = Dashboard(
-                            store, args.plan_root or Path.cwd(), args.dashboard_port
-                        )
+                        dashboard = Dashboard(store, args.plan_root, args.dashboard_port)
                         store.dashboard = dashboard
                         dashboard.start()
                     try:
@@ -115,6 +121,7 @@ def main() -> int:
                             print(
                                 json.dumps({"ready": True, "socket": str(server.path)}), flush=True
                             )
+                            event("serve", "ready", dashboard=dashboard is not None)
                             server.serve_forever(poll_interval=0.2)
                     except KeyboardInterrupt:
                         pass

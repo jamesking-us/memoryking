@@ -520,7 +520,7 @@ def run_arm(cluster, base, fanout, repetitions):
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             futures = [executor.submit(perform, job) for job in jobs]
             while any(not f.done() for f in futures):
-                for tenant, conversation in conversations.items():
+                for _tenant, conversation in conversations.items():
                     try:
                         conversation._sync()
                     except LocalError:

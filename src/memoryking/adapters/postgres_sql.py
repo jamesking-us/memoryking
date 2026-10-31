@@ -91,7 +91,10 @@ def native_statement(statement: str) -> str:
     if re.search(r"\b(PRAGMA|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK)\b", statement, re.I):
         raise LocalError("unsupported_database_statement")
     statement = statement.replace(
-        "lexical MATCH ?", "to_tsvector('simple',text) @@ phraseto_tsquery('simple',?)"
+        # Retrieval sends FTS5 syntax: quoted terms joined by OR. websearch_to_tsquery
+        # keeps those semantics (any term matches); phraseto_tsquery would demand the phrase.
+        "lexical MATCH ?",
+        "to_tsvector('simple',text) @@ websearch_to_tsquery('simple',?)",
     ).replace("length(CAST(body AS BLOB))", "octet_length(body)")
     if statement.startswith("INSERT OR REPLACE INTO "):
         match = re.fullmatch(r"INSERT OR REPLACE INTO (\w+) VALUES (\([^;]+\))", statement)

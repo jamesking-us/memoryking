@@ -37,8 +37,10 @@ class LocalClient:
     enforce exact-byte dispatch, dependency inheritance and conversation rebuilding.
     """
 
-    def __init__(self, socket: Path, credential_file: Path, project: str):
+    def __init__(self, socket: Path, credential_file: Path, project: str, namespace: str = "sdk"):
         self.socket, self.credential_file, self.project = socket, credential_file, project
+        # A named namespace makes `key` a real idempotency key across processes.
+        self.namespace = namespace
         self.last_context = self._request(self._credential(), "context", {"project": project})
         self.binding = tuple(self.last_context[key] for key in BINDING_FIELDS)
 
@@ -137,7 +139,9 @@ class LocalClient:
         if observation.get("project") != self.project:
             raise LocalError("scope_mismatch")
         credential, _ = self._current()
-        namespace = self._request(credential, "namespace", {"project": self.project})["namespace"]
+        namespace = self._request(
+            credential, "namespace", {"project": self.project, "name": self.namespace}
+        )["namespace"]
         return self._request(
             credential, "capture", {"namespace": namespace, "key": key, "request": observation}
         )
@@ -162,6 +166,9 @@ class LocalClient:
             raise LocalError("unknown_tool")
         if not validator.is_valid(arguments):
             raise LocalError("invalid_tool_arguments")
+        if name not in {"memory_status", "memory_capture"}:
+            # The catalog makes incarnation optional; the bridge binds the session's value.
+            arguments = {"incarnation": self.binding[-1], **arguments}
         if name == "memory_status":
             if arguments["project"] != self.project:
                 raise LocalError("scope_mismatch")

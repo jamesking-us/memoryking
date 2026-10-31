@@ -15,6 +15,10 @@ from typing import Any
 from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.local import LocalError
 
+# Largest signed journal line accepted on write and read. It covers every journaled
+# action (bindings are bounded at 128 KiB canonical, selectors at 16 KiB) with headroom.
+JOURNAL_RECORD_LIMIT = 262144
+
 
 def sync_dir(path: Path) -> None:
     fd = os.open(path, os.O_RDONLY)
@@ -90,6 +94,10 @@ class Control:
         identity = load_strict((path / "identity.json").read_bytes())
         self.store: str = identity["store"]
         self.key = bytes.fromhex(identity["key"])
+        # Verified journal prefix: (byte length, running sha256, records, previous line hash).
+        self._verified: tuple[int, Any, list[dict[str, Any]], str] | None = None
+        # Byte offset of an unacknowledged torn final line, discarded on the next append.
+        self.torn_tail: int | None = None
 
     def sign(self, body: dict[str, Any]) -> str:
         raw = canonical_bytes(body)
@@ -139,15 +147,52 @@ class Control:
         atomic(self.path / "anchor", self.sign(value).encode())
 
     def journal(self, anchor: dict[str, Any]) -> list[dict[str, Any]]:
+        """Verify the hash-chained journal; only an unanchored torn final line is tolerated."""
         private_file(self.path / "journal")
+        data = (self.path / "journal").read_bytes()
         records: list[dict[str, Any]] = []
         previous = "0" * 64
-        for line in (self.path / "journal").read_text().splitlines():
-            record = self.verify(line)
-            if record["previous"] != previous or record["sequence"] != len(records) + 1:
-                raise LocalError("journal_invalid")
-            previous = hashlib.sha256(line.encode()).hexdigest()
+        position = 0
+        cached = self._verified
+        if (
+            cached is not None
+            and cached[0] <= len(data)
+            and hashlib.sha256(data[: cached[0]]).digest() == cached[1].digest()
+        ):
+            position, records, previous = cached[0], list(cached[2]), cached[3]
+        self.torn_tail = None
+        while position < len(data):
+            end = data.find(b"\n", position)
+            line = data[position : end if end >= 0 else len(data)]
+            record: dict[str, Any] | None = None
+            failure: LocalError | None = None
+            try:
+                record = self._verify(line.decode("ascii"), JOURNAL_RECORD_LIMIT)
+                if record["previous"] != previous or record["sequence"] != len(records) + 1:
+                    raise LocalError("journal_invalid")
+            except UnicodeError:
+                failure = LocalError("invalid_token")
+            except LocalError as exc:
+                failure = exc
+            if failure is not None or end < 0:
+                # A crash while appending leaves a final line without its newline. It is
+                # discardable only when every anchored record before it verified; a
+                # complete line that fails, or damage anywhere else, stays fatal.
+                if end < 0 and len(records) >= anchor["journal_sequence"]:
+                    self.torn_tail = position
+                    break
+                raise failure or LocalError("journal_invalid")
+            assert record is not None
+            previous = hashlib.sha256(line).hexdigest()
             records.append(record)
+            position = end + 1
+        verified_end = position if self.torn_tail is None else self.torn_tail
+        self._verified = (
+            verified_end,
+            hashlib.sha256(data[:verified_end]),
+            list(records),
+            previous,
+        )
         index = anchor["journal_sequence"]
         expected = (
             "0" * 64
@@ -160,7 +205,7 @@ class Control:
         )
         if expected != anchor["journal_head"]:
             raise LocalError("journal_rollback")
-        return records
+        return list(records)
 
     def append(self, anchor: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
         records = self.journal(anchor)
@@ -169,10 +214,28 @@ class Control:
         )
         record = {"sequence": len(records) + 1, "previous": previous, "action": action}
         token = self.sign(record)
-        with (self.path / "journal").open("ab") as stream:
-            stream.write(token.encode() + b"\n")
+        line = token.encode() + b"\n"
+        if len(token) > JOURNAL_RECORD_LIMIT:
+            # Refused before any byte is written, so the store stays healthy and readable.
+            raise LocalError("journal_record_limit")
+        verified = self._verified
+        assert verified is not None
+        with (self.path / "journal").open("r+b") as stream:
+            if self.torn_tail is not None:
+                stream.truncate(self.torn_tail)
+                self.torn_tail = None
+            stream.seek(0, os.SEEK_END)
+            stream.write(line)
             stream.flush()
             os.fsync(stream.fileno())
+        prefix = verified[1].copy()
+        prefix.update(line)
+        self._verified = (
+            verified[0] + len(line),
+            prefix,
+            [*verified[2], record],
+            hashlib.sha256(token.encode()).hexdigest(),
+        )
         anchor["journal_sequence"] = record["sequence"]
         anchor["journal_head"] = hashlib.sha256(token.encode()).hexdigest()
         self.anchor(anchor)

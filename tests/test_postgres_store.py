@@ -250,6 +250,51 @@ class PostgresStoreTests(unittest.TestCase):
             PostgresStore(pool, self.root, self.control, self.tenant, self.credential)
         self.assertEqual("service_unavailable", caught.exception.code)
 
+    def test_end_maintenance_clears_only_the_matching_fence_for_a_current_admin(self):
+        from memoryking.adapters.postgres_recovery import end_maintenance
+        from memoryking.adapters.shared_control import SharedControl
+
+        self.capture()
+        with self.store() as store:
+            reader = store.grant(self.credential, "reader", "demo", ["read"])
+        operation = "ab" * 16
+        controller = SharedControl(self.control / self.tenant)
+        with controller.locked():
+            anchor = controller.read_anchor()
+            anchor.update(state="maintenance", maintenance_operation=operation)
+            controller.anchor(anchor)
+        with self.assertRaises(LocalError) as caught:
+            with self.store() as store:
+                store.read(self.credential, "demo")
+        self.assertEqual("recovery_required", caught.exception.code)
+        with psycopg.connect(self.cluster.dsn("mk_runtime"), autocommit=True) as connection:
+            for wrong_operation, credential, code in (
+                ("cd" * 16, self.credential, "maintenance_operation_mismatch"),
+                (operation, reader, "denied"),
+                (operation, "not-a-token", "invalid_token"),
+            ):
+                with self.assertRaises(LocalError) as caught:
+                    end_maintenance(
+                        connection, self.control, self.tenant, wrong_operation, credential
+                    )
+                self.assertEqual(code, caught.exception.code)
+            self.assertEqual(controller.read_anchor()["state"], "maintenance")
+            result = end_maintenance(
+                connection, self.control, self.tenant, operation, self.credential
+            )
+        self.assertEqual(
+            {"status": "active", "tenant": self.tenant, "operation": operation}, result
+        )
+        self.assertNotIn("maintenance_operation", controller.read_anchor())
+        with self.store() as store:
+            self.assertEqual(
+                "durable memory", delivered(store.read(self.credential, "demo"))["items"][0]["text"]
+            )
+        with psycopg.connect(self.cluster.dsn("mk_runtime"), autocommit=True) as connection:
+            with self.assertRaises(LocalError) as caught:
+                end_maintenance(connection, self.control, self.tenant, operation, self.credential)
+            self.assertEqual("maintenance_operation_mismatch", caught.exception.code)
+
     def test_native_backup_restore_retires_history_and_replays_revocation(self):
         from memoryking.adapters.postgres_recovery import backup, restore
 
