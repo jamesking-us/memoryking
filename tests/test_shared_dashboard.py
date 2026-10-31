@@ -130,7 +130,7 @@ class SharedDashboardTests(unittest.TestCase):
             self.assertEqual(403, response.status)
         self.command("grant", {"principal": "new", "project": "demo", "capabilities": ["read"]})
         with self.fetch("/api/command", body) as response:
-            self.assertEqual(403, response.status)
+            self.assertEqual(409, response.status)
 
     def test_all_packaged_worker_brand_and_view_assets_are_served(self):
         from memoryking.adapters.dashboard import ASSETS
@@ -200,7 +200,7 @@ class SharedDashboardTests(unittest.TestCase):
             self.assertEqual([], json.loads(frame["data"])["phases"])
         self.login()  # Replaces the current browser session; its old cursor is unusable.
         with self.fetch("/api/events", headers={"Last-Event-ID": old}) as response:
-            self.assertEqual(403, response.status)
+            self.assertEqual(409, response.status)
             self.assertEqual("cursor_context_changed", json.loads(response.read())["error"])
 
     def test_snapshot_duplicate_suppression_and_bounded_history(self):

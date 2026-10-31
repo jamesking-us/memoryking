@@ -20,12 +20,13 @@ from memoryking.adapters.postgres_admin import (
     provision_roles,
 )
 from memoryking.adapters.postgres_pool import create_pool
-from memoryking.adapters.postgres_recovery import backup, restore
+from memoryking.adapters.postgres_recovery import backup, end_maintenance, restore
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_http import create_app
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.local import LocalError
+from memoryking.observability import LEVELS, configure
 from memoryking.shared_sdk import SharedClient
 
 
@@ -59,6 +60,7 @@ def parser() -> argparse.ArgumentParser:
         "worker-once",
         "backup",
         "restore",
+        "end-maintenance",
     ):
         item = commands.add_parser(name)
         item.add_argument("--dsn-file", type=Path, required=True)
@@ -73,8 +75,15 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--content", type=Path, required=True)
             item.add_argument("--control", type=Path, required=True)
             item.add_argument("--audience", default="memoryking-shared")
-        if name in {"init-tenant", "worker-once", "backup", "restore"}:
+        if name in {"init-tenant", "worker-once", "backup", "restore", "end-maintenance"}:
             item.add_argument("--tenant", required=True)
+        if name == "end-maintenance":
+            item.add_argument("--control", type=Path, required=True)
+            item.add_argument("--audience", default="memoryking-shared")
+            item.add_argument("--credential", type=Path, required=True)
+            item.add_argument(
+                "--operation", required=True, help="Operation id recorded by the dead backup"
+            )
         if name == "init-tenant":
             item.add_argument("--principal", default="owner")
         if name in {"worker-once", "backup"}:
@@ -98,6 +107,7 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--pool-size", type=int, default=8)
             item.add_argument("--plan-root", type=Path)
             item.add_argument("--dashboard-tenant")
+            item.add_argument("--log-level", default="warning", choices=LEVELS)
     request = commands.add_parser("request")
     request.add_argument("--url", required=True)
     request.add_argument("--tenant", required=True)
@@ -146,7 +156,14 @@ def run(args: Any) -> dict[str, Any]:
             return {"bootstrap_file": str(args.bootstrap_output), "url": output["url"]}
         return output
     connection_string = dsn(args.dsn_file)
-    if args.command in {"provision-roles", "migrate", "enable-vector", "init-tenant", "restore"}:
+    if args.command in {
+        "provision-roles",
+        "migrate",
+        "enable-vector",
+        "init-tenant",
+        "restore",
+        "end-maintenance",
+    }:
         with psycopg.connect(connection_string, autocommit=True) as connection:
             if args.command == "provision-roles":
                 private_dir(args.role_secrets)
@@ -176,6 +193,15 @@ def run(args: Any) -> dict[str, Any]:
                     args.audience,
                 )
                 return {"credential_file": str(path)}
+            elif args.command == "end-maintenance":
+                return end_maintenance(
+                    connection,
+                    args.control,
+                    args.tenant,
+                    args.operation,
+                    secret(args.credential),
+                    audience=args.audience,
+                )
             else:
                 path = restore(
                     connection,
@@ -192,6 +218,8 @@ def run(args: Any) -> dict[str, Any]:
     try:
         if args.command == "serve":
             import uvicorn
+
+            configure(args.log_level)
 
             address = ipaddress.ip_address(args.bind)
             if not 0 < args.port <= 65535:

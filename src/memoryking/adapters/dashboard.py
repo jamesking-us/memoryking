@@ -8,13 +8,15 @@ import re
 import secrets
 import threading
 from http.cookies import SimpleCookie
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 from memoryking.adapters.local_store import LocalStore, uid
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
+from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure
 
 STATIC = Path(__file__).with_name("web")
 ASSETS = {
@@ -43,10 +45,13 @@ SAFE_HEADERS = {
 class PlanFiles:
     """Explicit file adapter: bounded, allowlisted, hash-observed and read-only."""
 
-    def __init__(self, root: Path):
-        self.root = root.resolve()
+    def __init__(self, root: Path | None):
+        # Without an explicit root the dashboard serves the workspace view only.
+        self.root = root.resolve() if root is not None else None
 
     def read(self, relative: str, limit: int = 1048576) -> bytes:
+        if self.root is None:
+            raise LocalError("plan_source_unavailable")
         path = self.root / relative
         if path.is_symlink() or not path.resolve().is_relative_to(self.root):
             raise LocalError("plan_source_invalid")
@@ -79,12 +84,13 @@ class PlanFiles:
                 "verification": "local-job/job.json",
                 "manifest": "manifest.json",
                 "report-qa": "report-qa.json",
-                "submission": "kindle-submission.json",
             }.items():
                 result[f"P{n:02d}-{label}"] = (
                     f"docs/reports/evidence/phase-{n:02d}/{file}",
                     "text/plain; charset=utf-8",
                 )
+        if self.root is None:
+            return result
         for path in sorted((self.root / "docs/adr").glob("[0-9][0-9][0-9]-*.md"))[:40]:
             result[path.stem] = (str(path.relative_to(self.root)), "text/plain; charset=utf-8")
         return result
@@ -92,7 +98,7 @@ class PlanFiles:
     def snapshot(self, at: int) -> dict[str, Any]:
         # The product dashboard operates without a development-report checkout.
         # A partially configured or corrupt legacy checkout must still fail closed.
-        if not any(
+        if self.root is None or not any(
             (self.root / path).exists()
             for path in ("docs/dashboard-plan.json", "docs/reports/phases.json")
         ):
@@ -280,10 +286,11 @@ class PlanFiles:
         }
 
 
-class Dashboard(HTTPServer):
+class Dashboard(ThreadingHTTPServer):
     request_queue_size = 8
+    daemon_threads = True
 
-    def __init__(self, store: LocalStore, root: Path, port: int = 0):
+    def __init__(self, store: LocalStore, root: Path | None, port: int = 0):
         self.store, self.files = store, PlanFiles(root)
         self.codes: dict[str, dict[str, Any]] = {}
         self.sessions: dict[str, dict[str, Any]] = {}
@@ -521,6 +528,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     principal=store._decode(value["credential"], "credential")["principal"],
                     tenant=value["tenant"],
                     authorization_epoch=dashboard.epoch(value["tenant"]),
+                    capacity=store._capacity(value["tenant"]),
                 )
                 raw = canonical_bytes(result)
             elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/execution/"):
@@ -600,9 +608,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             return
         except LocalError as exc:
-            self.send(403, canonical_bytes({"error": exc.code}))
-        except Exception:
-            self.send(503, b'{"error":"dashboard_unavailable"}')
+            self.send(http_status(exc.code, 403), canonical_bytes({"error": exc.code}))
+        except Exception as exc:
+            request_id = failure("dashboard", exc)
+            self.send(
+                503, canonical_bytes({"error": "dashboard_unavailable", "request_id": request_id})
+            )
 
     do_HEAD = do_GET
     do_POST = do_GET

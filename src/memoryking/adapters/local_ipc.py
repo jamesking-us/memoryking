@@ -6,6 +6,7 @@ import os
 import socket
 import socketserver
 import stat
+import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,6 +24,7 @@ from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure
 
 WIRE_LIMIT = 262144
 
@@ -105,17 +107,25 @@ class Handler(socketserver.StreamRequestHandler):
             self.request.sendall(canonical_bytes({"error": code}) + b"\n")
         except (TimeoutError, BrokenPipeError, ConnectionResetError):
             return
-        except Exception:
-            # Never serialize SQL, filenames, caller content or exception strings.
-            self.request.sendall(b'{"error":"internal_error"}\n')
+        except Exception as exc:
+            # Never serialize SQL, filenames, caller content or exception strings. The
+            # request id links the generic reply to the redacted operator log line.
+            request_id = failure("local_ipc", exc)
+            self.request.sendall(
+                canonical_bytes({"error": "internal_error", "request_id": request_id}) + b"\n"
+            )
 
 
-class Server(socketserver.UnixStreamServer):
-    """Sequential bounded requests prevent unbounded thread/connection allocation."""
+class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """Bounded concurrent requests: a slow client never blocks everyone else."""
 
     request_queue_size = 16
+    daemon_threads = True
+    block_on_close = True
+    max_concurrent = 8
 
     def __init__(self, store: LocalStore):
+        self.slots = threading.BoundedSemaphore(self.max_concurrent)
         self.path = store.root / "service.sock"
         if len(os.fsencode(self.path)) > 100:
             raise LocalError("socket_path_too_long")
@@ -125,8 +135,36 @@ class Server(socketserver.UnixStreamServer):
                 raise LocalError("unsafe_socket")
             self.path.unlink()
         self.operations: LocalOperations = StoreOperations(store)
+        self.store = store
         super().__init__(str(self.path), Handler)
         os.chmod(self.path, 0o600)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self.slots.acquire(timeout=5):
+            try:
+                request.sendall(b'{"error":"service_busy"}\n')
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+    def service_actions(self) -> None:
+        """Between requests, complete trivial audit jobs so the queue never fills."""
+        try:
+            self.store.drain()
+        except LocalError:
+            pass  # A fenced or unhealthy store reports its state on the next request.
 
     def server_close(self) -> None:
         super().server_close()

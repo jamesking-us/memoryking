@@ -66,18 +66,34 @@ Configure through the embedding API with a current history, expected generation 
 
 | Area | Implemented bound / behavior |
 | --- | --- |
-| Local request | 256 KiB wire body; 64 KiB captured text; one request per socket connection. |
+| Local request | 256 KiB wire body; 64 KiB captured text; one request per socket connection; up to eight connections served concurrently, more wait up to five seconds and then receive `service_busy`. |
+| Query | Up to 32 distinct searchable terms. Longer queries are searched on their leading terms and the receipt diagnostics record `query_terms_truncated`. |
+| Candidate window | The 256 newest lexical matches in the project are scored; older matches beyond the window are not candidates. |
+| Policy journal | 256 KiB per signed record, enforced before writing (`journal_record_limit`) and on reading. A torn final line beyond the anchored sequence is discarded on the next append; damage anywhere else stays fatal. |
+| Conversation | 128 messages per dispatch through `AuthorizedConversation`; the request as a whole stays within 96 KiB. |
 | Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. |
 | Authorization | Five-second evaluation-to-commit/first-byte deadline, with UTC and monotonic checks. |
 | Idempotency | Replay bodies retained for 30 days; expired/deleted results do not free a consumed identity. |
-| Generic jobs | 30-second leases, five attempts, bounded retry backoff, 1,000 unfinished jobs and four live leases per tenant. |
+| Generic jobs | 30-second leases, five attempts, bounded retry backoff, 1,000 unfinished jobs and four live leases per tenant. The local daemon completes `audit_probe` jobs itself between requests, so a default installation never needs a worker to keep capturing. |
 | Mandatory resolution | 256 candidate revisions/bindings and 65,536 atom-binding work units; overflow blocks. |
 | Atlas | Default 200 nodes/400 edges; maxima 500/1,500; 196,608-byte response; cursor expires after 60 seconds. Counts describe only the returned window. |
 | Dense retrieval | Exact authorized scan capped at 10,000 eligible vectors and 256 candidates; insufficient index/frontier is explicit. |
-| Processing usage | Up to 100,000 retained attempts per tenant; unknown costs stay null, with known lower bounds. |
+| Processing usage | Up to 100,000 retained attempts per tenant; unknown costs stay null, with known lower bounds. Attempts past their 30-day retention are pruned by `gc` and when the cap is reached. |
 | Experience | 10,000 immutable records; up to 256 latest visible records per listing; no unbounded pagination/compaction. |
 | Browser | 60-second bootstrap, 15-minute session, five-second polling and 15-second snapshot freshness; hidden/expired views clear. |
 | Shared live updates | Eight streams, bounded samples/cursor history, resync/polling fallback. Not an unbounded event replay service. |
+
+### Capacity and release
+
+Every per-tenant bound has a release path and is reported by `status` under `capacity` as `used`, `limit` and `warning` (true from 80 percent). The dashboard overview shows the same figures.
+
+| Resource | Limit | Scope | Released by | Error when full |
+| --- | --- | --- | --- | --- |
+| `jobs` | 1,000 pending or leased | tenant | The daemon drains `audit_probe` jobs between requests; `claim`/`finish` workers also drain. | `queue_full` |
+| `rendered_artifacts` | 1,024 retained briefings, replays and resume packets | tenant, evicting the caller's own oldest first | 30-day expiry, and eviction of the oldest retained artifact when the count or byte cap is reached; an evicted receipt replays as `replay_expired`. | `retention_capacity` only when a single artifact exceeds 128 MiB |
+| `rendered_bytes` | 128 MiB of retained artifact bodies | tenant | As above. | As above |
+| `operation_intents` | 4,096 open intents per tenant and 32 per task stream | tenant and stream | Transitioning an intent to `succeeded` or `failed`. Resolved intents keep their consumed identity but no longer count. | `operation_capacity`, `operation_scope_capacity` |
+| `processing_usage` | 100,000 attempts | tenant | 30-day retention: expired rows are pruned by `gc` and when the cap is reached. | `usage_retention_limit` |
 
 The product has been exercised on macOS with Python 3.12 and native PostgreSQL 18.6, and through a single-host Linux-container rehearsal. A full native Linux matrix, Windows, physical touch, complete OS reduced-motion/browser coverage and third-party agent hosts remain unqualified. Intermittent dashboard scope refresh loss needs further investigation.
 
@@ -93,6 +109,10 @@ Inspection is bounded to 128 ordinary tables, 10,000 rows, 60 KiB per canonical 
 
 Each imported row becomes restricted historical evidence; legacy approval and role labels do not become current permission. Lessons become unaccepted, nonexecutable proposals. Retired rows/dependents become tombstones. Reconciliation checks current target records and references but is not a lossless reverse importer, two-way sync or live cutover procedure. Production datasets and client behavior require their own rehearsal.
 
+### Dashboard agent endpoint
+
+The local dashboard port also serves `POST /api/v1/retrieval` for an agent on the same machine: a retrieval command (`brief`, `fetch`, `receipt`, `replay`, `receipts`, `atlas`) in the request body, authenticated with `Authorization: Bearer <credential>` instead of a browser session, with exact `Host` and `Origin` checks and no cookies. It exists so a host can reuse the dashboard's loopback listener; the Unix socket remains the primary local transport and the shared service offers the same operations over HTTPS.
+
 ## Troubleshooting
 
 | Result | What to do |
@@ -104,7 +124,10 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 | `idempotency_conflict`, `source_conflict` | Investigate mismatched bytes; do not invent a new key to bypass the conflict. |
 | `source_retired`, `idempotency_result_expired` | The identity remains consumed. Reconcile instead of repeating the mutation. |
 | `stale_lease`, `stale_source` | Discard stale output and resolve current source/worker state. |
-| `queue_full`, `service_busy` | Back off and drain bounded work; inspect contention. No mutation retry is automatic. |
+| `queue_full`, `service_busy` | Back off and drain bounded work; inspect contention. No mutation retry is automatic. HTTP transports answer capacity with 429 and unavailability with 503; conflicts such as `history_changed` or `session_changed` use 409. |
+| `journal_record_limit` | The policy action was refused before any byte was written; the store stays usable. Reduce the action's payload. |
+| `maintenance_operation_mismatch` | `end-maintenance` was given an operation id that is not the one recorded by the interrupted backup. Read the anchor's `maintenance_operation` and retry with it. |
+| `internal_error`, `dashboard_unavailable`, `service_unavailable` with a `request_id` | Find the matching `request_id=` line in the daemon's stderr log (`serve --log-level`); it names the component, error type and code location without content. |
 | `release_expired`, `clock_untrusted` | Restore trustworthy timing and request a fresh authorized response. |
 | `recovery_required`, `journal_rollback`, `backup_invalid` | Stay offline and use verified independent recovery evidence. |
 | `session_changed` | Sign in again; permissions changed and retained views were cleared. |

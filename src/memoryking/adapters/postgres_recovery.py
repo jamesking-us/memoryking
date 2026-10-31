@@ -18,13 +18,13 @@ from typing import Any, Callable
 from psycopg import sql
 
 from memoryking.adapters.local_files import Ownership, atomic, private_dir, private_file, sync_dir
-from memoryking.adapters.local_store import LocalStore, identifier, uid
+from memoryking.adapters.local_store import LocalStore, identifier, recovery_admin, uid
 from memoryking.adapters.postgres_admin import Roles
 from memoryking.adapters.postgres_sql import PostgresSQL, record_factory
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.contracts.canonical import canonical_bytes, load_strict
-from memoryking.domain.local import Clock, LocalError, SystemClock
+from memoryking.domain.local import Clock, LocalError, SystemClock, temporal_valid
 
 # Preserve the revision-1 archive inventory for supported historical restores.
 TABLES_V1 = (
@@ -119,8 +119,9 @@ def settings(connection: Any, tenant: str) -> None:
 
 
 def backup(
-    store: PostgresStore, backup_connection: Any, destination: Path, *, roles: Roles = Roles()
+    store: PostgresStore, backup_connection: Any, destination: Path, *, roles: Roles | None = None
 ) -> dict[str, Any]:
+    roles = roles or Roles()
     if destination.exists():
         raise LocalError("backup_requires_new_directory")
     if backup_connection.execute("SELECT current_user").fetchone()[0] != roles.backup:
@@ -228,7 +229,7 @@ def restore(
     archive: Path,
     *,
     audience: str = "memoryking-shared",
-    roles: Roles = Roles(),
+    roles: Roles | None = None,
     clock: Clock | None = None,
     fault: Callable[[str], None] | None = None,
     lost_anchor_journal_head: str | None = None,
@@ -238,6 +239,7 @@ def restore(
     An interruption leaves the independent fence in place. Re-run explicit restore
     against the verified archive; old watermarks, credentials and retries retire.
     """
+    roles = roles or Roles()
     identifier(tenant)
     identifier(audience)
     for directory in (root, control, control / tenant, archive):
@@ -407,14 +409,7 @@ def restore(
                     "SELECT blob FROM observations WHERE blob IS NOT NULL"
                 )
             }
-            for path in directory.iterdir():
-                private_file(path)
-                if path.name not in live:
-                    path.unlink()
-            sync_dir(directory)
-            admin = recovery.db.execute(
-                "SELECT principal FROM grants WHERE project='*' ORDER BY principal LIMIT 1"
-            ).fetchone()
+            admin = recovery_admin(recovery.db, clock.utc_ms())
             if admin is None:
                 raise LocalError("recovery_admin_missing")
             position = recovery.db.execute("SELECT position FROM tenants").fetchone()[0]
@@ -430,7 +425,7 @@ def restore(
                 "store": controller.store,
                 "incarnation": recovery.incarnation,
                 "tenant": tenant,
-                "principal": admin[0],
+                "principal": admin[1],
                 "audience": audience,
             }
         )
@@ -451,6 +446,66 @@ def restore(
                 )
             anchor.pop("maintenance_operation", None)
             controller.anchor(anchor)
+        # Orphan blobs go only after the database and anchor are committed, so an
+        # interrupted restore never deletes content a retry would still need.
+        for path in directory.iterdir():
+            private_file(path)
+            if path.name not in live:
+                path.unlink()
+        sync_dir(directory)
         return credential_path
     finally:
         owner.close()
+
+
+def end_maintenance(
+    connection: Any,
+    control: Path,
+    tenant: str,
+    operation: str,
+    credential: str,
+    *,
+    audience: str = "memoryking-shared",
+    clock: Clock | None = None,
+) -> dict[str, Any]:
+    """Clear a maintenance fence left by a backup that died before its own cleanup.
+
+    The caller must present a current admin credential for the tenant and the exact
+    operation identifier recorded in the anchor; any other fence stays closed.
+    """
+    identifier(tenant)
+    if not re.fullmatch(r"[a-f0-9]{32}", operation):
+        raise LocalError("invalid_request")
+    private_dir(control / tenant)
+    controller = SharedControl(control / tenant)
+    identity = controller.verify(credential)
+    if (
+        identity.get("kind") != "credential"
+        or identity.get("store") != controller.store
+        or identity.get("tenant") != tenant
+        or identity.get("audience") != audience
+    ):
+        raise LocalError("denied")
+    principal = identifier(identity["principal"])
+    at = (clock or SystemClock()).utc_ms()
+    with connection.transaction():
+        settings(connection, tenant)
+        row = connection.execute(
+            "SELECT capabilities,starts,expires FROM grants WHERE tenant=%s AND principal=%s AND project='*'",
+            (tenant, principal),
+        ).fetchone()
+    capabilities = row[0] if row is not None else []
+    if isinstance(capabilities, str):
+        capabilities = load_strict(capabilities.encode())
+    if row is None or "admin" not in capabilities or not temporal_valid(at, row[1], row[2]):
+        raise LocalError("denied")
+    with controller.locked():
+        anchor = controller.read_anchor()
+        if identity.get("incarnation") != anchor["incarnation"]:
+            raise LocalError("history_changed")
+        if anchor["state"] != "maintenance" or anchor.get("maintenance_operation") != operation:
+            raise LocalError("maintenance_operation_mismatch")
+        anchor["state"] = "active"
+        anchor.pop("maintenance_operation")
+        controller.anchor(anchor)
+    return {"status": "active", "tenant": tenant, "operation": operation}

@@ -140,7 +140,7 @@ class AtlasCases:
             {"focus": ["x"] * 17},
             {"types": ["unknown"]},
         ):
-            self.fails("invalid_request", lambda: self.atlas(**args))
+            self.fails("invalid_request", lambda args=args: self.atlas(**args))
 
 
 class AtlasTests(AtlasCases, unittest.TestCase):

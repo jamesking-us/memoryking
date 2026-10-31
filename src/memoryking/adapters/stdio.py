@@ -11,6 +11,7 @@ from typing import Any, BinaryIO
 
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.local import LocalError
+from memoryking.observability import failure
 from memoryking.sdk import CATALOG, LocalClient
 
 INPUT_LIMIT = 262144
@@ -118,7 +119,8 @@ class StdioBridge:
                     response = self.handle(value)
                 except ContractError:
                     response = self.error(None, -32700, "parse_error")
-                except Exception:
+                except Exception as exc:
+                    failure("stdio", exc)
                     response = self.error(None, -32603, "internal_error")
             if response is not None:
                 if (

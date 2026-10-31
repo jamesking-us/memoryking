@@ -664,6 +664,37 @@ with LocalStore(root, ctl, fault=fail) as store:
         self.store.revoke(self.credential, "worker", "demo")
         self.error("denied", self.store.finish, worker, "demo", next_lease["lease"], "complete")
 
+    def test_daemon_drains_audit_jobs_so_default_captures_never_hit_queue_full(self):
+        # Default configuration, no patched limits, no separate worker: the serving
+        # daemon completes audit_probe jobs between requests.
+        with Server(self.store) as server:
+            thread = threading.Thread(
+                target=lambda: server.serve_forever(poll_interval=0.005), daemon=True
+            )
+            thread.start()
+            try:
+                for number in range(1, 1002):
+                    self.capture(number)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+        self.store.drain()
+        states = dict(self.store.db.execute("SELECT state,count(*) FROM jobs GROUP BY state"))
+        self.assertEqual(states, {"complete": 1001})
+        status = self.store.status(self.credential, "demo")
+        self.assertEqual(status["projection"]["frontier"], status["position"])
+        self.assertEqual(status["capacity"]["jobs"], {"used": 0, "limit": 1000, "warning": False})
+        self.assertEqual(
+            set(status["capacity"]),
+            {
+                "jobs",
+                "rendered_artifacts",
+                "rendered_bytes",
+                "operation_intents",
+                "processing_usage",
+            },
+        )
+
     def test_anchor_write_failure_returns_no_ack_and_retry_recovers(self):
         def fail(point):
             if point == "before_anchor":

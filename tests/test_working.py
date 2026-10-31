@@ -330,7 +330,7 @@ class WorkingTests(unittest.TestCase):
                     "required": True,
                 }
             ]
-            self.fails("artifact_path_invalid", lambda: self.save(body))
+            self.fails("artifact_path_invalid", lambda body=body: self.save(body))
         body = checkpoint()
         body["acceptance"][0]["state"] = "passed"
         self.fails("verification_evidence_required", lambda: self.save(body))
@@ -549,7 +549,7 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
                 db.execute("DROP TABLE " + table)
             historical_inventory(db, 3)
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 8)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],
@@ -563,6 +563,17 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
             self.intent(operation=f"op{number}")
         self.fails("operation_scope_capacity", lambda: self.intent(operation="overflow"))
         self.assertEqual(len(self.resume(max_output_tokens=16000)["operations"]), 32)
+        self.assertEqual(
+            self.store.status(self.owner, "p")["capacity"]["operation_intents"]["used"], 32
+        )
+        # Resolving an intent releases its slot while its identity stays consumed.
+        self.transition("dispatching", 1, operation="op0")
+        self.transition("succeeded", 2, operation="op0")
+        self.intent(operation="overflow")
+        self.fails("operation_identity_consumed", lambda: self.intent(operation="op0"))
+        self.assertEqual(
+            self.store.status(self.owner, "p")["capacity"]["operation_intents"]["used"], 32
+        )
 
     def test_unacknowledged_dispatch_is_recovered_as_ambiguous_after_deadline(self):
         self.save()

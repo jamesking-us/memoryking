@@ -25,6 +25,7 @@ class RequestClient(LocalClient):
 
     def __init__(self, service: SharedService, tenant: str, credential: str, project: str):
         self.service, self.tenant, self.token, self.project = service, tenant, credential, project
+        self.namespace = "sdk"
         self.released: Released | None = None
         self.last_context = self._request(credential, "context", {"project": project})
         self.binding = tuple(self.last_context[key] for key in BINDING_FIELDS)

@@ -21,7 +21,9 @@ from memoryking.adapters.local_store import identifier, uid
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
+from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure
 
 
 def stable(value: Any) -> Any:
@@ -149,6 +151,7 @@ class SharedDashboard:
                         tenant=value["tenant"],
                         principal=who["principal"],
                         authorization_epoch=epoch[0],
+                        capacity=store._capacity(value["tenant"]),
                         streaming=True,
                         adapter="shared-plan-files / authorized read only",
                     )
@@ -387,9 +390,9 @@ class SharedDashboard:
                 response.headers["content-length"] = "0"
             return response
         except LocalError as exc:
-            return error(exc.code, 403)
-        except Exception:
-            return error("dashboard_unavailable", 503)
+            return error(exc.code, http_status(exc.code, 403))
+        except Exception as exc:
+            return error("dashboard_unavailable", 503, failure("shared_dashboard", exc))
 
     async def events(self, session: str, cursor: str | None) -> Response:
         from memoryking.adapters.shared_http import error

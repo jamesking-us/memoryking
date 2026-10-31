@@ -262,6 +262,46 @@ p {
 .metric .eyebrow {
   letter-spacing: 1px;
 }
+.capacity {
+  margin-bottom: 22px;
+}
+.capacity-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.capacity-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.capacity-item strong {
+  display: block;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+  margin: 4px 0;
+  color: var(--text);
+}
+.capacity-item p {
+  font-size: 11px;
+  margin: 0;
+}
+.capacity-item.warning {
+  border-color: #d9822b;
+}
+.capacity-meter {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  margin-top: 8px;
+  overflow: hidden;
+}
+.capacity-meter span {
+  display: block;
+  height: 100%;
+  background: currentColor;
+}
 .section-head {
   display: flex;
   justify-content: space-between;

@@ -122,7 +122,7 @@ class DenseCases:
         for vector in ([1], [0] * 384):
             args = self.dense_args(config)
             args["dense"]["vector"] = vector
-            self.fails("embedding_vector_invalid", lambda: self.run_r(args=args))
+            self.fails("embedding_vector_invalid", lambda args=args: self.run_r(args=args))
         args = self.dense_args(config)
         args["dense"]["fingerprint"] = "0" * 64
         result = self.run_r(args=args)

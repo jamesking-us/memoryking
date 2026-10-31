@@ -39,6 +39,9 @@ class Repository:
             "verify": "attest",
             "revalidate": "repository",
         }.get(action, "read")
+        # Git runs before the write transaction so the store lock never waits on the
+        # repository; the commit below rechecks authorization and clone identity.
+        snapshot = self.snapshot_outside(credential, args) if action == "capture" else None
         with self.s.transaction() as decision:
             at = decision.evaluated_ms
             who = self.s._auth(credential, cap, args["project"], at)
@@ -80,7 +83,8 @@ class Repository:
             elif action == "register":
                 result = self.register(who, args, at)
             elif action == "capture":
-                result = self.capture(who, args, at)
+                assert snapshot is not None
+                result = self.capture(who, args, at, snapshot)
             elif action == "bind":
                 result = self.bind(who, args, at)
             elif action == "verify":
@@ -214,7 +218,7 @@ class Repository:
             "position": position,
         }
 
-    def capture(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+    def _clone_root(self, who: dict[str, Any], args: dict[str, Any]) -> Path:
         clone = self.db.execute(
             "SELECT * FROM repository_clones WHERE tenant=? AND repository=? AND alias=?",
             (who["tenant"], args["repository"], args["clone"]),
@@ -228,7 +232,22 @@ class Repository:
             clone["inode"],
         ):
             raise LocalError("repository_clone_changed")
-        body = GitSnapshot(root).capture(args["repository"], args["environment"])
+        return root
+
+    def snapshot_outside(self, credential: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Authorize and locate the clone in a short transaction, then run Git unlocked."""
+        with self.s.transaction() as decision:
+            at = decision.evaluated_ms
+            who = self.s._auth(credential, "repository", args["project"], at)
+            self.s._auth(credential, "read", args["project"], at)
+            self.visible(who, args["repository"], args["project"])
+            root = self._clone_root(who, args)
+        return GitSnapshot(root).capture(args["repository"], args["environment"])
+
+    def capture(
+        self, who: dict[str, Any], args: dict[str, Any], at: int, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        self._clone_root(who, args)  # The clone must still be the registered one at commit.
         raw = canonical_bytes(body)
         if len(raw) > 4 * 1024 * 1024:
             raise LocalError("repository_projection_limit")

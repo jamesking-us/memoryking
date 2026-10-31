@@ -82,6 +82,23 @@
         </section>
         <p id="notice" role="alert"></p>
         <div id="content" hidden>
+          <section
+            id="capacity"
+            class="card capacity"
+            aria-label="Tenant capacity"
+          >
+            <div class="section-head">
+              <div>
+                <h2>Capacity</h2>
+                <p class="caption">
+                  Bounded resources for this tenant. Each has a release path; a
+                  warning appears from 80 percent.
+                </p>
+              </div>
+              <span id="capacity-state" class="tag"></span>
+            </div>
+            <div id="capacity-list" class="capacity-list"></div>
+          </section>
           <div id="development-record" hidden>
             <section
               id="metrics"

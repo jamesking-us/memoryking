@@ -43,9 +43,49 @@ interface Snapshot {
   principal: string;
   tenant: string;
   authorization_epoch?: number;
+  capacity?: Record<string, { used: number; limit: number; warning: boolean }>;
   streaming?: boolean;
   stream_sequence?: number;
   resync_required?: boolean;
+}
+const CAPACITY_LABELS: Record<string, [string, string]> = {
+  jobs: ["Pending jobs", "Drained by the service between requests"],
+  rendered_artifacts: ["Retained briefings", "Oldest evicted first at the cap"],
+  rendered_bytes: ["Retained bytes", "Artifact bodies held for replay"],
+  operation_intents: ["Open operations", "Released when an operation resolves"],
+  processing_usage: ["Usage attempts", "Pruned after 30 days"],
+};
+function renderCapacity(capacity: Snapshot["capacity"] | undefined): void {
+  const list = get("capacity-list");
+  list.replaceChildren();
+  const entries = Object.entries(capacity ?? {});
+  const warnings = entries.filter(([, v]) => v.warning).length;
+  get("capacity-state").textContent = entries.length
+    ? warnings
+      ? `${warnings} near limit`
+      : "Within limits"
+    : "Not reported";
+  for (const [name, value] of entries) {
+    const [title, note] = CAPACITY_LABELS[name] ?? [name, ""];
+    const item = el(
+      "div",
+      "",
+      value.warning ? "capacity-item warning" : "capacity-item",
+    );
+    item.append(el("p", title, "eyebrow"));
+    const shown =
+      name === "rendered_bytes"
+        ? `${(value.used / 1048576).toFixed(1)} / ${Math.round(value.limit / 1048576)} MiB`
+        : `${value.used.toLocaleString()} / ${value.limit.toLocaleString()}`;
+    item.append(el("strong", shown));
+    const meter = el("div", "", "capacity-meter");
+    const fill = el("span");
+    fill.style.width = `${Math.min(100, (100 * value.used) / Math.max(1, value.limit))}%`;
+    meter.append(fill);
+    item.append(meter);
+    item.append(el("p", note));
+    list.append(item);
+  }
 }
 const get = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -333,6 +373,7 @@ function render(): void {
     : snapshot.streaming && !streamFallback
       ? "Current snapshot · live updates and 5s polling"
       : "Current snapshot · polled every 5s";
+  renderCapacity(snapshot.capacity);
   get("development-record").hidden = snapshot.phases.length === 0;
   if (!snapshot.phases.length) {
     for (const id of ["phases", "detail", "metrics", "phase-map", "adrs"])
@@ -359,7 +400,7 @@ function render(): void {
     [
       "REPORT CLOSEOUTS",
       `${snapshot.counts.report_closeouts} / ${snapshot.counts.total}`,
-      "QA and Gmail accepted, including partial or blocked outcomes",
+      "QA accepted, including partial or blocked outcomes",
     ],
     [
       "LOCAL VERIFICATION",

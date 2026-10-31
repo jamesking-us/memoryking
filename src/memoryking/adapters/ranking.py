@@ -156,9 +156,7 @@ class Ranking:
             "dataset_kind": "development",
             "judgment_provenance": args["judgment_provenance"],
             "judgment_assurance": "actor_reported",
-            "source_position": self.db.execute(
-                "SELECT position FROM tenants WHERE tenant=?", (who["tenant"],)
-            ).fetchone()[0],
+            "source_position": self._project_position(who["tenant"], args["project"]),
             "status": "passes_development_gates"
             if improved and all(case["passes"] for case in cases)
             else "fails_development_gates",
@@ -179,6 +177,24 @@ class Ranking:
             at,
         )
 
+    def _project_position(self, tenant: str, project: str) -> int:
+        """Latest event that can change this project's ranking inputs.
+
+        Captures, claims, reviews and feedback elsewhere in the tenant do not invalidate a
+        shadow evaluation; the shadow record itself is excluded so a fresh evaluation stays
+        activatable until the project changes.
+        """
+        statements = (
+            "SELECT coalesce(max(position),0) FROM observations WHERE tenant=? AND project=?",
+            "SELECT coalesce(max(position),0) FROM experience_records WHERE tenant=? AND project=? AND kind!='shadow'",
+            "SELECT coalesce(max(r.created),0) FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project=?",
+            "SELECT coalesce(max(l.position),0) FROM lifecycle l JOIN revisions r ON l.tenant=r.tenant AND l.revision=r.id JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE l.tenant=? AND f.project=?",
+        )
+        return max(
+            int(self.db.execute(statement, (tenant, project)).fetchone()[0])
+            for statement in statements
+        )
+
     def transition(
         self, who: dict[str, Any], args: dict[str, Any], action: str, at: int
     ) -> dict[str, Any]:
@@ -194,9 +210,7 @@ class Ranking:
         if action == "activate":
             shadow = self.records.get(who, args["project"], args["shadow"], "shadow", at)
             body = json.loads(shadow["body"])
-            position = self.db.execute(
-                "SELECT position FROM tenants WHERE tenant=?", (who["tenant"],)
-            ).fetchone()[0]
+            position = self._project_position(who["tenant"], args["project"])
             if (
                 body["configuration"] != reference
                 or spec is None
@@ -204,7 +218,7 @@ class Ranking:
                 or body["status"] != "passes_development_gates"
             ):
                 raise LocalError("ranking_evaluation_required")
-            if position != shadow["position"]:
+            if position != body["source_position"]:
                 raise LocalError("ranking_shadow_stale")
         elif (
             reference is not None

@@ -108,7 +108,7 @@ class EmbeddingJobCases:
             ("embedding_vector_invalid", {"vector": [1000000, 0]}),
             ("embedding_vector_invalid", {"vector": [0] * 384}),
         ]:
-            self.fails(code, lambda: self.complete_e(lease, **changes))
+            self.fails(code, lambda changes=changes: self.complete_e(lease, **changes))
         self.complete_e(lease)
         self.assertTrue(self.status_e(config)["ready"])
 

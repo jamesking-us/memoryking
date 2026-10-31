@@ -115,7 +115,7 @@ class PostgresStore(LocalStore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "3":
+            if version is None or version[0] != "4":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException:
@@ -284,11 +284,9 @@ class PostgresStore(LocalStore):
                     decision.check(self.clock)
                     clock_started = time.monotonic()
                     serial = self.connection.execute(
-                        "UPDATE memoryking.tenant_meta SET value=(value::bigint+1)::text "
-                        "WHERE tenant=%s AND key='commit_serial' AND value::bigint<%s RETURNING value",
-                        (self.tenant, MAX_COUNTER),
+                        "SELECT memoryking.next_commit_serial(%s,%s)", (self.tenant, MAX_COUNTER)
                     ).fetchone()
-                    if serial is None:
+                    if serial is None or serial[0] is None:
                         raise LocalError("counter_exhausted")
                     clock_locked = time.monotonic()
                     position = self.db.execute(

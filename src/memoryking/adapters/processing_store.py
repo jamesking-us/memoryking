@@ -13,7 +13,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, USAGE_LIMIT, LocalStore, uid
 from memoryking.adapters.token_count import counter
 from memoryking.adapters.working import Working
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
@@ -106,9 +106,20 @@ class Processing:
             self.db.execute(
                 "SELECT count(*) FROM processing_usage WHERE tenant=?", (who["tenant"],)
             ).fetchone()[0]
-            >= 100000
+            >= USAGE_LIMIT
         ):
-            raise LocalError("usage_retention_limit")
+            # Only rows past their retention are released; recent attempts are never
+            # silently discarded to make room.
+            self.db.execute(
+                "DELETE FROM processing_usage WHERE tenant=? AND expires<=?", (who["tenant"], at)
+            )
+            if (
+                self.db.execute(
+                    "SELECT count(*) FROM processing_usage WHERE tenant=?", (who["tenant"],)
+                ).fetchone()[0]
+                >= USAGE_LIMIT
+            ):
+                raise LocalError("usage_retention_limit")
         self.db.execute(
             "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (

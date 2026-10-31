@@ -1,6 +1,4 @@
 jsonschema==4.26.0
-reportlab==4.4.9
-pypdf==6.10.0
 ruff==0.17.2
 mypy==2.4.0
 build==1.6.1

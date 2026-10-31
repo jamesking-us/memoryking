@@ -13,7 +13,7 @@ class StatementTests(unittest.TestCase):
             "SELECT '?' AS value WHERE x=%s AND y='it''s ?'",
         )
         self.assertIn(
-            "phraseto_tsquery", native_statement("SELECT id FROM lexical WHERE lexical MATCH ?")
+            "websearch_to_tsquery", native_statement("SELECT id FROM lexical WHERE lexical MATCH ?")
         )
         self.assertEqual(
             native_statement("SELECT length(CAST(body AS BLOB)) FROM checkpoints"),

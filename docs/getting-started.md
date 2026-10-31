@@ -48,7 +48,7 @@ Start the service:
   --dashboard-port 8771
 ```
 
-Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes.
+Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes. The service completes its own bookkeeping jobs between requests, so no separate worker process is needed. Add `--log-level info` to see redacted operational events on stderr.
 
 ## 4. Open the dashboard
 
@@ -63,7 +63,7 @@ In a second terminal, from the same checkout:
 
 Open the URL printed by the command. Read the private output file locally and enter its `code` in the page. Use the **one-use code**, never the owner credential. The code expires after 60 seconds; request a new file name for another attempt.
 
-The dashboard starts empty. Enter your project in **Task activity** and select **Load tasks** after your agent has saved something to it. **Memory** and **Retrieval history** show the project's stored records and briefings. Each view checks your current permissions. They do not discover conversations in other applications automatically.
+The dashboard starts empty. The overview shows capacity use for the tenant's bounded resources and warns at 80 percent. Enter your project in **Task activity** and select **Load tasks** after your agent has saved something to it. **Memory** and **Retrieval history** show the project's stored records and briefings. Each view checks your current permissions. They do not discover conversations in other applications automatically.
 
 To explore a populated synthetic dashboard, install the [contributor environment](../CONTRIBUTING.md#setup) and run:
 

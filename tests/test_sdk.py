@@ -18,6 +18,7 @@ from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_ipc import Server
 from memoryking.adapters.stdio import INPUT_LIMIT, StdioBridge
 from memoryking.contracts.canonical import canonical_bytes
+from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 
 
@@ -169,6 +170,68 @@ class SDKTests(unittest.TestCase):
                 "checkpoint": checkpoint(),
             },
         )
+
+    def test_bridge_binds_incarnation_when_a_tool_call_omits_it(self):
+        result = self.client.tool(
+            "memory_brief",
+            {
+                "version": 1,
+                "action": "brief",
+                "args": {
+                    "project": "p",
+                    "query": "durable",
+                    "bindings": [{}],
+                    "max_output_tokens": 6000,
+                    "tokenizer": "cl100k_base",
+                },
+            },
+        )
+        self.assertEqual(result["incarnation"], self.store.incarnation)
+        with self.assertRaises(LocalError) as caught:
+            self.client.tool(
+                "memory_brief",
+                {
+                    "version": 1,
+                    "incarnation": "hist_" + "0" * 32,
+                    "action": "brief",
+                    "args": {
+                        "project": "p",
+                        "query": "durable",
+                        "bindings": [{}],
+                        "max_output_tokens": 6000,
+                        "tokenizer": "cl100k_base",
+                    },
+                },
+            )
+        self.assertEqual("history_changed", caught.exception.code)
+
+    def test_capture_key_is_idempotent_across_client_instances(self):
+        def observation(event, text):
+            return {
+                "version": 1,
+                "project": "p",
+                "source": "sdk",
+                "source_event": event,
+                "text": text,
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            }
+
+        first = self.client.capture("same-key", observation("e1", "first bytes"))
+        again = LocalClient(self.server.path, self.credential, "p").capture(
+            "same-key", observation("e1", "first bytes")
+        )
+        self.assertEqual(first, again)
+        with self.assertRaises(LocalError) as caught:
+            LocalClient(self.server.path, self.credential, "p").capture(
+                "same-key", observation("e1", "different bytes")
+            )
+        self.assertEqual("idempotency_conflict", caught.exception.code)
+        other = LocalClient(self.server.path, self.credential, "p", namespace="other").capture(
+            "same-key", observation("e2", "other bytes")
+        )
+        self.assertNotEqual(first["observation"], other["observation"])
 
     def test_bound_sdk_save_resume_and_no_automatic_retry(self):
         context = self.client.context()

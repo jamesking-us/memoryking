@@ -221,7 +221,8 @@ def execute(scenario, operation, arguments):
         revoked = failure("replay", readers["receipt"], reader)
         scenario.clock.offset += RETRY_MS + 1000
         expired = failure("replay", receipt)
-        fresh = brief()
+        # Purge follows recorded dependencies, so the packet must have cited the source.
+        fresh = brief(query=raw)
         s.purge(owner, obs["observation"])
         purged = failure("replay", fresh["receipt"])
         return {

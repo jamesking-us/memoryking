@@ -110,7 +110,7 @@ class ProcessingCases:
         for field, value in [("kind", "constraint"), ("authority", "project")]:
             changed = copy.deepcopy(args)
             changed["body"][field] = value
-            self.fails("invalid_request", lambda: self.run_p("extract", changed))
+            self.fails("invalid_request", lambda changed=changed: self.run_p("extract", changed))
         self.review(first)
         self.assertEqual(len(self.query()["items"]), 1)
         self.store.purge(self.owner, self.obs["observation"])
@@ -122,7 +122,7 @@ class ProcessingCases:
             args["provenance"][field] = "0" * 64
             self.fails(
                 "source_manifest_mismatch" if field == "input_hash" else "output_hash_mismatch",
-                lambda: self.run_p("extract", args),
+                lambda args=args: self.run_p("extract", args),
             )
         reader = self.store.grant(self.owner, "reader", "p", ["read"])
         self.fails("denied", lambda: self.run_p("extract", self.proposal(), reader))
@@ -207,7 +207,11 @@ class ProcessingCases:
         with self.assertRaises(LocalError):
             self.run_r("replay", {"project": "p", "receipt": result["receipt"]})
         self.assertEqual([i["revision"] for i in self.query()["items"]], [unrelated["revision"]])
-        self.fails("checkpoint_unavailable", self.compile)
+        # The checkpoint recorded no dependency on the purged source, so it stays usable
+        # and a new compilation simply omits the lost material.
+        after = self.compile()
+        self.assertNotIn(original["revision"], canonical_bytes(after).decode())
+        self.assertNotIn(self.raw, canonical_bytes(after).decode())
         self.save(revision=1)
         fresh = self.compile()
         self.assertEqual(fresh["optional_explanation"]["mode"], "omitted")

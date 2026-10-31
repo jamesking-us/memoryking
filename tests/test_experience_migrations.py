@@ -48,7 +48,7 @@ class LocalExperienceMigrations(unittest.TestCase):
                 db.execute("SELECT 1 FROM sqlite_master WHERE name='experience_records'").fetchone()
             )
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 8)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
         self.assertEqual(
             self.store.db.execute("SELECT blob FROM observations").fetchone()[0],
             self.span["content_hash"],
@@ -66,7 +66,7 @@ class LocalExperienceMigrations(unittest.TestCase):
         atomic(archive / "manifest", self.store.control.sign(manifest).encode())
         self.store.purge(self.owner, self.obs["observation"])
         restore_fixture(self, archive)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 8)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
         self.assertEqual(self.store.db.execute("SELECT deleted FROM observations").fetchone()[0], 1)
 
 
@@ -167,7 +167,7 @@ class NativeExperienceUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "3",
+                        "4",
                     )
         finally:
             cluster.close()
