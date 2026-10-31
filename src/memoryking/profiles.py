@@ -15,8 +15,18 @@ from typing import Any
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.domain.local import LocalError
 
-FIELDS = ("store", "control", "socket", "credential", "dashboard_port", "embedding_model")
-PATH_FIELDS = ("store", "control", "socket", "credential", "embedding_model")
+FIELDS = (
+    "store",
+    "control",
+    "socket",
+    "credential",
+    "dashboard_port",
+    "embedding_model",
+    "backup_dir",
+    "backup_every",
+    "backup_keep",
+)
+PATH_FIELDS = ("store", "control", "socket", "credential", "embedding_model", "backup_dir")
 
 
 def config_path() -> Path:
@@ -57,6 +67,17 @@ def validate(name: str, values: Any) -> dict[str, Any]:
         if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
             raise LocalError("profile_config_invalid")
         clean["dashboard_port"] = port
+    if "backup_every" in values:
+        if not isinstance(values["backup_every"], str) or not re.fullmatch(
+            r"[1-9]\d*[mhd]", values["backup_every"]
+        ):
+            raise LocalError("profile_config_invalid")
+        clean["backup_every"] = values["backup_every"]
+    if "backup_keep" in values:
+        keep = values["backup_keep"]
+        if isinstance(keep, bool) or not isinstance(keep, int) or not 1 <= keep <= 1000:
+            raise LocalError("profile_config_invalid")
+        clean["backup_keep"] = keep
     return clean
 
 

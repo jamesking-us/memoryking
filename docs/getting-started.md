@@ -108,7 +108,7 @@ Lexical search works out of the box. For meaning-based recall, install the embed
 .venv/bin/python -m memoryking --profile home embeddings enable --project demo
 ```
 
-Restart `serve` after adding the model to the profile. The service then indexes the project in the background and every briefing searches by meaning as well as by words; `doctor` reports both the runtime and the model. The model runs on your CPU and nothing leaves the machine.
+Restart `serve` after adding the model to the profile. The same profile can schedule backups: add `--backup-dir "$HOME/.memoryking-backups" --backup-every 1d --backup-keep 14` to `profile add`, and `doctor` will tell you when the newest backup is stale. The service then indexes the project in the background and every briefing searches by meaning as well as by words; `doctor` reports both the runtime and the model. The model runs on your CPU and nothing leaves the machine.
 
 ## 7. Connect an agent
 

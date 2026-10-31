@@ -152,6 +152,8 @@ class LocalStore:
         self.counters = Metrics()
         # A loaded local embedding model lets briefings embed their own queries.
         self.embedder: Any | None = None
+        # A scheduled backup policy the daemon checks between requests.
+        self.backup_policy: Any | None = None
         try:
             self.control = Control(control)
             self.anchor = self.control.read_anchor()
@@ -1033,6 +1035,8 @@ class LocalStore:
         operator remembering to run `gc`.
         """
         now = self.clock.utc_ms()
+        if self.backup_policy is not None:
+            self.backup_policy.maybe_run(self, now)
         if now - self._last_housekeeping < interval_ms:
             return False
         self._last_housekeeping = now

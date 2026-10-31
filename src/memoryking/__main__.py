@@ -108,6 +108,8 @@ def doctor(
     socket: Path | None,
     credential: Path | None,
     embedding_model: Path | None = None,
+    backup_dir: Path | None = None,
+    backup_every: str | None = None,
 ) -> list[tuple[str, str, str]]:
     """Health checks an operator can run while the daemon is up. Each is (level, name, detail)."""
     import sqlite3
@@ -204,6 +206,10 @@ def doctor(
             "embedding model",
             "no model configured; `serve --embedding-model DIR` after installing one enables semantic search",
         )
+    from memoryking.backups import check as backup_check
+
+    level, detail = backup_check(backup_dir, backup_every, int(time.time() * 1000))
+    record(level, "backups", detail)
     if socket is not None and credential is not None and sock.exists():
         try:
             result = request(sock, read_credential(credential), "status", {"project": "main"})
@@ -245,6 +251,9 @@ def main() -> int:
     adder.add_argument("--socket", type=Path, help="Default: STORE/service.sock")
     adder.add_argument("--dashboard-port", type=int)
     adder.add_argument("--embedding-model", type=Path, help="Installed local model directory")
+    adder.add_argument("--backup-dir", type=Path)
+    adder.add_argument("--backup-every", help="Such as 12h or 1d")
+    adder.add_argument("--backup-keep", type=int)
     prof_commands.add_parser("list")
     prof_commands.add_parser("remove").add_argument("name")
     for name in ("init", "serve", "backup", "restore", "gc", "control-checkpoint"):
@@ -258,6 +267,11 @@ def main() -> int:
                 help="Opt-in loopback port; 0 chooses a free port; a profile may set it",
             )
             cmd.add_argument("--plan-root", type=Path, help="Explicit trusted plan/report checkout")
+            cmd.add_argument("--backup-dir", type=Path, help="Directory for scheduled backups")
+            cmd.add_argument("--backup-every", help="Backup interval such as 12h or 1d")
+            cmd.add_argument(
+                "--backup-keep", type=int, help="Complete backups to retain; default 14"
+            )
             cmd.add_argument(
                 "--embedding-model",
                 type=Path,
@@ -293,6 +307,8 @@ def main() -> int:
     doc.add_argument("--socket", type=Path, help="Also query the running daemon")
     doc.add_argument("--credential", type=Path, help="Admin credential for the daemon query")
     doc.add_argument("--embedding-model", type=Path, help="Model directory to verify")
+    doc.add_argument("--backup-dir", type=Path, help="Scheduled backup directory to check")
+    doc.add_argument("--backup-every", help="Backup policy interval the directory should meet")
     cred = commands.add_parser("credential", help="Issue, list and revoke agent credentials")
     cred_commands = cred.add_subparsers(dest="credential_command", required=True)
     for name in ("issue", "list", "revoke"):
@@ -373,11 +389,12 @@ def main() -> int:
                     "store": str(args.store.resolve()),
                     "control": str(args.control.resolve()),
                 }
-                for field in ("credential", "socket", "embedding_model"):
+                for field in ("credential", "socket", "embedding_model", "backup_dir"):
                     if getattr(args, field) is not None:
                         values[field] = str(getattr(args, field).resolve())
-                if args.dashboard_port is not None:
-                    values["dashboard_port"] = args.dashboard_port
+                for field in ("dashboard_port", "backup_every", "backup_keep"):
+                    if getattr(args, field) is not None:
+                        values[field] = getattr(args, field)
                 path = profiles.save(args.name, values, args.config)
                 print(json.dumps({"profile": args.name, "config": str(path)}))
             elif args.profile_command == "remove":
@@ -493,7 +510,13 @@ def main() -> int:
                 print(packet["text"], end="")
         elif args.command == "doctor":
             findings = doctor(
-                args.store, args.control, args.socket, args.credential, args.embedding_model
+                args.store,
+                args.control,
+                args.socket,
+                args.credential,
+                args.embedding_model,
+                args.backup_dir,
+                args.backup_every,
             )
             width = max(len(name) for _, name, _ in findings)
             for level, name, detail in findings:
@@ -594,6 +617,12 @@ def main() -> int:
                     signal.signal(signal.SIGTERM, stop)
                     dashboard = None
                     embeddings = None
+                    if args.backup_dir is not None:
+                        from memoryking.backups import Policy
+
+                        store.backup_policy = Policy(
+                            args.backup_dir, args.backup_every or "1d", args.backup_keep or 14
+                        )
                     if args.embedding_model is not None:
                         from memoryking.adapters.local_embeddings import LocalOnnxEmbedding
                         from memoryking.embedding_loop import EmbeddingLoop
