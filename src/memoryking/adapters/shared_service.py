@@ -65,4 +65,13 @@ class SharedService:
         # Domain writes and stateful permit/lease/CAS operations stay exclusive.
         release_only = request["operation"] in {"read", "export", "context", "status", "namespace"}
         with self.store(tenant, credential, release_only=release_only) as store:
-            return StoreOperations(store).execute(value)
+            result = StoreOperations(store).execute(value)
+            if request["operation"] == "capture":
+                # A tenant that captures also drains its own audit jobs, so the shared
+                # profile never depends solely on the scheduled worker to stay under
+                # the queue limit.
+                try:
+                    store.drain(limit=64)
+                except LocalError:
+                    pass
+            return result

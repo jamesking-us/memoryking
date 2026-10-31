@@ -250,6 +250,15 @@ class PostgresStoreTests(unittest.TestCase):
             PostgresStore(pool, self.root, self.control, self.tenant, self.credential)
         self.assertEqual("service_unavailable", caught.exception.code)
 
+    def test_drain_completes_audit_jobs_without_a_worker(self):
+        self.capture()
+        with self.store() as store:
+            self.assertEqual(store.drain(), 1)
+            self.assertEqual(store.drain(), 0)
+            status = store.status(self.credential, "demo")
+        self.assertEqual(status["jobs"], {"complete": 1})
+        self.assertEqual(status["projection"]["frontier"], status["position"])
+
     def test_end_maintenance_clears_only_the_matching_fence_for_a_current_admin(self):
         from memoryking.adapters.postgres_recovery import end_maintenance
         from memoryking.adapters.shared_control import SharedControl

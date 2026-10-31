@@ -664,6 +664,18 @@ with LocalStore(root, ctl, fault=fail) as store:
         self.store.revoke(self.credential, "worker", "demo")
         self.error("denied", self.store.finish, worker, "demo", next_lease["lease"], "complete")
 
+    def test_receipts_expire_after_thirty_days_through_hourly_housekeeping(self):
+        self.capture()
+        delivered(self.store.read(self.credential, "demo"))
+        count = lambda: self.store.db.execute("SELECT count(*) FROM receipts").fetchone()[0]  # noqa: E731
+        self.assertEqual(count(), 1)
+        self.assertTrue(self.store.housekeeping())
+        self.assertFalse(self.store.housekeeping(), "housekeeping runs at most once per hour")
+        self.assertEqual(count(), 1)
+        self.clock.advance(RETRY_MS + 1)
+        self.assertTrue(self.store.housekeeping())
+        self.assertEqual(count(), 0)
+
     def test_daemon_drains_audit_jobs_so_default_captures_never_hit_queue_full(self):
         # Default configuration, no patched limits, no separate worker: the serving
         # daemon completes audit_probe jobs between requests.
