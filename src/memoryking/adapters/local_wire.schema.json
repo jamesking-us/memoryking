@@ -447,6 +447,34 @@
           "maxLength": 8192
         },
         "operation": {
+          "const": "grants"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
           "const": "purge"
         },
         "args": {

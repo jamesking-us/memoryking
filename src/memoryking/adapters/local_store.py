@@ -744,6 +744,32 @@ class LocalStore:
         self._expose()
         return self._token("credential", tenant=who["tenant"], principal=principal)
 
+    def grants(self, credential: str) -> list[dict[str, Any]]:
+        """Every grant in the caller's tenant, for operators; needs admin rights."""
+        with self.transaction() as decision:
+            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
+            at = decision.evaluated_ms
+            items = []
+            for row in self.db.execute(
+                "SELECT principal,project,capabilities,starts,expires FROM grants WHERE tenant=? ORDER BY principal,project",
+                (who["tenant"],),
+            ).fetchall():
+                capabilities = row["capabilities"]
+                if isinstance(capabilities, str):
+                    capabilities = json.loads(capabilities)
+                items.append(
+                    {
+                        "principal": row["principal"],
+                        "project": row["project"],
+                        "capabilities": sorted(capabilities),
+                        "starts": row["starts"],
+                        "expires": row["expires"],
+                        "valid_now": temporal_valid(at, row["starts"], row["expires"]),
+                    }
+                )
+        self._expose()
+        return items
+
     def revoke(self, credential: str, principal: str, project: str) -> None:
         identifier(principal)
         identifier(project)

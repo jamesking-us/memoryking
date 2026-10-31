@@ -185,6 +185,12 @@ class SharedDashboard:
                         old is not None and old.get("expires", 0) <= at
                     )
                     raw = canonical_bytes(result)
+                elif route == "/api/projects":
+                    from memoryking.adapters.projects import visible_projects
+
+                    raw = canonical_bytes(
+                        {"items": visible_projects(store, value["credential"], at)}
+                    )
                 elif route.startswith("/api/execution/"):
                     project = identifier(route.removeprefix("/api/execution/"))
                     store._auth(value["credential"], "read", project, at)

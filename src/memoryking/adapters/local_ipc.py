@@ -71,6 +71,8 @@ class StoreOperations:
             return store.read(credential, **args, export=op == "export")
         if op == "status":
             return store.status(credential, **args)
+        if op == "grants":
+            return {"items": store.grants(credential)}
         if op == "claim":
             return {"job": store.claim(credential, **args)}
         if op == "finish":

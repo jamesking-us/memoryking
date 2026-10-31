@@ -7,6 +7,62 @@ const CAPACITY_LABELS = {
     operation_intents: ["Open operations", "Released when an operation resolves"],
     processing_usage: ["Usage attempts", "Pruned after 30 days"],
 };
+const PROJECT_KEY = "memoryking.project";
+let projectsLoadedFor = -1;
+function rememberedProject() {
+    try {
+        return localStorage.getItem(PROJECT_KEY) ?? "";
+    }
+    catch {
+        return "";
+    }
+}
+function rememberProject(project) {
+    try {
+        localStorage.setItem(PROJECT_KEY, project);
+    }
+    catch {
+        /* per-viewer convenience only */
+    }
+}
+async function loadProjects() {
+    if (!snapshot || projectsLoadedFor === generation)
+        return;
+    projectsLoadedFor = generation;
+    const context = generation;
+    let items = [];
+    try {
+        items = (await api("/api/projects")).items;
+    }
+    catch {
+        projectsLoadedFor = -1;
+        return;
+    }
+    if (!snapshot || context !== generation)
+        return;
+    const remembered = rememberedProject();
+    for (const id of ["execution-project", "receipt-project"]) {
+        const select = get(id);
+        const current = select.value || remembered;
+        select.replaceChildren();
+        if (!items.length) {
+            const empty = el("option", "No readable projects yet");
+            empty.value = "";
+            empty.disabled = true;
+            empty.selected = true;
+            select.append(empty);
+            continue;
+        }
+        for (const item of items) {
+            const option = el("option", `${item.project} · ${item.observations} memories · ${item.tasks} tasks · ${item.receipts} receipts`);
+            option.value = item.project;
+            select.append(option);
+        }
+        select.value = items.some((i) => i.project === current)
+            ? current
+            : items[0].project;
+    }
+}
 function renderCapacity(capacity) {
     const list = get("capacity-list");
     list.replaceChildren();
@@ -149,9 +205,9 @@ function clear(message) {
     observatory.clear();
     stopStream();
     clearExecution();
-    get("execution-project").value = "";
+    get("execution-project").selectedIndex = -1;
     clearReceipts();
-    get("receipt-project").value = "";
+    get("receipt-project").selectedIndex = -1;
     get("receipt-notice").textContent = "Sign in to inspect retained receipts.";
     snapshot = null;
     get("content").hidden = true;
@@ -269,7 +325,9 @@ function render() {
             ? "Current snapshot · live updates and 5s polling"
             : "Current snapshot · polled every 5s";
     renderCapacity(snapshot.capacity);
+    void loadProjects();
     get("development-record").hidden = snapshot.phases.length === 0;
+    get("record-nav").hidden = snapshot.phases.length === 0;
     if (!snapshot.phases.length) {
         for (const id of ["phases", "detail", "metrics", "phase-map", "adrs"])
             get(id).replaceChildren();
@@ -437,9 +495,20 @@ get("logout").addEventListener("click", async () => {
     }
 });
 get("refresh").addEventListener("click", () => void refresh());
+// `memoryking dashboard open` hands the one-use code over in the URL fragment, which
+// never reaches the server; it is consumed and removed from the address bar at once.
+const fragmentCode = /^#code=([A-Za-z0-9_-]{16,128})$/.exec(location.hash);
+if (fragmentCode) {
+    history.replaceState(null, "", location.pathname);
+    get("code").value = fragmentCode[1];
+    get("login-form").requestSubmit();
+}
 get("overview").addEventListener("click", () => window.scrollTo({ top: 0 }));
 get("retrieval-nav").addEventListener("click", () => get("retrieval-lab").scrollIntoView());
-get("receipt-project").addEventListener("input", clearReceipts);
+get("receipt-project").addEventListener("change", () => {
+    rememberProject(get("receipt-project").value);
+    clearReceipts();
+});
 get("receipt-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     clearReceipts();
@@ -749,7 +818,11 @@ async function refreshExecution() {
     }
 }
 get("execution-nav").addEventListener("click", () => get("execution-panel").scrollIntoView());
-get("execution-project").addEventListener("input", () => clearExecution());
+get("record-nav").addEventListener("click", () => get("development-record").scrollIntoView());
+get("execution-project").addEventListener("change", () => {
+    rememberProject(get("execution-project").value);
+    clearExecution();
+});
 get("execution-form").addEventListener("submit", (event) => {
     event.preventDefault();
     clearExecution();

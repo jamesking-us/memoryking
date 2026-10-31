@@ -26,6 +26,50 @@ CATALOG = json.loads(Path(__file__).with_name("adapters").joinpath("stdio.tools.
 TOOL_VALIDATORS = {
     item["name"]: Draft202012Validator(item["inputSchema"]) for item in CATALOG["tools"]
 }
+DEFAULT_BUDGET = 6000
+
+
+def _resolve(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+    ref = node.get("$ref")
+    while isinstance(ref, str) and ref.startswith("#/$defs/"):
+        node = defs[ref.removeprefix("#/$defs/")]
+        ref = node.get("$ref")
+    return node
+
+
+def _tool_args() -> dict[tuple[str, Any], set[str]]:
+    """Which args each tool action accepts, so defaults are filled only where they fit."""
+    result: dict[tuple[str, Any], set[str]] = {}
+    for item in CATALOG["tools"]:
+        defs = item["inputSchema"].get("$defs", {})
+        for branch in item["inputSchema"].get("oneOf", []):
+            action = branch["properties"].get("action", {}).get("const")
+            args = _resolve(branch["properties"].get("args", {}), defs)
+            properties = args.get("properties", {})
+            result[(item["name"], action)] = set(properties)
+            nested = properties.get("brief")
+            if isinstance(nested, dict):
+                result[(item["name"], "brief")] = set(_resolve(nested, defs).get("properties", {}))
+    return result
+
+
+TOOL_ARGS = _tool_args()
+_TOKENIZER: list[str] = []
+
+
+def default_tokenizer() -> str:
+    """The exact tokenizer when the optional lock is installed, else the disclosed estimate."""
+    if not _TOKENIZER:
+        from memoryking.adapters.token_count import encoding
+
+        try:
+            encoding()
+            _TOKENIZER.append("cl100k_base")
+        except LocalError:
+            _TOKENIZER.append("utf8-byte-estimate-v1")
+    return _TOKENIZER[0]
+
+
 BINDING_FIELDS = ("store", "tenant", "principal", "project", "incarnation")
 
 
@@ -160,15 +204,50 @@ class LocalClient:
         credential, _ = self._current()
         return self._request(credential, "inference", {"command": command})
 
+    def defaults(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fill what the catalog leaves optional from the session binding.
+
+        The store still validates the completed command, so a caller who sends every
+        field explicitly gets exactly the old behavior.
+        """
+        arguments = {**arguments}
+        if name == "memory_status":
+            arguments.setdefault("project", self.project)
+            return arguments
+        if name == "memory_capture":
+            request = arguments.get("request")
+            if isinstance(request, dict):
+                arguments["request"] = {"version": 1, "project": self.project, **request}
+            return arguments
+        arguments = {"version": 1, "incarnation": self.binding[-1], **arguments}
+        args = arguments.get("args")
+        if isinstance(args, dict):
+            arguments["args"] = self._default_args(name, arguments.get("action"), args)
+        return arguments
+
+    def _default_args(self, name: str, action: Any, args: dict[str, Any]) -> dict[str, Any]:
+        args = {**args}
+        fields = TOOL_ARGS.get((name, action), set())
+        if "project" in fields:
+            args.setdefault("project", self.project)
+        if "bindings" in fields:
+            args.setdefault("bindings", [{}])
+        if "max_output_tokens" in fields:
+            args.setdefault("max_output_tokens", DEFAULT_BUDGET)
+        if "tokenizer" in fields:
+            args.setdefault("tokenizer", default_tokenizer())
+        nested = args.get("brief")
+        if "brief" in fields and isinstance(nested, dict):
+            args["brief"] = self._default_args(name, "brief", nested)
+        return args
+
     def tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         validator = TOOL_VALIDATORS.get(name)
         if validator is None:
             raise LocalError("unknown_tool")
         if not validator.is_valid(arguments):
             raise LocalError("invalid_tool_arguments")
-        if name not in {"memory_status", "memory_capture"}:
-            # The catalog makes incarnation optional; the bridge binds the session's value.
-            arguments = {"incarnation": self.binding[-1], **arguments}
+        arguments = self.defaults(name, arguments)
         if name == "memory_status":
             if arguments["project"] != self.project:
                 raise LocalError("scope_mismatch")

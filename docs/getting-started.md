@@ -50,9 +50,29 @@ Start the service:
 
 Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes. The service completes its own bookkeeping jobs between requests, so no separate worker process is needed. Add `--log-level info` to see redacted operational events on stderr.
 
-## 4. Open the dashboard
+## 4. Check the service
 
 In a second terminal, from the same checkout:
+
+```sh
+.venv/bin/python -m memoryking status \
+  --socket "$HOME/.memoryking-data/service.sock" \
+  --credential "$HOME/.memoryking-control/owner.credential"
+```
+
+This prints the store's history id, position, frontier, job states and a capacity bar for every bounded resource. `--version` prints the installed package version. If anything looks wrong, `memoryking doctor --store ... --control ...` checks the installation and names the fix for each failed check.
+
+## 5. Open the dashboard
+
+From the same terminal, the quickest route signs you in directly:
+
+```sh
+.venv/bin/python -m memoryking dashboard open \
+  --socket "$HOME/.memoryking-data/service.sock" \
+  --credential "$HOME/.memoryking-control/owner.credential"
+```
+
+When no browser can be opened from the terminal, request a code file instead:
 
 ```sh
 .venv/bin/python -m memoryking dashboard-login \
@@ -63,7 +83,7 @@ In a second terminal, from the same checkout:
 
 Open the URL printed by the command. Read the private output file locally and enter its `code` in the page. Use the **one-use code**, never the owner credential. The code expires after 60 seconds; request a new file name for another attempt.
 
-The dashboard starts empty. The overview shows capacity use for the tenant's bounded resources and warns at 80 percent. Enter your project in **Task activity** and select **Load tasks** after your agent has saved something to it. **Memory** and **Retrieval history** show the project's stored records and briefings. Each view checks your current permissions. They do not discover conversations in other applications automatically.
+The dashboard starts empty. The overview shows capacity use for the tenant's bounded resources and warns at 80 percent. **Task activity** and **Retrieval history** list the projects your account can read, with their record counts; pick one and select **Load**. The browser remembers your last choice. **Memory** and **Retrieval history** show the project's stored records and briefings. Each view checks your current permissions. They do not discover conversations in other applications automatically.
 
 To explore a populated synthetic dashboard, install the [contributor environment](../CONTRIBUTING.md#setup) and run:
 
@@ -73,9 +93,17 @@ To explore a populated synthetic dashboard, install the [contributor environment
 
 The demo prints its loopback URL and a path to its private bootstrap file. Enter that file's one-use code and select project `demo`. Ctrl-C stops the demo and removes its temporary data. Its sample results are illustrative, not real agent work.
 
-## 5. Connect an agent
+## 6. Connect an agent
 
 The [agent guide](agent-guide.md) covers the Python client and MCP stdio bridge. A typical integration saves observations during work, checkpoints before interruption, and requests a briefing and resume packet when work continues.
+
+Agents should not use the owner credential. Issue each one a scoped credential:
+
+```sh
+.venv/bin/python -m memoryking credential issue agent-1 --project demo --capabilities capture,read --expires 30d --output "$HOME/.memoryking-control/agent-1.credential" --socket "$HOME/.memoryking-data/service.sock" --credential "$HOME/.memoryking-control/owner.credential"
+```
+
+`credential list` shows what is issued and `credential revoke` withdraws one.
 
 For multiple machines or tenants, use the [shared deployment](deployment.md#shared-postgresql). Do not expose the local loopback dashboard through a network proxy.
 
