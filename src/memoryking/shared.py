@@ -108,6 +108,11 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--plan-root", type=Path)
             item.add_argument("--dashboard-tenant")
             item.add_argument("--log-level", default="warning", choices=LEVELS)
+            item.add_argument(
+                "--trace",
+                action="store_true",
+                help="Log one timing line per request; implies --log-level info",
+            )
     request = commands.add_parser("request")
     request.add_argument("--url", required=True)
     request.add_argument("--tenant", required=True)
@@ -219,7 +224,7 @@ def run(args: Any) -> dict[str, Any]:
         if args.command == "serve":
             import uvicorn
 
-            configure(args.log_level)
+            configure(args.log_level, trace=args.trace)
 
             address = ipaddress.ip_address(args.bind)
             if not 0 < args.port <= 65535:

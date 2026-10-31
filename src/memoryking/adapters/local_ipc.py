@@ -26,7 +26,7 @@ from memoryking.application.local_port import LocalOperations
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
-from memoryking.observability import failure
+from memoryking.observability import failure, summarize, timings, trace, tracing
 
 WIRE_LIMIT = 262144
 
@@ -36,13 +36,21 @@ class StoreOperations:
         self.store = store
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
-        """Dispatch and record the operation's latency and outcome for `/metrics`."""
+        """Dispatch and record the operation's latency and outcome for `/metrics`.
+
+        With `serve --trace`, one redacted line per request also goes to the log:
+        operation, command action, outcome, elapsed time, lock wait, time inside
+        transactions and response size. Never the body, the project or the principal.
+        """
         operation = request.get("operation") if isinstance(request, dict) else None
         name = operation if isinstance(operation, str) else "invalid"
         started = time.monotonic()
         error: str | None = None
+        spans = timings(self.store) if tracing() else None
+        response: dict[str, Any] | Released | None = None
         try:
-            return self._execute(request)
+            response = self._execute(request)
+            return response
         except LocalError as exc:
             error = exc.code
             raise
@@ -50,7 +58,31 @@ class StoreOperations:
             error = "internal_error"
             raise
         finally:
-            self.store.counters.observe(name, (time.monotonic() - started) * 1000, error)
+            elapsed = (time.monotonic() - started) * 1000
+            self.store.counters.observe(name, elapsed, error)
+            if spans is not None:
+                self.store.timings.items = None
+                trace(
+                    "operations",
+                    operation=name,
+                    action=self._action(request),
+                    outcome=error or "ok",
+                    response_bytes=len(response.body)
+                    if isinstance(response, Released)
+                    else len(canonical_bytes(response))
+                    if response is not None
+                    else 0,
+                    **summarize(elapsed, spans),
+                )
+
+    @staticmethod
+    def _action(request: Any) -> str:
+        """The command action (a fixed vocabulary such as brief), never free text."""
+        try:
+            action = request["args"]["command"]["action"]
+        except (KeyError, TypeError):
+            return "-"
+        return action if isinstance(action, str) and action.isidentifier() else "-"
 
     def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
         if not VALIDATOR.is_valid(request):

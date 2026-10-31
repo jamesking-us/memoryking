@@ -18,10 +18,21 @@ LOGGER = logging.getLogger("memoryking")
 LEVELS = ("debug", "info", "warning", "error")
 
 
-def configure(level: str = "warning") -> None:
-    """Send package logs to stderr at the requested level; idempotent."""
+_TRACING = False
+
+
+def configure(level: str = "warning", trace: bool = False) -> None:
+    """Send package logs to stderr at the requested level; idempotent.
+
+    With `trace`, one timing line per request is written at info level, so a level
+    above info is lowered to info; an explicit debug level is kept.
+    """
+    global _TRACING
     if level not in LEVELS:
         raise ValueError("log level must be one of " + ", ".join(LEVELS))
+    _TRACING = trace
+    if trace and LEVELS.index(level) > LEVELS.index("info"):
+        level = "info"
     LOGGER.setLevel(getattr(logging, level.upper()))
     if not any(getattr(h, "_memoryking", False) for h in LOGGER.handlers):
         handler = logging.StreamHandler(sys.stderr)
@@ -29,6 +40,38 @@ def configure(level: str = "warning") -> None:
         handler._memoryking = True  # type: ignore[attr-defined]
         LOGGER.addHandler(handler)
     LOGGER.propagate = False
+
+
+def tracing() -> bool:
+    """Whether per-request timing lines are wanted; checked before any timing work."""
+    return _TRACING
+
+
+def trace(component: str, **fields: Any) -> None:
+    """One timing line per request: operation names, outcome codes, durations and sizes.
+
+    Never the project, principal, request body, SQL or paths: identifiers that name
+    content stay out of the log exactly as for every other line.
+    """
+    if _TRACING:
+        LOGGER.info("component=%s event=trace%s", component, _fields(fields))
+
+
+def timings(store: Any) -> list[dict[str, float]]:
+    """Start collecting this thread's transaction timings on a store; returns the list."""
+    items: list[dict[str, float]] = []
+    store.timings.items = items
+    return items
+
+
+def summarize(elapsed_ms: float, spans: list[dict[str, float]]) -> dict[str, Any]:
+    """Fields for a trace line from a request's elapsed time and its transaction spans."""
+    return {
+        "elapsed_ms": round(elapsed_ms, 3),
+        "transactions": len(spans),
+        "lock_wait_ms": round(sum(span.get("lock_wait_ms", 0.0) for span in spans), 3),
+        "transaction_ms": round(sum(span.get("transaction_ms", 0.0) for span in spans), 3),
+    }
 
 
 def event(component: str, name: str, **fields: Any) -> None:

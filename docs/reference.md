@@ -129,7 +129,7 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 
 ### Metrics
 
-`GET /metrics` on the dashboard port, authenticated with `Authorization: Bearer <admin credential>` and no cookie, returns Prometheus text: requests and errors by operation and code, a latency histogram per operation, capacity used and limit per resource, jobs by state, position and frontier. Counters live in the daemon's memory and reset on restart; nothing in them names content or principals.
+`GET /metrics` on the dashboard port, authenticated with `Authorization: Bearer <admin credential>` and no cookie, returns Prometheus text: requests and errors by operation and code, a latency histogram per operation, capacity used and limit per resource, jobs by state, position and frontier. Counters live in the daemon's memory and reset on restart; nothing in them names content or principals. For the same figures per request rather than aggregated, start the daemon with `serve --trace` (see [deployment](deployment.md#local-configuration)).
 
 ### Dashboard agent endpoint
 
