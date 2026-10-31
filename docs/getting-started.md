@@ -39,14 +39,22 @@ Choose **new** directories. MemoryKing refuses to initialize over an existing st
 
 The output gives the path to an owner credential file. Keep it private. The data directory holds content; the separate control directory holds identity and recovery information. Neither directory may be inside the other. For disk-loss protection, retain control information independently of the content disk as well.
 
-Start the service:
+Name the store once so later commands need no paths:
 
 ```sh
-.venv/bin/python -m memoryking serve \
+.venv/bin/python -m memoryking profile add home \
   --store "$HOME/.memoryking-data" \
   --control "$HOME/.memoryking-control" \
   --dashboard-port 8771
 ```
+
+Start the service:
+
+```sh
+.venv/bin/python -m memoryking --profile home serve
+```
+
+Without a profile, pass `--store`, `--control` and `--dashboard-port 8771` explicitly; explicit flags always override the profile.
 
 Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes. The service completes its own bookkeeping jobs between requests and prunes expired records once an hour, so no separate worker or scheduled cleanup is needed. Add `--log-level info` to see redacted operational events on stderr.
 
@@ -55,21 +63,17 @@ Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the sa
 In a second terminal, from the same checkout:
 
 ```sh
-.venv/bin/python -m memoryking status \
-  --socket "$HOME/.memoryking-data/service.sock" \
-  --credential "$HOME/.memoryking-control/owner.credential"
+.venv/bin/python -m memoryking --profile home status
 ```
 
-This prints the store's history id, position, frontier, job states and a capacity bar for every bounded resource. `--version` prints the installed package version. If anything looks wrong, `memoryking doctor --store ... --control ...` checks the installation and names the fix for each failed check.
+This prints the store's history id, position, frontier, job states and a capacity bar for every bounded resource. `--version` prints the installed package version. If anything looks wrong, `memoryking --profile home doctor` checks the installation and names the fix for each failed check.
 
 ## 5. Open the dashboard
 
 From the same terminal, the quickest route signs you in directly:
 
 ```sh
-.venv/bin/python -m memoryking dashboard open \
-  --socket "$HOME/.memoryking-data/service.sock" \
-  --credential "$HOME/.memoryking-control/owner.credential"
+.venv/bin/python -m memoryking --profile home dashboard open
 ```
 
 When no browser can be opened from the terminal, request a code file instead:
@@ -100,7 +104,7 @@ The [agent guide](agent-guide.md) covers the Python client and MCP stdio bridge.
 Agents should not use the owner credential. Issue each one a scoped credential:
 
 ```sh
-.venv/bin/python -m memoryking credential issue agent-1 --project demo --capabilities capture,read --expires 30d --output "$HOME/.memoryking-control/agent-1.credential" --socket "$HOME/.memoryking-data/service.sock" --credential "$HOME/.memoryking-control/owner.credential"
+.venv/bin/python -m memoryking --profile home credential issue agent-1 --project demo --capabilities capture,read --expires 30d --output "$HOME/.memoryking-control/agent-1.credential"
 ```
 
 `credential list` shows what is issued and `credential revoke` withdraws one.

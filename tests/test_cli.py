@@ -1,6 +1,7 @@
 """Operator CLI: version and the human status rendering."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -184,3 +185,91 @@ class HelperTests(unittest.TestCase):
         self.assertIn("owner      *        admin,read    yes    never", text)
         self.assertIn("1970-01-02 00:00Z", text)
         self.assertEqual(render_grants([]), "No grants.")
+
+
+class ProfileTests(OperatorCommandTests):
+    def setUp(self):
+        super().setUp()
+        self.config = Path(self.temp.name) / "config.toml"
+        self.env = {**os.environ, "MEMORYKING_CONFIG": str(self.config)}
+
+    def cli(self, *args, expect=0):
+        run = subprocess.run(
+            [sys.executable, "-m", "memoryking", *args],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+        self.assertEqual(run.returncode, expect, run.stdout + run.stderr)
+        return run.stdout
+
+    def test_profile_fills_paths_and_explicit_flags_still_win(self):
+        self.cli(
+            "profile",
+            "add",
+            "work",
+            "--store",
+            str(self.store_dir),
+            "--control",
+            str(self.control_dir),
+            "--dashboard-port",
+            "0",
+        )
+        self.assertEqual(self.config.stat().st_mode & 0o777, 0o600)
+        listed = self.cli("profile", "list")
+        self.assertIn("work", listed)
+        self.assertIn(f"store = {self.store_dir.resolve()}", listed)
+        self.assertIn("dashboard_port = 0", listed)
+        out = self.cli("--profile", "work", "status")
+        self.assertIn("Frontier", out)
+        out = self.cli("--profile", "work", "doctor")
+        self.assertIn("checks, 0 failed", out)
+        out = self.cli("--profile", "work", "credential", "list")
+        self.assertIn("owner", out)
+        # An explicit flag overrides the profile; a missing path without a profile is named.
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking",
+                "--profile",
+                "work",
+                "status",
+                "--socket",
+                "/nonexistent.sock",
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+        self.assertNotEqual(run.returncode, 0)
+        run = subprocess.run(
+            [sys.executable, "-m", "memoryking", "status", "--credential", str(self.credential)],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+        self.assertIn("socket_required", run.stdout + run.stderr)
+        run = subprocess.run(
+            [sys.executable, "-m", "memoryking", "--profile", "nope", "status"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+        self.assertIn("profile_unknown", run.stdout + run.stderr)
+        self.cli("profile", "remove", "work")
+        self.assertNotIn("work", self.cli("profile", "list"))
+
+    def test_profile_validation_rejects_relative_paths_and_unknown_fields(self):
+        from memoryking import profiles
+
+        with self.assertRaises(LocalError):
+            profiles.validate("x", {"store": "relative", "control": "/abs"})
+        with self.assertRaises(LocalError):
+            profiles.validate("x", {"store": "/a", "control": "/b", "token": "secret"})
+        with self.assertRaises(LocalError):
+            profiles.validate("bad name", {"store": "/a", "control": "/b"})
+        self.config.write_text("profiles = 3\n")
+        self.config.chmod(0o600)
+        with self.assertRaises(LocalError):
+            profiles.load(self.config)
