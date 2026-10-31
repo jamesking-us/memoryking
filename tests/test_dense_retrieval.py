@@ -113,6 +113,38 @@ class DenseCases:
         after = self.run_r(args=self.dense_args(config), credential=reader)
         self.assertEqual(after["guidance"], [])
 
+    def test_daemon_model_fills_dense_queries_only_for_enabled_projects(self):
+        from memoryking.contracts.canonical import canonical_hash
+
+        class FakeEmbedder:
+            def __init__(self, fingerprint):
+                self.fingerprint, self.dimensions, self.calls = fingerprint, 384, []
+
+            def embed(self, texts):
+                self.calls.extend(texts)
+                vectors = [[1000000] + [0] * 383 for _ in texts]
+                return type("Batch", (), {"vectors": vectors})()
+
+        before = self.run_r()
+        self.assertEqual(before["coverage"]["dense"], "unavailable")
+        config = self.configure()
+        job = self.claim_e(config)
+        self.complete_e(job)
+        self.store.embedder = FakeEmbedder(config["fingerprint"])
+        result = self.run_r()
+        self.assertEqual(result["coverage"]["dense"], "ready")
+        self.assertEqual(self.store.embedder.calls, [self.brief_args()["query"]])
+        diag = self.receipt(result)["diagnostics"]
+        self.assertEqual(diag["model_fingerprints"], [config["fingerprint"]])
+        # An explicit dense request is never overridden by the daemon's model.
+        explicit = self.dense_args(config)
+        explicit["dense"]["query_hash"] = canonical_hash(explicit["query"])
+        self.run_r(args=explicit)
+        self.assertEqual(len(self.store.embedder.calls), 1)
+        # A different model fingerprint means no matching partition: lexical only.
+        self.store.embedder = FakeEmbedder("0" * 64)
+        self.assertEqual(self.run_r()["coverage"]["dense"], "unavailable")
+
     def test_fingerprint_query_dimension_and_zero_vector_validation(self):
         config = self.configure()
         self.drain(config)

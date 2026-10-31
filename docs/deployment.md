@@ -52,6 +52,7 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `serve --plan-root` | Optional compatibility attachment for an explicitly trusted development-record checkout. Normal product use needs no report files; without the flag the dashboard shows the workspace view only. |
 | `serve` housekeeping | The daemon expires replay results, artifacts, usage rows and access receipts past their 30-day retention once an hour, and completes audit jobs between requests; `gc` remains available for offline use. |
 | `serve --dashboard-port` metrics | With the dashboard enabled, `GET /metrics` with a bearer admin credential returns Prometheus text (requests, errors, latency, capacity, jobs, frontier) for scraping. |
+| `serve --embedding-model DIR` | Loads the installed local model; the daemon indexes every enabled project and embeds briefing queries itself. A profile may set `embedding_model`. `embeddings enable|status --project P` manage a project's partition. |
 | `serve --log-level` | `warning` by default. Redacted operator log lines on stderr: component, event, request id, error type and code location, never content, SQL or paths. An `internal_error` reply carries the `request_id` of its line. |
 | `status --socket`, `--credential` | Human summary of store health through the running daemon: history, position, frontier, jobs and capacity bars; `--json` prints the raw result. Needs an admin credential. |
 | `--version` | Prints the installed package version. |

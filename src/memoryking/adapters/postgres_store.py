@@ -103,6 +103,7 @@ class PostgresStore(LocalStore):
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
         self.counters = Metrics()
+        self.embedder: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
         self.active = False

@@ -393,3 +393,20 @@ class CaptureCommandTests(OperatorCommandTests):
             str(self.credential),
         )
         self.assertIn("pytest call failed: tests/test_x.py::test_y", text)
+
+
+class EmbeddingsCommandTests(OperatorCommandTests):
+    def test_enable_and_status_manage_the_partition_without_a_model(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        enabled = json.loads(self.cli("embeddings", "enable", "--project", "demo", *common))
+        self.assertEqual(enabled["dimensions"], 384)
+        again = json.loads(self.cli("embeddings", "enable", "--project", "demo", *common))
+        self.assertTrue(again.get("already_enabled"))
+        status = json.loads(self.cli("embeddings", "status", "--project", "demo", *common))
+        self.assertEqual(status["state"], "experimental")
+        self.assertEqual(status["generation"], 1)
+        findings = doctor(
+            self.store_dir, self.control_dir, None, None, Path(self.temp.name) / "nomodel"
+        )
+        levels = {name: level for level, name, _ in findings}
+        self.assertEqual(levels["embedding model"], "fail")

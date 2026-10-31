@@ -150,6 +150,8 @@ class LocalStore:
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
         self.counters = Metrics()
+        # A loaded local embedding model lets briefings embed their own queries.
+        self.embedder: Any | None = None
         try:
             self.control = Control(control)
             self.anchor = self.control.read_anchor()

@@ -97,7 +97,20 @@ To explore a populated synthetic dashboard, install the [contributor environment
 
 The demo prints its loopback URL and a path to its private bootstrap file. Enter that file's one-use code and select project `demo`. Ctrl-C stops the demo and removes its temporary data. Its sample results are illustrative, not real agent work.
 
-## 6. Connect an agent
+## 6. Optional: semantic search
+
+Lexical search works out of the box. For meaning-based recall, install the embeddings lock and the pinned model once, then tell the service where the model is:
+
+```sh
+.venv/bin/python -I -m pip install --require-hashes -r requirements-embeddings.lock
+.venv/bin/python -m memoryking.model_install --destination "$HOME/.memoryking-model"
+.venv/bin/python -m memoryking profile add home --store "$HOME/.memoryking-data" --control "$HOME/.memoryking-control" --dashboard-port 8771 --embedding-model "$HOME/.memoryking-model"
+.venv/bin/python -m memoryking --profile home embeddings enable --project demo
+```
+
+Restart `serve` after adding the model to the profile. The service then indexes the project in the background and every briefing searches by meaning as well as by words; `doctor` reports both the runtime and the model. The model runs on your CPU and nothing leaves the machine.
+
+## 7. Connect an agent
 
 The [agent guide](agent-guide.md) covers the Python client and MCP stdio bridge. A typical integration saves observations during work, checkpoints before interruption, and requests a briefing and resume packet when work continues.
 

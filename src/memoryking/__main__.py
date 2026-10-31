@@ -103,7 +103,11 @@ def read_credential(path: Path) -> str:
 
 
 def doctor(
-    store: Path, control: Path, socket: Path | None, credential: Path | None
+    store: Path,
+    control: Path,
+    socket: Path | None,
+    credential: Path | None,
+    embedding_model: Path | None = None,
 ) -> list[tuple[str, str, str]]:
     """Health checks an operator can run while the daemon is up. Each is (level, name, detail)."""
     import sqlite3
@@ -171,6 +175,35 @@ def doctor(
         record("ok", "tokenizer", "exact cl100k_base available")
     except LocalError:
         record("warn", "tokenizer", "exact tokenizer missing; byte estimate is used and disclosed")
+    from importlib.util import find_spec
+
+    if find_spec("onnxruntime") is not None:
+        record("ok", "embeddings runtime", "onnxruntime installed")
+    else:
+        record(
+            "warn",
+            "embeddings runtime",
+            "not installed; `pip install --require-hashes -r requirements-embeddings.lock` enables local semantic search",
+        )
+    if embedding_model is not None:
+        try:
+            from memoryking.adapters.local_embeddings import model_files
+
+            model_files(embedding_model)
+            record("ok", "embedding model", f"{embedding_model} verified")
+        except (LocalError, OSError) as exc:
+            code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
+            record(
+                "fail",
+                "embedding model",
+                f"{embedding_model}: {code}; run `python -m memoryking.model_install --destination DIR`",
+            )
+    else:
+        record(
+            "warn",
+            "embedding model",
+            "no model configured; `serve --embedding-model DIR` after installing one enables semantic search",
+        )
     if socket is not None and credential is not None and sock.exists():
         try:
             result = request(sock, read_credential(credential), "status", {"project": "main"})
@@ -211,6 +244,7 @@ def main() -> int:
     adder.add_argument("--credential", type=Path, help="Default admin credential file")
     adder.add_argument("--socket", type=Path, help="Default: STORE/service.sock")
     adder.add_argument("--dashboard-port", type=int)
+    adder.add_argument("--embedding-model", type=Path, help="Installed local model directory")
     prof_commands.add_parser("list")
     prof_commands.add_parser("remove").add_argument("name")
     for name in ("init", "serve", "backup", "restore", "gc", "control-checkpoint"):
@@ -224,6 +258,12 @@ def main() -> int:
                 help="Opt-in loopback port; 0 chooses a free port; a profile may set it",
             )
             cmd.add_argument("--plan-root", type=Path, help="Explicit trusted plan/report checkout")
+            cmd.add_argument(
+                "--embedding-model",
+                type=Path,
+                help="Installed local model directory; the daemon then embeds queries and "
+                "indexes every enabled project itself (a profile may set it)",
+            )
             cmd.add_argument(
                 "--log-level",
                 default="warning",
@@ -252,6 +292,7 @@ def main() -> int:
     doc.add_argument("--control", type=Path)
     doc.add_argument("--socket", type=Path, help="Also query the running daemon")
     doc.add_argument("--credential", type=Path, help="Admin credential for the daemon query")
+    doc.add_argument("--embedding-model", type=Path, help="Model directory to verify")
     cred = commands.add_parser("credential", help="Issue, list and revoke agent credentials")
     cred_commands = cred.add_subparsers(dest="credential_command", required=True)
     for name in ("issue", "list", "revoke"):
@@ -277,6 +318,13 @@ def main() -> int:
     opener.add_argument(
         "--print-only", action="store_true", help="Print the sign-in link instead of opening it"
     )
+    emb = commands.add_parser("embeddings", help="Enable or inspect local semantic search")
+    emb_commands = emb.add_subparsers(dest="embeddings_command", required=True)
+    for name in ("enable", "status"):
+        item = emb_commands.add_parser(name)
+        item.add_argument("--socket", type=Path)
+        item.add_argument("--credential", type=Path, help="Admin credential")
+        item.add_argument("--project", required=True)
     cap = commands.add_parser("capture", help="Save one observation from text or stdin")
     cap.add_argument("--socket", type=Path)
     cap.add_argument("--credential", type=Path)
@@ -325,7 +373,7 @@ def main() -> int:
                     "store": str(args.store.resolve()),
                     "control": str(args.control.resolve()),
                 }
-                for field in ("credential", "socket"):
+                for field in ("credential", "socket", "embedding_model"):
                     if getattr(args, field) is not None:
                         values[field] = str(getattr(args, field).resolve())
                 if args.dashboard_port is not None:
@@ -369,6 +417,48 @@ def main() -> int:
             )
             atomic(args.output, json.dumps(result).encode())
             print(json.dumps({"bootstrap_file": str(args.output), "url": result["url"]}))
+        elif args.command == "embeddings":
+            from memoryking.adapters.local_embeddings import model_manifest
+            from memoryking.domain.embeddings import fingerprint
+
+            token = read_credential(args.credential)
+            context = request(args.socket, token, "context", {"project": args.project})
+            fp = fingerprint(model_manifest())
+
+            def embedding(action: str, extra: dict[str, Any], key: str | None = None) -> Any:
+                command: dict[str, Any] = {
+                    "version": 1,
+                    "incarnation": context["incarnation"],
+                    "action": action,
+                    "args": {"project": args.project, **extra},
+                }
+                if key:
+                    command["key"] = key
+                return request(args.socket, token, "embedding", {"command": command})
+
+            if args.embeddings_command == "status":
+                print(json.dumps(embedding("status", {"fingerprint": fp})))
+            else:
+                try:
+                    current = embedding("status", {"fingerprint": fp})
+                except LocalError as exc:
+                    if exc.code != "embedding_partition_unavailable":
+                        raise
+                    current = {}
+                generation = int(current.get("generation") or 0)
+                if current.get("state") == "experimental":
+                    print(json.dumps({**current, "already_enabled": True}))
+                else:
+                    result = embedding(
+                        "configure",
+                        {
+                            "model": "minilm-l6-v2-onnx",
+                            "state": "experimental",
+                            "expected_generation": generation,
+                        },
+                        key="enable-" + str(generation),
+                    )
+                    print(json.dumps(result))
         elif args.command == "capture":
             from memoryking import hooks
 
@@ -402,7 +492,9 @@ def main() -> int:
             else:
                 print(packet["text"], end="")
         elif args.command == "doctor":
-            findings = doctor(args.store, args.control, args.socket, args.credential)
+            findings = doctor(
+                args.store, args.control, args.socket, args.credential, args.embedding_model
+            )
             width = max(len(name) for _, name, _ in findings)
             for level, name, detail in findings:
                 print(f"{level.upper():<5} {name.ljust(width)}  {detail}")
@@ -501,6 +593,12 @@ def main() -> int:
 
                     signal.signal(signal.SIGTERM, stop)
                     dashboard = None
+                    embeddings = None
+                    if args.embedding_model is not None:
+                        from memoryking.adapters.local_embeddings import LocalOnnxEmbedding
+                        from memoryking.embedding_loop import EmbeddingLoop
+
+                        store.embedder = LocalOnnxEmbedding(args.embedding_model)
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")
@@ -513,10 +611,20 @@ def main() -> int:
                                 json.dumps({"ready": True, "socket": str(server.path)}), flush=True
                             )
                             event("serve", "ready", dashboard=dashboard is not None)
+                            if store.embedder is not None:
+                                embeddings = EmbeddingLoop(
+                                    store,
+                                    server.path,
+                                    args.control / "owner.credential",
+                                    store.embedder,
+                                )
+                                embeddings.start()
                             server.serve_forever(poll_interval=0.2)
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        if embeddings is not None:
+                            embeddings.stop()
                         if dashboard:
                             dashboard.stop()
                 elif args.command == "backup":
