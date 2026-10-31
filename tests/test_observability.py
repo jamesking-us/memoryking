@@ -118,3 +118,64 @@ class ServerTests(unittest.TestCase):
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
+
+
+class MetricsTests(unittest.TestCase):
+    def test_counters_histogram_and_rendering(self):
+        from memoryking.observability_metrics import Metrics, render
+
+        metrics = Metrics()
+        metrics.observe("read", 4.0, None)
+        metrics.observe("read", 40.0, None)
+        metrics.observe("capture", 2.0, "denied")
+        snap = metrics.snapshot()
+        self.assertEqual(snap["requests"], {"read": 2, "capture": 1})
+        self.assertEqual(snap["errors"], {"denied": 1})
+        self.assertEqual(snap["latency_buckets"]["read"][0], 1)  # le 5
+        self.assertEqual(snap["latency_buckets"]["read"][-1], 2)  # +Inf
+        text = render(
+            metrics,
+            {
+                "position": 7,
+                "projection": {"frontier": 7},
+                "jobs": {"complete": 7},
+                "capacity": {"jobs": {"used": 0, "limit": 1000, "warning": False}},
+            },
+        )
+        self.assertIn('memoryking_requests_total{operation="read"} 2', text)
+        self.assertIn('memoryking_request_duration_ms_count{operation="read"} 2', text)
+        self.assertIn('memoryking_jobs{state="complete"} 7', text)
+        self.assertIn("memoryking_frontier 7", text)
+
+    def test_ipc_dispatch_records_every_request(self):
+        import tempfile
+        from pathlib import Path
+
+        from memoryking.adapters.local_ipc import StoreOperations
+        from memoryking.adapters.local_store import LocalStore
+
+        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+            base = Path(directory)
+            credential = LocalStore.initialize(base / "s", base / "c").read_text()
+            with LocalStore(base / "s", base / "c") as store:
+                ops = StoreOperations(store)
+                ops.execute(
+                    {
+                        "version": 1,
+                        "credential": credential,
+                        "operation": "context",
+                        "args": {"project": "demo"},
+                    }
+                )
+                with self.assertRaises(LocalError):
+                    ops.execute(
+                        {
+                            "version": 1,
+                            "credential": "bad",
+                            "operation": "context",
+                            "args": {"project": "demo"},
+                        }
+                    )
+                snap = store.counters.snapshot()
+                self.assertEqual(snap["requests"]["context"], 2)
+                self.assertEqual(snap["errors"], {"invalid_token": 1})

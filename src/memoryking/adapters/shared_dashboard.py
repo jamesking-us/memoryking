@@ -185,6 +185,22 @@ class SharedDashboard:
                         old is not None and old.get("expires", 0) <= at
                     )
                     raw = canonical_bytes(result)
+                elif route.startswith("/api/timeline/"):
+                    from memoryking.adapters.timeline import timeline
+
+                    parts = route.split("/")
+                    if len(parts) not in {4, 5} or (len(parts) == 5 and not parts[4].isdigit()):
+                        raise LocalError("invalid_request")
+                    project = identifier(parts[3])
+                    reader = store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(
+                        timeline(
+                            store,
+                            reader,
+                            project,
+                            before=int(parts[4]) if len(parts) == 5 else None,
+                        )
+                    )
                 elif route == "/api/projects":
                     from memoryking.adapters.projects import visible_projects
 

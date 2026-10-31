@@ -115,6 +115,14 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 
 `GET /api/projects` on a signed-in dashboard session returns the projects the session's principal may read now, each with tenant-wide counts of observations, claims, task streams and retained receipts. A tenant-wide grant lists every project holding records; a scoped grant lists its own project even when empty.
 
+### Dashboard timeline
+
+`GET /api/timeline/{project}` and `GET /api/timeline/{project}/{before}` on a signed-in session list the project's events newest first (captures, claims, reviews, checkpoints, handoffs, purges) with the principal that caused each, up to 100 per page; `next_before` pages further back. The Memory view's **Timeline** shows the same.
+
+### Metrics
+
+`GET /metrics` on the dashboard port, authenticated with `Authorization: Bearer <admin credential>` and no cookie, returns Prometheus text: requests and errors by operation and code, a latency histogram per operation, capacity used and limit per resource, jobs by state, position and frontier. Counters live in the daemon's memory and reset on restart; nothing in them names content or principals.
+
 ### Dashboard agent endpoint
 
 The local dashboard port also serves `POST /api/v1/retrieval` for an agent on the same machine: a retrieval command (`brief`, `fetch`, `receipt`, `replay`, `receipts`, `atlas`) in the request body, authenticated with `Authorization: Bearer <credential>` instead of a browser session, with exact `Host` and `Origin` checks and no cookies. It exists so a host can reuse the dashboard's loopback listener; the Unix socket remains the primary local transport and the shared service offers the same operations over HTTPS.

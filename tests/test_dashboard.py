@@ -377,6 +377,69 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(status, 200, replayed)
         self.assertEqual(json.loads(replayed)["text"], packet["text"])
 
+    def test_timeline_lists_project_events_newest_first_with_paging(self):
+        namespace = self.store.namespace(self.owner, "p")
+        captured = []
+        for number in range(3):
+            captured.append(
+                self.store.capture(
+                    self.owner,
+                    namespace,
+                    f"tl{number}",
+                    {
+                        "version": 1,
+                        "project": "p",
+                        "source": "test",
+                        "source_event": f"tl{number}",
+                        "text": f"timeline event {number}",
+                        "readers": None,
+                        "classification": "internal",
+                        "observed_at_ms": number,
+                    },
+                )
+            )
+        self.store.purge(self.owner, captured[0]["observation"])
+        self.login()
+        status, _, raw = self.call("GET", "/api/timeline/p")
+        self.assertEqual(status, 200, raw)
+        data = json.loads(raw)
+        kinds = [i["kind"] for i in data["items"]]
+        self.assertEqual(kinds[0], "purge")
+        self.assertIn("observation_captured", kinds)
+        self.assertEqual(
+            [i["position"] for i in data["items"]],
+            sorted((i["position"] for i in data["items"]), reverse=True),
+        )
+        self.assertTrue(all(i["subject_kind"] == "observation" for i in data["items"]))
+        self.assertTrue(all(i["actor"] == "owner" for i in data["items"]))
+        status, _, raw = self.call("GET", f"/api/timeline/p/{data['items'][0]['position']}")
+        self.assertEqual(status, 200)
+        older = json.loads(raw)["items"]
+        self.assertTrue(all(i["position"] < data["items"][0]["position"] for i in older))
+        self.assertEqual(self.call("GET", "/api/timeline/p/notanumber")[0], 403)
+        self.assertEqual(json.loads(self.call("GET", "/api/timeline/other")[2])["items"], [])
+
+    def test_metrics_endpoint_needs_a_bearer_admin_and_reports_counters(self):
+        status, _, raw = self.call("GET", "/metrics")
+        self.assertIn(status, (401, 403))
+        self.assertIn(b"bearer_required", raw)
+        self.store.counters.observe("read", 12.5, None)
+        self.store.counters.observe("capture", 3.0, "queue_full")
+        status, headers, raw = self.call(
+            "GET", "/metrics", headers={"Authorization": "Bearer " + self.owner}
+        )
+        self.assertEqual(status, 200, raw)
+        self.assertTrue(headers["Content-Type"].startswith("text/plain"))
+        text = raw.decode()
+        self.assertIn('memoryking_requests_total{operation="read"} 1', text)
+        self.assertIn('memoryking_errors_total{code="queue_full"} 1', text)
+        self.assertIn('memoryking_request_duration_ms_bucket{operation="read",le="25"} 1', text)
+        self.assertIn('memoryking_capacity_limit{resource="jobs"} 1000', text)
+        self.assertIn("memoryking_position ", text)
+        reader = self.store.grant(self.owner, "reader", "p", ["read"])
+        status, _, raw = self.call("GET", "/metrics", headers={"Authorization": "Bearer " + reader})
+        self.assertEqual(status, 403)
+
     def test_projects_lists_readable_projects_with_counts(self):
         from memoryking.adapters.projects import visible_projects
 

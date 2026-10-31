@@ -36,6 +36,7 @@ from memoryking.domain.local import (
     SystemClock,
     temporal_valid,
 )
+from memoryking.observability_metrics import Metrics
 
 CAPABILITIES = {
     "capture",
@@ -148,6 +149,7 @@ class LocalStore:
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
+        self.counters = Metrics()
         try:
             self.control = Control(control)
             self.anchor = self.control.read_anchor()
