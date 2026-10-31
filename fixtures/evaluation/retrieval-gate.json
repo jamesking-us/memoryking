@@ -1,0 +1,12 @@
+{
+  "purpose": "Release gate for tools/retrieval_benchmark.py on its deterministic synthetic corpus; a regression guard, not a quality claim.",
+  "minimum": {
+    "recall_mean": 0.95,
+    "precision_mean": 0.5,
+    "mrr": 0.9,
+    "window_recall_mean": 0.9
+  },
+  "maximum": {
+    "tokens_mean": 6000
+  }
+}
