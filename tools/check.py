@@ -26,6 +26,7 @@ def main():
     env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
     commands = [
         [sys.executable, "tools/generate_contracts.py", "--check"],
+        [sys.executable, "tools/generate_error_codes.py", "--check"],
         [sys.executable, "-m", "ruff", "check", "src", "tools", "tests", "examples"],
         [sys.executable, "-m", "ruff", "format", "--check", "src", "tools", "tests", "examples"],
         [sys.executable, "-m", "mypy"],

@@ -10,6 +10,7 @@ from time import monotonic
 from typing import Any, BinaryIO
 
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError
 from memoryking.observability import failure
 from memoryking.sdk import CATALOG, LocalClient
@@ -97,7 +98,12 @@ class StdioBridge:
             return self.result(
                 identifier,
                 {
-                    "content": [{"type": "text", "text": json.dumps({"error": exc.code})}],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps({"error": exc.code, "hint": hint(exc.code)}),
+                        }
+                    ],
                     "isError": True,
                 },
             )

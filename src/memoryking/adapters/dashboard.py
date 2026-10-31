@@ -14,6 +14,7 @@ from typing import Any
 
 from memoryking.adapters.local_store import LocalStore, uid
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
+from memoryking.domain.hints import hint
 from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure
@@ -614,7 +615,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             return
         except LocalError as exc:
-            self.send(http_status(exc.code, 403), canonical_bytes({"error": exc.code}))
+            self.send(
+                http_status(exc.code, 403),
+                canonical_bytes({"error": exc.code, "hint": hint(exc.code)}),
+            )
         except Exception as exc:
             request_id = failure("dashboard", exc)
             self.send(

@@ -23,6 +23,7 @@ from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure
 
@@ -106,7 +107,7 @@ class Handler(socketserver.StreamRequestHandler):
                 self.request.sendall(canonical_bytes(response) + b"\n")
         except (LocalError, ContractError) as exc:
             code = exc.code if isinstance(exc, LocalError) else "invalid_request"
-            self.request.sendall(canonical_bytes({"error": code}) + b"\n")
+            self.request.sendall(canonical_bytes({"error": code, "hint": hint(code)}) + b"\n")
         except (TimeoutError, BrokenPipeError, ConnectionResetError):
             return
         except Exception as exc:
@@ -192,5 +193,5 @@ def request(
         if not isinstance(value, dict):
             raise LocalError("invalid_response")
         if "error" in value:
-            raise LocalError(value["error"])
+            raise LocalError(value["error"], value.get("hint"))
         return value

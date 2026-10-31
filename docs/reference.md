@@ -120,6 +120,8 @@ The local dashboard port also serves `POST /api/v1/retrieval` for an agent on th
 
 ## Troubleshooting
 
+Every error reply carries a `hint` beside its `error` code, and the complete list is in [error codes](error-codes.md), generated from the same table. The most common results:
+
 | Result | What to do |
 | --- | --- |
 | `no_relevant_memory` | Check project, access, query and evidence; an empty result can be correct. |
