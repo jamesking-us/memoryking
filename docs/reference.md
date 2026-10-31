@@ -6,7 +6,7 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 
 | Interface | Entry point | Scope |
 | --- | --- | --- |
-| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, JSON requests and offline recovery. |
+| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, status, doctor, credentials, dashboard sign-in, JSON requests and offline recovery. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
 | MCP stdio | `python -m memoryking.adapters.stdio` | Eight model-facing memory tools; daemon must already run. |
@@ -108,6 +108,10 @@ Workflow: `memoryking.migration snapshot` → `inspect` → `plan` → bounded `
 Inspection is bounded to 128 ordinary tables, 10,000 rows, 60 KiB per canonical row and 64 MiB total canonical row data. Unknown schemas, unresolved references, unstable keys or hash mismatches block. Apply defaults to 100 rows, maximum 500. Keep its source ID, snapshot and journal stable across retries.
 
 Each imported row becomes restricted historical evidence; legacy approval and role labels do not become current permission. Lessons become unaccepted, nonexecutable proposals. Retired rows/dependents become tombstones. Reconciliation checks current target records and references but is not a lossless reverse importer, two-way sync or live cutover procedure. Production datasets and client behavior require their own rehearsal.
+
+### Dashboard project listing
+
+`GET /api/projects` on a signed-in dashboard session returns the projects the session's principal may read now, each with tenant-wide counts of observations, claims, task streams and retained receipts. A tenant-wide grant lists every project holding records; a scoped grant lists its own project even when empty.
 
 ### Dashboard agent endpoint
 

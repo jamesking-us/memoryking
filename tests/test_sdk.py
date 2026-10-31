@@ -171,6 +171,39 @@ class SDKTests(unittest.TestCase):
             },
         )
 
+    def test_tool_calls_fill_session_defaults(self):
+        status = self.client.tool("memory_status", {})
+        self.assertEqual(status["project"], "p")
+        captured = self.client.tool(
+            "memory_capture",
+            {
+                "key": "minimal",
+                "request": {
+                    "source": "sdk",
+                    "source_event": "minimal",
+                    "text": "durable note saved with defaults",
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            },
+        )
+        self.assertIn("observation", captured)
+        brief = self.client.tool("memory_brief", {"action": "brief", "args": {"query": "durable"}})
+        self.assertIn("receipt", brief)
+        self.assertEqual(brief["usage"]["max_output_tokens"], 6000)
+        self.assertIn(captured["observation"], [i["reference"] for i in brief["guidance"]])
+        receipt = self.client.tool(
+            "memory_fetch", {"action": "receipt", "args": {"receipt": brief["receipt"]}}
+        )
+        self.assertEqual(receipt["receipt"], brief["receipt"])
+        # Explicit values still win over defaults.
+        explicit = self.client.tool(
+            "memory_brief",
+            {"action": "brief", "args": {"query": "durable", "max_output_tokens": 2000}},
+        )
+        self.assertEqual(explicit["usage"]["max_output_tokens"], 2000)
+
     def test_bridge_binds_incarnation_when_a_tool_call_omits_it(self):
         result = self.client.tool(
             "memory_brief",

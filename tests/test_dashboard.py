@@ -322,6 +322,40 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn(b"Synthetic protected document", result[2])
         self.store.fault = lambda _: None
 
+    def test_projects_lists_readable_projects_with_counts(self):
+        from memoryking.adapters.projects import visible_projects
+
+        namespace = self.store.namespace(self.owner, "p")
+        self.store.capture(
+            self.owner,
+            namespace,
+            "listed",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "listed",
+                "text": "a memory that makes the project visible",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        self.login()
+        status, _, raw = self.call("GET", "/api/projects")
+        self.assertEqual(status, 200)
+        items = {i["project"]: i for i in json.loads(raw)["items"]}
+        self.assertIn("p", items)
+        self.assertGreaterEqual(items["p"]["observations"], 1)
+        self.assertEqual(
+            set(items["p"]), {"project", "observations", "claims", "tasks", "receipts"}
+        )
+        reader = self.store.grant(self.owner, "reader", "q", ["read"])
+        with self.store.transaction() as decision:
+            scoped = visible_projects(self.store, reader, decision.evaluated_ms)
+        self.assertEqual([i["project"] for i in scoped], ["q"])
+        self.assertEqual(scoped[0]["observations"], 0)
+
     def test_snapshot_reports_capacity_for_every_bounded_resource(self):
         self.login()
         status, _, raw = self.call("GET", "/api/snapshot")

@@ -24,6 +24,9 @@
         <button class="nav" id="retrieval-nav">
           ⌁ &nbsp; Retrieval history
         </button>
+        <button class="nav" id="record-nav" hidden>
+          ▤ &nbsp; Development record
+        </button>
         <div class="side-note">
           Permissions
           <p>
@@ -49,7 +52,7 @@
           <div>
             <h1>Workspace overview</h1>
             <p class="subtitle">
-              Task status, stored memories and retrieval history.
+              Capacity, task status, stored memories and retrieval history.
             </p>
           </div>
           <div class="controls">
@@ -99,6 +102,66 @@
             </div>
             <div id="capacity-list" class="capacity-list"></div>
           </section>
+          <section id="execution-panel" class="card execution-panel">
+            <div class="section-head">
+              <div>
+                <h2>Task activity</h2>
+              </div>
+              <span class="tag">Agent-reported</span>
+            </div>
+            <p>
+              Goals, acceptance criteria and blockers saved by connected agents.
+              Reported results include evidence where available.
+            </p>
+            <form id="execution-form" class="receipt-form">
+              <label for="execution-project">Project</label
+              ><select id="execution-project" required>
+                <option value="" disabled selected>
+                  Sign in to list projects
+                </option></select
+              ><button type="submit">Load tasks</button>
+            </form>
+            <p id="execution-notice" role="status">
+              Enter a project to load its tasks.
+            </p>
+            <div class="execution-workspace">
+              <div id="execution-tasks"></div>
+              <section aria-label="Activity log">
+                <h3>Activity log</h3>
+                <ol id="execution-events" class="activity-trail"></ol>
+              </section>
+            </div>
+            <p id="execution-provenance" class="caption"></p>
+          </section>
+          <section id="retrieval-lab" class="card retrieval-lab">
+            <div class="section-head">
+              <div>
+                <h2>Retrieval history</h2>
+              </div>
+              <span class="tag">Recorded briefings</span>
+            </div>
+            <p>
+              Briefings requested by this account, including selected sources,
+              token budgets and retrieval methods.
+            </p>
+            <form id="receipt-form" class="receipt-form">
+              <label for="receipt-project">Project</label
+              ><select id="receipt-project" required>
+                <option value="" disabled selected>
+                  Sign in to list projects
+                </option></select
+              ><button type="submit">Load recent receipts</button>
+            </form>
+            <p id="receipt-notice" role="status">
+              Choose a project to inspect retained receipts. No model usage is
+              inferred.
+            </p>
+            <div class="receipt-workspace">
+              <div id="receipt-list"></div>
+              <div id="receipt-detail" aria-live="polite"></div>
+            </div>
+          </section>
+          <section id="observatory" class="card observatory"></section>
           <div id="development-record" hidden>
             <section
               id="metrics"
@@ -152,72 +215,6 @@
               </article>
             </section>
           </div>
-          <section id="execution-panel" class="card execution-panel">
-            <div class="section-head">
-              <div>
-                <h2>Task activity</h2>
-              </div>
-              <span class="tag">Agent-reported</span>
-            </div>
-            <p>
-              Goals, acceptance criteria and blockers saved by connected agents.
-              Reported results include evidence where available.
-            </p>
-            <form id="execution-form" class="receipt-form">
-              <label for="execution-project">Project</label
-              ><input
-                id="execution-project"
-                required
-                maxlength="96"
-                pattern="[A-Za-z0-9_-]+"
-                placeholder="demo"
-                autocomplete="off"
-              /><button type="submit">Load tasks</button>
-            </form>
-            <p id="execution-notice" role="status">
-              Enter a project to load its tasks.
-            </p>
-            <div class="execution-workspace">
-              <div id="execution-tasks"></div>
-              <section aria-label="Activity log">
-                <h3>Activity log</h3>
-                <ol id="execution-events" class="activity-trail"></ol>
-              </section>
-            </div>
-            <p id="execution-provenance" class="caption"></p>
-          </section>
-          <section id="retrieval-lab" class="card retrieval-lab">
-            <div class="section-head">
-              <div>
-                <h2>Retrieval history</h2>
-              </div>
-              <span class="tag">Recorded briefings</span>
-            </div>
-            <p>
-              Briefings requested by this account, including selected sources,
-              token budgets and retrieval methods.
-            </p>
-            <form id="receipt-form" class="receipt-form">
-              <label for="receipt-project">Project</label
-              ><input
-                id="receipt-project"
-                required
-                maxlength="96"
-                pattern="[A-Za-z0-9_-]+"
-                placeholder="demo"
-                autocomplete="off"
-              /><button type="submit">Load recent receipts</button>
-            </form>
-            <p id="receipt-notice" role="status">
-              Choose a project to inspect retained receipts. No model usage is
-              inferred.
-            </p>
-            <div class="receipt-workspace">
-              <div id="receipt-list"></div>
-              <div id="receipt-detail" aria-live="polite"></div>
-            </div>
-          </section>
-          <section id="observatory" class="card observatory"></section>
           <footer id="provenance"></footer>
         </div>
       </main>

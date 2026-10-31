@@ -50,6 +50,11 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `serve --dashboard-port` | Dashboard disabled unless set. `0` chooses a free port; otherwise 0–65535. Always loopback. |
 | `serve --plan-root` | Optional compatibility attachment for an explicitly trusted development-record checkout. Normal product use needs no report files; without the flag the dashboard shows the workspace view only. |
 | `serve --log-level` | `warning` by default. Redacted operator log lines on stderr: component, event, request id, error type and code location, never content, SQL or paths. An `internal_error` reply carries the `request_id` of its line. |
+| `status --socket`, `--credential` | Human summary of store health through the running daemon: history, position, frontier, jobs and capacity bars; `--json` prints the raw result. Needs an admin credential. |
+| `--version` | Prints the installed package version. |
+| `doctor --store`, `--control` | Checks Python, directory ownership and layout, socket path, schema version, journal integrity and tokenizer; with `--socket` and `--credential` it also reports capacity and frontier from the daemon. Exit 1 when a check fails. |
+| `credential issue NAME --project P --capabilities a,b [--expires 30d] --output FILE` | Issues a scoped credential into a new private file. `credential list` shows every grant with validity; `credential revoke NAME --project P` removes one. All take `--socket` and an admin `--credential`. |
+| `dashboard open --socket`, `--credential` | Issues a one-use code and opens the dashboard signed in; `--print-only` prints the link instead. The code travels in the URL fragment and expires in 60 seconds. |
 | `request --socket`, `--credential` | Required socket and private credential file paths. |
 | `request --credential-output` | New private output file required for a grant; secret values are not printed. |
 | `dashboard-login --output` | New private file containing a one-use code; expires after 60 seconds. |

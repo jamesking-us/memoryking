@@ -4,7 +4,7 @@
   "tools": [
     {
       "name": "memory_status",
-      "description": "Read current authenticated project identity, history and authorization epoch. This does not authorize an inference.",
+      "description": "Check what this session is bound to: store, tenant, principal, project and the current history id. Call it first in a session, or when a call fails with history_changed, before retrying anything. Read-only; it never authorizes a model request.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "MemoryKing current authorized project context",
@@ -15,9 +15,7 @@
             "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
           }
         },
-        "required": [
-          "project"
-        ],
+        "required": [],
         "additionalProperties": false
       },
       "annotations": {
@@ -27,7 +25,7 @@
     },
     {
       "name": "memory_capture",
-      "description": "Capture an authorized observation with a stable retry key; no external tool is executed.",
+      "description": "Remember something you observed: an error, a test result, a decision, a fact with its source. Give a stable `key` and `request.source_event` for the same event so a retry replays instead of duplicating; the same key with different text is a conflict. Text is stored as untrusted evidence, not as an instruction.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -98,8 +96,6 @@
               }
             },
             "required": [
-              "version",
-              "project",
               "source",
               "source_event",
               "text",
@@ -138,7 +134,7 @@
     },
     {
       "name": "memory_handoff",
-      "description": "Authorized MemoryKing handoff. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Pass a task to another principal with their current permissions: `prepare` a handoff from a checkpoint, `preview` what the recipient would receive, `materialize` it as the recipient, `ack` or `cancel`. A handoff never widens access; what the recipient cannot see is left out and reported.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -164,7 +160,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "key",
               "args"
@@ -193,7 +188,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "key",
               "args"
@@ -222,7 +216,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "key",
               "args"
@@ -251,7 +244,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "key",
               "args"
@@ -280,7 +272,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "key",
               "args"
@@ -342,14 +333,12 @@
               }
             },
             "required": [
-              "project",
               "task",
               "run",
               "checkpoint",
               "recipient",
               "role",
               "stage",
-              "bindings",
               "ttl_ms"
             ],
             "additionalProperties": false
@@ -376,10 +365,7 @@
               }
             },
             "required": [
-              "project",
-              "handle",
-              "max_output_tokens",
-              "tokenizer"
+              "handle"
             ],
             "additionalProperties": false
           },
@@ -404,7 +390,6 @@
               }
             },
             "required": [
-              "project",
               "handle",
               "materialization",
               "rendered_hash"
@@ -424,7 +409,6 @@
               }
             },
             "required": [
-              "project",
               "handle"
             ],
             "additionalProperties": false
@@ -440,7 +424,7 @@
     },
     {
       "name": "memory_brief",
-      "description": "Authorized MemoryKing brief. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Ask for a briefing before starting work: `brief` with a short query returns mandatory constraints, ranked guidance with sources and a receipt. Read `status` and `reason` first: `blocked` or `budget_insufficient` means decide, not truncate. `rerun` repeats an earlier receipt with a new query. Project, bindings, budget and tokenizer default to the session's.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -464,7 +448,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args"
             ]
@@ -489,7 +472,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args"
             ]
@@ -596,11 +578,7 @@
               }
             },
             "required": [
-              "project",
-              "query",
-              "bindings",
-              "max_output_tokens",
-              "tokenizer"
+              "query"
             ]
           },
           "Fetch": {
@@ -700,7 +678,6 @@
               }
             },
             "required": [
-              "project",
               "predecessor",
               "brief"
             ]
@@ -843,7 +820,7 @@
     },
     {
       "name": "memory_fetch",
-      "description": "Authorized MemoryKing fetch. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Follow up on a briefing you already have: `fetch` more of a source, `receipt` the diagnostics behind a receipt, `replay` the exact bytes that were delivered, `receipts` to list recent ones. Replays can report expired or purged; that is an answer, not an error to retry.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -867,7 +844,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args"
             ]
@@ -892,7 +868,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args"
             ]
@@ -917,7 +892,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args"
             ]
@@ -942,7 +916,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args"
             ]
@@ -1096,13 +1069,10 @@
               }
             },
             "required": [
-              "project",
               "reference",
               "kind",
               "start_byte",
-              "end_byte",
-              "max_output_tokens",
-              "tokenizer"
+              "end_byte"
             ]
           },
           "Receipt": {
@@ -1119,7 +1089,6 @@
               }
             },
             "required": [
-              "project",
               "receipt"
             ]
           },
@@ -1132,9 +1101,7 @@
                 "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
               }
             },
-            "required": [
-              "project"
-            ]
+            "required": []
           },
           "Rerun": {
             "type": "object",
@@ -1296,7 +1263,7 @@
     },
     {
       "name": "memory_checkpoint",
-      "description": "Authorized MemoryKing checkpoint. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Save progress before you stop or hand over: objective, current state, next actions, failed attempts, blockers and verification gaps, under a project, task and expected revision. Use the exact revision you last saw; a conflict means someone else saved first, so resume and merge rather than overwrite.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -1322,7 +1289,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args",
               "key"
@@ -1869,7 +1835,6 @@
               }
             },
             "required": [
-              "project",
               "task",
               "run",
               "expected_revision",
@@ -2273,7 +2238,7 @@
     },
     {
       "name": "memory_resume",
-      "description": "Authorized MemoryKing resume. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Pick up a saved task: returns the checkpoint, open operations and the context you are still authorized to see, within a token budget. Read `status`; a `blocked` or `partial` packet lists what is missing. Budget and tokenizer default to the session's.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -2295,7 +2260,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args"
             ],
@@ -2901,13 +2865,9 @@
               }
             },
             "required": [
-              "project",
               "task",
               "run",
-              "checkpoint",
-              "bindings",
-              "max_output_tokens",
-              "tokenizer"
+              "checkpoint"
             ],
             "additionalProperties": false
           },
@@ -3245,7 +3205,7 @@
     },
     {
       "name": "memory_feedback",
-      "description": "Authorized MemoryKing feedback. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Report what happened after using memory: `outcome` records the result of a run with its evidence, `feedback` rates whether a specific memory helped. This informs ranking; it cannot activate a procedure or change policy.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -3272,7 +3232,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args",
               "key"
@@ -3301,7 +3260,6 @@
               }
             },
             "required": [
-              "version",
               "action",
               "args",
               "key"
@@ -4007,7 +3965,6 @@
               }
             },
             "required": [
-              "project",
               "logical_key",
               "expected_revision",
               "body"
@@ -4089,7 +4046,6 @@
               }
             },
             "required": [
-              "project",
               "receipt",
               "reference",
               "task",

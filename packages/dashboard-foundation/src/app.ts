@@ -55,6 +55,66 @@ const CAPACITY_LABELS: Record<string, [string, string]> = {
   operation_intents: ["Open operations", "Released when an operation resolves"],
   processing_usage: ["Usage attempts", "Pruned after 30 days"],
 };
+const PROJECT_KEY = "memoryking.project";
+let projectsLoadedFor = -1;
+function rememberedProject(): string {
+  try {
+    return localStorage.getItem(PROJECT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+function rememberProject(project: string): void {
+  try {
+    localStorage.setItem(PROJECT_KEY, project);
+  } catch {
+    /* per-viewer convenience only */
+  }
+}
+async function loadProjects(): Promise<void> {
+  if (!snapshot || projectsLoadedFor === generation) return;
+  projectsLoadedFor = generation;
+  const context = generation;
+  let items: Array<{
+    project: string;
+    observations: number;
+    claims: number;
+    tasks: number;
+    receipts: number;
+  }> = [];
+  try {
+    items = (await api("/api/projects")).items as typeof items;
+  } catch {
+    projectsLoadedFor = -1;
+    return;
+  }
+  if (!snapshot || context !== generation) return;
+  const remembered = rememberedProject();
+  for (const id of ["execution-project", "receipt-project"]) {
+    const select = get<HTMLSelectElement>(id);
+    const current = select.value || remembered;
+    select.replaceChildren();
+    if (!items.length) {
+      const empty = el("option", "No readable projects yet");
+      empty.value = "";
+      empty.disabled = true;
+      empty.selected = true;
+      select.append(empty);
+      continue;
+    }
+    for (const item of items) {
+      const option = el(
+        "option",
+        `${item.project} · ${item.observations} memories · ${item.tasks} tasks · ${item.receipts} receipts`,
+      );
+      option.value = item.project;
+      select.append(option);
+    }
+    select.value = items.some((i) => i.project === current)
+      ? current
+      : items[0].project;
+  }
+}
 function renderCapacity(capacity: Snapshot["capacity"] | undefined): void {
   const list = get("capacity-list");
   list.replaceChildren();
@@ -212,9 +272,9 @@ function clear(message: string): void {
   observatory.clear();
   stopStream();
   clearExecution();
-  get<HTMLInputElement>("execution-project").value = "";
+  get<HTMLSelectElement>("execution-project").selectedIndex = -1;
   clearReceipts();
-  get<HTMLInputElement>("receipt-project").value = "";
+  get<HTMLSelectElement>("receipt-project").selectedIndex = -1;
   get("receipt-notice").textContent = "Sign in to inspect retained receipts.";
   snapshot = null;
   get("content").hidden = true;
@@ -374,7 +434,9 @@ function render(): void {
       ? "Current snapshot · live updates and 5s polling"
       : "Current snapshot · polled every 5s";
   renderCapacity(snapshot.capacity);
+  void loadProjects();
   get("development-record").hidden = snapshot.phases.length === 0;
+  get("record-nav").hidden = snapshot.phases.length === 0;
   if (!snapshot.phases.length) {
     for (const id of ["phases", "detail", "metrics", "phase-map", "adrs"])
       get(id).replaceChildren();
@@ -559,11 +621,22 @@ get("logout").addEventListener("click", async () => {
   }
 });
 get("refresh").addEventListener("click", () => void refresh());
+// `memoryking dashboard open` hands the one-use code over in the URL fragment, which
+// never reaches the server; it is consumed and removed from the address bar at once.
+const fragmentCode = /^#code=([A-Za-z0-9_-]{16,128})$/.exec(location.hash);
+if (fragmentCode) {
+  history.replaceState(null, "", location.pathname);
+  get<HTMLInputElement>("code").value = fragmentCode[1];
+  get<HTMLFormElement>("login-form").requestSubmit();
+}
 get("overview").addEventListener("click", () => window.scrollTo({ top: 0 }));
 get("retrieval-nav").addEventListener("click", () =>
   get("retrieval-lab").scrollIntoView(),
 );
-get("receipt-project").addEventListener("input", clearReceipts);
+get("receipt-project").addEventListener("change", () => {
+  rememberProject(get<HTMLSelectElement>("receipt-project").value);
+  clearReceipts();
+});
 get<HTMLFormElement>("receipt-form").addEventListener(
   "submit",
   async (event) => {
@@ -572,7 +645,7 @@ get<HTMLFormElement>("receipt-form").addEventListener(
     if (!snapshot) return;
     const ticket = receiptGeneration;
     const context = generation;
-    const project = get<HTMLInputElement>("receipt-project").value;
+    const project = get<HTMLSelectElement>("receipt-project").value;
     get("receipt-notice").textContent = "Checking current access…";
     try {
       const result = await api("/api/receipts/" + encodeURIComponent(project));
@@ -1156,12 +1229,18 @@ async function refreshExecution(): Promise<void> {
 get("execution-nav").addEventListener("click", () =>
   get("execution-panel").scrollIntoView(),
 );
-get("execution-project").addEventListener("input", () => clearExecution());
+get("record-nav").addEventListener("click", () =>
+  get("development-record").scrollIntoView(),
+);
+get("execution-project").addEventListener("change", () => {
+  rememberProject(get<HTMLSelectElement>("execution-project").value);
+  clearExecution();
+});
 get<HTMLFormElement>("execution-form").addEventListener("submit", (event) => {
   event.preventDefault();
   clearExecution();
   if (!snapshot) return;
-  executionProject = get<HTMLInputElement>("execution-project").value;
+  executionProject = get<HTMLSelectElement>("execution-project").value;
   get("execution-notice").textContent = "Checking current task access…";
   void refreshExecution();
 });
