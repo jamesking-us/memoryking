@@ -284,6 +284,13 @@
         },
         "dense": {
           "$ref": "#/$defs/DenseQuery"
+        },
+        "format": {
+          "enum": [
+            "json",
+            "text"
+          ],
+          "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
         }
       },
       "required": [

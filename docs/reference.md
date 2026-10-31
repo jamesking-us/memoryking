@@ -71,7 +71,7 @@ Configure through the embedding API with a current history, expected generation 
 | Candidate window | The 256 newest lexical matches in the project are scored; older matches beyond the window are not candidates. |
 | Policy journal | 256 KiB per signed record, enforced before writing (`journal_record_limit`) and on reading. A torn final line beyond the anchored sequence is discarded on the next append; damage anywhere else stays fatal. |
 | Conversation | 128 messages per dispatch through `AuthorizedConversation`; the request as a whole stays within 96 KiB. |
-| Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. |
+| Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. `format: "text"` returns a cited Markdown rendering in an envelope with the same receipt; the token count is of the rendered text. |
 | Authorization | Five-second evaluation-to-commit/first-byte deadline, with UTC and monotonic checks. |
 | Idempotency | Replay bodies retained for 30 days; expired/deleted results do not free a consumed identity. |
 | Generic jobs | 30-second leases, five attempts, bounded retry backoff, 1,000 unfinished jobs and four live leases per tenant. The local daemon completes `audit_probe` jobs itself between requests, so a default installation never needs a worker to keep capturing. |

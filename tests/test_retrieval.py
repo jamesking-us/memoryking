@@ -408,6 +408,38 @@ class RetrievalTests(unittest.TestCase):
         result = self.run_r(args=self.brief_args(query="nonsenseterm deadline retry"))
         self.assertIn(captured["observation"], [i["reference"] for i in result["guidance"]])
 
+    def test_text_format_renders_cited_markdown_with_the_same_receipt_semantics(self):
+        self.constraint()
+        captured = self.observe("deadline", "retry backoff exceeded the total deadline")
+        result = self.run_r(args=self.brief_args(query="deadline", format="text"))
+        self.assertEqual(result["format"], "text")
+        self.assertEqual(result["status"], "partial")
+        text = result["text"]
+        self.assertTrue(text.startswith("# Briefing: deadline"))
+        self.assertIn("## Must follow", text)
+        self.assertIn("Never disclose credentials", text)
+        self.assertIn("## Guidance", text)
+        self.assertIn("[g1]", text)
+        self.assertIn("retry backoff exceeded the total deadline", text)
+        self.assertIn("## Sources", text)
+        self.assertIn(captured["observation"], text)
+        self.assertIn("## Caveats", text)
+        refs = {s["id"] for s in result["sources"]}
+        self.assertIn(captured["observation"], refs)
+        self.assertNotIn("guidance", result)
+        self.assertGreater(result["usage"]["output_tokens"], 0)
+        # Replay returns the exact envelope bytes; the receipt records the text format.
+        raw = self.run_r(args=self.brief_args(query="deadline", format="text"), raw=True)
+        replayed = self.run_r("replay", {"project": "p", "receipt": result["receipt"]}, raw=True)
+        self.assertEqual(json.loads(replayed)["receipt"], result["receipt"])
+        self.assertEqual(json.loads(replayed)["text"], result["text"])
+        self.assertEqual(self.receipt(result)["diagnostics"]["format"], "text")
+        self.assertEqual(
+            self.receipt(result)["diagnostics"]["usage"]["output_tokens"],
+            result["usage"]["output_tokens"],
+        )
+        self.assertIsInstance(raw, bytes)
+
     def test_truncated_query_keeps_its_leading_terms(self):
         captured = self.observe("lead", "leadterm appears early")
         trailing = " ".join(f"filler{i}" for i in range(40))
