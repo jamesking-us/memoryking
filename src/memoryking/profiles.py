@@ -15,8 +15,8 @@ from typing import Any
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.domain.local import LocalError
 
-FIELDS = ("store", "control", "socket", "credential", "dashboard_port")
-PATH_FIELDS = ("store", "control", "socket", "credential")
+FIELDS = ("store", "control", "socket", "credential", "dashboard_port", "embedding_model")
+PATH_FIELDS = ("store", "control", "socket", "credential", "embedding_model")
 
 
 def config_path() -> Path:

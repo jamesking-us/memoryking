@@ -134,6 +134,35 @@ class Retrieval:
         self.s._expose()
         return Released(raw, decision, self.s.clock, access_id)
 
+    def _auto_dense(self, who: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        """Embed the query with the daemon's model when the project has a partition for it.
+
+        Only when the caller sent no `dense` request: an explicit request, including an
+        explicit vector, is never overridden. Without a model or a matching experimental
+        partition the briefing stays lexical, exactly as before.
+        """
+        embedder = self.s.embedder
+        if embedder is None or "dense" in args:
+            return args
+        row = self.db.execute(
+            "SELECT 1 FROM embedding_partitions WHERE tenant=? AND project=? AND fingerprint=? AND state='experimental' AND incarnation=?",
+            (who["tenant"], args["project"], embedder.fingerprint, self.s.incarnation),
+        ).fetchone()
+        if row is None:
+            return args
+        try:
+            batch = embedder.embed([args["query"]])
+        except Exception:  # a model failure degrades to lexical retrieval, never a refusal
+            return args
+        return {
+            **args,
+            "dense": {
+                "fingerprint": embedder.fingerprint,
+                "query_hash": canonical_hash(args["query"]),
+                "vector": batch.vectors[0],
+            },
+        }
+
     def textual(
         self, args: dict[str, Any], kind: str, raw: bytes, diag: dict[str, Any]
     ) -> tuple[bytes, dict[str, Any]]:
@@ -376,6 +405,7 @@ class Retrieval:
         recorded = args.get("recorded_position", source)
         if recorded > source:
             raise LocalError("invalid_recorded_position")
+        args = self._auto_dense(who, args)
         dense = dense_search(self.s, who, args, recorded, target_position)
         missing = [
             c

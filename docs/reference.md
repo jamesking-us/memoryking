@@ -53,7 +53,7 @@ Authoritative contracts:
 | Capability | Enablement | Boundary |
 | --- | --- | --- |
 | Exact token counting | Install `requirements-tokenizers.lock`; request `cl100k_base`. | Missing runtime is explicit; `utf8-byte-estimate-v1` is a disclosed estimate. |
-| Local semantic retrieval | Install `requirements-embeddings.lock`, explicitly install the pinned model, configure an experimental partition and run an embedding worker. | Default lexical retrieval remains available. No model download happens on startup. |
+| Local semantic retrieval | Install `requirements-embeddings.lock`, install the pinned model once with the model installer, then start `serve --embedding-model DIR` and run `memoryking embeddings enable --project P`. The daemon indexes the project itself and embeds every briefing's query, so no worker or client-side vectors are needed; the explicit partition and worker commands still work. | Default lexical retrieval remains available and is the fallback whenever the model or partition is absent. No model download happens on startup. |
 | pgvector exact search | Reviewed extension 0.8.7 in its dedicated schema, explicitly enabled by an operator. | Shared only; no approximate HNSW/IVFFlat index. Missing/wrong extension returns unavailable. |
 | Adapter deltas | Retain a matching authorized base through the resume adapter. | Transport optimization; full model context is reconstructed. No automatic model-token savings claim. |
 | Source-backed compilation | `processing` commands; deterministic extraction by default. | Candidate text must preserve validated whole source units and essential state or fall back. Remote generation is not included. |
@@ -61,7 +61,7 @@ Authoritative contracts:
 
 The model installer command is `python -m memoryking.model_install --destination NEW_MODEL_DIRECTORY`. It downloads the files pinned in the [model manifest](../src/memoryking/adapters/models/minilm-l6-v2-onnx.json), verifies hashes and never loads model-repository Python. Review its license and network requirements before opting in. The CPU model produces 384-dimensional vectors and reads only the first 256 tokens per input; truncation is disclosed.
 
-Configure through the embedding API with a current history, expected generation and model fingerprint. The one-shot worker takes `--model`, `--credential`, `--project` and either `--socket` or `--shared-url` plus `--tenant`/`--ca-file`. Installing a runtime does not activate a partition, provision a provider account or authorize remote egress.
+`memoryking embeddings enable --project P` configures the project's partition for the pinned model, and `embeddings status` reports its state, frontier and readiness. With `serve --embedding-model DIR` (or `embedding_model` in a profile) the daemon loads the model once, completes each enabled project's indexing jobs through the ordinary claim and complete path using its own owner credential, and embeds the query of any briefing that did not supply a `dense` request; an explicit request is never overridden. The embedding API and the one-shot worker (`--model`, `--credential`, `--project`, `--socket` or `--shared-url` with `--tenant`/`--ca-file`) remain available for the shared profile and for external indexing. Installing a runtime does not activate a partition, provision a provider account or authorize remote egress.
 
 ## Current limits
 
