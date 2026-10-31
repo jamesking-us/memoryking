@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__
+from memoryking import __version__, profiles
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
@@ -191,14 +191,36 @@ def doctor(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
+    parser.add_argument(
+        "--profile",
+        default=os.environ.get("MEMORYKING_PROFILE"),
+        help="Named store from the profiles config; fills omitted --store, --control, "
+        "--socket and --credential (MEMORYKING_PROFILE)",
+    )
+    parser.add_argument(
+        "--config", type=Path, help="Profiles file; default ~/.memoryking/config.toml"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
+    prof = commands.add_parser("profile", help="Name a store so commands need no paths")
+    prof_commands = prof.add_subparsers(dest="profile_command", required=True)
+    adder = prof_commands.add_parser("add")
+    adder.add_argument("name")
+    adder.add_argument("--store", type=Path, required=True)
+    adder.add_argument("--control", type=Path, required=True)
+    adder.add_argument("--credential", type=Path, help="Default admin credential file")
+    adder.add_argument("--socket", type=Path, help="Default: STORE/service.sock")
+    adder.add_argument("--dashboard-port", type=int)
+    prof_commands.add_parser("list")
+    prof_commands.add_parser("remove").add_argument("name")
     for name in ("init", "serve", "backup", "restore", "gc", "control-checkpoint"):
         cmd = commands.add_parser(name)
-        cmd.add_argument("--store", type=Path, required=True)
-        cmd.add_argument("--control", type=Path, required=True)
+        cmd.add_argument("--store", type=Path)
+        cmd.add_argument("--control", type=Path)
         if name == "serve":
             cmd.add_argument(
-                "--dashboard-port", type=int, help="Opt-in loopback port; 0 chooses a free port"
+                "--dashboard-port",
+                type=int,
+                help="Opt-in loopback port; 0 chooses a free port; a profile may set it",
             )
             cmd.add_argument("--plan-root", type=Path, help="Explicit trusted plan/report checkout")
             cmd.add_argument(
@@ -220,21 +242,21 @@ def main() -> int:
     status = commands.add_parser(
         "status", help="Show store health, frontier, jobs and capacity through the daemon"
     )
-    status.add_argument("--socket", type=Path, required=True)
-    status.add_argument("--credential", type=Path, required=True)
+    status.add_argument("--socket", type=Path)
+    status.add_argument("--credential", type=Path)
     status.add_argument("--project", default="main")
     status.add_argument("--json", action="store_true", help="Print the raw status result")
     doc = commands.add_parser("doctor", help="Check the installation and report fixes")
-    doc.add_argument("--store", type=Path, required=True)
-    doc.add_argument("--control", type=Path, required=True)
+    doc.add_argument("--store", type=Path)
+    doc.add_argument("--control", type=Path)
     doc.add_argument("--socket", type=Path, help="Also query the running daemon")
     doc.add_argument("--credential", type=Path, help="Admin credential for the daemon query")
     cred = commands.add_parser("credential", help="Issue, list and revoke agent credentials")
     cred_commands = cred.add_subparsers(dest="credential_command", required=True)
     for name in ("issue", "list", "revoke"):
         item = cred_commands.add_parser(name)
-        item.add_argument("--socket", type=Path, required=True)
-        item.add_argument("--credential", type=Path, required=True, help="Admin credential")
+        item.add_argument("--socket", type=Path)
+        item.add_argument("--credential", type=Path, help="Admin credential")
         if name in {"issue", "revoke"}:
             item.add_argument("principal")
             item.add_argument("--project", required=True)
@@ -249,27 +271,54 @@ def main() -> int:
     dash = commands.add_parser("dashboard", help="Open the dashboard in a browser")
     dash_commands = dash.add_subparsers(dest="dashboard_command", required=True)
     opener = dash_commands.add_parser("open")
-    opener.add_argument("--socket", type=Path, required=True)
-    opener.add_argument("--credential", type=Path, required=True)
+    opener.add_argument("--socket", type=Path)
+    opener.add_argument("--credential", type=Path)
     opener.add_argument(
         "--print-only", action="store_true", help="Print the sign-in link instead of opening it"
     )
     rpc = commands.add_parser(
         "request", help="Read a versioned operation/args JSON object from stdin"
     )
-    rpc.add_argument("--socket", type=Path, required=True)
-    rpc.add_argument("--credential", type=Path, required=True)
+    rpc.add_argument("--socket", type=Path)
+    rpc.add_argument("--credential", type=Path)
     rpc.add_argument(
         "--credential-output", type=Path, help="Required for grant; saves the new secret privately"
     )
     login = commands.add_parser(
         "dashboard-login", help="Save a one-use browser bootstrap code privately"
     )
-    login.add_argument("--socket", type=Path, required=True)
-    login.add_argument("--credential", type=Path, required=True)
+    login.add_argument("--socket", type=Path)
+    login.add_argument("--credential", type=Path)
     login.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        if args.command == "profile":
+            if args.profile_command == "add":
+                values: dict[str, Any] = {
+                    "store": str(args.store.resolve()),
+                    "control": str(args.control.resolve()),
+                }
+                for field in ("credential", "socket"):
+                    if getattr(args, field) is not None:
+                        values[field] = str(getattr(args, field).resolve())
+                if args.dashboard_port is not None:
+                    values["dashboard_port"] = args.dashboard_port
+                path = profiles.save(args.name, values, args.config)
+                print(json.dumps({"profile": args.name, "config": str(path)}))
+            elif args.profile_command == "remove":
+                path = profiles.remove(args.name, args.config)
+                print(json.dumps({"removed": args.name, "config": str(path)}))
+            else:
+                for name, values in sorted(profiles.load(args.config).items()):
+                    print(name)
+                    for field, value in values.items():
+                        print(f"  {field} = {value}")
+            return 0
+        profiles.apply(args, args.profile, args.config)
+        optional = {"socket", "credential"} if args.command == "doctor" else set()
+        for field in ("store", "control", "socket", "credential"):
+            if hasattr(args, field) and getattr(args, field) is None and field not in optional:
+                raise LocalError(field + "_required")
         if args.command == "init":
             path = LocalStore.initialize(args.store, args.control, args.tenant, args.principal)
             print(json.dumps({"credential_file": str(path)}))

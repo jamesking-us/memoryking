@@ -45,6 +45,7 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 
 | Option | Default / meaning |
 | --- | --- |
+| `--profile NAME`, `--config FILE` | Fill omitted `--store`, `--control`, `--socket`, `--credential` and `--dashboard-port` from a named profile in `~/.memoryking/config.toml` (`MEMORYKING_PROFILE`, `MEMORYKING_CONFIG`). The file holds paths only. `profile add NAME --store ... --control ...`, `profile list` and `profile remove NAME` maintain it. Explicit flags always win. |
 | `--store`, `--control` | Required paths for initialization, serving and offline maintenance. Neither may contain the other. |
 | `init --tenant`, `--principal` | `main` and `owner`; IDs are 1–96 ASCII letters, digits, `_` or `-`. |
 | `serve --dashboard-port` | Dashboard disabled unless set. `0` chooses a free port; otherwise 0–65535. Always loopback. |
