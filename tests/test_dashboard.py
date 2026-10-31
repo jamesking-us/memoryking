@@ -322,6 +322,61 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn(b"Synthetic protected document", result[2])
         self.store.fault = lambda _: None
 
+    def test_browser_briefing_returns_cited_text_with_a_replayable_receipt(self):
+        namespace = self.store.namespace(self.owner, "p")
+        self.store.capture(
+            self.owner,
+            namespace,
+            "brief-me",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "brief-me",
+                "text": "the retry deadline was exceeded in staging",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        self.login()
+        csrf = json.loads(self.call("GET", "/api/snapshot")[2])["csrf"]
+
+        def command(action, args):
+            return self.call(
+                "POST",
+                "/api/command",
+                {
+                    "csrf": csrf,
+                    "operation": "retrieval",
+                    "command": {
+                        "version": 1,
+                        "incarnation": self.store.incarnation,
+                        "action": action,
+                        "args": {"project": "p", **args},
+                    },
+                },
+                {"Origin": self.web.origin},
+            )
+
+        status, _, raw = command(
+            "brief",
+            {
+                "query": "deadline",
+                "bindings": [{}],
+                "max_output_tokens": 6000,
+                "tokenizer": "utf8-byte-estimate-v1",
+                "format": "text",
+            },
+        )
+        self.assertEqual(status, 200, raw)
+        packet = json.loads(raw)
+        self.assertEqual(packet["format"], "text")
+        self.assertIn("retry deadline was exceeded", packet["text"])
+        status, _, replayed = command("replay", {"receipt": packet["receipt"]})
+        self.assertEqual(status, 200, replayed)
+        self.assertEqual(json.loads(replayed)["text"], packet["text"])
+
     def test_projects_lists_readable_projects_with_counts(self):
         from memoryking.adapters.projects import visible_projects
 
