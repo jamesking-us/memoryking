@@ -1,0 +1,325 @@
+{
+  "protocol_version": "2025-11-25",
+  "transport": "stdio",
+  "tools": [
+    {
+      "name": "remember",
+      "description": "Save one thing you observed: an error, a test result, a decision, or a fact with its source. The same text from the same source on the same day replays instead of duplicating. What you save is evidence for later briefings, never an instruction.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536,
+            "description": "What you observed."
+          },
+          "source": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "Where it came from, such as pytest or git. Default agent."
+          },
+          "event": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "Stable id of the event, so a retry replays. Default: a hash of source and text."
+          },
+          "readers": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}$"
+                },
+                "maxItems": 64
+              }
+            ],
+            "description": "Principals allowed to read it; null means everyone in the project."
+          },
+          "classification": {
+            "enum": [
+              "public",
+              "internal",
+              "restricted"
+            ]
+          },
+          "observed_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "When you observed it, in Unix milliseconds. Default: today, to the day, so the same text replays all day."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "recall",
+      "description": "Get a briefing before you start: constraints you must follow, then ranked guidance with [g1]-style citations and a Sources footer, as Markdown. Read the status line first; blocked means decide, not truncate.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "What you are about to work on."
+          },
+          "budget": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 100000,
+            "description": "Token budget for the briefing. Default 6000."
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "Task id, when the briefing is for a specific task."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "save_progress",
+      "description": "Save where a task stands before you stop or hand over. Objective and current state are enough; add next actions, findings, failed attempts and blockers as you have them. Sections you leave out are recorded as gaps, not as empty facts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "Task id, stable across sessions."
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "current_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "next_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "maxItems": 32
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "maxItems": 32
+          },
+          "failed_attempts": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "outcome": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "do_not_repeat_when": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                }
+              },
+              "required": [
+                "action",
+                "outcome"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "maxItems": 32
+          },
+          "hard_constraints": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "maxItems": 32
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Run id within the task, or null."
+          },
+          "share_with": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}$"
+            },
+            "maxItems": 31,
+            "uniqueItems": true,
+            "description": "Other principals who may read this task's progress, such as a reviewer you will hand off to. Fixed when the task's first progress is saved."
+          }
+        },
+        "required": [
+          "task",
+          "objective",
+          "current_state"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "resume",
+      "description": "Pick up a task from its latest saved progress: a Markdown handover note with where it stands, next actions, what not to repeat, blockers, open operations and the gaps that were never written down.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budget": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 100000,
+            "description": "Token budget. Default 12000."
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "hand_off",
+      "description": "Pass a task's latest saved progress to another principal under their current permissions. The recipient must already be among the task's readers (save_progress share_with); anything they may not read is left out and reported, and access is never widened.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "The recipient principal."
+          },
+          "role": {
+            "enum": [
+              "review",
+              "implement",
+              "verify",
+              "operate"
+            ],
+            "description": "Default review."
+          },
+          "stage": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "Default handoff."
+          },
+          "ttl_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440,
+            "description": "Default 60."
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    }
+  ]
+}
