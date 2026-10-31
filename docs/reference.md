@@ -69,7 +69,7 @@ Configure through the embedding API with a current history, expected generation 
 | --- | --- |
 | Local request | 256 KiB wire body; 64 KiB captured text; one request per socket connection; up to eight connections served concurrently, more wait up to five seconds and then receive `service_busy`. |
 | Query | Up to 32 distinct searchable terms. Longer queries are searched on their leading terms and the receipt diagnostics record `query_terms_truncated`. |
-| Candidate window | The 256 newest lexical matches in the project are scored; older matches beyond the window are not candidates. |
+| Candidate window | Each query term contributes its 256 newest matches in the project; the merged set is ordered by how many terms a document matches, then by recency, and the top 256 are scored. A common word therefore cannot crowd out documents that match the rare terms. |
 | Policy journal | 256 KiB per signed record, enforced before writing (`journal_record_limit`) and on reading. A torn final line beyond the anchored sequence is discarded on the next append; damage anywhere else stays fatal. |
 | Conversation | 128 messages per dispatch through `AuthorizedConversation`; the request as a whole stays within 96 KiB. |
 | Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. `format: "text"` returns a cited Markdown rendering in an envelope with the same receipt; the token count is of the rendered text. |
@@ -83,6 +83,10 @@ Configure through the embedding API with a current history, expected generation 
 | Experience | 10,000 immutable records; up to 256 latest visible records per listing; no unbounded pagination/compaction. |
 | Browser | 60-second bootstrap, 15-minute session, five-second polling and 15-second snapshot freshness; hidden/expired views clear. |
 | Shared live updates | Eight streams, bounded samples/cursor history, resync/polling fallback. Not an unbounded event replay service. |
+
+### Retrieval quality gate
+
+`tools/retrieval_benchmark.py --gate` builds a deterministic synthetic corpus (400 documents, 200 labelled queries by default), runs real briefings and reports recall, precision, reciprocal rank, recall when a common word widens the candidate set, briefing tokens and latency. The thresholds in `fixtures/evaluation/retrieval-gate.json` fail the check when a ranking change regresses them. The corpus is synthetic, so the gate guards against regressions; it is not evidence of real-task retrieval quality.
 
 ### Capacity and release
 

@@ -616,21 +616,31 @@ class Retrieval:
         else:
             ids = []
             if query and args.get("freshness", "any") != "attested":
-                # Tenant/scope/audience filtering precedes the candidate limit. The window
-                # is newest-first so recent memories are never crowded out by old matches;
-                # relevance scoring then ranks within the window.
-                rows = self.db.execute(
-                    "SELECT o.id FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM lexical WHERE tenant=? AND lexical MATCH ?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
-                    (
-                        who["tenant"],
-                        args["project"],
-                        recorded,
-                        who["principal"],
-                        who["tenant"],
-                        " OR ".join('"' + t.replace('"', '""') + '"' for t in query),
-                    ),
-                ).fetchall()
-                ids = [r["id"] for r in rows]
+                # Tenant/scope/audience filtering precedes the candidate limit. Each term
+                # gets its own newest-first window, so a common word cannot crowd out the
+                # documents that match the rare ones; the windows are merged by how many
+                # terms a document matches, then by recency, and the top 257 are scored.
+                coverage: dict[str, int] = {}
+                position: dict[str, int] = {}
+                limited = False
+                for term in query:
+                    rows = self.db.execute(
+                        "SELECT o.id,o.position FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM lexical WHERE tenant=? AND lexical MATCH ?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
+                        (
+                            who["tenant"],
+                            args["project"],
+                            recorded,
+                            who["principal"],
+                            who["tenant"],
+                            '"' + term.replace('"', '""') + '"',
+                        ),
+                    ).fetchall()
+                    limited = limited or len(rows) > 256
+                    for row in rows:
+                        coverage[row["id"]] = coverage.get(row["id"], 0) + 1
+                        position[row["id"]] = row["position"]
+                ordered = sorted(coverage, key=lambda i: (-coverage[i], -position[i], i))
+                ids = ordered[:256] + (ordered[256:257] if limited or len(ordered) > 256 else [])
             if len(cache) >= 64:
                 cache.pop(next(iter(cache)))
             cache[key] = {"expires": at + 60000, "ids": ids}

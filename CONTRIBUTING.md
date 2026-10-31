@@ -46,3 +46,5 @@ Keep the README short and approachable. Put user detail in the five guides it li
 The repository remains private. No project distribution license has been selected and no package/image is published. Public sharing requires the owner to select a license and review dependency notices and release readiness. Existing third-party notices, including the bundled tokenizer license, must remain intact.
 
 `tools/dependency_inventory.py` reads installed package metadata, license-file hashes and committed locks. Its output is an inventory, not a blanket license grant. Model downloads have their own manifest/license requirements.
+
+Ranking or candidate-selection changes must keep `tools/retrieval_benchmark.py --gate` green; `tools/check.py` runs it. Raise a threshold in `fixtures/evaluation/retrieval-gate.json` when a change improves a metric, never lower one without a note in the pull request.

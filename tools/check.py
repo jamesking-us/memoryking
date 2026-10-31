@@ -35,6 +35,13 @@ def main():
         [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
         [sys.executable, "tools/run_conformance.py", "--output", "tmp/checks/scenarios.json"],
         [sys.executable, "tools/check_docs.py"],
+        [
+            sys.executable,
+            "tools/retrieval_benchmark.py",
+            "--gate",
+            "--output",
+            "tmp/checks/retrieval-benchmark.json",
+        ],
     ]
     if os.environ.get("MEMORYKING_REQUIRE_POSTGRES") == "1":
         commands.append(
