@@ -690,7 +690,7 @@ get("logout").addEventListener("click", async () => {
 get("refresh").addEventListener("click", () => void refresh());
 // `memoryking dashboard open` hands the one-use code over in the URL fragment, which
 // never reaches the server; it is consumed and removed from the address bar at once.
-const fragmentCode = /^#code=([A-Za-z0-9_-]{16,128})$/.exec(location.hash);
+const fragmentCode = /^#code=([A-Za-z0-9_\\-]{16,128})$/.exec(location.hash);
 if (fragmentCode) {
   history.replaceState(null, "", location.pathname);
   get<HTMLInputElement>("code").value = fragmentCode[1];
@@ -856,16 +856,14 @@ get<HTMLFormElement>("receipt-form").addEventListener(
             const compare = el("button", "Compare with previous briefing");
             compare.type = "button";
             compare.addEventListener("click", async () => {
-              const older = items.filter(
-                (other) => other.created_ms < item.created_ms,
-              );
-              if (!older.length) {
+              // The list is newest first, so the previous briefing is the next entry.
+              const previous = items[items.indexOf(item) + 1];
+              if (!previous) {
                 compare.replaceWith(
                   el("p", "No earlier receipt to compare with.", "caption"),
                 );
                 return;
               }
-              const previous = older[0];
               try {
                 const before = await api(
                   "/api/receipt/" +

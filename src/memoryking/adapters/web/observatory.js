@@ -106,7 +106,7 @@ export class Observatory {
         const form = e("form", "", "observatory-form");
         this.project = field(form, "Project", "", "text");
         this.project.required = true;
-        this.project.pattern = "[A-Za-z0-9_-]{1,96}";
+        this.project.pattern = "[A-Za-z0-9_\\-]{1,96}";
         const label = e("label", "View");
         this.view = e("select");
         this.view.setAttribute("aria-label", "View");
@@ -476,7 +476,7 @@ export class Observatory {
         form.append(e("h3", `${actionLabel} revision ${revision}`), e("p", `Compare-and-set family version ${expected_version}. Check the source and scope above before confirming. The server rechecks current authority and version.`));
         const reason = field(form, "Decision reason (identifier)", "reviewed_in_dashboard");
         reason.required = true;
-        reason.pattern = "[A-Za-z0-9_-]{1,96}";
+        reason.pattern = "[A-Za-z0-9_\\-]{1,96}";
         const breadth = field(form, "I reviewed the applicability breadth", "", "checkbox");
         form.append(e("button", "Confirm " + actionLabel, "primary"), button("Cancel", () => form.remove()));
         form.onsubmit = (event) => {
