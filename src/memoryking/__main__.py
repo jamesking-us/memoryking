@@ -18,6 +18,7 @@ from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import LocalStore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError
 from memoryking.observability import LEVELS, configure, event
 
@@ -484,12 +485,17 @@ def main() -> int:
         return 0
     except (LocalError, ContractError) as exc:
         print(
-            json.dumps({"error": exc.code if isinstance(exc, LocalError) else "invalid_request"}),
+            json.dumps(
+                {"error": code, "hint": hint(code)}
+                if (code := exc.code if isinstance(exc, LocalError) else "invalid_request")
+                else {}
+            ),
             file=sys.stderr,
         )
         return 2
     except (OSError, ValueError):
-        print('{"error":"local_io_or_configuration_error"}', file=sys.stderr)
+        code = "local_io_or_configuration_error"
+        print(json.dumps({"error": code, "hint": hint(code)}), file=sys.stderr)
         return 2
 
 

@@ -10,8 +10,9 @@ from typing import Callable, Protocol
 class LocalError(Exception):
     """Stable non-disclosing error code; never embeds supplied content."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, hint: str | None = None):
         self.code = code
+        self.hint = hint
         super().__init__(code)
 
 

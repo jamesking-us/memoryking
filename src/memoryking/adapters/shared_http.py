@@ -17,6 +17,7 @@ from starlette.routing import Route
 
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.hints import hint
 from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure
@@ -54,7 +55,7 @@ class ReleaseResponse(Response):
 
 
 def error(code: str, status: int = 400, request_id: str | None = None) -> Response:
-    body: dict[str, str] = {"error": code}
+    body: dict[str, str] = {"error": code, "hint": hint(code)}
     if request_id is not None:
         body["request_id"] = request_id
     return Response(

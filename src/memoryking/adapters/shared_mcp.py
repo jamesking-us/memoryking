@@ -14,6 +14,7 @@ from starlette.requests import Request
 
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes
+from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.sdk import BINDING_FIELDS, CATALOG, TOOL_VALIDATORS, LocalClient
 
@@ -105,7 +106,8 @@ class SharedMCP:
             return types.CallToolResult(
                 content=[
                     types.TextContent(
-                        type="text", text=canonical_bytes({"error": exc.code}).decode()
+                        type="text",
+                        text=canonical_bytes({"error": exc.code, "hint": hint(exc.code)}).decode(),
                     )
                 ],
                 is_error=True,
