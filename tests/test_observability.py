@@ -54,6 +54,14 @@ class ObservabilityTests(unittest.TestCase):
         self.assertEqual(429, http_status("retention_capacity", 400))
         self.assertEqual(429, http_status("operation_scope_capacity", 400))
         self.assertEqual(429, http_status("usage_retention_limit", 400))
+        # Fixed input bounds never clear by waiting: no retry signal.
+        for code in (
+            "tool_input_limit",
+            "checkpoint_input_limit",
+            "inference_request_limit",
+            "delta_limit",
+        ):
+            self.assertEqual(400, http_status(code, 400), code)
         self.assertEqual(503, http_status("recovery_required", 400))
         self.assertEqual(503, http_status("service_busy", 400))
         self.assertEqual(403, http_status("denied", 403))

@@ -206,7 +206,7 @@
             },
             "maxItems": 31,
             "uniqueItems": true,
-            "description": "Other principals who may read this task's progress, such as a reviewer you will hand off to. Fixed when the task's first progress is saved."
+            "description": "Other principals who may read this task's progress, such as a reviewer you will hand off to. Omit it to keep the readers from the previous save."
           }
         },
         "required": [

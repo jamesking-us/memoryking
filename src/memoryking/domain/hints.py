@@ -272,7 +272,7 @@ HINTS: dict[str, str] = {
     "inference_permit_expired": "The permit expired; authorize again.",
     "inference_permit_mismatch": "The permit was issued for different bytes or binding.",
     "inference_provenance_unknown": "Each message needs a memory artifact or host authorization as provenance.",
-    "inference_request_limit": "The request exceeds 128 messages, 96 KiB, or the artifact bounds.",
+    "inference_request_limit": "The conversation is full (128 messages, so 127 before a dispatch), the request exceeds 96 KiB, or the artifact bounds are exceeded.",
     "inference_result_quarantined": "The provider result was quarantined; do not reuse it.",
     "host_authorization_expired": "The host's authorization for this content expired; authorize again.",
     "host_authorization_required": "Host-supplied content needs a host authorization with a source hash.",

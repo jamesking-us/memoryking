@@ -17,7 +17,7 @@ from memoryking import hooks
 from memoryking.domain.local import LocalError
 
 REPORT_TAIL = 4000
-_state = {"announced": False, "captured": 0}
+_state = {"announced": False, "captured": 0, "disabled": False}
 
 
 def enabled() -> bool:
@@ -38,16 +38,17 @@ def summarize(report: Any) -> str:
 
 def record_failure(report: Any) -> dict[str, Any] | None:
     """Capture one failed report; returns the capture result or None when disabled."""
-    if not enabled() or not getattr(report, "failed", False):
+    if _state["disabled"] or not enabled() or not getattr(report, "failed", False):
         return None
     text = summarize(report)
     try:
-        result = hooks.capture(
-            text,
-            source="pytest",
-            event=hooks.event_id("pytest", report.nodeid, text.splitlines()[-1] if text else ""),
-        )
-    except (LocalError, OSError) as exc:
+        # The hook derives the key from the whole text (node id and traceback tail),
+        # the project and the day: a changed failure is recorded, an identical rerun
+        # replays.
+        result = hooks.capture(text, source="pytest")
+    except Exception as exc:
+        # Never fail the test run: any capture error disables capture for this run.
+        _state["disabled"] = True
         if not _state["announced"]:
             _state["announced"] = True
             code = exc.code if isinstance(exc, LocalError) else type(exc).__name__

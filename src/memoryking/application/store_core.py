@@ -1016,7 +1016,7 @@ class StoreCore:
     def egress_revision(self) -> str:
         """The policy revision every conversation binds to; a change retires them all."""
         policy = self.egress_policy
-        return "local-recording-v1" if policy is None else str(policy.revision)
+        return "local-recording-v1" if policy is None else str(policy.binding)
 
     def context(self, credential: str, project: str) -> Released:
         """Read-scoped identity discovery; aggregate/admin status remains separate."""

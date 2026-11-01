@@ -308,7 +308,7 @@ class AuthorizedConversation:
                     except Exception as exc:
                         failure = {
                             "status": "failed",
-                            "wire_hash": None,
+                            "wire_hash": self.provider.last_wire_hash,
                             "response_hash": None,
                             "usage": None,
                         }

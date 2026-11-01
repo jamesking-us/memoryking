@@ -127,7 +127,7 @@ TOOLS: list[dict[str, Any]] = [
                     "items": IDENTIFIER,
                     "maxItems": 31,
                     "uniqueItems": True,
-                    "description": "Other principals who may read this task's progress, such as a reviewer you will hand off to. Fixed when the task's first progress is saved.",
+                    "description": "Other principals who may read this task's progress, such as a reviewer you will hand off to. Omit it to keep the readers from the previous save.",
                 },
             },
             "required": ["task", "objective", "current_state"],
@@ -200,9 +200,11 @@ CATALOG: dict[str, Any] = {"protocol_version": "2025-11-25", "transport": "stdio
 DAY_MS = 86_400_000
 
 
-def _event(source: str, text: str, observed_ms: int) -> str:
-    day = observed_ms // DAY_MS
-    return "ev-" + hashlib.sha256(f"{source}\n{day}\n{text}".encode()).hexdigest()[:40]
+def _event(source: str, text: str, observed_ms: int, project: str) -> str:
+    return (
+        "ev-"
+        + hashlib.sha256(f"{source}\n{project}\n{observed_ms}\n{text}".encode()).hexdigest()[:40]
+    )
 
 
 def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -215,7 +217,9 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
         observed = arguments.get("observed_ms")
         if observed is None:
             observed = int(time.time() * 1000) // DAY_MS * DAY_MS
-        event = arguments.get("event") or _event(source, arguments["text"], observed)
+        event = arguments.get("event") or _event(
+            source, arguments["text"], observed, client.project
+        )
         return client.tool(
             "memory_capture",
             {

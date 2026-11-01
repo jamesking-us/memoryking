@@ -69,11 +69,12 @@ def timeline(
             }
         )
         if len(items) >= limit:
-            break
-    scanned_to = rows[-1]["position"] if rows else None
+            # A full page resumes after its last ITEM, not the last row scanned:
+            # rows fetched beyond it may still match.
+            return {"project": project, "items": items, "next_before": row["position"]}
     exhausted = len(rows) < limit * 4
     return {
         "project": project,
         "items": items,
-        "next_before": None if exhausted and len(items) < limit else scanned_to,
+        "next_before": None if exhausted or not rows else rows[-1]["position"],
     }

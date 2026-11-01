@@ -78,11 +78,18 @@ def capture(
     moment of the capture itself. Pass `observed_ms` to keep a precise time.
     """
     socket, token, project = connection(**where)
+    # Unpaired surrogates (e.g. from a decoded traceback) become replacement characters.
+    text = text.encode("utf-8", "replace").decode("utf-8")
     if len(text.encode()) > TEXT_LIMIT:
         text = text.encode()[: TEXT_LIMIT - 32].decode("utf-8", "ignore") + "\n[truncated]"
     if not text.strip():
         raise LocalError("invalid_request")
-    event = event or event_id(source, text)
+    observed = (
+        observed_ms if observed_ms is not None else int(time.time() * 1000) // DAY_MS * DAY_MS
+    )
+    # The derived key covers everything the payload varies by (project, observed time,
+    # text), so a rerun replays and another day or project is a new capture.
+    event = event or event_id(source, text, f"{project}\n{observed}")
     space = request(socket, token, "namespace", {"project": project, "name": namespace})
     return request(
         socket,
@@ -99,9 +106,7 @@ def capture(
                 "text": text,
                 "readers": readers,
                 "classification": classification,
-                "observed_at_ms": observed_ms
-                if observed_ms is not None
-                else int(time.time() * 1000) // DAY_MS * DAY_MS,
+                "observed_at_ms": observed,
             },
         },
     )
