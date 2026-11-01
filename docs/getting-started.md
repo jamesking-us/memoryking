@@ -7,15 +7,13 @@ This guide takes you from a new checkout to a local service and dashboard. No mo
 Use Python 3.12; the reference patch is recorded in [`.python-version`](../.python-version). The local service is exercised on macOS. Linux containers are exercised separately; Windows is not a supported local target yet.
 
 ```sh
-git clone https://github.com/jamesking-us/memoryking.git
-cd memoryking
 python3.12 -m venv .venv
-.venv/bin/python -I -m pip install --require-hashes -r requirements-build.lock -r requirements-core.lock
-.venv/bin/python -I -m pip install --no-build-isolation --no-deps .
+.venv/bin/python -I -m pip install --pre memoryking
 .venv/bin/python -I -m pip check
+git clone https://github.com/jamesking-us/memoryking.git && cd memoryking
 ```
 
-These commands install locked dependencies and build the package from this checkout. There is no public registry release to install by name yet; a [release wheel or container image](deployment.md#release-build) can be built from the checkout. Keep the checkout to run the examples; the installed service itself does not need it.
+This installs the released package from PyPI; `--pre` is needed while the current release is a preview (`0.1.0a1`). The checkout is for the examples and tools in this guide; the installed service itself does not need it. To pin the wheel by hash, use the `install` line from the release's `RELEASE.json` on the [release page](https://github.com/jamesking-us/memoryking/releases). To build from source instead, install the locks and the checkout as the [contributing guide](../CONTRIBUTING.md) describes, or use the [release wheel or container image](deployment.md#release-build).
 
 ## 2. Try the complete example
 

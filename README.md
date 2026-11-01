@@ -49,18 +49,16 @@ The core runs locally **without a model account, GPU or paid API**. A shared Pos
 
 ## See it work
 
-You need Python **3.12** and Git. Repository access is currently private. From a terminal:
+You need Python **3.12**. From a terminal:
 
 ```sh
-git clone https://github.com/jamesking-us/memoryking.git
-cd memoryking
 python3.12 -m venv .venv
-.venv/bin/python -I -m pip install --require-hashes -r requirements-build.lock -r requirements-core.lock
-.venv/bin/python -I -m pip install --no-build-isolation --no-deps .
-.venv/bin/python examples/remember_and_resume.py
+.venv/bin/python -I -m pip install --pre memoryking
+git clone https://github.com/jamesking-us/memoryking.git
+.venv/bin/python memoryking/examples/remember_and_resume.py
 ```
 
-The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
+The first two lines install the released package (`--pre` because the current release is a preview); the checkout is only there for the example. The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
 
 For a lasting installation and the browser dashboard, follow the [getting started guide](docs/getting-started.md): name your store once with `memoryking profile add`, then `status`, `doctor`, `dashboard open` and `credential issue` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](docs/agent-guide.md).
 
@@ -110,4 +108,4 @@ See [deployment and configuration](docs/deployment.md) for commands, prerequisit
 
 MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](SECURITY.md) and [current limits](docs/reference.md#current-limits).
 
-MemoryKing is released under the [Apache License 2.0](LICENSE). A packaged release (a Python wheel and a container image, each with recorded checksums) is built from this repository; the first public upload is in preparation. See [distribution](CONTRIBUTING.md#distribution).
+MemoryKing is released under the [Apache License 2.0](LICENSE). Each release is a Python package on [PyPI](https://pypi.org/project/memoryking/) and a container image for the local service at `ghcr.io/jamesking-us/memoryking`, both built reproducibly from this repository with checksums recorded on the [release page](https://github.com/jamesking-us/memoryking/releases). See [distribution](CONTRIBUTING.md#distribution).

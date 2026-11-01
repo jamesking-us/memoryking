@@ -49,6 +49,8 @@ docker run --rm -v mk-data:/data -v mk-control:/control memoryking:local init --
 docker run -d --name memoryking -v mk-data:/data -v mk-control:/control memoryking:local
 ```
 
+The published image is `ghcr.io/jamesking-us/memoryking:<version>`; pull it by the digest recorded on the release page (for `0.1.0a1`, `ghcr.io/jamesking-us/memoryking@sha256:681adce7eaec14f747cfb60accd78118f6f21680e5d207999abe33bb08620c61`) and use that reference in place of `memoryking:local` above.
+
 Named volumes take the image's ownership of `/data` and `/control`; the store and control trees are created inside them because `init` insists on new directories. The socket is `/data/store/service.sock` on the data volume, so an agent in another container reaches it by mounting the same volume, and the owner credential is in the control volume. The dashboard binds loopback inside the container; run with `--network host` on Linux to open it from the host, or use the shared profile for anything beyond one machine. `tools/image_rehearsal.py --output NEW.json` builds the image, initialises a disposable store, starts the daemon, queries its status and records the image digest; that digest is what the owner signs and publishes. The tool pushes nothing.
 
 ### Publishing a release
@@ -57,9 +59,9 @@ MemoryKing is licensed under the Apache License 2.0. Publishing runs locally wit
 
 1. Merge the release commit to `main`, tag it (`git tag -a v0.1.0a1 -m "MemoryKing 0.1.0a1"`) and push the tag.
 2. In the contributor environment at that tag, run `.venv/bin/python tools/build_release.py`. It writes `dist/SHA256SUMS` and `dist/RELEASE.json` and proves a fresh install; a second run of the same commit must reproduce the same hashes.
-3. Upload the wheel and sdist from a throwaway environment that has `twine` (it is not in the hash locks), with a PyPI API token scoped to the project: `twine upload dist/memoryking-0.1.0a1*`. Confirm the hashes PyPI shows match `SHA256SUMS`.
-4. Build and rehearse the image (`tools/image_rehearsal.py --output tmp/image-0.1.0a1.json`), then tag and push it to a registry you control, for example `docker tag memoryking:local ghcr.io/jamesking-us/memoryking:0.1.0a1 && docker push ghcr.io/jamesking-us/memoryking:0.1.0a1`, and sign the pushed digest with your cosign key: `cosign sign --key cosign.key ghcr.io/jamesking-us/memoryking@sha256:<digest>`. Publish `cosign.pub` so users can `cosign verify`.
-5. Create the GitHub release for the tag with `SHA256SUMS`, `RELEASE.json` and the image digest in its notes, so the wheel and image of one version are tied together.
+3. Upload the wheel and sdist from a throwaway environment that has `twine` (it is not in the hash locks), with a PyPI API token scoped to the project (the first upload of a new project needs an account-wide token; replace it with a project token afterwards): `twine upload dist/memoryking-0.1.0a1*`. Confirm the hashes PyPI shows (`https://pypi.org/pypi/memoryking/<version>/json`) match `SHA256SUMS`.
+4. Build and rehearse the image (`tools/image_rehearsal.py --output tmp/image-0.1.0a1.json`), then tag and push it to a registry you control, for example `docker tag memoryking:local ghcr.io/jamesking-us/memoryking:0.1.0a1 && docker push ghcr.io/jamesking-us/memoryking:0.1.0a1`, and sign the pushed digest (the index digest `docker push` prints) with your cosign key: `cosign sign --key cosign.key ghcr.io/jamesking-us/memoryking@sha256:<digest>`, or keyless with `cosign sign` alone, which signs in through a browser and records the signature in the public transparency log. Publish `cosign.pub` so users can `cosign verify`. A new package on the GitHub registry starts private; make it public in the package's settings on GitHub (the API cannot), or nobody can pull it.
+5. Create the GitHub release for the tag, marked as a pre-release while the version is one, with `SHA256SUMS`, `RELEASE.json`, the wheel and the sdist attached and the image digest in its notes, so the wheel and image of one version are tied together.
 
 The shared-profile image under `deploy/shared/` is published the same way when needed. After the first upload, the getting-started guide's install becomes `pip install --pre memoryking` followed by `init`, `profile add`, `serve` and `dashboard open`.
 
@@ -220,7 +222,7 @@ Stop the stack while preserving its data:
 docker compose --env-file tmp/shared-evaluation/compose.env -f deploy/shared/compose.yaml down
 ```
 
-The reusable test helper is `tools/shared_compose_rehearsal.py --compose /absolute/path/to/docker-compose --directory NEW_STATE --output NEW_LOGS`. It runs the role/API/worker/crash/archive/restore/migration sequence, records results and stops its containers. API, gateway and database have bounded `on-failure:3` restart policies; exhausted retries need diagnosis. There is no published image, Kubernetes chart or managed cloud installer.
+The reusable test helper is `tools/shared_compose_rehearsal.py --compose /absolute/path/to/docker-compose --directory NEW_STATE --output NEW_LOGS`. It runs the role/API/worker/crash/archive/restore/migration sequence, records results and stops its containers. API, gateway and database have bounded `on-failure:3` restart policies; exhausted retries need diagnosis. The shared-profile image is not published; there is no Kubernetes chart or managed cloud installer.
 
 ## Backup and recovery
 
