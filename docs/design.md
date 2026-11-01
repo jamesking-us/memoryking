@@ -20,6 +20,8 @@ flowchart TB
 
 The Python domain layer contains contracts and decisions independent of vendors. Application services coordinate them; adapters implement storage, transports, repository inspection and optional providers. TypeScript implements the browser interface and generated client contracts.
 
+Storage sits behind one port. The store's operations (authorization, capture, reads, grants, purge policy, idempotent retries, jobs, context, status) are written once in the application layer in portable SQL, and each backend supplies what differs: the connection and transaction discipline, the control tree and token signing, and a small dialect for the two expressions the engines spell differently (full-text match and byte length). SQLite and PostgreSQL both implement that port; neither subclasses the other, and the PostgreSQL facade refuses engine-specific syntax rather than translating it, so a new divergence fails a test instead of hiding in a rewrite rule.
+
 ## Three kinds of memory
 
 | Kind | Meaning | Important distinction |
@@ -36,7 +38,7 @@ Procedures extend reviewed knowledge into reusable steps. Activation is a separa
 
 The local profile uses one SQLite store per tenant, SQLite WAL with full synchronization, private content files and a Unix socket. One OS owner controls a store. Multiple machines must not write the SQLite files over a shared filesystem.
 
-The shared profile uses native PostgreSQL, tenant-scoped transaction ordering and isolated migration/runtime/worker/backup roles. HTTP and MCP clients share the same authorization and domain rules. Tenant-wide ordering simplifies correctness but can create contention; the current implementation has not met its proposed workload targets.
+The shared profile uses native PostgreSQL, tenant-scoped transaction ordering and isolated migration/runtime/worker/backup roles. HTTP and MCP clients share the same authorization and domain rules, and the same store operations as the local profile, through the storage port above. Tenant-wide ordering simplifies correctness but can create contention; the current implementation has not met its proposed workload targets.
 
 An independent control tree records signing identity, recovery anchors and policy/deletion history. It is deliberately separate from ordinary content backups.
 

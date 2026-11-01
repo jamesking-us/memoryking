@@ -16,8 +16,9 @@ from memoryking.adapters.egress_policy import (
     ProviderPolicy,
     rank,
 )
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, identifier, uid
+from memoryking.adapters.local_store import RETRY_MS, identifier, uid
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import Decision, LocalError, Released
 
@@ -36,7 +37,7 @@ class Inference:
     The ordinary model-facing tools deliberately cannot invoke this surface.
     """
 
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
         self.r = Retrieval(store)
 

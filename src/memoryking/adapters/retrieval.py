@@ -18,10 +18,10 @@ from memoryking.adapters.local_store import (
     ARTIFACT_BYTES_LIMIT,
     ARTIFACT_LIMIT,
     RETRY_MS,
-    LocalStore,
     uid,
 )
 from memoryking.adapters.token_count import counter
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.briefing import (
     COMPILER,
@@ -43,7 +43,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Retrieval:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db, self.k = store, store.db, Knowledge(store)
         if not hasattr(store, "retrieval_cache"):
             store.retrieval_cache = {}
@@ -714,7 +714,9 @@ class Retrieval:
                 limited = False
                 for term in query:
                     rows = self.db.execute(
-                        "SELECT o.id,o.position FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM lexical WHERE tenant=? AND lexical MATCH ?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
+                        "SELECT o.id,o.position FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
+                        + self.s.dialect.lexical_match()
+                        + ") ORDER BY o.position DESC,o.id DESC LIMIT 257",
                         (
                             who["tenant"],
                             args["project"],

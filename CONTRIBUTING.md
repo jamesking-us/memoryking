@@ -18,6 +18,8 @@ The checks cover generated artifacts, Python lint/format/types, TypeScript build
 
 To make PostgreSQL mandatory, supply an absolute `MEMORYKING_PG_BIN` directory containing `postgres`, `initdb`, `pg_ctl` and `psql`, and set `MEMORYKING_REQUIRE_POSTGRES=1`. The reference version is PostgreSQL 18.6. `tools/setup_postgres_dev.py` can build the pinned source locally; it needs the platform's compiler/build prerequisites and creates no persistent service.
 
+The semantic suite is one set of cases on two backends: every test in the knowledge, retrieval, working-state, handoff, repository, execution, atlas, inference and egress case classes also runs on native PostgreSQL through `tests/test_postgres_parity.py` and its siblings. A case that genuinely cannot run there (SQLite file backups, offline schema upgrades, fixture SQL only SQLite understands) is named in `LOCAL_ONLY` with its reason; do not widen that map to make a parity failure go away. Store operations are written in portable SQL in `src/memoryking/application/store_core.py` against the dialect in `application/storage.py`; the PostgreSQL facade refuses `INSERT OR`, `MATCH`, `BLOB`, `GLOB` and `PRAGMA`, so use `upsert`, `insert_ignore`, `dialect.lexical_match()` and `dialect.byte_length()` instead.
+
 ## Clean-checkout verification
 
 Commit the candidate first. Substitute the full output of `git rev-parse HEAD`:

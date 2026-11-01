@@ -13,7 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from memoryking.adapters.local_store import LocalStore, uid
+from memoryking.adapters.local_store import uid
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.http_status import http_status
@@ -292,7 +293,7 @@ class Dashboard(ThreadingHTTPServer):
     request_queue_size = 8
     daemon_threads = True
 
-    def __init__(self, store: LocalStore, root: Path | None, port: int = 0):
+    def __init__(self, store: StoreCore, root: Path | None, port: int = 0):
         self.store, self.files = store, PlanFiles(root)
         self.codes: dict[str, dict[str, Any]] = {}
         self.sessions: dict[str, dict[str, Any]] = {}

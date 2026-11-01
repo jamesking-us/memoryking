@@ -12,8 +12,9 @@ from jsonschema import Draft202012Validator
 from memoryking.adapters.execution import Execution
 from memoryking.adapters.experience_records import ExperienceRecords
 from memoryking.adapters.handoff import Handoff
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError, Released
 from memoryking.domain.usage import UsageRecord, summarize
@@ -24,7 +25,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Inspection:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
         self.r = Retrieval(store)
 

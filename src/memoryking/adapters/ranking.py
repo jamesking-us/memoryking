@@ -6,14 +6,15 @@ import json
 from typing import Any
 
 from memoryking.adapters.experience_records import ExperienceRecords
-from memoryking.adapters.local_store import LocalStore, uid
+from memoryking.adapters.local_store import uid
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_hash
 from memoryking.domain.learning import POLICY, freeze, measure
 from memoryking.domain.local import Decision, LocalError
 
 
 class Ranking:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db, self.records = store, store.db, ExperienceRecords(store)
 
     def spec(self, who: dict[str, Any], project: str, reference: str, at: int) -> dict[str, Any]:

@@ -11,7 +11,9 @@ from typing import Any, cast
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, uid
+from memoryking.application.storage import insert_ignore
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain import selectors
 from memoryking.domain.local import LocalError, Released, temporal_valid
@@ -23,7 +25,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Knowledge:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s = store
         self.db = store.db
 
@@ -475,7 +477,7 @@ class Knowledge:
             ).fetchall():
                 if self._state(tenant, other["id"], position)[0] == "accepted":
                     self.db.execute(
-                        "INSERT OR IGNORE INTO conflicts VALUES (?,?,?,?)",
+                        insert_ignore("conflicts", 4),
                         (tenant, other["id"], row["id"], position),
                     )
         self.db.execute(
