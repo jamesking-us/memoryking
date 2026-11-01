@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Build the release wheel and sdist reproducibly, record their hashes, and prove they install.
 
-Nothing here uploads anything. The package carries the `Private :: Do Not Upload` classifier
-until a distribution licence is chosen; this tool produces the artifacts, their SHA-256
-manifest and an install line pinned by hash, so a release can be verified before it is
-ever published.
+Nothing here uploads anything. This tool produces the artifacts, their SHA-256 manifest
+and an install line pinned by hash, so a release can be verified before the owner
+publishes it (see docs/deployment.md, "Publishing a release").
 """
 
 from __future__ import annotations
@@ -115,8 +114,9 @@ def main() -> None:
             f"pip install --require-hashes --no-deps {wheel.name} "
             f"--hash=sha256:{hashes[wheel.name]}"
         ),
+        "license": "Apache-2.0",
         "published": False,
-        "note": "Not uploaded anywhere; see CONTRIBUTING.md#distribution.",
+        "note": "Not uploaded by this tool; see docs/deployment.md#publishing-a-release.",
     }
     installed: dict[str, str] = {}
     if not args.skip_install:

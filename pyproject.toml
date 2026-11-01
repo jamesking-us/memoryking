@@ -6,9 +6,24 @@ build-backend = "setuptools.build_meta"
 name = "memoryking"
 version = "0.1.0a1"
 description = "MemoryKing local memory, checkpoint and recovery service"
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "James King" }]
 dependencies = ["jsonschema==4.26.0"]
-classifiers = ["Private :: Do Not Upload"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Repository = "https://github.com/jamesking-us/memoryking"
 
 [project.scripts]
 memoryking = "memoryking.__main__:main"

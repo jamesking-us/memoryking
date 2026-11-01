@@ -20,6 +20,14 @@ with zipfile.ZipFile(wheel) as archive:
         == (root / "contracts/experience-v1.schema.json").read_bytes()
     )
     assert "memoryking/reference_agent.py" in archive.namelist()
+    licenses = {
+        name.rsplit("/", 1)[-1] for name in archive.namelist() if ".dist-info/licenses/" in name
+    }
+    assert {"LICENSE", "NOTICE"} <= licenses, licenses
+    metadata = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+    assert len(metadata) == 1
+    assert "License-Expression: Apache-2.0" in archive.read(metadata[0]).decode()
+    assert "Private :: Do Not Upload" not in archive.read(metadata[0]).decode()
     entrypoints = [
         name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
     ]

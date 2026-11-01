@@ -78,7 +78,7 @@ def collect():
     return {
         "schema_version": 2,
         "scope": "Installed distribution metadata and all committed lock profiles; declared licenses, not legal clearance",
-        "project_distribution": "private_candidate_no_public_license_declared",
+        "project_distribution": "Apache-2.0; see LICENSE and NOTICE",
         "profiles": {
             path.name: [
                 {"name": name, "version": version}
