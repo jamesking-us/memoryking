@@ -14,11 +14,12 @@ from memoryking.adapters.local_store import (
     INTENT_LIMIT,
     INTENT_SCOPE_LIMIT,
     RETRY_MS,
-    LocalStore,
     uid,
 )
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.token_count import counter
+from memoryking.application.storage import insert_ignore
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, canonical_hash
 from memoryking.domain.briefing import counted
 from memoryking.domain.checkpoint import dependencies, operation_transition, stream_name
@@ -33,7 +34,7 @@ RECENT_OBSERVATIONS = 16
 
 
 class Working:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
         self.r = Retrieval(store)
 
@@ -247,7 +248,9 @@ class Working:
         if args["expected_revision"] is not None and args["expected_revision"] != current:
             raise LocalError("checkpoint_revision_conflict")
         total, size = self.db.execute(
-            "SELECT count(*),coalesce(sum(length(CAST(body AS BLOB))),0) FROM checkpoints WHERE tenant=?",
+            "SELECT count(*),coalesce(sum("
+            + self.s.dialect.byte_length("body")
+            + "),0) FROM checkpoints WHERE tenant=?",
             (who["tenant"],),
         ).fetchone()
         body = canonical_bytes(args["checkpoint"])
@@ -881,7 +884,7 @@ class Working:
             )
         result = {"operation": row["id"], "state": row["state"], "revision": row["revision"]}
         self.db.execute(
-            "INSERT OR IGNORE INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            insert_ignore("retries", 10),
             (
                 tenant,
                 request["incarnation"],

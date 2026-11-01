@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from memoryking.adapters.local_store import LocalStore, identifier
+from memoryking.adapters.local_store import identifier
+from memoryking.application.store_core import StoreCore
 from memoryking.domain.local import temporal_valid
 
 
-def visible_projects(store: LocalStore, credential: str, at: int) -> list[dict[str, Any]]:
+def visible_projects(store: StoreCore, credential: str, at: int) -> list[dict[str, Any]]:
     """Projects the credential can read now, with observation, claim, task and receipt counts.
 
     A tenant-wide grant lists every project that holds records; a scoped grant lists only

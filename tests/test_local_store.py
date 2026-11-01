@@ -638,7 +638,7 @@ with LocalStore(root, ctl, fault=fail) as store:
     def test_queue_and_worker_bounds_and_current_source_permission(self):
         from unittest.mock import patch
 
-        with patch("memoryking.adapters.local_store.QUEUE_LIMIT", 1):
+        with patch("memoryking.application.store_core.QUEUE_LIMIT", 1):
             self.capture()
             self.error("queue_full", self.capture, 2)
         for number in range(2, 6):

@@ -26,11 +26,13 @@ from memoryking.adapters.local_store import (
 )
 from memoryking.adapters.postgres_sql import PostgresSQL
 from memoryking.adapters.shared_control import SharedControl
+from memoryking.application.storage import PostgresDialect
+from memoryking.application.store_core import StoreCore
 from memoryking.domain.local import Clock, Decision, LocalError, SystemClock
 from memoryking.observability_metrics import Metrics
 
 
-class PostgresStore(LocalStore):
+class PostgresStore(StoreCore):
     control: SharedControl
 
     def dense_exact(
@@ -99,6 +101,7 @@ class PostgresStore(LocalStore):
         self.clock = clock or SystemClock()
         self.fault = fault or (lambda _: None)
         self.lock = threading.RLock()
+        self.dialect = PostgresDialect()
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
@@ -146,7 +149,7 @@ class PostgresStore(LocalStore):
             ):
                 raise LocalError("denied")
             parent = self._token("credential", tenant=self.tenant, principal=delegation["by"])
-            LocalStore._auth(self, parent, capability, project, at)
+            StoreCore._auth(self, parent, capability, project, at)
         return super()._auth(token, capability, project, at)
 
     def _token(self, kind: str, **fields: Any) -> str:

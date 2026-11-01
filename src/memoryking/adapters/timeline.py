@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from memoryking.adapters.local_store import LocalStore, identifier
+from memoryking.adapters.local_store import identifier
+from memoryking.application.store_core import StoreCore
 
 LIMIT = 100
 
 
 def timeline(
-    store: LocalStore,
+    store: StoreCore,
     who: dict[str, Any],
     project: str,
     *,

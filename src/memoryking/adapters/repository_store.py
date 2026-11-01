@@ -10,8 +10,10 @@ from typing import Any, cast
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.repository_git import GitSnapshot, canonical_remote
+from memoryking.application.storage import upsert
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError, Released
 from memoryking.domain.selectors import Truth, bindings, path_valid
@@ -22,7 +24,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Repository:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
 
     def execute(self, credential: str, command: dict[str, Any]) -> Released:
@@ -418,7 +420,7 @@ class Repository:
         if old and old["impact"] == "high" and impact != "high":
             raise LocalError("impact_downgrade_requires_new_revision")
         self.db.execute(
-            "INSERT OR REPLACE INTO code_policies VALUES (?,?,?,?,?,?,?,?,?)",
+            upsert("code_policies"),
             (
                 who["tenant"],
                 row["id"],
@@ -465,7 +467,7 @@ class Repository:
             raise LocalError("dependency_policy_stale")
         state = "valid" if args["passed"] else "invalid"
         self.db.execute(
-            "INSERT OR REPLACE INTO code_validations VALUES (?,?,?,?,?,?,?,?,?,?)",
+            upsert("code_validations"),
             (
                 who["tenant"],
                 self.s.incarnation,
@@ -579,7 +581,7 @@ class Repository:
             evidence = prior["evidence"] if prior is not None else policy["evidence"]
             expires = prior["expires"] if prior is not None else at
             self.db.execute(
-                "INSERT OR REPLACE INTO code_validations VALUES (?,?,?,?,?,?,?,?,?,?)",
+                upsert("code_validations"),
                 (
                     who["tenant"],
                     self.s.incarnation,
@@ -699,7 +701,7 @@ class Repository:
                 return None
             self._evidence(who, prior["evidence"], at)
             self.db.execute(
-                "INSERT OR REPLACE INTO code_validations VALUES (?,?,?,?,?,?,?,?,?,?)",
+                upsert("code_validations"),
                 (
                     who["tenant"],
                     self.s.incarnation,

@@ -6,7 +6,7 @@ import secrets
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
-from memoryking.adapters.local_store import LocalStore
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError, Released
 
@@ -23,9 +23,7 @@ class BrowserStore:
     instant. Subject/intersection checks keep the real store's identity semantics.
     """
 
-    def __init__(
-        self, store: LocalStore, session: dict[str, Any], check_session: Callable[[], Any]
-    ):
+    def __init__(self, store: StoreCore, session: dict[str, Any], check_session: Callable[[], Any]):
         self.store, self.session = store, dict(session)
         self.check_session = check_session
 
@@ -52,7 +50,7 @@ class BrowserStore:
 
 
 def execute(
-    store: LocalStore,
+    store: StoreCore,
     session: dict[str, Any],
     body: dict[str, Any],
     check_session: Callable[[], Any],
@@ -100,7 +98,7 @@ def execute(
         or command["action"] not in allowed[operation]
     ):
         raise LocalError("dashboard_action_unsupported")
-    services: dict[str, Callable[[LocalStore], CommandService]] = {
+    services: dict[str, Callable[[StoreCore], CommandService]] = {
         "retrieval": Retrieval,
         "knowledge": Knowledge,
         "experience": Experience,
@@ -110,5 +108,5 @@ def execute(
         "inspection": Inspection,
         "inference": Inference,
     }
-    guarded = cast(LocalStore, BrowserStore(store, session, check_session))
+    guarded = cast(StoreCore, BrowserStore(store, session, check_session))
     return services[operation](guarded).execute(session["credential"], command)

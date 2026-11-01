@@ -17,12 +17,12 @@ from memoryking.adapters.handoff import Handoff
 from memoryking.adapters.inference import Inference
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_contract import VALIDATOR
-from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
@@ -32,7 +32,7 @@ WIRE_LIMIT = 262144
 
 
 class StoreOperations:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.store = store
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
@@ -177,7 +177,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     block_on_close = True
     max_concurrent = 8
 
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.slots = threading.BoundedSemaphore(self.max_concurrent)
         self.path = store.root / "service.sock"
         if len(os.fsencode(self.path)) > 100:
