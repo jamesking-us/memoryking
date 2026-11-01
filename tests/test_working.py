@@ -549,7 +549,7 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
                 db.execute("DROP TABLE " + table)
             historical_inventory(db, 3)
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],

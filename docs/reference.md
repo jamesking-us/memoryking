@@ -12,7 +12,8 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
 | MCP stdio | `python -m memoryking.adapters.stdio` | Eight model-facing memory tools; daemon must already run. |
 | Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp` | Authenticated Streamable HTTP transport. |
-| Reference agent | `python -m memoryking.reference_agent --help` | Create-file/readback task harness, checkpoint/recovery and local recording provider. |
+| Reference agent | `python -m memoryking.reference_agent --help` | Create-file/readback task harness, checkpoint/recovery, the local recording provider or a policy adapter. |
+| Provider adapters | `memoryking.providers.adapter(policy, name, model)` | Anthropic, OpenAI-compatible and Vertex AI dispatch for `AuthorizedConversation`, built from the daemon's egress policy. |
 | Repository worker | `python -m memoryking.repository_worker --help` | One bounded passive repository validation job. |
 | Embedding worker | `python -m memoryking.embedding_worker --help` | One configured local-model indexing job. |
 | Migration | `python -m memoryking.migration --help` | Detached legacy snapshot inspection, planning, import and reconciliation. |
@@ -58,6 +59,7 @@ Authoritative contracts:
 | Adapter deltas | Retain a matching authorized base through the resume adapter. | Transport optimization; full model context is reconstructed. No automatic model-token savings claim. |
 | Source-backed compilation | `processing` commands; deterministic extraction by default. | Candidate text must preserve validated whole source units and essential state or fall back. Remote generation is not included. |
 | Feedback ranking | Explicit proposal, evaluation and activation. | Bounded development experiment; disabled by default. |
+| Model providers | `serve --egress-policy FILE` naming providers, models, hosts and classification ceilings; the host builds adapters from the same file. | Off by default: only the local recorder is accepted. Enforced by the daemon at permit time; every dispatch is audited for 30 days. One HTTPS request per dispatch, no retry, no streaming, no provider-side state. |
 
 The model installer command is `python -m memoryking.model_install --destination NEW_MODEL_DIRECTORY`. It downloads the files pinned in the [model manifest](../src/memoryking/adapters/models/minilm-l6-v2-onnx.json), verifies hashes and never loads model-repository Python. Review its license and network requirements before opting in. The CPU model produces 384-dimensional vectors and reads only the first 256 tokens per input; truncation is disclosed.
 
@@ -71,7 +73,8 @@ The model installer command is `python -m memoryking.model_install --destination
 | Query | Up to 32 distinct searchable terms. Longer queries are searched on their leading terms and the receipt diagnostics record `query_terms_truncated`. |
 | Candidate window | Each query term contributes its 256 newest matches in the project; the merged set is ordered by how many terms a document matches, then by recency, and the top 256 are scored. A common word therefore cannot crowd out documents that match the rare terms. |
 | Policy journal | 256 KiB per signed record, enforced before writing (`journal_record_limit`) and on reading. A torn final line beyond the anchored sequence is discarded on the next append; damage anywhere else stays fatal. |
-| Conversation | 128 messages per dispatch through `AuthorizedConversation`; the request as a whole stays within 96 KiB. |
+| Conversation | 128 messages per dispatch through `AuthorizedConversation`; the request as a whole stays within 96 KiB, or the provider's smaller `max_request_bytes`. |
+| Egress audit | One record per consumed permit for a remote provider, retained 30 days, 64 per listing page; a reply is admitted only up to 64 KiB of text and a provider response up to 1 MiB. |
 | Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. `format: "text"` returns a cited Markdown rendering in an envelope with the same receipt; the token count is of the rendered text. |
 | Authorization | Five-second evaluation-to-commit/first-byte deadline, with UTC and monotonic checks. |
 | Idempotency | Replay bodies retained for 30 days; expired/deleted results do not free a consumed identity. |
@@ -155,5 +158,8 @@ Every error reply carries a `hint` beside its `error` code, and the complete lis
 | `release_expired`, `clock_untrusted` | Restore trustworthy timing and request a fresh authorized response. |
 | `recovery_required`, `journal_rollback`, `backup_invalid` | Stay offline and use verified independent recovery evidence. |
 | `session_changed` | Sign in again; permissions changed and retained views were cleared. |
+| `egress_provider_denied`, `egress_classification_denied` | The daemon's egress policy does not allow that provider or model, or a cited source is classified above the provider's ceiling; change the policy and restart, or rebuild the conversation without the source. |
+| `provider_not_supported` | The adapter was built from a policy revision the daemon is not running; rebuild it from the current file. |
+| `provider_unavailable`, `provider_response_invalid` | The provider failed, timed out or answered in an unexpected shape; nothing was admitted and the audit record says `failed`. The dispatch is never retried automatically. |
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

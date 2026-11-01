@@ -74,6 +74,46 @@ def duration_ms(text: str) -> int:
     return int(text[:-1]) * DURATION_UNITS[text[-1]]
 
 
+def render_audit(result: dict[str, Any]) -> str:
+    """A human table of egress records; hashes are shortened, nothing else is."""
+    lines = [f"egress policy {result['policy_revision']}"]
+    items = result["items"]
+    if not items:
+        lines.append("no egress records in the retention window")
+        return "\n".join(lines)
+    header = (
+        "when (utc)",
+        "status",
+        "provider",
+        "model",
+        "host",
+        "class",
+        "bytes",
+        "receipts",
+        "permit",
+    )
+    rows = [
+        (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(item["evaluated_ms"] / 1000)),
+            item["status"],
+            item["provider"],
+            item["model"],
+            item["host"],
+            item["classification"],
+            str(item["request_bytes"]),
+            str(len(item["receipts"])),
+            item["permit"],
+        )
+        for item in items
+    ]
+    widths = [max(len(r[i]) for r in [header, *rows]) for i in range(len(header))]
+    for row in [header, *rows]:
+        lines.append("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip())
+    if result.get("next_before") is not None:
+        lines.append(f"more: --before {result['next_before']}")
+    return "\n".join(lines)
+
+
 def render_grants(items: list[dict[str, Any]]) -> str:
     if not items:
         return "No grants."
@@ -290,6 +330,12 @@ def main() -> int:
                 help="Log one timing line per request (operation, action, outcome, elapsed, "
                 "lock wait, transaction time, response size); implies --log-level info",
             )
+            cmd.add_argument(
+                "--egress-policy",
+                type=Path,
+                help="Private TOML policy naming the providers, models and hosts retained "
+                "context may reach; without it only the local recorder is accepted",
+            )
         if name == "init":
             cmd.add_argument("--tenant", default="main")
             cmd.add_argument("--principal", default="owner")
@@ -332,6 +378,15 @@ def main() -> int:
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
+    audit = commands.add_parser(
+        "egress-audit",
+        help="List what left this store for a model provider, and whether it arrived",
+    )
+    audit.add_argument("--socket", type=Path)
+    audit.add_argument("--credential", type=Path, help="Credential with inference capability")
+    audit.add_argument("--project", required=True)
+    audit.add_argument("--before", type=int, help="Page further back from this evaluated_ms")
+    audit.add_argument("--json", action="store_true")
     dash = commands.add_parser("dashboard", help="Open the dashboard in a browser")
     dash_commands = dash.add_subparsers(dest="dashboard_command", required=True)
     opener = dash_commands.add_parser("open")
@@ -561,6 +616,23 @@ def main() -> int:
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command == "egress-audit":
+            result = request(
+                args.socket,
+                read_credential(args.credential),
+                "inference",
+                {
+                    "command": {
+                        "version": 1,
+                        "action": "audit",
+                        "args": {"project": args.project, "before": args.before},
+                    }
+                },
+            )
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+            else:
+                print(render_audit(result))
         elif args.command == "dashboard":
             result = request(
                 args.socket, read_credential(args.credential), "dashboard_bootstrap", {}
@@ -616,6 +688,10 @@ def main() -> int:
             with LocalStore(args.store, args.control) as store:
                 if args.command == "serve":
                     configure(args.log_level, trace=args.trace)
+                    if args.egress_policy is not None:
+                        from memoryking.adapters.egress_policy import EgressPolicy
+
+                        store.egress_policy = EgressPolicy.load(args.egress_policy)
 
                     def stop(signum: int, frame: object) -> None:
                         raise KeyboardInterrupt

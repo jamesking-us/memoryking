@@ -183,17 +183,20 @@ export class Observatory {
             throw Error("Bindings must be a bounded array of objects");
         return b;
     }
-    async command(operation, action, args = {}, key) {
+    async command(operation, action, args = {}, key, bare = false) {
         const ctx = this.current();
         if (!ctx || document.hidden)
             throw Error("Current visible session required");
         const stamp = JSON.stringify(ctx), ticket = this.ticket, project = this.project.value, started = Date.now();
-        const command = {
-            version: 1,
-            incarnation: ctx.incarnation,
-            action,
-            args: { ...args, project },
-        };
+        // The inference contract binds history inside its arguments, not on the command.
+        const command = bare
+            ? { version: 1, action, args: { ...args, project } }
+            : {
+                version: 1,
+                incarnation: ctx.incarnation,
+                action,
+                args: { ...args, project },
+            };
         if (key)
             command.key = key;
         const result = await this.api("/api/command", {
@@ -640,7 +643,52 @@ export class Observatory {
             "available",
             "age_ms",
         ]), detail("Projection frontiers, coverage and measured fields", data), e("p", "Frontiers are opaque ordering tokens, not item counts. Lock wait, cache churn and recovery qualification remain unknown here. Retry, cancel and schedule controls are unavailable.", "integrity"));
+        await this.egress();
         this.exportCurrent(load);
+    }
+    /** What left this store for a model provider, under which policy, and whether it arrived. */
+    async egress() {
+        const section = e("section");
+        section.append(e("h3", "Egress audit"));
+        let data;
+        try {
+            data = await this.command("inference", "audit", { before: null }, undefined, true);
+        }
+        catch (error) {
+            section.append(e("p", "Egress audit unavailable under this session: " +
+                (error instanceof Error
+                    ? readable(error.message)
+                    : "request failed"), "caption"));
+            this.output.append(section);
+            return;
+        }
+        const items = rows(data.items).map((item) => ({
+            when: new Date(Number(item.evaluated_ms)).toLocaleString(),
+            status: item.status,
+            provider: item.provider,
+            model: item.model,
+            host: item.host,
+            classification: item.classification,
+            bytes: item.request_bytes,
+            receipts: Array.isArray(item.receipts) ? item.receipts.length : 0,
+            tokens: `${String(item.input_tokens ?? "?")} in / ${String(item.output_tokens ?? "?")} out`,
+            permit: item.permit,
+        }));
+        section.append(e("p", `Policy ${readable(data.policy_revision)}. Each record is one request the daemon authorized for a remote provider: hashes and receipt ids only, never content. A record left pending means the host never reported the outcome.`, "integrity"), items.length
+            ? table(items, [
+                "when",
+                "status",
+                "provider",
+                "model",
+                "host",
+                "classification",
+                "bytes",
+                "receipts",
+                "tokens",
+                "permit",
+            ])
+            : e("p", "Nothing has left this store for a provider in the retention window."));
+        this.output.append(section);
     }
     async handoffs() {
         const data = await this.command("inspection", "handoffs");

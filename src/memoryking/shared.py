@@ -113,6 +113,12 @@ def parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="Log one timing line per request; implies --log-level info",
             )
+            item.add_argument(
+                "--egress-policy",
+                type=Path,
+                help="Private TOML policy naming the providers, models and hosts retained "
+                "context may reach; without it only the local recorder is accepted",
+            )
     request = commands.add_parser("request")
     request.add_argument("--url", required=True)
     request.add_argument("--tenant", required=True)
@@ -237,6 +243,10 @@ def run(args: Any) -> dict[str, Any]:
             if args.tls_key:
                 private_file(args.tls_key)
             service = SharedService(pool, args.content, args.control, audience=args.audience)
+            if args.egress_policy is not None:
+                from memoryking.adapters.egress_policy import EgressPolicy
+
+                service.egress_policy = EgressPolicy.load(args.egress_policy)
             app = create_app(
                 service,
                 hosts=args.host,

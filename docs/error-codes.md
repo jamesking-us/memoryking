@@ -236,6 +236,16 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `duplicate_criterion` | Acceptance criteria ids must be unique within a checkpoint. |
 
+## egress
+
+| Code | What to do |
+| --- | --- |
+| `egress_audit_missing` | No egress audit record matches that permit for this principal; report only permits you consumed. |
+| `egress_audit_reported` | That egress audit record already has a final outcome; a report is written once. |
+| `egress_classification_denied` | A message cites content above the provider's classification ceiling; rebuild the conversation without it or raise the ceiling in the policy. |
+| `egress_policy_invalid` | The egress policy file is malformed: check revision, provider names, hosts, models, classification ceilings and that plain HTTP is loopback-only. |
+| `egress_provider_denied` | The provider or model is not in the daemon's egress policy; add it to the policy file and restart `serve --egress-policy`. |
+
 ## embedding
 
 | Code | What to do |
@@ -673,11 +683,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `provider_context_limit` | The provider's stored context exceeds its limit. |
+| `provider_credential_missing` | The adapter's key or token file is missing or unreadable; check key_file, token_file or token_command in the policy. |
 | `provider_handle_invalid` | The provider handle is malformed. |
 | `provider_handle_unavailable` | The provider handle's file is missing or unreadable. |
-| `provider_not_supported` | Only the local recording provider is supported; a real provider needs a reviewed adapter. |
+| `provider_not_supported` | Only the local recorder and adapters built from the daemon's current egress policy are accepted; load the policy with `serve --egress-policy` and build the adapter from it. |
 | `provider_request_invalid` | The provider request bytes are not the canonical frozen request. |
-| `provider_unavailable` | The provider could not be reached. |
+| `provider_response_invalid` | The provider's reply was not the expected shape or exceeded the size bound; nothing was admitted to the conversation. |
+| `provider_unavailable` | The provider did not answer within the timeout or returned an error; the dispatch was not retried. |
 
 ## query
 

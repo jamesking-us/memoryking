@@ -8,6 +8,7 @@ MemoryKing stores potentially sensitive agent observations. Run it inside a trus
 - Private reads recheck current permissions. The consuming host must use the authorized-conversation integration to rebuild retained model input after revocation; an ordinary memory API call cannot erase a host's old transcript.
 - Backups require independent current control information. Restoring content creates a new history and retires old retry namespaces, watermarks and handles.
 - Revocation and purge control future access and implemented live copies. They do not promise erasure of previous deliveries, exports, backups or physical storage remnants.
+- Nothing leaves the machine for a model provider unless the operator loads an egress policy. The service enforces that policy before issuing a permit (provider, model, host, byte count and the classification ceiling of every cited source) and records every dispatch in an audit that survives purge. Provider keys and tokens are read by the host process from private files, never by the service, and never appear in records or logs.
 
 Do not expose the local dashboard remotely or disable TLS/Host/Origin checks to make a shared setup work. Keep credentials, DSNs, store/control files, migration snapshots and provider inputs out of Git and public issues.
 

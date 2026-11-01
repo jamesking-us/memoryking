@@ -69,7 +69,7 @@ TABLES_V2 = TABLES_V1 + (
     "processing_usage",
     "adapter_bases",
 )
-TABLES = TABLES_V2 + ("experience_records", "ranking_state", "ranking_history")
+TABLES = TABLES_V2 + ("experience_records", "ranking_state", "ranking_history", "egress_audit")
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
