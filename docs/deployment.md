@@ -36,7 +36,7 @@ Run the build step in the contributor environment. Verify the wheel revision/has
 pip install --require-hashes --no-deps memoryking-0.1.0a1-py3-none-any.whl --hash=sha256:<from RELEASE.json>
 ```
 
-Nothing is uploaded: the package keeps its `Private :: Do Not Upload` classifier until a distribution licence is chosen (see [distribution](../CONTRIBUTING.md#distribution)). `tools/local_ci.py` runs the release build on a clean checkout.
+The tool uploads nothing; publishing is the owner's sequence [below](#publishing-a-release). `tools/local_ci.py` runs the release build on a clean checkout.
 
 ### Container image for the local daemon
 
@@ -49,7 +49,19 @@ docker run --rm -v mk-data:/data -v mk-control:/control memoryking:local init --
 docker run -d --name memoryking -v mk-data:/data -v mk-control:/control memoryking:local
 ```
 
-Named volumes take the image's ownership of `/data` and `/control`; the store and control trees are created inside them because `init` insists on new directories. The socket is `/data/store/service.sock` on the data volume, so an agent in another container reaches it by mounting the same volume, and the owner credential is in the control volume. The dashboard binds loopback inside the container; run with `--network host` on Linux to open it from the host, or use the shared profile for anything beyond one machine. `tools/image_rehearsal.py --output NEW.json` builds the image, initialises a disposable store, starts the daemon, queries its status and records the image digest; that digest is what the owner signs (`cosign sign`) and publishes once a licence exists. No image is pushed.
+Named volumes take the image's ownership of `/data` and `/control`; the store and control trees are created inside them because `init` insists on new directories. The socket is `/data/store/service.sock` on the data volume, so an agent in another container reaches it by mounting the same volume, and the owner credential is in the control volume. The dashboard binds loopback inside the container; run with `--network host` on Linux to open it from the host, or use the shared profile for anything beyond one machine. `tools/image_rehearsal.py --output NEW.json` builds the image, initialises a disposable store, starts the daemon, queries its status and records the image digest; that digest is what the owner signs and publishes. The tool pushes nothing.
+
+### Publishing a release
+
+MemoryKing is licensed under the Apache License 2.0. Publishing runs locally with the owner's credentials; nothing in the repository or a hosted workflow holds them. The version lives in `pyproject.toml` and `src/memoryking/__init__.py`; a pre-release such as `0.1.0a1` installs only with `pip install --pre`.
+
+1. Merge the release commit to `main`, tag it (`git tag -a v0.1.0a1 -m "MemoryKing 0.1.0a1"`) and push the tag.
+2. In the contributor environment at that tag, run `.venv/bin/python tools/build_release.py`. It writes `dist/SHA256SUMS` and `dist/RELEASE.json` and proves a fresh install; a second run of the same commit must reproduce the same hashes.
+3. Upload the wheel and sdist from a throwaway environment that has `twine` (it is not in the hash locks), with a PyPI API token scoped to the project: `twine upload dist/memoryking-0.1.0a1*`. Confirm the hashes PyPI shows match `SHA256SUMS`.
+4. Build and rehearse the image (`tools/image_rehearsal.py --output tmp/image-0.1.0a1.json`), then tag and push it to a registry you control, for example `docker tag memoryking:local ghcr.io/jamesking-us/memoryking:0.1.0a1 && docker push ghcr.io/jamesking-us/memoryking:0.1.0a1`, and sign the pushed digest with your cosign key: `cosign sign --key cosign.key ghcr.io/jamesking-us/memoryking@sha256:<digest>`. Publish `cosign.pub` so users can `cosign verify`.
+5. Create the GitHub release for the tag with `SHA256SUMS`, `RELEASE.json` and the image digest in its notes, so the wheel and image of one version are tied together.
+
+The shared-profile image under `deploy/shared/` is published the same way when needed. After the first upload, the getting-started guide's install becomes `pip install --pre memoryking` followed by `init`, `profile add`, `serve` and `dashboard open`.
 
 ## Local service
 

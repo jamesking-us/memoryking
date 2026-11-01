@@ -2,7 +2,7 @@
 """Build the local-daemon container image and prove it serves; record its digest for signing.
 
 Runs on a host with a Docker engine (not inside the development container). Nothing is
-pushed. The recorded digest is what the owner signs and publishes once a licence exists.
+pushed. The recorded digest is what the owner signs and publishes.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def main() -> None:
         "status": json.loads(status),
         "seconds": round(time.monotonic() - started, 1),
         "pushed": False,
-        "sign": f"cosign sign --key <owner-key> {args.tag}@{image_id}  # after a licence is chosen",
+        "sign": f"cosign sign --key cosign.key <registry>/memoryking@{image_id}",
     }
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k != "status"}, indent=2))

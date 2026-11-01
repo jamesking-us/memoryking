@@ -45,9 +45,9 @@ Keep the README short and approachable. Put user detail in the five guides it li
 
 ## Distribution
 
-The repository remains private. No project distribution license has been selected and no package/image is published. Public sharing requires the owner to select a license and review dependency notices and release readiness. Existing third-party notices, including the bundled tokenizer license, must remain intact.
+MemoryKing is licensed under the Apache License, Version 2.0 (`LICENSE`), with third-party notices in `NOTICE`; the bundled tokenizer vocabulary keeps its own MIT notice at `src/memoryking/adapters/tokenizers/LICENSE`. Both files ship inside the wheel's `dist-info/licenses`, and `tools/check_wheel.py` fails if they are missing. Contributions are accepted under the same licence.
 
-Release artifacts are ready to publish when that decision is made: `tools/build_release.py` produces a reproducible wheel and sdist with `SHA256SUMS` and `RELEASE.json`, `deploy/local/Dockerfile` builds the local-daemon image from that wheel, and `tools/image_rehearsal.py` proves the image serves and records its digest for signing. Publishing means removing the `Private :: Do Not Upload` classifier, uploading the artifacts to the index with their recorded hashes, pushing the image by digest and signing it; none of that is automated here.
+Releasing is a local, owner-run sequence described in the [deployment guide](docs/deployment.md#publishing-a-release): `tools/build_release.py` produces a reproducible wheel and sdist with `SHA256SUMS` and `RELEASE.json`, `deploy/local/Dockerfile` builds the local-daemon image from that wheel, `tools/image_rehearsal.py` proves the image serves and records its digest, and the owner uploads, pushes and signs with credentials that never enter this repository. No hosted workflow publishes anything.
 
 `tools/dependency_inventory.py` reads installed package metadata, license-file hashes and committed locks. Its output is an inventory, not a blanket license grant. Model downloads have their own manifest/license requirements.
 
