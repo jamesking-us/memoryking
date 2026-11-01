@@ -66,9 +66,9 @@ For a lasting installation and the browser dashboard, follow the [getting starte
 
 ## See what your agents are doing
 
-![MemoryKing dashboard overview showing capacity for each bounded resource, a project picker with record counts, and a synthetic task with pending criteria](docs/images/dashboard.jpg)
+![MemoryKing dashboard overview showing capacity for each bounded resource, a project card with record counts and latest activity, and a synthetic task opened by its three-sentence "where this left off" summary](docs/images/dashboard.jpg)
 
-*Dashboard overview with synthetic example data: capacity first, then the project's task activity. Progress reflects saved agent reports and evidence.*
+*Dashboard overview with synthetic example data: capacity first, then the projects you can read, then the project's task activity with its summary. Progress reflects saved agent reports and evidence.*
 
 The dashboard helps you inspect recorded work without reading a long chat transcript. Projects you can read are listed with their record counts; pick one and every view follows it.
 
