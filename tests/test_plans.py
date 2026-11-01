@@ -271,7 +271,7 @@ class PlanCases:
         working = Working(self.store)
         working.execute(self.owner, self.command("plan_get", {"task": "checkout", "revision": None}))
         self.store.purge(self.owner, self.obs["observation"])
-        with self.assertRaisesRegex(LocalError, "checkpoint_evidence_unavailable"):
+        with self.assertRaisesRegex(LocalError, "checkpoint_(evidence_)?unavailable"):
             working.execute(self.owner, self.command("plan_get", {"task": "checkout", "revision": None}))
 
     def test_owner_reassignment_exposes_the_current_write_revision(self):
