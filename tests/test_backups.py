@@ -63,6 +63,33 @@ class BackupPolicyTests(unittest.TestCase):
         self.assertTrue((self.directory / "backup-20200101T000000Z").is_dir())
         self.assertEqual(len(backups.existing(self.directory)), 2)
 
+    def test_failed_backup_leaves_no_partial_copy_and_backs_off(self):
+        namespace = self.store.namespace(self.credential, "demo")
+        self.store.capture(self.credential, namespace, "k1", observation(1))
+        blobs = [p for p in (self.store.root / "blobs").rglob("*") if p.is_file()]
+        blobs[0].unlink()  # the database copy succeeds, the blob copy then fails
+        self.store.backup_policy = backups.Policy(self.directory, "1d", keep=2)
+        self.store.housekeeping()
+        self.assertEqual(backups.existing(self.directory), [])
+        self.assertEqual(list(self.directory.iterdir()), [], "no partial database copy is left")
+        attempts = 0
+        real = self.store.backup
+
+        def counted(target):
+            nonlocal attempts
+            attempts += 1
+            return real(target)
+
+        self.store.backup = counted
+        for _ in range(10):  # ten minutes of daemon checks
+            self.clock.advance(60_001)
+            self.store.housekeeping()
+        self.assertEqual(attempts, 0, "a failure waits before retrying")
+        self.clock.advance(3_600_001)
+        self.store.housekeeping()
+        self.assertEqual(attempts, 1)
+        self.assertEqual(list(self.directory.iterdir()), [])
+
     def test_doctor_advice_for_missing_stale_and_fresh_backups(self):
         now = self.clock.utc_ms()
         self.assertEqual(backups.check(None, None, now)[0], "warn")

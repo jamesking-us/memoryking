@@ -71,6 +71,7 @@ class Policy:
             raise LocalError("invalid_request")
         self.directory, self.every_ms, self.keep = directory, interval_ms(every), keep
         self.checked_ms = 0
+        self.failed_ms: int | None = None
 
     def maybe_run(self, store: Any, now_ms: int, check_every_ms: int = 60_000) -> Path | None:
         """Back up when due; at most one check per minute, errors logged and swallowed."""
@@ -79,11 +80,16 @@ class Policy:
         self.checked_ms = now_ms
         if not due(self.directory, self.every_ms, now_ms):
             return None
+        # After a failure, wait the interval (at most an hour) instead of retrying
+        # every minute: a persistent cause would otherwise fill the disk.
+        if self.failed_ms is not None and now_ms - self.failed_ms < min(self.every_ms, 3_600_000):
+            return None
         return self.run(store, now_ms)
 
     def run(self, store: Any, now_ms: int) -> Path | None:
         private_dir(self.directory, create=True)
         target = self.directory / ("backup-" + stamp(now_ms))
+        created = not target.exists()
         try:
             manifest = store.backup(target)
             removed = prune(self.directory, self.keep)
@@ -94,9 +100,14 @@ class Policy:
                 blobs=len(manifest.get("blobs", [])),
                 pruned=len(removed),
             )
+            self.failed_ms = None
             return target
         except (LocalError, OSError) as exc:
             failure("backup", exc)
+            self.failed_ms = now_ms
+            # A partial copy has no manifest, so retention would never remove it.
+            if created and target.is_dir() and not (target / "manifest").exists():
+                shutil.rmtree(target, ignore_errors=True)
             return None
 
 

@@ -676,6 +676,25 @@ with LocalStore(root, ctl, fault=fail) as store:
         self.assertTrue(self.store.housekeeping())
         self.assertEqual(count(), 0)
 
+    def test_unreadable_blob_costs_only_its_own_job_and_never_stops_the_daemon(self):
+        self.capture(1, text="first memory")
+        self.capture(2, text="second memory")
+        first = self.store.db.execute(
+            "SELECT o.blob FROM jobs j JOIN observations o ON j.observation=o.id ORDER BY j.position LIMIT 1"
+        ).fetchone()[0]
+        next(p for p in (self.store.root / "blobs").rglob(first)).unlink()
+        self.assertEqual(self.store.drain(), 1)  # the readable job still completes
+        rows = self.store.db.execute("SELECT state,attempts FROM jobs ORDER BY position").fetchall()
+        self.assertEqual([tuple(r) for r in rows], [("pending", 1), ("complete", 1)])
+        for _ in range(10):
+            self.clock.advance(61_000)
+            self.store.drain()
+        self.assertEqual(
+            self.store.db.execute("SELECT state FROM jobs ORDER BY position").fetchone()[0], "dead"
+        )
+        with Server(self.store) as server:
+            server.service_actions()  # neither drain nor housekeeping escapes
+
     def test_daemon_drains_audit_jobs_so_default_captures_never_hit_queue_full(self):
         # Default configuration, no patched limits, no separate worker: the serving
         # daemon completes audit_probe jobs between requests.

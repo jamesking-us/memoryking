@@ -213,12 +213,19 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             self.slots.release()
 
     def service_actions(self) -> None:
-        """Between requests, complete trivial audit jobs so the queue never fills."""
-        try:
-            self.store.drain()
-            self.store.housekeeping()
-        except LocalError:
-            pass  # A fenced or unhealthy store reports its state on the next request.
+        """Between requests, complete trivial audit jobs so the queue never fills.
+
+        Draining and housekeeping are independent: a failure in one never skips the
+        other or escapes serve_forever. A fenced or unhealthy store reports its state
+        on the next request; anything else is logged.
+        """
+        for action in (self.store.drain, self.store.housekeeping):
+            try:
+                action()
+            except LocalError:
+                pass
+            except Exception as exc:
+                failure("local_ipc", exc, action=action.__name__)
 
     def server_close(self) -> None:
         super().server_close()

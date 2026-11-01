@@ -16,7 +16,7 @@ from memoryking import __version__, profiles
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
-from memoryking.adapters.local_store import LocalStore
+from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError
@@ -265,10 +265,14 @@ def doctor(
             with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
                 version = db.execute("PRAGMA user_version").fetchone()[0]
             record(
-                "ok" if version == 9 else "warn",
+                "ok" if version == SCHEMA_VERSION else "warn",
                 "schema",
                 f"SQLite schema {version}"
-                + ("" if version == 9 else "; the daemon migrates to 9 on next start"),
+                + (
+                    ""
+                    if version == SCHEMA_VERSION
+                    else f"; the daemon migrates to {SCHEMA_VERSION} on next start"
+                ),
             )
         except sqlite3.Error as exc:
             record("fail", "schema", f"cannot read {database}: {type(exc).__name__}")

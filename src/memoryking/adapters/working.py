@@ -409,7 +409,10 @@ class Working:
                 at + RETRY_MS,
             ),
         )
-        self.s._event(who["tenant"], "summary_derived", row["id"], at, who["principal"])
+        position = self.s._event(who["tenant"], "summary_derived", row["id"], at, who["principal"])
+        self.s._enqueue(
+            who["tenant"], position, None, who["principal"]
+        )  # keeps the frontier moving
         return {
             "summary": text,
             "method": method,
@@ -425,7 +428,7 @@ class Working:
     ) -> dict[str, Any] | None:
         """The newest visible summary of a checkpoint; None when nobody derived one."""
         for row in self.db.execute(
-            "SELECT * FROM session_summaries WHERE tenant=? AND checkpoint=? AND incarnation=? AND expires>? ORDER BY created DESC,id DESC LIMIT 16",
+            "SELECT * FROM session_summaries ss WHERE tenant=? AND checkpoint=? AND incarnation=? AND expires>? AND EXISTS(SELECT 1 FROM rendered_artifacts ra WHERE ra.tenant=ss.tenant AND ra.id=ss.id AND ra.state='retained') ORDER BY created DESC,id DESC LIMIT 16",
             (who["tenant"], checkpoint, self.s.incarnation, at),
         ).fetchall():
             if (
@@ -446,8 +449,10 @@ class Working:
         """Derive owner summaries for streams idle past the threshold that have none."""
         who = self.s._auth(credential, "admin", "*", now)
         streams = self.db.execute(
-            "SELECT c.project,c.task,c.stream,c.id FROM checkpoint_streams s JOIN checkpoints c ON c.tenant=s.tenant AND c.id=s.latest WHERE s.tenant=? AND c.incarnation=? AND c.state='available' AND c.created<=? AND NOT EXISTS(SELECT 1 FROM session_summaries ss WHERE ss.tenant=c.tenant AND ss.checkpoint=c.id) LIMIT 32",
-            (who["tenant"], self.s.incarnation, now - idle_ms),
+            "SELECT c.project,c.task,c.stream,c.id FROM checkpoint_streams s JOIN checkpoints c ON c.tenant=s.tenant AND c.id=s.latest WHERE s.tenant=? AND c.incarnation=? AND c.state='available' AND c.created<=? AND NOT EXISTS(SELECT 1 FROM session_summaries ss WHERE ss.tenant=c.tenant AND ss.checkpoint=c.id) AND EXISTS(SELECT 1 FROM json_each(c.readers) WHERE value=?) LIMIT 32",
+            # Only checkpoints this principal reads: unreadable ones would fail every
+            # tick and hold the first 32 places forever.
+            (who["tenant"], self.s.incarnation, now - idle_ms, who["principal"]),
         ).fetchall()
         derived = 0
         for stream in streams:
