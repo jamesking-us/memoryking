@@ -3,6 +3,7 @@
 import copy
 import json
 import unittest
+from unittest.mock import patch
 
 import test_knowledge as knowledge
 import test_postgres_parity as pg
@@ -245,6 +246,33 @@ class PlanCases:
         current = self.get_plan()
         self.assertTrue(current["history_complete"])
         self.assertEqual(current["progress"]["completed"], 1)
+
+    def test_history_checks_each_shared_dependency_once_per_read(self):
+        value = plan()
+        value["steps"][0].update(status="done", evidence=self.proof())
+        self.save_plan(value)
+        for revision in range(1, 21):
+            value["steps"][0]["notes"] = f"Progress note {revision}"
+            self.save_plan(value, revision)
+        original = Working._dependency
+        calls = []
+
+        def checked(working, who, dependency, at):
+            calls.append((dependency["kind"], dependency["id"]))
+            return original(working, who, dependency, at)
+
+        with patch.object(Working, "_dependency", checked):
+            current = self.get_plan()
+        self.assertEqual(current["revision"], 21)
+        self.assertTrue(current["history_complete"])
+        self.assertEqual(current["progress"]["completed"], 1)
+        self.assertEqual(calls, [("observation", self.obs["observation"])])
+        # A later request must authorize again, including on the same adapter.
+        working = Working(self.store)
+        working.execute(self.owner, self.command("plan_get", {"task": "checkout", "revision": None}))
+        self.store.purge(self.owner, self.obs["observation"])
+        with self.assertRaisesRegex(LocalError, "checkpoint_evidence_unavailable"):
+            working.execute(self.owner, self.command("plan_get", {"task": "checkout", "revision": None}))
 
     def test_owner_reassignment_exposes_the_current_write_revision(self):
         self.save_plan()
