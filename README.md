@@ -1,4 +1,4 @@
-<p align="center"><img src="src/memoryking/adapters/web/elephant.png" width="180" alt="MemoryKing" /></p>
+<p align="center"><img src="https://raw.githubusercontent.com/jamesking-us/memoryking/main/src/memoryking/adapters/web/elephant.png" width="180" alt="MemoryKing" /></p>
 
 # Give your AI agents a memory they can pick up again
 
@@ -43,7 +43,7 @@ flowchart LR
 | Recover safely | Records of uncertain operations and history-aware backup/restore, so a restart does not silently authorize repeating an action. |
 | Understand what happened | A dashboard with capacity, task progress, a per-project timeline, a memory graph, on-demand briefings with their receipts, and retrieval history. |
 | Fit any agent host | A lean five-tool MCP profile with defaults for Claude Code, Codex, Grok or any stdio host; cited Markdown briefings; capture from the CLI, pytest or git hooks. |
-| Know what to do when something is refused | Every error reply carries a one-line hint, and a [generated page](docs/error-codes.md) lists them all. |
+| Know what to do when something is refused | Every error reply carries a one-line hint, and a [generated page](https://github.com/jamesking-us/memoryking/blob/main/docs/error-codes.md) lists them all. |
 
 The core runs locally **without a model account, GPU or paid API**. A shared PostgreSQL profile supports multiple agents and tenants. Optional local embeddings add semantic search. If you do want MemoryKing itself to talk to a model (Anthropic, OpenAI, xAI, Google Vertex AI, or one running on your own machine), you write a short policy saying which, and every request it sends is checked against that policy and recorded.
 
@@ -60,11 +60,11 @@ git clone https://github.com/jamesking-us/memoryking.git
 
 The first two lines install the released package (`--pre` because the current release is a preview); the checkout is only there for the example. The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
 
-For a lasting installation and the browser dashboard, follow the [getting started guide](docs/getting-started.md): name your store once with `memoryking profile add`, then `status`, `doctor`, `dashboard open` and `credential issue` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](docs/agent-guide.md).
+For a lasting installation and the browser dashboard, follow the [getting started guide](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md): name your store once with `memoryking profile add`, then `status`, `doctor`, `dashboard open` and `credential issue` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md).
 
 ## See what your agents are doing
 
-![MemoryKing dashboard overview showing capacity for each bounded resource, a project card with record counts and latest activity, and a synthetic task opened by its three-sentence "where this left off" summary](docs/images/dashboard.jpg)
+![MemoryKing dashboard overview showing capacity for each bounded resource, a project card with record counts and latest activity, and a synthetic task opened by its three-sentence "where this left off" summary](https://raw.githubusercontent.com/jamesking-us/memoryking/main/docs/images/dashboard.jpg)
 
 *Dashboard overview with synthetic example data: capacity first, then the projects you can read, then the project's task activity with its summary. Progress reflects saved agent reports and evidence.*
 
@@ -88,24 +88,24 @@ Agents must publish their state through the supported interfaces. A displayed he
 | Shared | Multiple agents using a central service | PostgreSQL, authenticated HTTP/MCP, separate database roles and recovery storage. |
 | Docker evaluation | Trying the shared profile on one machine | A source-built Compose stack with loopback HTTPS. |
 
-See [deployment and configuration](docs/deployment.md) for commands, prerequisites, backup and recovery.
+See [deployment and configuration](https://github.com/jamesking-us/memoryking/blob/main/docs/deployment.md) for commands, prerequisites, backup and recovery.
 
 ## Read the documentation
 
 | Guide | What you will learn |
 | --- | --- |
-| [Getting started](docs/getting-started.md) | Install, run the demo, create a store and open the dashboard. |
-| [Using MemoryKing with agents](docs/agent-guide.md) | Capture → brief → checkpoint → resume → handoff; Python, lean and full MCP profiles for any host, and automatic capture from hooks. |
-| [Deployment and configuration](docs/deployment.md) | Local/shared/Docker setups, credentials, configuration, upgrades and recovery. |
-| [How it is designed](docs/design.md) | Storage, knowledge review, retrieval, permissions and recovery guarantees. |
-| [Feature and API reference](docs/reference.md) | Interfaces, optional capabilities, limits and capacity, metrics, migration and troubleshooting. |
-| [Error codes](docs/error-codes.md) | Every error code with the next move, generated from the service's own table. |
-| [Contributing](CONTRIBUTING.md) | Build, test and maintain the project locally. |
+| [Getting started](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md) | Install, run the demo, create a store and open the dashboard. |
+| [Using MemoryKing with agents](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md) | Capture → brief → checkpoint → resume → handoff; Python, lean and full MCP profiles for any host, and automatic capture from hooks. |
+| [Deployment and configuration](https://github.com/jamesking-us/memoryking/blob/main/docs/deployment.md) | Local/shared/Docker setups, credentials, configuration, upgrades and recovery. |
+| [How it is designed](https://github.com/jamesking-us/memoryking/blob/main/docs/design.md) | Storage, knowledge review, retrieval, permissions and recovery guarantees. |
+| [Feature and API reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md) | Interfaces, optional capabilities, limits and capacity, metrics, migration and troubleshooting. |
+| [Error codes](https://github.com/jamesking-us/memoryking/blob/main/docs/error-codes.md) | Every error code with the next move, generated from the service's own table. |
+| [Contributing](https://github.com/jamesking-us/memoryking/blob/main/CONTRIBUTING.md) | Build, test and maintain the project locally. |
 
 ## Current status
 
 **Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Improved real-task success or reduced token cost has not yet been demonstrated. Windows, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
 
-MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](SECURITY.md) and [current limits](docs/reference.md#current-limits).
+MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](https://github.com/jamesking-us/memoryking/blob/main/SECURITY.md) and [current limits](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#current-limits).
 
-MemoryKing is released under the [Apache License 2.0](LICENSE). Each release is a Python package on [PyPI](https://pypi.org/project/memoryking/) and a container image for the local service at `ghcr.io/jamesking-us/memoryking`, both built reproducibly from this repository with checksums recorded on the [release page](https://github.com/jamesking-us/memoryking/releases). See [distribution](CONTRIBUTING.md#distribution).
+MemoryKing is released under the [Apache License 2.0](https://github.com/jamesking-us/memoryking/blob/main/LICENSE). Each release is a Python package on [PyPI](https://pypi.org/project/memoryking/) and a container image for the local service at `ghcr.io/jamesking-us/memoryking`, both built reproducibly from this repository with checksums recorded on the [release page](https://github.com/jamesking-us/memoryking/releases). See [distribution](https://github.com/jamesking-us/memoryking/blob/main/CONTRIBUTING.md#distribution).
