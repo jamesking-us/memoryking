@@ -57,6 +57,10 @@ def visible_projects(store: StoreCore, credential: str, at: int) -> list[dict[st
         "tasks",
     )
     tally(
+        "SELECT o.project,max(e.at_ms) FROM events e JOIN observations o ON o.tenant=e.tenant AND o.id=e.subject WHERE e.tenant=? GROUP BY o.project",
+        "last_activity_ms",
+    )
+    tally(
         "SELECT project,count(*) FROM rendered_artifacts WHERE tenant=? AND state='retained' GROUP BY project",
         "receipts",
     )
@@ -73,6 +77,7 @@ def visible_projects(store: StoreCore, credential: str, at: int) -> list[dict[st
                 "claims": entry.get("claims", 0),
                 "tasks": entry.get("tasks", 0),
                 "receipts": entry.get("receipts", 0),
+                "last_activity_ms": entry.get("last_activity_ms"),
             }
         )
     return items

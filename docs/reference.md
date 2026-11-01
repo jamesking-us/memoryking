@@ -121,7 +121,7 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 
 ### Dashboard project listing
 
-`GET /api/projects` on a signed-in dashboard session returns the projects the session's principal may read now, each with tenant-wide counts of observations, claims, task streams and retained receipts. A tenant-wide grant lists every project holding records; a scoped grant lists its own project even when empty.
+`GET /api/projects` on a signed-in dashboard session returns the projects the session's principal may read now, each with tenant-wide counts of observations, claims, task streams and retained receipts, and the instant of the latest recorded observation event (`last_activity_ms`). A tenant-wide grant lists every project holding records; a scoped grant lists its own project even when empty.
 
 ### Dashboard timeline
 
