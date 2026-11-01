@@ -15,12 +15,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from memoryking.adapters.egress_policy import LOCAL_MODEL, LOCAL_PROVIDER, LOCAL_REVISION
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
 from memoryking.domain.local import LocalError
+from memoryking.providers import HttpAdapter
 from memoryking.sdk import BINDING_FIELDS, LocalClient
 
-EGRESS_REVISION = "local-recording-v1"
+EGRESS_REVISION = LOCAL_REVISION
 
 
 def digest(data: bytes) -> str:
@@ -100,10 +102,11 @@ MESSAGE_LIMIT = 128
 class AuthorizedConversation:
     """A full-context reference dispatcher. No automatic retry or implicit rebinding."""
 
-    def __init__(self, client: LocalClient, provider: LocalRecordingProvider):
-        # An arbitrary callback could rewrite bytes, leak data, or hide remote state.
-        # Additional providers need an explicitly reviewed adapter/egress policy.
-        if type(provider) is not LocalRecordingProvider:
+    def __init__(self, client: LocalClient, provider: LocalRecordingProvider | HttpAdapter):
+        # An arbitrary callback could rewrite bytes, leak data, or hide remote state. The
+        # only providers are the local recorder and the reviewed adapters, and an adapter
+        # must have been built from the policy the daemon itself enforces.
+        if type(provider) is not LocalRecordingProvider and not isinstance(provider, HttpAdapter):
             raise LocalError("provider_not_supported")
         self._lock = threading.RLock()
         self._monotonic_ns = time.monotonic_ns
@@ -148,15 +151,26 @@ class AuthorizedConversation:
             key: context[key] for key in (*BINDING_FIELDS, "authorization_epoch", "purge_epoch")
         }
         current["delegation_chain"] = context.get("delegation_chain", [])
+        current["egress_policy_revision"] = context.get("egress_policy_revision", EGRESS_REVISION)
         if self._binding is not None and self._binding != current:
             self._discard()
         self._binding = current
+        if (
+            isinstance(self.provider, HttpAdapter)
+            and self.provider.policy_revision != current["egress_policy_revision"]
+        ):
+            # The adapter was built from a policy the daemon no longer enforces.
+            self._discard()
+            raise LocalError("provider_not_supported")
         return {
             **current,
-            "egress_policy_revision": EGRESS_REVISION,
             "model_session_id": self.model_session_id,
             "context_epoch": self.context_epoch,
         }
+
+    @property
+    def remote(self) -> bool:
+        return isinstance(self.provider, HttpAdapter)
 
     def add_host(
         self,
@@ -221,16 +235,29 @@ class AuthorizedConversation:
         self._proofs.append(proof)
 
     def _args(self, binding: dict[str, Any]) -> dict[str, Any]:
+        provider, model = LOCAL_PROVIDER, LOCAL_MODEL
+        if isinstance(self.provider, HttpAdapter):
+            provider, model = self.provider.name, self.provider.model
         return copy.deepcopy(
             {
                 "binding": binding,
                 "request": {
-                    "provider": "local-recording",
-                    "model": "echo-v1",
+                    "provider": provider,
+                    "model": model,
                     "messages": self._messages,
                     "state_handles": self._handles,
                 },
                 "manifest": {"segments": self._proofs, "handles": self._handle_proofs},
+            }
+        )
+
+    def _report(self, binding: dict[str, Any], permit_id: str, outcome: dict[str, Any]) -> None:
+        """Complete the daemon's audit record for a remote dispatch; never silently skipped."""
+        self.client.inference_status(
+            {
+                "version": 1,
+                "action": "report",
+                "args": {"binding": binding, "permit": permit_id, **outcome},
             }
         )
 
@@ -242,7 +269,7 @@ class AuthorizedConversation:
             closure[name] = [unique[key] for key in sorted(unique)]
         return {"origin": "derived", "sha256": digest(raw), **closure}
 
-    def dispatch(self) -> dict[str, str]:
+    def dispatch(self) -> dict[str, Any]:
         with self._lock:
             args = self._args(self._sync())
             if not args["request"]["messages"]:
@@ -275,7 +302,41 @@ class AuthorizedConversation:
                     raise LocalError("clock_untrusted")
                 if elapsed >= 5_000_000_000:
                     raise LocalError("release_expired")
-                result = self.provider.dispatch(raw)
+                if isinstance(self.provider, HttpAdapter):
+                    try:
+                        delivered = self.provider.dispatch(raw)
+                    except Exception as exc:
+                        failure = {
+                            "status": "failed",
+                            "wire_hash": None,
+                            "response_hash": None,
+                            "usage": None,
+                        }
+                        try:
+                            self._report(args["binding"], used["id"], failure)
+                        except Exception:
+                            pass  # The record stays pending, which is the truth.
+                        raise LocalError("provider_unavailable") from exc
+                    result: dict[str, Any] = {
+                        "content": delivered.content,
+                        "handle": None,
+                        "request_hash": delivered.request_hash,
+                        "wire_hash": delivered.wire_hash,
+                        "usage": delivered.usage,
+                    }
+                    self._report(
+                        args["binding"],
+                        used["id"],
+                        {
+                            "status": "delivered",
+                            "wire_hash": delivered.wire_hash,
+                            "response_hash": digest(delivered.content.encode()),
+                            "usage": delivered.usage,
+                        },
+                    )
+                else:
+                    result = dict(self.provider.dispatch(raw))
+                content = str(result["content"])
             except Exception:
                 self._discard()
                 raise
@@ -286,14 +347,15 @@ class AuthorizedConversation:
                 if current != args["binding"]:
                     raise LocalError("inference_context_changed")
                 inherited = args["manifest"]["segments"] + args["manifest"]["handles"]
-                self._append(
-                    "assistant",
-                    result["content"],
-                    self._inherited(inherited, result["content"].encode()),
-                )
-                handle = {"kind": "conversation", "id": result["handle"]}
-                self._handles = [handle]
-                self._handle_proofs = [self._inherited(inherited, canonical_bytes(handle))]
+                self._append("assistant", content, self._inherited(inherited, content.encode()))
+                if result.get("handle"):
+                    handle = {"kind": "conversation", "id": str(result["handle"])}
+                    self._handles = [handle]
+                    self._handle_proofs = [self._inherited(inherited, canonical_bytes(handle))]
+                else:
+                    # A stateless adapter keeps nothing; the full context is resent each time.
+                    self._handles = []
+                    self._handle_proofs = []
                 checked_at = self._monotonic_ns()
                 validation = self.client.inference_status(
                     {"version": 1, "action": "validate", "args": self._args(current)}

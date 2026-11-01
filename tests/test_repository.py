@@ -531,7 +531,7 @@ class RepositoryTests(unittest.TestCase):
             historical_inventory(db, 5)
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 9)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
         self.assertEqual(self.query()["items"][0]["revision"], self.claim["revision"])
         self.assertEqual(
             self.store.db.execute("SELECT count(*) FROM repositories").fetchone()[0], 0

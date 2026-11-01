@@ -56,6 +56,8 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `serve --embedding-model DIR` | Loads the installed local model; the daemon indexes every enabled project and embeds briefing queries itself. A profile may set `embedding_model`. `embeddings enable|status --project P` manage a project's partition. |
 | `serve --log-level` | `warning` by default. Redacted operator log lines on stderr: component, event, request id, error type and code location, never content, SQL or paths. An `internal_error` reply carries the `request_id` of its line. |
 | `serve --trace` | One `event=trace` line per request at info level (the level is lowered to info if it was higher): for a socket request the operation, the command action, the outcome code, elapsed milliseconds, time spent waiting for the store lock, time inside transactions, the number of transactions and the response size; for a dashboard request the method, the route family (such as `/api/receipts`, never the project or receipt id), the status and the same timings. Nothing in a trace line names content, a project or a principal. The shared service accepts the same flag. |
+| `serve --egress-policy FILE` | Loads the private egress policy below; without it the only model provider is the local recorder and nothing leaves the machine. A policy change needs a restart and retires every open conversation. The shared service accepts the same flag. |
+| `egress-audit --project P [--before MS] [--json]` | Lists what left the store for a provider in the last 30 days: when, status (`delivered`, `failed` or `pending`), provider, model, host, classification, bytes, cited receipts and permit. Needs a credential with `inference`. |
 | `status --socket`, `--credential` | Human summary of store health through the running daemon: history, position, frontier, jobs and capacity bars; `--json` prints the raw result. Needs an admin credential. |
 | `--version` | Prints the installed package version. |
 | `doctor --store`, `--control` | Checks Python, directory ownership and layout, socket path, schema version, journal integrity and tokenizer; with `--socket` and `--credential` it also reports capacity and frontier from the daemon. Exit 1 when a check fails. |
@@ -68,6 +70,53 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `--backup` | New external directory for backup; verified existing directory for restore. |
 
 Paths/runtime changes require restart. Permission changes apply transactionally. Keep owner credentials out of agent prompts and browser pages; issue scoped credentials for normal agents. Files use owner-only modes (directories 0700, sensitive files 0600).
+
+### Egress policy
+
+By default MemoryKing never sends retained context to a model: `AuthorizedConversation` accepts only the local recorder. To let a host dispatch through a real provider, write a private policy file (mode 0600) and start the service with `serve --egress-policy FILE`. The daemon enforces the policy at authorization time, so a host cannot exceed it, and records every departure in the egress audit.
+
+```toml
+revision = "team-2026-11"              # any change retires every open conversation
+
+[[providers]]                          # Anthropic
+name = "anthropic-messages"
+host = "api.anthropic.com"
+models = ["claude-sonnet-5-5"]
+key_file = "/private/anthropic.key"    # read by the host process, never by the daemon
+max_classification = "internal"        # restricted sources never leave through this provider
+
+[[providers]]                          # OpenAI, xAI Grok, or any chat-completions server
+name = "openai-chat"
+host = "api.x.ai"
+models = ["grok-4"]
+key_file = "/private/xai.key"
+
+[[providers]]                          # a model running on this machine (Ollama, vLLM, LM Studio)
+name = "openai-chat"
+host = "127.0.0.1:11434"
+insecure_http = true                   # plain HTTP is accepted for loopback hosts only
+models = ["llama3.1:8b"]
+max_classification = "restricted"      # nothing leaves the machine, so the ceiling can be higher
+
+[[providers]]                          # Google Cloud Vertex AI, Gemini
+name = "vertex-ai"
+location = "us-central1"               # host defaults to LOCATION-aiplatform.googleapis.com
+project = "my-gcp-project"
+models = ["gemini-2.5-pro"]
+token_command = ["/usr/bin/gcloud", "auth", "print-access-token"]
+
+[[providers]]                          # Vertex AI, Anthropic models through rawPredict
+name = "vertex-ai"
+location = "us-east5"
+project = "my-gcp-project"
+publisher = "anthropic"
+models = ["claude-sonnet-5-5"]
+token_file = "/private/vertex.token"
+```
+
+Fields: `name` is one of `anthropic-messages`, `openai-chat` or `vertex-ai`; `host` (required except for Vertex, where it defaults from `location`), `models` (the only models the daemon will authorize), `max_classification` (`public`, `internal` or `restricted`; default `internal`), `max_request_bytes` (default and maximum 98,304), `timeout_s` (default 60, maximum 300), `max_output_tokens` (default 1,024), `path` (overrides the provider's endpoint path, for proxies), `headers` (up to eight extra headers; authorization headers are refused), and credentials: `key_file` for API keys, `token_file` for a bearer token, or `token_command` (an absolute program and arguments whose standard output is the token, run by the host process with a minimal environment). Vertex also takes `location`, `project` and `publisher` (`google` for `generateContent`, `anthropic` for `rawPredict`). A provider name may appear more than once only with different hosts in separate policy files; within one file names are unique, so run two local servers as two policies or one server with several models.
+
+Adapters make one HTTPS request per dispatch with certificate verification, no retry, no streaming and no tool use, and keep no state: the full conversation is resent each time. Every consumed permit writes an audit record (provider, model, host, policy revision, request and manifest hashes, the content-free manifest, highest classification, byte count) that the host completes with the outcome, wire hash, response hash and token usage. `memoryking egress-audit` and the dashboard's **Jobs & health** view list them for 30 days; purging a source does not remove the record of a delivery that already happened.
 
 ## Shared PostgreSQL
 
@@ -163,7 +212,7 @@ The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. I
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 9 and PostgreSQL 4. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 10 and PostgreSQL 5. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 

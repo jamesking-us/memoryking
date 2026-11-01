@@ -203,7 +203,9 @@ class LocalClient:
     def inference_status(self, command: dict[str, Any]) -> dict[str, Any]:
         """Trusted host surface; deliberately absent from the model-facing tool catalog."""
         validate_inference(command)
-        if command["args"]["binding"]["project"] != self.project:
+        args = command["args"]
+        project = args["binding"]["project"] if "binding" in args else args.get("project")
+        if project != self.project:
             raise LocalError("scope_mismatch")
         credential, _ = self._current()
         return self._request(credential, "inference", {"command": command})

@@ -62,6 +62,46 @@
         "args"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "action": {
+          "const": "report"
+        },
+        "args": {
+          "$ref": "#/$defs/Report"
+        }
+      },
+      "required": [
+        "version",
+        "action",
+        "args"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "action": {
+          "const": "audit"
+        },
+        "args": {
+          "$ref": "#/$defs/Audit"
+        }
+      },
+      "required": [
+        "version",
+        "action",
+        "args"
+      ],
+      "additionalProperties": false
     }
   ],
   "$defs": {
@@ -108,7 +148,8 @@
           "minItems": 0
         },
         "egress_policy_revision": {
-          "const": "local-recording-v1"
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,96}(?![\\s\\S])"
         },
         "model_session_id": {
           "type": "string",
@@ -179,10 +220,16 @@
       "type": "object",
       "properties": {
         "provider": {
-          "const": "local-recording"
+          "enum": [
+            "local-recording",
+            "anthropic-messages",
+            "openai-chat",
+            "vertex-ai"
+          ]
         },
         "model": {
-          "const": "echo-v1"
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:@/-]{1,128}(?![\\s\\S])"
         },
         "messages": {
           "type": "array",
@@ -367,6 +414,126 @@
         "request",
         "manifest",
         "permit"
+      ],
+      "additionalProperties": false
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "Report": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/Binding"
+        },
+        "permit": {
+          "type": "string",
+          "pattern": "^permit_[a-f0-9]{32}(?![\\s\\S])"
+        },
+        "status": {
+          "enum": [
+            "delivered",
+            "failed",
+            "unknown"
+          ]
+        },
+        "wire_hash": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "response_hash": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "binding",
+        "permit",
+        "status",
+        "wire_hash",
+        "response_hash",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    "Audit": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "project",
+        "before"
       ],
       "additionalProperties": false
     }

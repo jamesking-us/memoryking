@@ -124,6 +124,10 @@ def connect(root: Path) -> sqlite3.Connection:
 
 
 class LocalStore:
+    # The operator's egress policy; None means the local recorder is the only provider.
+    # A class default so every store, including PostgreSQL, reports a revision.
+    egress_policy: Any | None = None
+
     dashboard: Any = None
 
     def __init__(
@@ -208,7 +212,9 @@ class LocalStore:
             self.db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8}:
             self.db.executescript(Path(__file__).with_name("index_schema.sql").read_text())
-        elif version != 9:
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+            self.db.executescript(Path(__file__).with_name("egress_schema.sql").read_text())
+        elif version != 10:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         self.store_id, self.incarnation = meta["store"], meta["incarnation"]
@@ -1044,6 +1050,8 @@ class LocalStore:
             self.db.execute(
                 "DELETE FROM receipts WHERE evaluated<=?", (decision.evaluated_ms - RETRY_MS,)
             )
+            # Egress audit records outlive purge (the delivery happened) but not retention.
+            self.db.execute("DELETE FROM egress_audit WHERE expires<=?", (decision.evaluated_ms,))
         return int(count)
 
     def housekeeping(self, interval_ms: int = 3_600_000) -> bool:
@@ -1220,6 +1228,11 @@ class LocalStore:
     ) -> dict[str, Any]:
         return {"capabilities": sorted(capabilities), "delegation_chain": []}
 
+    def egress_revision(self) -> str:
+        """The policy revision every conversation binds to; a change retires them all."""
+        policy = self.egress_policy
+        return "local-recording-v1" if policy is None else str(policy.revision)
+
     def context(self, credential: str, project: str) -> Released:
         """Read-scoped identity discovery; aggregate/admin status remains separate."""
         identifier(project)
@@ -1248,6 +1261,7 @@ class LocalStore:
                     "incarnation": self.incarnation,
                     "authorization_epoch": epochs[0],
                     "purge_epoch": epochs[1],
+                    "egress_policy_revision": self.egress_revision(),
                     **self._context_details(who, capabilities, project, at),
                     "evaluated_ms": at,
                     "deadline_ms": decision.deadline_ms,

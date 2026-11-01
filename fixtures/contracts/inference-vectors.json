@@ -209,7 +209,7 @@
     }
   },
   {
-    "name": "other_model",
+    "name": "malformed_model",
     "valid": false,
     "request": {
       "version": 1,
@@ -230,7 +230,7 @@
         },
         "request": {
           "provider": "local-recording",
-          "model": "remote-v1",
+          "model": "not a model!",
           "messages": [
             {
               "role": "user",
@@ -472,7 +472,7 @@
     }
   },
   {
-    "name": "unknown_egress_policy",
+    "name": "malformed_egress_policy",
     "valid": false,
     "request": {
       "version": 1,
@@ -487,7 +487,7 @@
           "authorization_epoch": 1,
           "purge_epoch": 0,
           "delegation_chain": [],
-          "egress_policy_revision": "network-v1",
+          "egress_policy_revision": "network v1!",
           "model_session_id": "session",
           "context_epoch": 0
         },
@@ -1349,6 +1349,225 @@
           ],
           "handles": []
         }
+      }
+    }
+  },
+  {
+    "name": "authorize_openai_chat_under_a_policy",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "team-2026-10",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "openai-chat",
+          "model": "llama3.1:8b",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "authorize_vertex_ai_under_a_policy",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "authorize",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "team-2026-10",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "request": {
+          "provider": "vertex-ai",
+          "model": "gemini-2.5-pro",
+          "messages": [
+            {
+              "role": "user",
+              "content": "hello"
+            }
+          ],
+          "state_handles": []
+        },
+        "manifest": {
+          "segments": [
+            {
+              "origin": "host",
+              "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "artifacts": [],
+              "host_authorizations": [
+                {
+                  "id": "input1",
+                  "classification": "internal",
+                  "source_hash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+                  "expires_ms": 2000000000000
+                }
+              ]
+            }
+          ],
+          "handles": []
+        }
+      }
+    }
+  },
+  {
+    "name": "report_delivery",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "report",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "permit": "permit_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "delivered",
+        "wire_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "response_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 3
+        }
+      }
+    }
+  },
+  {
+    "name": "report_unknown_outcome",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "report",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "permit": "permit_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "unknown",
+        "wire_hash": null,
+        "response_hash": null,
+        "usage": null
+      }
+    }
+  },
+  {
+    "name": "report_bad_status",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "report",
+      "args": {
+        "binding": {
+          "store": "store",
+          "tenant": "main",
+          "principal": "owner",
+          "project": "p",
+          "incarnation": "hist_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "authorization_epoch": 1,
+          "purge_epoch": 0,
+          "delegation_chain": [],
+          "egress_policy_revision": "local-recording-v1",
+          "model_session_id": "session",
+          "context_epoch": 0
+        },
+        "permit": "permit_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "retried",
+        "wire_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "response_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 3
+        }
+      }
+    }
+  },
+  {
+    "name": "audit_listing",
+    "valid": true,
+    "request": {
+      "version": 1,
+      "action": "audit",
+      "args": {
+        "project": "p",
+        "before": null
+      }
+    }
+  },
+  {
+    "name": "audit_unknown_field",
+    "valid": false,
+    "request": {
+      "version": 1,
+      "action": "audit",
+      "args": {
+        "project": "p",
+        "before": null,
+        "limit": 5
       }
     }
   }

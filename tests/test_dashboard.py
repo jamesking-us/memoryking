@@ -434,6 +434,30 @@ class DashboardTests(unittest.TestCase):
             json.loads(self.call("GET", "/api/citations/other/" + captured)[2])["items"], []
         )
 
+    def test_egress_audit_is_readable_from_the_browser_but_never_dispatchable(self):
+        self.login()
+        csrf = json.loads(self.call("GET", "/api/snapshot")[2])["csrf"]
+
+        def command(action, args):
+            return self.call(
+                "POST",
+                "/api/command",
+                {
+                    "csrf": csrf,
+                    "operation": "inference",
+                    "command": {"version": 1, "action": action, "args": args},
+                },
+                {"Origin": self.web.origin},
+            )
+
+        status, _, raw = command("audit", {"project": "p", "before": None})
+        self.assertEqual(status, 200, raw)
+        listing = json.loads(raw)
+        self.assertEqual(listing["items"], [])
+        self.assertEqual(listing["policy_revision"], "local-recording-v1")
+        status, _, raw = command("authorize", {"project": "p"})
+        self.assertEqual(json.loads(raw)["error"], "dashboard_action_unsupported")
+
     def test_two_receipts_expose_comparable_selected_references(self):
         namespace = self.store.namespace(self.owner, "p")
         for number, text in enumerate(("deadline exceeded on retry", "deadline fixed by backoff")):

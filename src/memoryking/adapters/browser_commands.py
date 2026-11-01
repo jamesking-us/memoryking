@@ -59,6 +59,7 @@ def execute(
 ) -> Released:
     from memoryking.adapters.experience import Experience
     from memoryking.adapters.handoff import Handoff
+    from memoryking.adapters.inference import Inference
     from memoryking.adapters.inspection import Inspection
     from memoryking.adapters.knowledge_store import Knowledge
     from memoryking.adapters.repository_store import Repository
@@ -90,6 +91,7 @@ def execute(
         "working": {"resume", "operations"},
         "handoff": {"prepare", "preview", "materialize", "cancel"},
         "inspection": {"history", "operations", "cost", "handoffs", "retention_preview", "purge"},
+        "inference": {"audit"},
     }
     if (
         not isinstance(operation, str)
@@ -106,6 +108,7 @@ def execute(
         "working": Working,
         "handoff": Handoff,
         "inspection": Inspection,
+        "inference": Inference,
     }
     guarded = cast(LocalStore, BrowserStore(store, session, check_session))
     return services[operation](guarded).execute(session["credential"], command)

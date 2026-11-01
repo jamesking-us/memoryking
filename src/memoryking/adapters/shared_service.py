@@ -19,8 +19,10 @@ class SharedService:
         self.pool, self.root, self.control, self.audience = pool, root, control, audience
         self.dashboard: Any = None
 
+    egress_policy: Any | None = None
+
     def store(self, tenant: str, credential: str, *, release_only: bool = False) -> PostgresStore:
-        return PostgresStore(
+        store = PostgresStore(
             self.pool,
             self.root,
             self.control,
@@ -29,6 +31,8 @@ class SharedService:
             audience=self.audience,
             release_only=release_only,
         )
+        store.egress_policy = self.egress_policy
+        return store
 
     def execute(
         self, tenant: str, credential: str, request: dict[str, Any]
