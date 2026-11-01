@@ -41,7 +41,7 @@ Authoritative contracts:
 
 **Knowledge.** Observations can be recalled without a model. Claims remain proposals until reviewed. Acceptance, quarantine, deprecation, attestation and partial replacement are explicit versioned actions. Constraint resolution is complete within its bounds and blocks on ambiguity, missing essential evidence or unknown applicability.
 
-**Working state.** Checkpoints preserve hard constraints, failures, verification and next actions. Expected revisions prevent stale writers from overwriting newer state. Handoffs are recipient-bound. Operation intent/transition/reconciliation records track uncertain effects; the host implements the actual external tool and readback.
+**Working state.** Checkpoints preserve hard constraints, failures, verification and next actions. Expected revisions prevent stale writers from overwriting newer state. Handoffs are recipient-bound. Operation intent/transition/reconciliation records track uncertain effects; the host implements the actual external tool and readback. Session summaries (`summarize`, hand-off, idle) are derived artifacts with their own receipt: the deterministic `extractive-v1` method quotes only the checkpoint, and a provider-written summary is admitted only as the exact reply in a delivered egress audit record. Resume packets and task cards carry the latest summary visible to the reader.
 
 **Repository context.** Registration and snapshots are trusted-host operations. Git/dirty artifact identity and supported passive source projections inform dependency checks. No repository code is executed. Shallow or incomplete ancestry and unsupported coverage remain unknown rather than current.
 
@@ -75,6 +75,7 @@ The model installer command is `python -m memoryking.model_install --destination
 | Policy journal | 256 KiB per signed record, enforced before writing (`journal_record_limit`) and on reading. A torn final line beyond the anchored sequence is discarded on the next append; damage anywhere else stays fatal. |
 | Conversation | 128 messages per dispatch through `AuthorizedConversation`; the request as a whole stays within 96 KiB, or the provider's smaller `max_request_bytes`. |
 | Egress audit | One record per consumed permit for a remote provider, retained 30 days, 64 per listing page; a reply is admitted only up to 64 KiB of text and a provider response up to 1 MiB. |
+| Session summaries | Extractive summaries are at most 1,200 characters from the checkpoint plus the 16 newest visible observations since it; provider-written ones at most 4,096 characters. Retained 30 days; the idle scan runs at most once a minute and derives up to 32 per pass. |
 | Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. `format: "text"` returns a cited Markdown rendering in an envelope with the same receipt; the token count is of the rendered text. |
 | Authorization | Five-second evaluation-to-commit/first-byte deadline, with UTC and monotonic checks. |
 | Idempotency | Replay bodies retained for 30 days; expired/deleted results do not free a consumed identity. |
@@ -160,6 +161,7 @@ Every error reply carries a `hint` beside its `error` code, and the complete lis
 | `session_changed` | Sign in again; permissions changed and retained views were cleared. |
 | `egress_provider_denied`, `egress_classification_denied` | The daemon's egress policy does not allow that provider or model, or a cited source is classified above the provider's ceiling; change the policy and restart, or rebuild the conversation without the source. |
 | `provider_not_supported` | The adapter was built from a policy revision the daemon is not running; rebuild it from the current file. |
+| `summary_source_invalid` | A provider-written summary was not the exact delivered reply for that permit; pass the unmodified text and the permit from the same dispatch, or use the extractive method. |
 | `provider_unavailable`, `provider_response_invalid` | The provider failed, timed out or answered in an unexpected shape; nothing was admitted and the audit record says `failed`. The dispatch is never retried automatically. |
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

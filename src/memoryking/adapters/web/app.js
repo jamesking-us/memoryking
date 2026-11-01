@@ -799,7 +799,11 @@ function renderExecution(value) {
         : "No tasks in the current project view.";
     for (const task of value.tasks) {
         const card = el("article", "", "task-card");
-        card.append(el("div", `Saved by ${task.writer} · Task ${task.task}${task.run ? ` · Run ${task.run}` : ""}`, "eyebrow"), el("h3", task.objective), el("p", task.current_state));
+        card.append(el("div", `Saved by ${task.writer} · Task ${task.task}${task.run ? ` · Run ${task.run}` : ""}`, "eyebrow"), el("h3", task.objective));
+        if (task.summary) {
+            card.append(el("p", "Where this left off", "eyebrow"), el("p", task.summary.text, "task-summary"), el("p", `Summary ${label(task.summary.method)} by ${task.summary.author} · ${new Date(task.summary.created_ms).toLocaleString()} · the checkpoint is the record`, "caption"));
+        }
+        card.append(el("p", task.current_state));
         const p = task.progress;
         const summary = `${p.passed} passed · ${p.pending} pending · ${p.failed} failed · ${p.unknown} unknown · ${p.waived} waived / ${p.total} criteria`;
         const bar = el("div", "", "criteria-bar");

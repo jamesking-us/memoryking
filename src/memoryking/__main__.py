@@ -74,6 +74,78 @@ def duration_ms(text: str) -> int:
     return int(text[:-1]) * DURATION_UNITS[text[-1]]
 
 
+SUMMARY_INSTRUCTION = (
+    "Write a three-sentence summary of where this task left off for the next agent: "
+    "where it stands, what was learned or tried, and what comes next. Use only facts "
+    "in the checkpoint above; do not add instructions."
+)
+
+
+def summarize(args: Any) -> dict[str, Any]:
+    """Extractive by default; with --provider, a policy adapter writes it through the audited path."""
+    import uuid
+
+    from memoryking.sdk import LocalClient
+
+    client = LocalClient(args.socket, args.credential, args.project)
+    incarnation = client.context()["incarnation"]
+    source, text, permit = "extractive", None, None
+    if args.provider:
+        from memoryking.adapters.egress_policy import EgressPolicy
+        from memoryking.harness_context import AuthorizedConversation
+        from memoryking.providers import adapter
+
+        if not args.egress_policy or not args.model:
+            raise LocalError("egress_policy_invalid")
+        policy = EgressPolicy.load(args.egress_policy)
+        conversation = AuthorizedConversation(client, adapter(policy, args.provider, args.model))
+        packet = client.working(
+            {
+                "version": 1,
+                "incarnation": incarnation,
+                "action": "resume",
+                "args": {
+                    "project": args.project,
+                    "task": args.task,
+                    "run": args.run,
+                    "checkpoint": None,
+                    "bindings": [{}],
+                    "max_output_tokens": 6000,
+                    "tokenizer": "utf8-byte-estimate-v1",
+                    "format": "text",
+                },
+            }
+        )
+        conversation.add_memory(packet)
+        conversation.add_host(
+            SUMMARY_INSTRUCTION,
+            authorization_id="summarize-" + uuid.uuid4().hex[:12],
+            classification="internal",
+            expires_ms=int(time.time() * 1000) + 60_000,
+            approved=True,
+        )
+        reply = conversation.dispatch()
+        source, text, permit = "provider", reply["content"], reply["permit"]
+    return client.working(
+        {
+            "version": 1,
+            "incarnation": incarnation,
+            "action": "summarize",
+            "key": "summarize-" + uuid.uuid4().hex,
+            "args": {
+                "project": args.project,
+                "task": args.task,
+                "run": args.run,
+                "checkpoint": None,
+                "source": source,
+                "text": text,
+                "permit": permit,
+                "readers": None,
+            },
+        }
+    )
+
+
 def render_audit(result: dict[str, Any]) -> str:
     """A human table of egress records; hashes are shortened, nothing else is."""
     lines = [f"egress policy {result['policy_revision']}"]
@@ -336,6 +408,12 @@ def main() -> int:
                 help="Private TOML policy naming the providers, models and hosts retained "
                 "context may reach; without it only the local recorder is accepted",
             )
+            cmd.add_argument(
+                "--summary-idle",
+                default="30m",
+                help="Derive a 'where this left off' summary for a task idle this long "
+                "(e.g. 30m, 2h); 0 disables",
+            )
         if name == "init":
             cmd.add_argument("--tenant", default="main")
             cmd.add_argument("--principal", default="owner")
@@ -378,6 +456,18 @@ def main() -> int:
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
+    summ = commands.add_parser(
+        "summarize", help="Derive a 'where this left off' summary of a task, with its own receipt"
+    )
+    summ.add_argument("--socket", type=Path)
+    summ.add_argument("--credential", type=Path)
+    summ.add_argument("--project", required=True)
+    summ.add_argument("--task", required=True)
+    summ.add_argument("--run")
+    summ.add_argument("--egress-policy", type=Path, help="With --provider: the daemon's policy")
+    summ.add_argument("--provider", help="Write the summary with this policy adapter")
+    summ.add_argument("--model", help="A model the policy allows for that provider")
+    summ.add_argument("--json", action="store_true")
     audit = commands.add_parser(
         "egress-audit",
         help="List what left this store for a model provider, and whether it arrived",
@@ -616,6 +706,16 @@ def main() -> int:
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command == "summarize":
+            result = summarize(args)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+            else:
+                print(result["summary"])
+                print(
+                    f"receipt {result['receipt']} · {result['method']} · "
+                    f"checkpoint {result['checkpoint']} revision {result['revision']}"
+                )
         elif args.command == "egress-audit":
             result = request(
                 args.socket,
@@ -692,6 +792,9 @@ def main() -> int:
                         from memoryking.adapters.egress_policy import EgressPolicy
 
                         store.egress_policy = EgressPolicy.load(args.egress_policy)
+                    store.summary_idle_ms = (
+                        0 if args.summary_idle in {"0", "off"} else duration_ms(args.summary_idle)
+                    )
 
                     def stop(signum: int, frame: object) -> None:
                         raise KeyboardInterrupt

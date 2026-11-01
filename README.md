@@ -36,7 +36,7 @@ flowchart LR
 | Need | What MemoryKing provides |
 | --- | --- |
 | Remember useful findings | Searchable observations with source attribution; reviewed knowledge stays distinct from unverified notes. |
-| Resume unfinished work | Checkpoints containing the objective, constraints, failed attempts, verification gaps and next actions. |
+| Resume unfinished work | Checkpoints containing the objective, constraints, failed attempts, verification gaps and next actions, opened by a three-sentence "where this left off" summary. |
 | Work together | Handoffs bound to the recipient's current permissions. |
 | Keep context manageable | Focused briefings with explicit output budgets and links back to evidence. |
 | Avoid stale advice | Repository identity, applicability rules and freshness checks for guidance tied to code. |

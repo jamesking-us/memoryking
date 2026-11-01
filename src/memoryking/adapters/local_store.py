@@ -161,6 +161,9 @@ class LocalStore:
         self.embedder: Any | None = None
         # A scheduled backup policy the daemon checks between requests.
         self.backup_policy: Any | None = None
+        # Idle threshold for owner-derived session summaries; 0 disables.
+        self.summary_idle_ms = 0
+        self._last_summary_scan = 0
         try:
             self.control = Control(control)
             self.anchor = self.control.read_anchor()
@@ -214,7 +217,9 @@ class LocalStore:
             self.db.executescript(Path(__file__).with_name("index_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
             self.db.executescript(Path(__file__).with_name("egress_schema.sql").read_text())
-        elif version != 10:
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}:
+            self.db.executescript(Path(__file__).with_name("summary_schema.sql").read_text())
+        elif version != 11:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         self.store_id, self.incarnation = meta["store"], meta["incarnation"]
@@ -1052,6 +1057,9 @@ class LocalStore:
             )
             # Egress audit records outlive purge (the delivery happened) but not retention.
             self.db.execute("DELETE FROM egress_audit WHERE expires<=?", (decision.evaluated_ms,))
+            self.db.execute(
+                "DELETE FROM session_summaries WHERE expires<=?", (decision.evaluated_ms,)
+            )
         return int(count)
 
     def housekeeping(self, interval_ms: int = 3_600_000) -> bool:
@@ -1063,11 +1071,29 @@ class LocalStore:
         now = self.clock.utc_ms()
         if self.backup_policy is not None:
             self.backup_policy.maybe_run(self, now)
+        if self.summary_idle_ms and now - self._last_summary_scan >= 60_000:
+            self._last_summary_scan = now
+            self.idle_summaries(now)
         if now - self._last_housekeeping < interval_ms:
             return False
         self._last_housekeeping = now
         self.expire_results()
         return True
+
+    def idle_summaries(self, now: int | None = None) -> int:
+        """Summaries for streams idle past the threshold, as the owner, when it may read them."""
+        from memoryking.adapters.working import Working
+
+        credential_file = self.control_path / "owner.credential"
+        if not self.summary_idle_ms or not credential_file.is_file():
+            return 0
+        try:
+            credential = credential_file.read_text().strip()
+            return Working(self).idle_summaries(
+                credential, self.summary_idle_ms, self.clock.utc_ms() if now is None else now
+            )
+        except (OSError, LocalError):
+            return 0
 
     def gc(self) -> int:
         with self.lock:

@@ -28,6 +28,8 @@ The Python domain layer contains contracts and decisions independent of vendors.
 | Reviewed knowledge | A versioned claim or constraint linked to source evidence. | Proposals require authorized review before becoming accepted guidance. |
 | Working state | A checkpoint of an unfinished task and its operations. | Pending tests and uncertain actions remain pending or uncertain after resume. |
 
+A session summary is a derived artifact: three sentences composed from a checkpoint and counts of what happened since, with its own receipt, shown first on resume and on the dashboard. It is a convenience, never evidence; the checkpoint it summarizes stays the record, and a model-written summary is admitted only when it is the exact audited reply.
+
 Procedures extend reviewed knowledge into reusable steps. Activation is a separate authorized decision. Outcomes and feedback are attributed records; they do not automatically prove effectiveness or promote a procedure.
 
 ## Local and shared storage

@@ -27,7 +27,9 @@ from memoryking.domain.local import Decision, LocalError, Released
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("working.schema.json").read_text())
 )
-MUTATIONS = {"save", "assign_writer", "operation_intent", "operation_transition"}
+MUTATIONS = {"save", "assign_writer", "operation_intent", "operation_transition", "summarize"}
+SUMMARY_LIMIT = 4096
+RECENT_OBSERVATIONS = 16
 
 
 class Working:
@@ -187,6 +189,8 @@ class Working:
                 result = self._save(who, args, at)
             elif action == "assign_writer":
                 result = self._assign(who, args, at)
+            elif action == "summarize":
+                result = self._summarize(who, args, at, receipt)
             elif action.startswith("operation_"):
                 result = self._write_operation(who, command, at)
             elif action == "operations":
@@ -284,6 +288,188 @@ class Working:
             "status": "durable",
             "source_position": position,
         }
+
+    def _recent_observations(
+        self, who: dict[str, Any], project: str, position: int, at: int
+    ) -> list[dict[str, Any]]:
+        """Visible observations recorded after a position, newest first, bounded."""
+        rows = self.db.execute(
+            "SELECT * FROM observations WHERE tenant=? AND project=? AND deleted=0 AND position>? ORDER BY position DESC LIMIT 64",
+            (who["tenant"], project, position),
+        ).fetchall()
+        visible = [row for row in rows if self.s._visible(who, row, at)]
+        return [
+            {"id": row["id"], "source": row["source"], "position": row["position"]}
+            for row in visible[:RECENT_OBSERVATIONS]
+        ]
+
+    def _summarize(
+        self, who: dict[str, Any], args: dict[str, Any], at: int, receipt: str
+    ) -> dict[str, Any]:
+        """Derive a "where this left off" summary as an artifact with its own receipt.
+
+        `extractive` quotes only the checkpoint and counts recent activity, so it can be
+        shown to anyone who may read the checkpoint. `provider` admits a model's reply only
+        when it is byte for byte the delivered reply in this principal's egress audit.
+        """
+        from memoryking.domain.summary import METHOD, compose
+
+        row = self._checkpoint(who, args, at)
+        body = json.loads(row["body"])
+        readers = args["readers"] or json.loads(row["readers"])
+        deps: list[dict[str, str]] = [{"kind": "checkpoint", "id": row["id"]}]
+        if args["source"] == "extractive":
+            observations = self._recent_observations(who, args["project"], row["position"], at)
+            operations, _ = self._operations(who, args, at, include_all=True)
+            text, method = compose(body, observations, operations), METHOD
+            deps.extend({"kind": "observation", "id": o["id"]} for o in observations)
+        else:
+            text = args["text"] or ""
+            audit = self.db.execute(
+                "SELECT * FROM egress_audit WHERE tenant=? AND id=? AND principal=? AND project=?",
+                (who["tenant"], args["permit"] or "", who["principal"], args["project"]),
+            ).fetchone()
+            if (
+                audit is None
+                or audit["status"] != "delivered"
+                or audit["response_hash"] != hashlib.sha256(text.encode()).hexdigest()
+            ):
+                raise LocalError("summary_source_invalid")
+            method = f"{audit['provider']}/{audit['model']}"
+            manifest = json.loads(audit["manifest"])
+            cited = sorted(
+                {
+                    a["receipt"]
+                    for proof in [*manifest["segments"], *manifest["handles"]]
+                    for a in proof["artifacts"]
+                }
+            )
+            seen = {d["id"] for d in deps}
+            for cited_receipt in cited:
+                artifact = self.db.execute(
+                    "SELECT dependencies FROM rendered_artifacts WHERE tenant=? AND id=? AND principal=?",
+                    (who["tenant"], cited_receipt, who["principal"]),
+                ).fetchone()
+                for dep in json.loads(artifact["dependencies"]) if artifact else []:
+                    if dep["kind"] == "observation" and dep["id"] not in seen:
+                        seen.add(dep["id"])
+                        deps.append(dep)
+        if not text or len(text) > SUMMARY_LIMIT:
+            raise LocalError("summary_source_invalid")
+        scope = self._scope(who, args)
+        artifact_body = {
+            "schema": "session-summary-v1",
+            "summary": text,
+            "method": method,
+            "checkpoint": row["id"],
+            "revision": row["revision"],
+            "task": args["task"],
+            "run": args["run"],
+            "author": who["principal"],
+            "readers": readers,
+            "sources": deps,
+            "created_ms": at,
+            "receipt": receipt,
+        }
+        raw = canonical_bytes(artifact_body)
+        diag = {
+            "status": "complete",
+            "kind": "session_summary",
+            "method": method,
+            "checkpoint": row["id"],
+            "checkpoint_hash": row["body_hash"],
+            "usage": {
+                "output_tokens": len(raw),
+                "max_output_tokens": None,
+                "serialized_bytes": len(raw),
+                "counting": "estimate",
+                "tokenizer": "utf8-byte-estimate-v1",
+                "provider_usage": "not_used" if method == METHOD else "audited",
+            },
+            "trace": [],
+        }
+        self.r._retain(who, {"project": args["project"]}, receipt, raw, diag, deps, at)
+        self.db.execute(
+            "INSERT INTO session_summaries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                who["tenant"],
+                receipt,
+                *scope[1:],
+                row["id"],
+                row["revision"],
+                who["principal"],
+                self.s.incarnation,
+                method,
+                text,
+                json.dumps(readers),
+                at,
+                at + RETRY_MS,
+            ),
+        )
+        self.s._event(who["tenant"], "summary_derived", row["id"], at, who["principal"])
+        return {
+            "summary": text,
+            "method": method,
+            "checkpoint": row["id"],
+            "revision": row["revision"],
+            "sources": deps,
+            "readers": readers,
+            "status": "derived",
+        }
+
+    def latest_summary(
+        self, who: dict[str, Any], checkpoint: str, at: int
+    ) -> dict[str, Any] | None:
+        """The newest visible summary of a checkpoint; None when nobody derived one."""
+        for row in self.db.execute(
+            "SELECT * FROM session_summaries WHERE tenant=? AND checkpoint=? AND incarnation=? AND expires>? ORDER BY created DESC,id DESC LIMIT 16",
+            (who["tenant"], checkpoint, self.s.incarnation, at),
+        ).fetchall():
+            if (
+                who["principal"] in json.loads(row["readers"])
+                or who["principal"] == row["principal"]
+            ):
+                return {
+                    "receipt": row["id"],
+                    "text": row["text"],
+                    "method": row["method"],
+                    "author": row["principal"],
+                    "revision": row["revision"],
+                    "created_ms": row["created"],
+                }
+        return None
+
+    def idle_summaries(self, credential: str, idle_ms: int, now: int) -> int:
+        """Derive owner summaries for streams idle past the threshold that have none."""
+        who = self.s._auth(credential, "admin", "*", now)
+        streams = self.db.execute(
+            "SELECT c.project,c.task,c.stream,c.id FROM checkpoint_streams s JOIN checkpoints c ON c.tenant=s.tenant AND c.id=s.latest WHERE s.tenant=? AND c.incarnation=? AND c.state='available' AND c.created<=? AND NOT EXISTS(SELECT 1 FROM session_summaries ss WHERE ss.tenant=c.tenant AND ss.checkpoint=c.id) LIMIT 32",
+            (who["tenant"], self.s.incarnation, now - idle_ms),
+        ).fetchall()
+        derived = 0
+        for stream in streams:
+            command = {
+                "version": 1,
+                "incarnation": self.s.incarnation,
+                "action": "summarize",
+                "key": "idle-" + stream["id"],
+                "args": {
+                    "project": stream["project"],
+                    "task": stream["task"],
+                    "run": None if stream["stream"] == "task" else stream["stream"][4:],
+                    "checkpoint": stream["id"],
+                    "source": "extractive",
+                    "text": None,
+                    "permit": None,
+                    "readers": None,
+                },
+            }
+            try:
+                self.execute(credential, command)
+                derived += 1
+            except LocalError:
+                continue  # Not a reader of that checkpoint, or it moved on; nothing to force.
+        return derived
 
     def _assign(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
         row = self._stream(who, args)
@@ -452,6 +638,7 @@ class Working:
         base.update(
             status="ready",
             checkpoint=None,
+            summary=None,
             operations=[],
             context_binding={
                 "store": self.s.store_id,
@@ -481,6 +668,7 @@ class Working:
                 },
                 operations=operations,
                 constraints=[self.r._claim(i) for i in mandatory["items"]],
+                summary=self.latest_summary(who, row["id"], at),
             )
             deps.extend(self.r._dependencies(base["constraints"]))
             gaps = list(body["capture"]["gaps"])
@@ -537,6 +725,7 @@ class Working:
                 status="budget_insufficient",
                 reason="essential_set_does_not_fit" if raw else "essential_serialization_limit",
                 checkpoint=None,
+                summary=None,
                 operations=[],
                 constraints=[],
                 conflicts=[],

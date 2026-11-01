@@ -166,6 +166,20 @@ def main():
                     },
                     f"checkpoint{revision}",
                 )
+            # A "where this left off" summary, as the daemon would derive after idling.
+            command(
+                w,
+                "summarize",
+                {
+                    **scope,
+                    "checkpoint": None,
+                    "source": "extractive",
+                    "text": None,
+                    "permit": None,
+                    "readers": None,
+                },
+                "demo-summary",
+            )
             if args.count == 1:
                 command(
                     k,

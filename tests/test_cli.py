@@ -73,6 +73,51 @@ class OperatorCommandTests(unittest.TestCase):
         self.assertEqual(run.returncode, expect, run.stdout + run.stderr)
         return run.stdout
 
+    def test_summarize_prints_the_summary_and_its_receipt(self):
+        from test_working import checkpoint
+
+        from memoryking.adapters.working import Working
+
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        output = []
+        Working(self.store).execute(
+            self.credential.read_text(),
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "save",
+                "key": "cli-ckpt",
+                "args": {
+                    "project": "demo",
+                    "task": "task",
+                    "run": None,
+                    "expected_revision": 0,
+                    "readers": ["owner"],
+                    "checkpoint": checkpoint(),
+                },
+            },
+        ).emit(output.append)
+        text = self.cli("summarize", "--project", "demo", "--task", "task", *common)
+        self.assertIn("Working on", text)
+        self.assertIn("extractive-v1", text)
+        self.assertIn("receipt rcpt_", text)
+        packet = json.loads(
+            self.cli("summarize", "--project", "demo", "--task", "task", "--json", *common)
+        )
+        self.assertEqual(packet["method"], "extractive-v1")
+        self.assertEqual(packet["status"], "derived")
+        self.cli(
+            "summarize",
+            "--project",
+            "demo",
+            "--task",
+            "task",
+            "--provider",
+            "openai-chat",
+            *common,
+            expect=2,
+        )
+
     def test_credential_issue_list_and_revoke_round_trip(self):
         common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
         issued = Path(self.temp.name) / "agent.credential"

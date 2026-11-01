@@ -57,6 +57,8 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `serve --log-level` | `warning` by default. Redacted operator log lines on stderr: component, event, request id, error type and code location, never content, SQL or paths. An `internal_error` reply carries the `request_id` of its line. |
 | `serve --trace` | One `event=trace` line per request at info level (the level is lowered to info if it was higher): for a socket request the operation, the command action, the outcome code, elapsed milliseconds, time spent waiting for the store lock, time inside transactions, the number of transactions and the response size; for a dashboard request the method, the route family (such as `/api/receipts`, never the project or receipt id), the status and the same timings. Nothing in a trace line names content, a project or a principal. The shared service accepts the same flag. |
 | `serve --egress-policy FILE` | Loads the private egress policy below; without it the only model provider is the local recorder and nothing leaves the machine. A policy change needs a restart and retires every open conversation. The shared service accepts the same flag. |
+| `serve --summary-idle 30m` | Between requests the daemon derives a "where this left off" summary, as the owner, for every task whose latest checkpoint has been idle this long and has none; `0` disables. Summaries follow the 30-day retention. |
+| `summarize --project P --task T [--run R] [--provider NAME --model M --egress-policy FILE] [--json]` | Derives a summary with its own receipt: extractive by default, or written by a policy adapter through the audited inference path. Needs a credential with `checkpoint` (and `inference` for `--provider`). |
 | `egress-audit --project P [--before MS] [--json]` | Lists what left the store for a provider in the last 30 days: when, status (`delivered`, `failed` or `pending`), provider, model, host, classification, bytes, cited receipts and permit. Needs a credential with `inference`. |
 | `status --socket`, `--credential` | Human summary of store health through the running daemon: history, position, frontier, jobs and capacity bars; `--json` prints the raw result. Needs an admin credential. |
 | `--version` | Prints the installed package version. |
@@ -212,7 +214,7 @@ The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. I
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 10 and PostgreSQL 5. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 11 and PostgreSQL 6. Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 

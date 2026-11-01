@@ -147,6 +147,16 @@ class AdapterContext(TypedDict):
     model_session: str
     context_epoch: int
 
+class Summarize(TypedDict):
+    project: str
+    task: str
+    run: str | None
+    checkpoint: str | None
+    source: Literal["extractive", "provider"]
+    text: str | None
+    permit: str | None
+    readers: list[str] | None
+
 class Command0(TypedDict):
     version: Literal[1]
     incarnation: str
@@ -193,4 +203,11 @@ class Command6(TypedDict):
     action: Literal["adapter_resume"]
     args: AdapterResume
 
-WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6
+class Command7(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    action: Literal["summarize"]
+    args: Summarize
+    key: str
+
+WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7

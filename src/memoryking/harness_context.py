@@ -368,4 +368,9 @@ class AuthorizedConversation:
             except Exception as exc:
                 self._discard()
                 raise LocalError("inference_result_quarantined") from exc
-            return {**result, "status": "validated", "permit_receipt": used["receipt"]}
+            return {
+                **result,
+                "status": "validated",
+                "permit": used["id"],
+                "permit_receipt": used["receipt"],
+            }

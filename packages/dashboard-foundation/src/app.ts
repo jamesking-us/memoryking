@@ -1084,6 +1084,12 @@ interface ExecutionTask {
   body_hash: string;
   objective: string;
   current_state: string;
+  summary: {
+    text: string;
+    method: string;
+    author: string;
+    created_ms: number;
+  } | null;
   criteria: TaskCriterion[];
   progress: {
     passed: number;
@@ -1165,8 +1171,19 @@ function renderExecution(value: ExecutionSnapshot): void {
         "eyebrow",
       ),
       el("h3", task.objective),
-      el("p", task.current_state),
     );
+    if (task.summary) {
+      card.append(
+        el("p", "Where this left off", "eyebrow"),
+        el("p", task.summary.text, "task-summary"),
+        el(
+          "p",
+          `Summary ${label(task.summary.method)} by ${task.summary.author} · ${new Date(task.summary.created_ms).toLocaleString()} · the checkpoint is the record`,
+          "caption",
+        ),
+      );
+    }
+    card.append(el("p", task.current_state));
     const p = task.progress;
     const summary = `${p.passed} passed · ${p.pending} pending · ${p.failed} failed · ${p.unknown} unknown · ${p.waived} waived / ${p.total} criteria`;
     const bar = el("div", "", "criteria-bar");

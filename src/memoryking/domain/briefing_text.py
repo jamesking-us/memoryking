@@ -132,6 +132,13 @@ def render_resume(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     )
     if packet.get("reason"):
         lines.extend(["", f"**Blocked:** {packet['reason']}."])
+    summary = packet.get("summary")
+    if isinstance(summary, dict) and summary.get("text"):
+        lines.extend(["", "## Where this left off", "", str(summary["text"])])
+        lines.append(
+            f"_Summary {summary.get('method', '?')} by {summary.get('author', '?')} at "
+            f"{_stamp(summary.get('created_ms'))}; the checkpoint below is the record._"
+        )
     if state.get("current_state"):
         lines.extend(["", "## Where it stands", "", state["current_state"]])
     if state.get("next_actions"):

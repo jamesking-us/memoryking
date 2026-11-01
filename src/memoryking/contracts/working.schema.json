@@ -197,6 +197,36 @@
         "args"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "summarize"
+        },
+        "args": {
+          "$ref": "#/$defs/Summarize"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args",
+        "key"
+      ],
+      "additionalProperties": false
     }
   ],
   "$defs": {
@@ -1145,6 +1175,97 @@
         "model_session",
         "context_epoch"
       ]
+    },
+    "Summarize": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "task": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "enum": [
+            "extractive",
+            "provider"
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "permit": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^permit_[a-f0-9]{32}(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readers": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "minItems": 1,
+              "maxItems": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "project",
+        "task",
+        "run",
+        "checkpoint",
+        "source",
+        "text",
+        "permit",
+        "readers"
+      ],
+      "additionalProperties": false
     }
   }
 }

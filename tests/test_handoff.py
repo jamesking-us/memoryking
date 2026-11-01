@@ -31,6 +31,8 @@ class HandoffTests(unittest.TestCase):
     constraint = helpers.WorkingTests.constraint
     clock = helpers.WorkingTests.clock
     fails = helpers.WorkingTests.fails
+    run_r = helpers.WorkingTests.run_r
+    resume = helpers.WorkingTests.resume
     intent = helpers.WorkingTests.intent
     transition = helpers.WorkingTests.transition
 
@@ -178,6 +180,18 @@ class HandoffTests(unittest.TestCase):
         self.fails("handoff_unavailable", self.prepare)
         self.saved = self.save(revision=2, readers=["owner"])
         self.fails("handoff_unavailable", self.prepare)
+
+    def test_prepare_carries_the_senders_summary_and_the_recipient_resumes_with_it(self):
+        prepared = self.prepare()
+        summary = prepared["summary"]
+        self.assertEqual(summary["method"], "extractive-v1")
+        self.assertTrue(summary["text"])
+        replay = self.run_r("replay", {"project": "p", "receipt": summary["receipt"]})
+        self.assertEqual(replay["summary"], summary["text"])
+        packet = self.resume(credential=self.recipient)
+        self.assertEqual(packet["summary"]["text"], summary["text"])
+        self.assertEqual(packet["summary"]["author"], "owner")
+        self.fails("checkpoint_unavailable", lambda: self.resume(credential=self.other))
 
     def test_recipient_only_policy_never_leaks_through_preview_or_prepare(self):
         self.recipient = self.store.grant(
@@ -446,5 +460,5 @@ class HandoffTests(unittest.TestCase):
             historical_inventory(db, 4)
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 11)
         self.assertEqual(self.view(self.prepare())["checkpoint"]["id"], self.saved["checkpoint"])
