@@ -1187,9 +1187,6 @@ summary:focus-visible,
   object-fit: contain;
   filter: drop-shadow(0 7px 10px #00000055);
 }
-.motion-toggle {
-  margin-bottom: 8px;
-}
 .tag,
 .controls,
 .nav-title,
@@ -1300,8 +1297,7 @@ aside {
   }
   .nav-title,
   .side-note,
-  aside .emblem-reveal,
-  aside .motion-toggle {
+  aside .emblem-reveal {
     display: none;
   }
   aside .nav {

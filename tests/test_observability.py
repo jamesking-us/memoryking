@@ -4,6 +4,7 @@ import http.client
 import logging
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -262,6 +263,12 @@ class MetricsTests(unittest.TestCase):
                         conn.request("GET", "/api/receipts/demo?x=1")
                         conn.getresponse().read()
                         conn.close()
+                        # The handler logs after the response bytes are out, so the
+                        # second line can trail the read by a moment.
+                        for _ in range(100):
+                            if sum("event=trace" in line for line in logs.output) >= 2:
+                                break
+                            time.sleep(0.02)
                     lines = [line for line in logs.output if "event=trace" in line]
                     self.assertEqual(len(lines), 2)
                     self.assertIn("component=dashboard event=trace", lines[0])
