@@ -15,7 +15,7 @@ python3.12 -m venv .venv
 .venv/bin/python -I -m pip check
 ```
 
-These commands install locked dependencies and build the package from this checkout. There is no public registry release to install by name. Keep the checkout to run the examples; the installed service itself does not need it.
+These commands install locked dependencies and build the package from this checkout. There is no public registry release to install by name yet; a [release wheel or container image](deployment.md#release-build) can be built from the checkout. Keep the checkout to run the examples; the installed service itself does not need it.
 
 ## 2. Try the complete example
 

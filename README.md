@@ -109,4 +109,4 @@ See [deployment and configuration](docs/deployment.md) for commands, prerequisit
 
 MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](SECURITY.md) and [current limits](docs/reference.md#current-limits).
 
-No public package or container image is published. A project distribution license has not yet been selected; see [distribution status](CONTRIBUTING.md#distribution).
+A packaged release (a Python wheel and a container image, each with recorded checksums) can be built from this repository, but nothing is published yet: a project distribution license has not been selected. See [distribution status](CONTRIBUTING.md#distribution).

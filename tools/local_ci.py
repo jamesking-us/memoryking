@@ -125,6 +125,7 @@ def main():
             ("checks", [str(python), "tools/check.py"], checkout),
             ("build", [str(python), "-m", "build", "--no-isolation"], checkout),
             ("wheel", [str(python), "tools/check_wheel.py"], checkout),
+            ("release", [str(python), "tools/build_release.py"], checkout),
             (
                 "contracts-package",
                 [

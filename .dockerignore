@@ -9,3 +9,6 @@
 !README.md
 !src/
 !src/**
+!deploy/local/
+!deploy/local/Dockerfile
+!requirements-core.lock

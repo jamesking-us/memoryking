@@ -28,6 +28,29 @@ python3.12 -m venv .venv-runtime
 
 Run the build step in the contributor environment. Verify the wheel revision/hash before moving it to another host. For a shared runtime, use the shared lock instead of the core lock. Node is needed to rebuild browser assets and TypeScript packages, not to run the installed Python service.
 
+### Release build
+
+`tools/build_release.py` builds the wheel and sdist reproducibly (the archive timestamps come from the commit, so one commit always yields the same bytes), writes `dist/SHA256SUMS` and `dist/RELEASE.json` (version, revision, tool versions, hashes), installs the wheel into a fresh virtual environment with the core lock, and checks `memoryking --version`. The manifest's `install` line pins the wheel by hash:
+
+```sh
+pip install --require-hashes --no-deps memoryking-0.1.0a1-py3-none-any.whl --hash=sha256:<from RELEASE.json>
+```
+
+Nothing is uploaded: the package keeps its `Private :: Do Not Upload` classifier until a distribution licence is chosen (see [distribution](../CONTRIBUTING.md#distribution)). `tools/local_ci.py` runs the release build on a clean checkout.
+
+### Container image for the local daemon
+
+[`deploy/local/Dockerfile`](../deploy/local/Dockerfile) builds the release wheel on a digest-pinned Python image and installs it with the core lock only, as an unprivileged user, with `/data` and `/control` as volumes:
+
+```sh
+docker build -f deploy/local/Dockerfile -t memoryking:local .
+docker volume create mk-data && docker volume create mk-control
+docker run --rm -v mk-data:/data -v mk-control:/control memoryking:local init --store /data/store --control /control/store
+docker run -d --name memoryking -v mk-data:/data -v mk-control:/control memoryking:local
+```
+
+Named volumes take the image's ownership of `/data` and `/control`; the store and control trees are created inside them because `init` insists on new directories. The socket is `/data/store/service.sock` on the data volume, so an agent in another container reaches it by mounting the same volume, and the owner credential is in the control volume. The dashboard binds loopback inside the container; run with `--network host` on Linux to open it from the host, or use the shared profile for anything beyond one machine. `tools/image_rehearsal.py --output NEW.json` builds the image, initialises a disposable store, starts the daemon, queries its status and records the image digest; that digest is what the owner signs (`cosign sign`) and publishes once a licence exists. No image is pushed.
+
 ## Local service
 
 ```sh
