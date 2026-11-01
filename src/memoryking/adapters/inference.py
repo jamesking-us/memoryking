@@ -26,6 +26,7 @@ VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("inference.schema.json").read_text())
 )
 EGRESS_REVISION = LOCAL_REVISION
+AUDIT_GROUP_LIMIT = 4096  # records one millisecond can hold in a single listing
 AUDIT_PAGE = 64
 
 
@@ -395,8 +396,23 @@ class Inference:
             + " ORDER BY evaluated DESC,id DESC LIMIT ?",
             (*params, AUDIT_PAGE + 1),
         ).fetchall()
+        # A page ends on a whole millisecond: records sharing the boundary instant move
+        # to the next page together, so an integer `before` cursor never drops any.
+        next_before = None
+        if len(rows) > AUDIT_PAGE:
+            boundary = rows[AUDIT_PAGE]["evaluated"]
+            shown = [row for row in rows[:AUDIT_PAGE] if row["evaluated"] > boundary]
+            if shown:
+                rows, next_before = shown, boundary + 1
+            else:
+                # One millisecond holds more than a page: return that whole group.
+                rows = self.db.execute(
+                    "SELECT * FROM egress_audit WHERE tenant=? AND project=? AND expires>? AND evaluated=? ORDER BY id DESC LIMIT ?",
+                    (who["tenant"], project, at, boundary, AUDIT_GROUP_LIMIT),
+                ).fetchall()
+                next_before = boundary
         items = []
-        for row in rows[:AUDIT_PAGE]:
+        for row in rows:
             manifest = json.loads(row["manifest"])
             receipts = sorted(
                 {
@@ -432,7 +448,7 @@ class Inference:
         result = {
             "status": "listed",
             "items": items,
-            "next_before": rows[AUDIT_PAGE - 1]["evaluated"] if len(rows) > AUDIT_PAGE else None,
+            "next_before": next_before,
             "policy_revision": self.s.egress_revision(),
         }
         return canonical_bytes({**result, "receipt": receipt}), decision, who, "listing", "listed"

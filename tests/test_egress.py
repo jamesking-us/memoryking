@@ -248,7 +248,8 @@ token_file = "{token}"
                 3,
             )
         listing = self.audit()
-        self.assertEqual(listing["policy_revision"], "test-2026")
+        # The operator's label plus a digest of the policy content.
+        self.assertRegex(listing["policy_revision"], r"^test-2026\.[0-9a-f]{16}$")
         self.assertEqual(len(listing["items"]), 6)
         newest = listing["items"][0]
         self.assertEqual(newest["status"], "delivered")
@@ -362,7 +363,12 @@ token_file = "{token}"
         self.assertEqual(caught.exception.code, "provider_unavailable")
         record = self.audit()["items"][0]
         self.assertEqual(record["status"], "failed")
-        self.assertIsNone(record["wire_hash"])
+        # The body handed to the transport is audited even though delivery failed.
+        sent = FakeProvider.requests[-1]["body"]
+        self.assertEqual(
+            record["wire_hash"],
+            hashlib.sha256(sent if isinstance(sent, bytes) else sent.encode()).hexdigest(),
+        )
         with self.assertRaises(LocalError) as caught:
             conversation.dispatch()
         self.assertEqual(caught.exception.code, "context_rebuild_required")

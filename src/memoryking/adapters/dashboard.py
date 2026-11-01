@@ -509,9 +509,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             from memoryking.adapters.local_store import identifier
 
             data = self.body()
-            value = dashboard.sessions.get(session)
-            if value is None or value["expires"] <= store.clock.utc_ms():
-                raise LocalError("session_expired")
+            # The same expiry, policy-epoch and incarnation checks as every other route:
+            # a session made stale by an earlier revoke cannot keep revoking.
+            with store.transaction() as decision:
+                value = dashboard.current(session, decision.evaluated_ms)
             if (
                 set(data) != {"csrf", "principal", "project"}
                 or not isinstance(data["csrf"], str)

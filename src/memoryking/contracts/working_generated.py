@@ -81,7 +81,7 @@ class Save(TypedDict):
     task: str
     run: str | None
     expected_revision: int | None
-    readers: list[str]
+    readers: list[str] | None
     checkpoint: Checkpoint
 
 class Resume(TypedDict):

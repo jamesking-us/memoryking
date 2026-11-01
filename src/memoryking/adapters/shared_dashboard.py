@@ -351,6 +351,20 @@ class SharedDashboard:
         """Revoke a grant from the dashboard; the epoch advances, so sessions re-sign-in."""
         value = self.current(session)
         with self.service.store(value["tenant"], value["credential"]) as store:
+            # The same expiry, policy-epoch and incarnation checks as read(): a session
+            # made stale by an earlier revoke, or expired, cannot keep revoking.
+            with store.transaction() as decision:
+                at = decision.evaluated_ms
+                store._auth(value["credential"], "admin", "*", at)
+                epoch = store.db.execute("SELECT policy_epoch FROM tenants").fetchone()
+                if (
+                    value["expires"] <= at
+                    or value["epoch"] != epoch[0]
+                    or value["incarnation"] != store.incarnation
+                ):
+                    with self.lock:
+                        self.sessions.pop(session, None)
+                    raise LocalError("session_changed")
             store.revoke(value["credential"], principal, project)
         return {"revoked": principal, "project": project, "sign_in_required": True}
 

@@ -8,8 +8,19 @@ from __future__ import annotations
 
 CONFLICT_SUFFIXES = ("_conflict", "_stale", "_changed", "_consumed", "_superseded")
 CONFLICT_CODES = {"reconciliation_required", "operation_reconciliation_required"}
-CAPACITY_SUFFIXES = ("_capacity", "_limit")
-CAPACITY_CODES = {"queue_full", "rate_limited", "concurrency_limit"}
+# 429 means "retry later": stored capacity that frees with time or retention, and the
+# few limits that clear on their own. A fixed input bound (tool_input_limit,
+# checkpoint_input_limit, ...) never clears, so it keeps the transport's 400.
+CAPACITY_SUFFIXES = ("_capacity",)
+CAPACITY_CODES = {
+    "queue_full",
+    "rate_limited",
+    "concurrency_limit",
+    "session_limit",
+    "bootstrap_limit",
+    "operation_limit",
+    "usage_retention_limit",
+}
 UNAVAILABLE_CODES = {
     "recovery_required",
     "service_busy",

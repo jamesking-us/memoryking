@@ -49,7 +49,8 @@ class HttpAdapter:
     def __init__(self, policy: EgressPolicy, entry: ProviderPolicy, model: str):
         if not entry.allows(model):
             raise LocalError("egress_provider_denied")
-        self.policy_revision = policy.revision
+        self.policy_revision = policy.binding
+        self.last_wire_hash: str | None = None  # the body last handed to the transport
         self.entry = entry
         self.name = entry.name
         self.model = model
@@ -131,6 +132,7 @@ class HttpAdapter:
         return value
 
     def dispatch(self, raw: bytes) -> ProviderResult:
+        self.last_wire_hash = None
         request = load_strict(raw)
         if (
             not isinstance(request, dict)
@@ -141,6 +143,9 @@ class HttpAdapter:
         ):
             raise LocalError("provider_request_invalid")
         body = canonical_bytes(self.wire(request))
+        # Recorded before the transport so a failed delivery still audits the bytes
+        # that may have left.
+        self.last_wire_hash = digest(body)
         reply = self._post(self.path(), self.headers(), body)
         content, usage = self.parse(reply)
         if not isinstance(content, str) or not content or len(content) > 65536:

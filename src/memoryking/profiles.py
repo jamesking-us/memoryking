@@ -6,6 +6,7 @@ paths only, never secrets: a credential entry is the path of a private credentia
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
@@ -130,7 +131,11 @@ def render(profiles: dict[str, dict[str, Any]]) -> str:
         for field in FIELDS:
             if field in profiles[name]:
                 value = profiles[name][field]
+                # JSON string escaping is valid TOML basic-string escaping: a path with a
+                # quote, backslash or control character reads back exactly.
                 lines.append(
-                    f"{field} = {value}" if isinstance(value, int) else f'{field} = "{value}"'
+                    f"{field} = {value}"
+                    if isinstance(value, int)
+                    else f"{field} = {json.dumps(str(value))}"
                 )
     return "\n".join(lines) + "\n"

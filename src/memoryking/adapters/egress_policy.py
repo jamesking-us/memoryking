@@ -8,7 +8,9 @@ that runs an adapter reads the same file to find its credentials.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -74,6 +76,16 @@ class EgressPolicy:
     revision: str
     providers: dict[str, ProviderPolicy]
     source: Path | None = None
+    fingerprint: str = ""
+
+    @property
+    def binding(self) -> str:
+        """The revision every conversation binds to: the operator's label plus a digest
+        of the policy content, so editing a host or model without a new label still
+        retires every conversation instead of letting host and daemon disagree."""
+        if not self.fingerprint:
+            return self.revision
+        return f"{self.revision[:79]}.{self.fingerprint[:16]}"
 
     @classmethod
     def load(cls, path: Path) -> EgressPolicy:
@@ -102,7 +114,10 @@ class EgressPolicy:
             if provider.name in providers:
                 raise LocalError("egress_policy_invalid")
             providers[provider.name] = provider
-        return cls(revision, providers, source)
+        fingerprint = hashlib.sha256(
+            json.dumps(data, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+        return cls(revision, providers, source, fingerprint)
 
     def provider(self, name: str) -> ProviderPolicy | None:
         return self.providers.get(name)

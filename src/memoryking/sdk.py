@@ -242,7 +242,7 @@ class LocalClient:
             # Progressive checkpoints: a minimal body saves in one call, the gaps are
             # recorded, and a missing expected_revision accepts the current one.
             args.setdefault("run", None)
-            args.setdefault("readers", [self.binding[2]])
+            args.setdefault("readers", None)  # keep the stream's readers (writer on first save)
             args.setdefault("expected_revision", None)
             if isinstance(args.get("checkpoint"), dict):
                 args["checkpoint"] = complete(args["checkpoint"], int(time.time() * 1000))

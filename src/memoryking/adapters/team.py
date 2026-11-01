@@ -150,15 +150,19 @@ def export(store: StoreCore, who: dict[str, Any], project: str, at: int) -> dict
     truncated: list[str] = []
     events: list[dict[str, Any]] = []
     before: int | None = None
-    while len(events) < EXPORT_EVENTS:
+    while True:
         page = timeline(store, who, project, before=before)
         events.extend(page["items"])
         if page["next_before"] is None:
             break
+        if len(events) >= EXPORT_EVENTS:
+            truncated.append("events")  # more events remain beyond the bound
+            break
         before = page["next_before"]
     if len(events) > EXPORT_EVENTS:
         events = events[:EXPORT_EVENTS]
-        truncated.append("events")
+        if "events" not in truncated:
+            truncated.append("events")
     egress = [
         {
             "permit": row["id"],

@@ -87,7 +87,7 @@ export interface Save {
   task: string;
   run: string | null;
   expected_revision: number | null;
-  readers: Array<string>;
+  readers: Array<string> | null;
   checkpoint: Checkpoint;
 }
 
