@@ -162,6 +162,17 @@ export interface AdapterContext {
   context_epoch: number;
 }
 
+export interface Summarize {
+  project: string;
+  task: string;
+  run: string | null;
+  checkpoint: string | null;
+  source: "extractive" | "provider";
+  text: string | null;
+  permit: string | null;
+  readers: Array<string> | null;
+}
+
 export interface Command0 {
   version: 1;
   incarnation: string;
@@ -215,4 +226,12 @@ export interface Command6 {
   args: AdapterResume;
 }
 
-export type WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6;
+export interface Command7 {
+  version: 1;
+  incarnation: string;
+  action: "summarize";
+  args: Summarize;
+  key: string;
+}
+
+export type WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7;

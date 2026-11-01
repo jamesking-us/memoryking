@@ -235,6 +235,7 @@ class Execution:
                 "source_position": row["position"],
                 "created_ms": row["created"],
                 "objective": body["objective"][:360],
+                "summary": self.w.latest_summary(who, row["id"], at),
                 "current_state": body["current_state"][:600],
                 "display_may_be_clipped": True,
                 "criteria": criteria,

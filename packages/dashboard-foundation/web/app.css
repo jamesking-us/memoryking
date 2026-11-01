@@ -727,6 +727,12 @@ footer {
   font-size: 20px;
   margin: 8px 0;
 }
+.task-summary {
+  color: var(--text);
+  border-left: 2px solid var(--good);
+  padding-left: 12px;
+  margin: 6px 0;
+}
 .task-card h4 {
   margin-bottom: 4px;
 }

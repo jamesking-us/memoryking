@@ -216,7 +216,7 @@ reuse(NativeFixture, test_retrieval.RetrievalTests, "brief_args receipt clock fa
 reuse(
     NativeFixture,
     test_working.WorkingTests,
-    "scope command save resume assign intent transition operations",
+    "scope command save resume assign intent transition operations summarize",
 )
 reuse(NativeFixture, test_handoff.HandoffTests, "prepare view ack")
 
@@ -289,6 +289,7 @@ test_operation_state_machine_retry_and_no_automatic_redispatch
 test_stale_writer_cannot_dispatch_and_new_writer_sees_old_ambiguity
 test_capacity_rejects_before_a_stream_becomes_unresumable
 test_expired_retained_resumes_are_collected_without_losing_checkpoint
+test_summaries_are_derived_artifacts_shown_first_on_resume
 """,
 )
 

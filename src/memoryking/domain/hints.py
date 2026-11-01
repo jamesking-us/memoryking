@@ -86,6 +86,8 @@ HINTS: dict[str, str] = {
     "experience_record_limit": "The record exceeds the per-record size limit.",
     "experience_response_limit": "The listing exceeds the response limit; narrow the request.",
     "inference_capacity": "Too many inference permits are outstanding; consume or let them expire.",
+    "summary_source_invalid": "A provider-written summary must be the exact reply recorded in a delivered egress audit for this principal and project; pass the permit and the unmodified text.",
+    "summary_unavailable": "No session summary is visible for that checkpoint; derive one with `summarize` or check the readers.",
     "egress_policy_invalid": "The egress policy file is malformed: check revision, provider names, hosts, models, classification ceilings and that plain HTTP is loopback-only.",
     "egress_provider_denied": "The provider or model is not in the daemon's egress policy; add it to the policy file and restart `serve --egress-policy`.",
     "egress_classification_denied": "A message cites content above the provider's classification ceiling; rebuild the conversation without it or raise the ceiling in the policy.",

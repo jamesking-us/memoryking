@@ -354,7 +354,36 @@ class Handoff:
             ),
         )
         self._event(who, "handoff_prepared", identifier, at)
-        return {"handle": identifier, "status": "prepared", "expires_ms": at + args["ttl_ms"]}
+        # A hand-off carries the sender's "where this left off" so the recipient reads
+        # three sentences before the full packet; the checkpoint remains the record.
+        from memoryking.adapters.working import Working
+
+        summary_receipt = uid("rcpt")
+        summary = Working(self.s)._summarize(
+            who,
+            {
+                "project": args["project"],
+                "task": args["task"],
+                "run": args["run"],
+                "checkpoint": args["checkpoint"],
+                "source": "extractive",
+                "text": None,
+                "permit": None,
+                "readers": None,
+            },
+            at,
+            summary_receipt,
+        )
+        return {
+            "handle": identifier,
+            "status": "prepared",
+            "expires_ms": at + args["ttl_ms"],
+            "summary": {
+                "receipt": summary_receipt,
+                "text": summary["summary"],
+                "method": summary["method"],
+            },
+        }
 
     def _render(
         self,

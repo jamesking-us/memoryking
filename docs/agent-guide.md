@@ -121,6 +121,14 @@ MemoryKing never reads a conversation on its own, but it is easy to feed from th
 
 Hook captures record the observation time to the day unless `--observed-ms` is given, so a rerun sends identical bytes and replays; the store's own event log keeps the exact time of each capture. Hook captures are evidence like any other: a briefing cites them with their source, and a reviewer can promote or quarantine what they contain.
 
+## Where this left off: session summaries
+
+A resume packet is exact but long. Every resume now begins with a three-sentence summary when one exists: where the task stands, what was learned or tried, and what comes next. Summaries are derived artifacts with their own receipt, stored beside the checkpoint they summarize; the checkpoint remains the record and the summary never adds facts to it.
+
+Three things produce them. A hand-off derives the sender's summary and returns it in the `prepare` result, so the recipient reads three sentences before the packet. The daemon derives one for any task whose latest checkpoint has been idle for `--summary-idle` (30 minutes by default) when the owner may read that checkpoint, so the dashboard's Task activity shows where each task left off. And a host can ask for one with the working-state action `summarize` or `memoryking summarize --project P --task T`.
+
+The default method is `extractive-v1`: a deterministic paragraph built from the checkpoint body plus counts of recent observations and open operations, quoting nothing but the checkpoint, so it is safe to show to every reader of the checkpoint. With an [egress policy](deployment.md#egress-policy) loaded, `memoryking summarize --provider NAME --model M --egress-policy FILE` has a model write it instead: the resume packet travels through `AuthorizedConversation` as audited memory, and the daemon admits the reply as a summary only if it is byte for byte the delivered reply recorded in the caller's egress audit for that permit. A model-written summary therefore cannot be edited on the way in, and its sources are the receipts the audit cites.
+
 ## What the host must do
 
 1. Supply accurate project/task identity and applicability bindings.

@@ -40,6 +40,7 @@ class WorkingTests(unittest.TestCase):
     review = knowledge_helpers.KnowledgeTests.review
     fails = retrieval_helpers.RetrievalTests.fails
     clock = retrieval_helpers.RetrievalTests.clock
+    run_r = retrieval_helpers.RetrievalTests.run_r
     constraint = retrieval_helpers.RetrievalTests.constraint
 
     def scope(self, **kw):
@@ -151,6 +152,119 @@ class WorkingTests(unittest.TestCase):
         self.store.close()
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
+
+    def summarize(self, credential=None, key=None, **kw):
+        return self.execute(
+            self.command(
+                "summarize",
+                {
+                    **self.scope(),
+                    "checkpoint": None,
+                    "source": "extractive",
+                    "text": None,
+                    "permit": None,
+                    "readers": None,
+                    **kw,
+                },
+                key,
+            ),
+            credential,
+        )
+
+    def test_summaries_are_derived_artifacts_shown_first_on_resume(self):
+        saved = self.save(readers=["owner", "reader"])
+        self.store.grant(self.owner, "reader", "p", ["read"])
+        before = self.resume()
+        self.assertIsNone(before["summary"])
+        self.store.capture(
+            self.owner,
+            self.ns,
+            "later",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "pytest",
+                "source_event": "later",
+                "text": "SECRET later observation text",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 2,
+            },
+        )
+        result = self.summarize(key="s1")
+        self.assertEqual(result["status"], "derived")
+        self.assertEqual(result["method"], "extractive-v1")
+        self.assertEqual(result["checkpoint"], saved["checkpoint"])
+        self.assertIn(
+            "1 observation recorded since the checkpoint (from pytest)", result["summary"]
+        )
+        self.assertNotIn("SECRET", result["summary"])
+        kinds = sorted(d["kind"] for d in result["sources"])
+        self.assertEqual(kinds, ["checkpoint", "observation"])
+        again = self.summarize(key="s1")  # idempotent replay, new receipt and instant
+        self.assertTrue(again["replayed"])
+        for field in ("summary", "method", "checkpoint", "sources", "readers"):
+            self.assertEqual(again[field], result[field])
+        replay = self.run_r("replay", {"project": "p", "receipt": result["receipt"]})
+        self.assertEqual(replay["schema"], "session-summary-v1")
+        self.assertEqual(replay["summary"], result["summary"])
+        self.assertEqual(replay["receipt"], result["receipt"])
+        after = self.resume()
+        self.assertEqual(after["summary"]["text"], result["summary"])
+        self.assertEqual(after["summary"]["receipt"], result["receipt"])
+        self.assertEqual(after["summary"]["author"], "owner")
+        text = self.resume(format="text")["text"]
+        self.assertIn("## Where this left off", text)
+        self.assertLess(text.index("Where this left off"), text.index("Where it stands"))
+        # A reader of the checkpoint sees the summary; a restricted summary is reader-bound.
+        reader = self.store.grant(self.owner, "reader", "p", ["read"])
+        self.assertEqual(self.resume(credential=reader)["summary"]["text"], result["summary"])
+        narrow = self.summarize(key="s2", readers=["owner"])
+        self.assertEqual(self.resume()["summary"]["receipt"], narrow["receipt"])
+        self.assertEqual(self.resume(credential=reader)["summary"]["receipt"], result["receipt"])
+        # A provider summary without an audited reply is refused.
+        self.fails(
+            "summary_source_invalid",
+            lambda: self.summarize(
+                key="s3", source="provider", text="made up", permit="permit_" + "0" * 32
+            ),
+        )
+        self.fails("summary_source_invalid", lambda: self.summarize(key="s4", source="provider"))
+        # A new revision starts without a summary; the old one stays with its checkpoint.
+        self.save(revision=1, readers=["owner", "reader"])
+        self.assertIsNone(self.resume()["summary"])
+        kinds = [
+            e["kind"]
+            for e in self.store.db.execute(
+                "SELECT kind FROM events WHERE subject=?", (saved["checkpoint"],)
+            ).fetchall()
+        ]
+        self.assertIn("summary_derived", kinds)
+
+    def test_idle_summaries_are_derived_once_by_the_owner_between_requests(self):
+        clock = self.clock()
+        saved = self.save()
+        self.store.summary_idle_ms = 1000
+        self.assertEqual(self.store.idle_summaries(clock.utc), 0)  # not idle yet
+        clock.utc += 2000
+        self.assertEqual(self.store.idle_summaries(clock.utc), 1)
+        self.assertEqual(self.store.idle_summaries(clock.utc), 0)  # already summarized
+        summary = self.resume()["summary"]
+        self.assertEqual(summary["author"], "owner")
+        self.assertEqual(summary["revision"], saved["revision"])
+        self.store.summary_idle_ms = 0
+        self.save(revision=1)
+        clock.utc += 2000
+        self.assertEqual(self.store.idle_summaries(clock.utc), 0)  # disabled
+        self.store.summary_idle_ms = 1000
+        self.store._last_summary_scan = 0
+        self.store.housekeeping()
+        self.assertIsNotNone(self.resume()["summary"])
+        # A checkpoint the owner may not read is left alone.
+        agent = self.store.grant(self.owner, "agent", "p", ["checkpoint", "read"])
+        self.save(readers=["agent"], credential=agent, task="private")
+        clock.utc += 2000
+        self.assertEqual(self.store.idle_summaries(clock.utc), 0)
 
     def test_full_checkpoint_current_policy_and_exact_budget(self):
         body = checkpoint()
@@ -549,7 +663,7 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
                 db.execute("DROP TABLE " + table)
             historical_inventory(db, 3)
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 11)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],

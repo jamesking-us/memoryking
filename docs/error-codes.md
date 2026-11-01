@@ -896,6 +896,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `store_required` | Pass `--store PATH` or use `--profile NAME`. |
 
+## summary
+
+| Code | What to do |
+| --- | --- |
+| `summary_source_invalid` | A provider-written summary must be the exact reply recorded in a delivered egress audit for this principal and project; pass the permit and the unmodified text. |
+| `summary_unavailable` | No session summary is visible for that checkpoint; derive one with `summarize` or check the readers. |
+
 ## temporal
 
 | Code | What to do |

@@ -5,6 +5,7 @@ import http.server
 import json
 import threading
 import unittest
+from pathlib import Path
 
 import test_inference
 
@@ -424,6 +425,85 @@ token_file = "{token}"
             Inference(self.store).execute(
                 reader, {"version": 1, "action": "audit", "args": {"project": "p", "before": None}}
             )
+
+    def test_model_written_summary_is_admitted_only_as_the_audited_reply(self):
+        policy = self.load_policy()
+        saved = self.client.working(
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "save",
+                "key": "ckpt1",
+                "args": {
+                    "project": "p",
+                    "task": "task",
+                    "run": None,
+                    "expected_revision": 0,
+                    "readers": ["owner"],
+                    "checkpoint": json.loads(
+                        (
+                            Path(__file__).resolve().parents[1]
+                            / "fixtures/contracts/checkpoint.json"
+                        ).read_text()
+                    ),
+                },
+            }
+        )
+        packet = self.client.working(
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "resume",
+                "args": {
+                    "project": "p",
+                    "task": "task",
+                    "run": None,
+                    "checkpoint": None,
+                    "bindings": [{}],
+                    "max_output_tokens": 6000,
+                    "tokenizer": "utf8-byte-estimate-v1",
+                    "format": "text",
+                },
+            }
+        )
+        conversation = self.conversation(policy, "openai-chat", "grok-4")
+        conversation.add_memory(packet)
+        self.host("Summarize in three sentences", context=conversation)
+        reply = conversation.dispatch()
+
+        def summarize(text, permit, key):
+            return self.client.working(
+                {
+                    "version": 1,
+                    "incarnation": self.store.incarnation,
+                    "action": "summarize",
+                    "key": key,
+                    "args": {
+                        "project": "p",
+                        "task": "task",
+                        "run": None,
+                        "checkpoint": None,
+                        "source": "provider",
+                        "text": text,
+                        "permit": permit,
+                        "readers": None,
+                    },
+                }
+            )
+
+        with self.assertRaises(LocalError) as caught:
+            summarize(reply["content"] + " (edited)", reply["permit"], "k1")
+        self.assertEqual(caught.exception.code, "summary_source_invalid")
+        result = summarize(reply["content"], reply["permit"], "k2")
+        self.assertEqual(result["summary"], reply["content"])
+        self.assertEqual(result["method"], "openai-chat/grok-4")
+        self.assertEqual(result["checkpoint"], saved["checkpoint"])
+        self.assertEqual([d["id"] for d in result["sources"] if d["kind"] == "observation"], [])
+        self.assertEqual(self.audit()["items"][0]["receipts"], [packet["receipt"]])
+        # The same audited reply may be filed again under a new key; it is the same text.
+        self.assertEqual(
+            summarize(reply["content"], reply["permit"], "k3")["summary"], reply["content"]
+        )
 
     def test_audit_records_outlive_purge_and_expire_with_retention(self):
         policy = self.load_policy()
