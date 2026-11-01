@@ -110,8 +110,7 @@ class Plans:
         # Historical rows still get their own audience/history/body checks, but
         # shared evidence needs only one current check at this caller/time.
         checked_dependencies = {
-            (dep["kind"], dep["id"])
-            for dep in json.loads(current["dependencies"])[:4096]
+            (dep["kind"], dep["id"]) for dep in json.loads(current["dependencies"])[:4096]
         }
         stream = self.w._stream(who, self.scope(args))
         assert stream is not None
