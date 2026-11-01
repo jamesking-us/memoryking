@@ -50,6 +50,17 @@ class Working:
             ).fetchone(),
         )
 
+    def _current_readers(self, who: dict[str, Any], args: dict[str, Any]) -> list[str]:
+        stream = self._stream(who, args)
+        if stream is not None and stream["latest"] is not None:
+            row = self.db.execute(
+                "SELECT readers FROM checkpoints WHERE tenant=? AND id=?",
+                (who["tenant"], stream["latest"]),
+            ).fetchone()
+            if row is not None:
+                return cast(list[str], json.loads(row["readers"]))
+        return [who["principal"]]
+
     def _writer(self, who: dict[str, Any], args: dict[str, Any], *, create: bool = False) -> None:
         row = self._stream(who, args)
         if row is None:
@@ -164,6 +175,9 @@ class Working:
             )
             self.s._auth(credential, "read", args["project"], at)
             self.r._expire(at)
+            if action == "save" and args["readers"] is None:
+                # Null keeps the stream's current audience; a first save is the writer's.
+                args = {**args, "readers": self._current_readers(who, args)}
             self._preflight(credential, who, action, args, at)
             key = command.get("key")
             lookup = (

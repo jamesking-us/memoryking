@@ -16,7 +16,7 @@ from memoryking.adapters.experience import Experience
 from memoryking.adapters.handoff import Handoff
 from memoryking.adapters.inference import Inference
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_contract import VALIDATOR
+from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
@@ -43,7 +43,8 @@ class StoreOperations:
         transactions and response size. Never the body, the project or the principal.
         """
         operation = request.get("operation") if isinstance(request, dict) else None
-        name = operation if isinstance(operation, str) else "invalid"
+        # Only a known operation name labels metrics and trace lines; caller text never does.
+        name = operation if isinstance(operation, str) and operation in OPERATIONS else "invalid"
         started = time.monotonic()
         error: str | None = None
         spans = timings(self.store) if tracing() else None

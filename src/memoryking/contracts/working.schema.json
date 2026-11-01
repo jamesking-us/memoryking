@@ -762,14 +762,22 @@
           "description": "The revision last seen; null accepts the current revision without a compare-and-set check."
         },
         "readers": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
-          },
-          "maxItems": 32,
-          "minItems": 1,
-          "uniqueItems": true
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who may read the checkpoint; null keeps the stream's current readers (the writer alone on a first save)."
         },
         "checkpoint": {
           "$ref": "#/$defs/Checkpoint"
