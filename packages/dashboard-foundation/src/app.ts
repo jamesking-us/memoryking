@@ -1,5 +1,6 @@
 import { Observatory } from "./observatory.js";
 import { installEmblem } from "./brand.js";
+import { Team } from "./team.js";
 interface Evidence {
   report: string;
   verification: string;
@@ -125,6 +126,8 @@ function renderComparison(
 const PROJECT_KEY = "memoryking.project";
 let projectsLoadedFor = -1;
 function rememberedProject(): string {
+  const linked = /^#project=([A-Za-z0-9_%\-]{1,96})$/.exec(location.hash);
+  if (linked) return decodeURIComponent(linked[1]);
   try {
     return localStorage.getItem(PROJECT_KEY) ?? "";
   } catch {
@@ -157,7 +160,8 @@ async function loadProjects(): Promise<void> {
   }
   if (!snapshot || context !== generation) return;
   const remembered = rememberedProject();
-  for (const id of ["execution-project", "receipt-project"]) {
+  renderProjects(items, remembered);
+  for (const id of ["execution-project", "receipt-project", "team-project"]) {
     const select = get<HTMLSelectElement>(id);
     const current = select.value || remembered;
     select.replaceChildren();
@@ -181,6 +185,64 @@ async function loadProjects(): Promise<void> {
       ? current
       : items[0].project;
   }
+}
+/** One card per readable project; opening one selects it in every view. */
+function renderProjects(
+  items: Array<{
+    project: string;
+    observations: number;
+    claims: number;
+    tasks: number;
+    receipts: number;
+    last_activity_ms?: number | null;
+  }>,
+  current: string,
+): void {
+  const grid = get("project-grid");
+  grid.replaceChildren();
+  get("projects-state").textContent = items.length
+    ? `${items.length} readable`
+    : "None readable";
+  for (const item of items) {
+    const card = el(
+      "button",
+      "",
+      "project-card" + (item.project === current ? " selected" : ""),
+    );
+    card.type = "button";
+    card.append(
+      el("strong", item.project),
+      el(
+        "small",
+        `${item.observations} memories · ${item.claims} claims · ${item.tasks} tasks · ${item.receipts} receipts`,
+      ),
+      el(
+        "small",
+        item.last_activity_ms
+          ? "last activity " + new Date(item.last_activity_ms).toLocaleString()
+          : "no recorded activity",
+      ),
+    );
+    card.onclick = () => openProject(item.project);
+    grid.append(card);
+  }
+}
+/** Follow a project in every view, from a card or a #project= link. */
+function openProject(project: string): void {
+  rememberProject(project);
+  for (const id of ["execution-project", "receipt-project", "team-project"]) {
+    const select = get<HTMLSelectElement>(id);
+    if (Array.from(select.options).some((o) => o.value === project))
+      select.value = project;
+  }
+  for (const card of get("project-grid").querySelectorAll(".project-card"))
+    card.classList.toggle(
+      "selected",
+      (card.querySelector("strong")?.textContent ?? "") === project,
+    );
+  history.replaceState(null, "", "#project=" + encodeURIComponent(project));
+  get<HTMLFormElement>("execution-form").requestSubmit();
+  get("execution-panel").scrollIntoView();
 }
 function renderCapacity(capacity: Snapshot["capacity"] | undefined): void {
   const list = get("capacity-list");
@@ -260,6 +322,23 @@ const observatory = new Observatory(
       : null,
   openReceipt,
 );
+const team = new Team(get("team-output"), {
+  api,
+  csrf: () => snapshot?.csrf ?? null,
+  signedOut: (message) => {
+    clear(message);
+  },
+});
+get("team-nav").onclick = () => get("team").scrollIntoView();
+get("team-project").addEventListener("change", () => {
+  rememberProject(get<HTMLSelectElement>("team-project").value);
+  team.clear();
+});
+get<HTMLFormElement>("team-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!snapshot) return;
+  void team.load(get<HTMLSelectElement>("team-project").value);
+});
 installEmblem(get<HTMLButtonElement>("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
 let selected = "P05";
@@ -356,6 +435,9 @@ function clearReceipts(): void {
 }
 function clear(message: string): void {
   observatory.clear();
+  team.clear();
+  get<HTMLSelectElement>("team-project").selectedIndex = -1;
+  get("project-grid").replaceChildren();
   stopStream();
   clearExecution();
   get<HTMLSelectElement>("execution-project").selectedIndex = -1;

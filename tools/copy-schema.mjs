@@ -33,6 +33,7 @@ for (const name of [
   "graph-layout",
   "graph-worker",
   "brand",
+  "team",
 ]) {
   copyFileSync(
     `packages/dashboard-foundation/dist/${name}.js`,

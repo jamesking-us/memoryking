@@ -20,6 +20,7 @@ import test_handoff
 import test_knowledge
 import test_repository
 import test_retrieval
+import test_team
 import test_working
 
 from memoryking.adapters.execution import Execution
@@ -332,3 +333,14 @@ class PostgresExecutionParity(NativeFixture):
 
 reuse(PostgresExecutionParity, test_execution.ExecutionTests, "passing event")
 adopt(PostgresExecutionParity, test_execution.ExecutionTests)
+
+
+class PostgresTeamParity(test_team.TeamCases, NativeFixture):
+    """Team activity and audit export over native PostgreSQL; readers bind their own store."""
+
+    def gate(self):
+        return self.store.transaction()
+
+    def who(self, credential=None):
+        with self.actor(credential) as store, store.transaction() as decision:
+            return store._auth(credential or self.owner, "read", "p", decision.evaluated_ms)

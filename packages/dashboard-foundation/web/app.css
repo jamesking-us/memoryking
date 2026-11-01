@@ -705,8 +705,36 @@ footer {
   background: #d46c76;
 }
 
-.execution-panel {
+.execution-panel,
+.team-panel {
   margin-top: 24px;
+}
+.projects {
+  margin-bottom: 22px;
+}
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.project-card {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 8px;
+}
+.project-card strong {
+  font-size: 16px;
+}
+.project-card small {
+  color: var(--muted);
+}
+.project-card.selected {
+  border-color: var(--accent);
+  box-shadow: inset 2px 0 var(--accent);
 }
 .execution-workspace {
   display: grid;

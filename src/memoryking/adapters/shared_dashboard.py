@@ -233,6 +233,29 @@ class SharedDashboard:
                         )
                     else:
                         raise LocalError("route_unavailable")
+                elif route.startswith("/api/activity/"):
+                    from memoryking.adapters.team import activity
+
+                    parts = route.split("/")
+                    if len(parts) not in {4, 5} or (len(parts) == 5 and not parts[4].isdigit()):
+                        raise LocalError("invalid_request")
+                    project = identifier(parts[3])
+                    reader = store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(
+                        activity(
+                            store,
+                            reader,
+                            project,
+                            at,
+                            days=int(parts[4]) if len(parts) == 5 else 30,
+                        )
+                    )
+                elif route.startswith("/api/export/"):
+                    from memoryking.adapters.team import export
+
+                    project = identifier(route.removeprefix("/api/export/"))
+                    store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(export(store, who, project, at))
                 elif route.startswith("/api/citations/"):
                     from urllib.parse import unquote
 
@@ -324,6 +347,13 @@ class SharedDashboard:
             }
         return session
 
+    def revoke(self, session: str, principal: str, project: str) -> dict[str, Any]:
+        """Revoke a grant from the dashboard; the epoch advances, so sessions re-sign-in."""
+        value = self.current(session)
+        with self.service.store(value["tenant"], value["credential"]) as store:
+            store.revoke(value["credential"], principal, project)
+        return {"revoked": principal, "project": project, "sign_in_required": True}
+
     def command(self, session: str, body: dict[str, Any]) -> Released:
         from memoryking.adapters.browser_commands import execute
 
@@ -413,6 +443,26 @@ class SharedDashboard:
                 )
                 return response
             session = self.session(request)
+            if route == "/api/admin/revoke" and request.method == "POST":
+                if request.headers.getlist("content-type") != ["application/json"]:
+                    raise LocalError("invalid_request")
+                raw = await request.body()
+                if len(raw) > 4096:
+                    raise LocalError("invalid_request")
+                body = load_strict(raw)
+                value = self.current(session)
+                if (
+                    not isinstance(body, dict)
+                    or set(body) != {"csrf", "principal", "project"}
+                    or not isinstance(body["csrf"], str)
+                    or not secrets.compare_digest(body["csrf"], value["csrf"])
+                ):
+                    raise LocalError("csrf_rejected")
+                principal, project = identifier(body["principal"]), identifier(body["project"])
+                revoked = await anyio.to_thread.run_sync(self.revoke, session, principal, project)
+                return Response(
+                    canonical_bytes(revoked), media_type="application/json", headers=SAFE_HEADERS
+                )
             if route == "/api/command" and request.method == "POST":
                 if request.headers.getlist("authorization"):
                     raise LocalError("mixed_authentication")
@@ -551,6 +601,10 @@ class SharedDashboard:
                 ("/api/receipts/{project}", ["GET", "HEAD"]),
                 ("/api/receipt/{project}/{receipt}", ["GET", "HEAD"]),
                 ("/api/citations/{project}/{node}", ["GET", "HEAD"]),
+                ("/api/activity/{project}", ["GET", "HEAD"]),
+                ("/api/activity/{project}/{days}", ["GET", "HEAD"]),
+                ("/api/export/{project}", ["GET", "HEAD"]),
+                ("/api/admin/revoke", ["POST"]),
                 ("/api/artifact/{artifact}", ["GET", "HEAD"]),
             ]
         ]

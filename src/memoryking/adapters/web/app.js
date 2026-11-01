@@ -1,5 +1,6 @@
 import { Observatory } from "./observatory.js";
 import { installEmblem } from "./brand.js";
+import { Team } from "./team.js";
 const CAPACITY_LABELS = {
     jobs: ["Pending jobs", "Drained by the service between requests"],
     rendered_artifacts: ["Retained briefings", "Oldest evicted first at the cap"],
@@ -44,6 +45,9 @@ function renderComparison(before, after, beforeId, afterId) {
 const PROJECT_KEY = "memoryking.project";
 let projectsLoadedFor = -1;
 function rememberedProject() {
+    const linked = /^#project=([A-Za-z0-9_%\-]{1,96})$/.exec(location.hash);
+    if (linked)
+        return decodeURIComponent(linked[1]);
     try {
         return localStorage.getItem(PROJECT_KEY) ?? "";
     }
@@ -75,7 +79,8 @@ async function loadProjects() {
     if (!snapshot || context !== generation)
         return;
     const remembered = rememberedProject();
-    for (const id of ["execution-project", "receipt-project"]) {
+    renderProjects(items, remembered);
+    for (const id of ["execution-project", "receipt-project", "team-project"]) {
         const select = get(id);
         const current = select.value || remembered;
         select.replaceChildren();
@@ -96,6 +101,37 @@ async function loadProjects() {
             ? current
             : items[0].project;
     }
+}
+/** One card per readable project; opening one selects it in every view. */
+function renderProjects(items, current) {
+    const grid = get("project-grid");
+    grid.replaceChildren();
+    get("projects-state").textContent = items.length
+        ? `${items.length} readable`
+        : "None readable";
+    for (const item of items) {
+        const card = el("button", "", "project-card" + (item.project === current ? " selected" : ""));
+        card.type = "button";
+        card.append(el("strong", item.project), el("small", `${item.observations} memories · ${item.claims} claims · ${item.tasks} tasks · ${item.receipts} receipts`), el("small", item.last_activity_ms
+            ? "last activity " + new Date(item.last_activity_ms).toLocaleString()
+            : "no recorded activity"));
+        card.onclick = () => openProject(item.project);
+        grid.append(card);
+    }
+}
+/** Follow a project in every view, from a card or a #project= link. */
+function openProject(project) {
+    rememberProject(project);
+    for (const id of ["execution-project", "receipt-project", "team-project"]) {
+        const select = get(id);
+        if (Array.from(select.options).some((o) => o.value === project))
+            select.value = project;
+    }
+    for (const card of get("project-grid").querySelectorAll(".project-card"))
+        card.classList.toggle("selected", (card.querySelector("strong")?.textContent ?? "") === project);
+    history.replaceState(null, "", "#project=" + encodeURIComponent(project));
+    get("execution-form").requestSubmit();
+    get("execution-panel").scrollIntoView();
 }
 function renderCapacity(capacity) {
     const list = get("capacity-list");
@@ -159,6 +195,24 @@ const observatory = new Observatory(get("observatory"), api, () => snapshot
         authorization_epoch: snapshot.authorization_epoch,
     }
     : null, openReceipt);
+const team = new Team(get("team-output"), {
+    api,
+    csrf: () => snapshot?.csrf ?? null,
+    signedOut: (message) => {
+        clear(message);
+    },
+});
+get("team-nav").onclick = () => get("team").scrollIntoView();
+get("team-project").addEventListener("change", () => {
+    rememberProject(get("team-project").value);
+    team.clear();
+});
+get("team-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!snapshot)
+        return;
+    void team.load(get("team-project").value);
+});
 installEmblem(get("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
 let selected = "P05";
@@ -252,6 +306,9 @@ function clearReceipts() {
 }
 function clear(message) {
     observatory.clear();
+    team.clear();
+    get("team-project").selectedIndex = -1;
+    get("project-grid").replaceChildren();
     stopStream();
     clearExecution();
     get("execution-project").selectedIndex = -1;

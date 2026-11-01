@@ -24,6 +24,7 @@
         <button class="nav" id="retrieval-nav">
           ⌁ &nbsp; Retrieval history
         </button>
+        <button class="nav" id="team-nav">☷ &nbsp; Team</button>
         <button class="nav" id="record-nav" hidden>
           ▤ &nbsp; Development record
         </button>
@@ -102,6 +103,19 @@
             </div>
             <div id="capacity-list" class="capacity-list"></div>
           </section>
+          <section id="projects" class="card projects" aria-label="Projects">
+            <div class="section-head">
+              <div>
+                <h2>Projects</h2>
+                <p class="caption">
+                  Projects your account can read, with record counts and the
+                  latest recorded activity. Open one to follow it in every view.
+                </p>
+              </div>
+              <span id="projects-state" class="tag"></span>
+            </div>
+            <div id="project-grid" class="project-grid"></div>
+          </section>
           <section id="execution-panel" class="card execution-panel">
             <div class="section-head">
               <div>
@@ -162,6 +176,28 @@
             </div>
           </section>
           <section id="observatory" class="card observatory"></section>
+          <section id="team" class="card team-panel">
+            <div class="section-head">
+              <div>
+                <h2>Team</h2>
+              </div>
+              <span class="tag">Shared profile</span>
+            </div>
+            <p>
+              Who did what in a project, the grants that allow it, and an audit
+              export. Counts are of recorded events; they describe activity, not
+              quality.
+            </p>
+            <form id="team-form" class="receipt-form">
+              <label for="team-project">Project</label
+              ><select id="team-project" required>
+                <option value="" disabled selected>
+                  Sign in to list projects
+                </option></select
+              ><button type="submit">Load team view</button>
+            </form>
+            <div id="team-output"></div>
+          </section>
           <div id="development-record" hidden>
             <section
               id="metrics"

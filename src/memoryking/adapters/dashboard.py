@@ -28,7 +28,7 @@ ASSETS = {
     "/elephant.png": ("elephant.png", "image/png"),
     **{
         f"/{name}.js": (f"{name}.js", "text/javascript")
-        for name in ("app", "observatory", "graph", "graph-layout", "graph-worker", "brand")
+        for name in ("app", "observatory", "graph", "graph-layout", "graph-worker", "brand", "team")
     },
     **{
         f"/{name}.svg": (f"{name}.svg", "image/svg+xml")
@@ -505,6 +505,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             return
         session = self.session()
+        if self.command == "POST" and self.path == "/api/admin/revoke":
+            from memoryking.adapters.local_store import identifier
+
+            data = self.body()
+            value = dashboard.sessions.get(session)
+            if value is None or value["expires"] <= store.clock.utc_ms():
+                raise LocalError("session_expired")
+            if (
+                set(data) != {"csrf", "principal", "project"}
+                or not isinstance(data["csrf"], str)
+                or not secrets.compare_digest(data["csrf"], value["csrf"])
+            ):
+                raise LocalError("csrf_rejected")
+            principal, project = identifier(data["principal"]), identifier(data["project"])
+            # A policy change advances the epoch, so every browser session, including this
+            # one, must sign in again afterwards; the reply says so.
+            store.revoke(value["credential"], principal, project)
+            self.send(
+                200,
+                canonical_bytes(
+                    {"revoked": principal, "project": project, "sign_in_required": True}
+                ),
+            )
+            return
         if self.command == "POST" and self.path == "/api/command":
             from memoryking.adapters.browser_commands import execute
 
@@ -607,6 +631,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                 else:
                     raise LocalError("route_unavailable")
+            elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/activity/"):
+                from memoryking.adapters.local_store import identifier
+                from memoryking.adapters.team import activity
+
+                parts = self.path.split("/")
+                if len(parts) not in {4, 5} or (len(parts) == 5 and not parts[4].isdigit()):
+                    raise LocalError("invalid_request")
+                project = identifier(parts[3])
+                who = store._auth(value["credential"], "read", project, decision.evaluated_ms)
+                raw = canonical_bytes(
+                    activity(
+                        store,
+                        who,
+                        project,
+                        decision.evaluated_ms,
+                        days=int(parts[4]) if len(parts) == 5 else 30,
+                    )
+                )
+            elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/export/"):
+                from memoryking.adapters.local_store import identifier
+                from memoryking.adapters.team import export
+
+                project = identifier(self.path.removeprefix("/api/export/"))
+                who = store._auth(value["credential"], "admin", "*", decision.evaluated_ms)
+                store._auth(value["credential"], "read", project, decision.evaluated_ms)
+                raw = canonical_bytes(export(store, who, project, decision.evaluated_ms))
             elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/citations/"):
                 from urllib.parse import unquote
 

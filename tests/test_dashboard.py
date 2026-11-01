@@ -458,6 +458,76 @@ class DashboardTests(unittest.TestCase):
         status, _, raw = command("authorize", {"project": "p"})
         self.assertEqual(json.loads(raw)["error"], "dashboard_action_unsupported")
 
+    def test_team_routes_activity_export_and_revoke_under_csrf(self):
+        namespace = self.store.namespace(self.owner, "p")
+        self.store.capture(
+            self.owner,
+            namespace,
+            "team-1",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "team-1",
+                "text": "team activity source",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        self.store.grant(self.owner, "agent-1", "p", ["read", "capture"])
+        self.login()
+        csrf = json.loads(self.call("GET", "/api/snapshot")[2])["csrf"]
+        status, _, raw = self.call("GET", "/api/activity/p")
+        self.assertEqual(status, 200, raw)
+        principals = {p["principal"]: p for p in json.loads(raw)["principals"]}
+        self.assertEqual(principals["owner"]["events"]["captures"], 1)
+        self.assertEqual(principals["agent-1"]["grants"], ["capture", "read"])
+        self.assertEqual(json.loads(self.call("GET", "/api/activity/p/7")[2])["days"], 7)
+        self.assertEqual(self.call("GET", "/api/activity/p/x")[0], 403)
+        status, _, raw = self.call("GET", "/api/export/p")
+        self.assertEqual(status, 200, raw)
+        document = json.loads(raw)
+        self.assertEqual(document["schema"], "audit-export-v1")
+        self.assertNotIn("team activity source", raw.decode())
+        self.assertEqual(self.call("GET", "/api/projects")[0], 200)
+        self.assertIn(
+            "last_activity_ms", json.loads(self.call("GET", "/api/projects")[2])["items"][0]
+        )
+        # Revoke needs the CSRF token and the dashboard origin; afterwards the session is stale.
+        self.assertEqual(
+            self.call(
+                "POST",
+                "/api/admin/revoke",
+                {"csrf": "wrong", "principal": "agent-1", "project": "p"},
+                {"Origin": self.web.origin},
+            )[0],
+            403,
+        )
+        self.assertEqual(
+            self.call(
+                "POST", "/api/admin/revoke", {"csrf": csrf, "principal": "agent-1", "project": "p"}
+            )[0],
+            403,
+        )
+        status, _, raw = self.call(
+            "POST",
+            "/api/admin/revoke",
+            {"csrf": csrf, "principal": "agent-1", "project": "p"},
+            {"Origin": self.web.origin},
+        )
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(
+            json.loads(raw), {"project": "p", "revoked": "agent-1", "sign_in_required": True}
+        )
+        self.assertEqual(self.call("GET", "/api/activity/p")[0], 409)
+        self.login()
+        principals = {
+            p["principal"]: p
+            for p in json.loads(self.call("GET", "/api/activity/p")[2])["principals"]
+        }
+        self.assertNotIn("agent-1", principals)
+
     def test_two_receipts_expose_comparable_selected_references(self):
         namespace = self.store.namespace(self.owner, "p")
         for number, text in enumerate(("deadline exceeded on retry", "deadline fixed by backoff")):
@@ -603,8 +673,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("p", items)
         self.assertGreaterEqual(items["p"]["observations"], 1)
         self.assertEqual(
-            set(items["p"]), {"project", "observations", "claims", "tasks", "receipts"}
+            set(items["p"]),
+            {"project", "observations", "claims", "tasks", "receipts", "last_activity_ms"},
         )
+        self.assertIsInstance(items["p"]["last_activity_ms"], int)
         reader = self.store.grant(self.owner, "reader", "q", ["read"])
         with self.store.transaction() as decision:
             scoped = visible_projects(self.store, reader, decision.evaluated_ms)
