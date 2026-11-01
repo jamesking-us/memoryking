@@ -106,6 +106,13 @@ class Plans:
 
     def get(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
         current = self.current(who, args, at)
+        # current() has already checked all its evidence under this transaction.
+        # Historical rows still get their own audience/history/body checks, but
+        # shared evidence needs only one current check at this caller/time.
+        checked_dependencies = {
+            (dep["kind"], dep["id"])
+            for dep in json.loads(current["dependencies"])[:4096]
+        }
         stream = self.w._stream(who, self.scope(args))
         assert stream is not None
         row = current
@@ -128,7 +135,10 @@ class Plans:
         for item in history[:4096]:
             try:
                 previous = self.w._checkpoint(
-                    who, {**self.scope(args), "checkpoint": item["id"]}, at
+                    who,
+                    {**self.scope(args), "checkpoint": item["id"]},
+                    at,
+                    checked_dependencies=checked_dependencies,
                 )
                 prior_plans.append(json.loads(previous["body"])["plan"])
             except (LocalError, KeyError):

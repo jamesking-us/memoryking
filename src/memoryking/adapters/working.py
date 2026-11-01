@@ -331,7 +331,14 @@ class Working:
         self.s._enqueue(who["tenant"], position, None, who["principal"])
         return {"revision": row["revision"] + 1, "writer": args["writer"], "reason": args["reason"]}
 
-    def _checkpoint(self, who: dict[str, Any], args: dict[str, Any], at: int) -> sqlite3.Row:
+    def _checkpoint(
+        self,
+        who: dict[str, Any],
+        args: dict[str, Any],
+        at: int,
+        *,
+        checked_dependencies: set[tuple[str, str]] | None = None,
+    ) -> sqlite3.Row:
         identifier = args["checkpoint"]
         if identifier is None:
             stream = self._stream(who, args)
@@ -349,7 +356,15 @@ class Working:
         if hashlib.sha256(row["body"].encode()).hexdigest() != row["body_hash"]:
             raise LocalError("checkpoint_integrity_failure")
         for dep in json.loads(row["dependencies"]):
+            identity = (dep["kind"], dep["id"])
+            if checked_dependencies is not None and identity in checked_dependencies:
+                continue
             self._dependency(who, dep, at)
+            # Plans.get owns this bounded, positive-only set for one caller and
+            # evaluated time inside its existing canonical transaction. It is
+            # never reused across transactions, releases or principals.
+            if checked_dependencies is not None and len(checked_dependencies) < 4096:
+                checked_dependencies.add(identity)
         return cast(sqlite3.Row, row)
 
     def _operations(
