@@ -1,14 +1,7 @@
-/** A bounded depth tilt of the bundled emblem; no continuous rendering or network requests. */
+/** A bounded depth tilt of the bundled emblem on request; reduced-motion users never see it. */
 export function installEmblem(button: HTMLButtonElement): void {
   const img = button.querySelector("img")!;
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "quiet motion-toggle";
-  toggle.textContent = "Motion on";
-  toggle.setAttribute("aria-pressed", "true");
-  button.after(toggle);
-  let motionAllowed = true,
-    visible = true,
+  let visible = true,
     animation: Animation | null = null;
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
   const stop = () => {
@@ -17,16 +10,9 @@ export function installEmblem(button: HTMLButtonElement): void {
     button.dataset.animating = "false";
   };
   stop();
-  toggle.onclick = () => {
-    motionAllowed = !motionAllowed;
-    toggle.textContent = motionAllowed ? "Motion on" : "Motion off";
-    toggle.setAttribute("aria-pressed", String(motionAllowed));
-    stop();
-  };
   button.onclick = () => {
     stop();
     if (
-      !motionAllowed ||
       reduced.matches ||
       document.hidden ||
       !visible ||

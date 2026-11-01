@@ -47,7 +47,7 @@ test("force graph ceiling rejects oversize input; dangling references cannot mov
   );
   assert.deepEqual(a.nodes, [{ id: "a", x: 40, y: 40, pinned: true }]);
 });
-test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or reduced", () => {
+test("emblem motion is on request only, bounded and cancelled when hidden, offscreen or reduced", () => {
   const names = ["document", "matchMedia", "IntersectionObserver"];
   const old = Object.fromEntries(
     names.map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]),
@@ -55,7 +55,6 @@ test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or r
   const handlers = {};
   let intersection,
     mediaChange,
-    toggle,
     active = null,
     starts = 0;
   const img = {
@@ -72,13 +71,7 @@ test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or r
       return active;
     },
   };
-  const button = {
-    dataset: {},
-    querySelector: () => img,
-    after(v) {
-      toggle = v;
-    },
-  };
+  const button = { dataset: {}, querySelector: () => img };
   const media = {
     matches: false,
     addEventListener(_k, f) {
@@ -132,11 +125,7 @@ test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or r
     active.onfinish();
     assert.equal(active, null);
     assert.equal(button.dataset.animating, "false");
-    toggle.onclick();
-    button.onclick();
-    assert.equal(active, null);
-    assert.equal(toggle.textContent, "Motion off");
-    toggle.onclick();
+    assert.equal(button.after, undefined, "no motion toggle is added");
     delete img.animate;
     button.onclick();
     assert.equal(button.dataset.animating, "false");
