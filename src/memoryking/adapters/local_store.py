@@ -121,6 +121,9 @@ __all__ = [
 ]
 
 
+SCHEMA_VERSION = 11  # the SQLite user_version the daemon migrates every store to
+
+
 class LocalStore(StoreCore):
     def __init__(
         self,
@@ -190,6 +193,7 @@ class LocalStore(StoreCore):
             raise
 
     def _load(self) -> None:
+        # Migrations run in order up to SCHEMA_VERSION.
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version == 1:
             self.db.executescript(Path(__file__).with_name("knowledge_schema.sql").read_text())
@@ -212,7 +216,7 @@ class LocalStore(StoreCore):
             self.db.executescript(Path(__file__).with_name("egress_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}:
             self.db.executescript(Path(__file__).with_name("summary_schema.sql").read_text())
-        elif version != 11:
+        elif version != SCHEMA_VERSION:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         self.store_id, self.incarnation = meta["store"], meta["incarnation"]

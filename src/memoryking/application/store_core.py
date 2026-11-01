@@ -641,47 +641,77 @@ class StoreCore:
                 return True
             return any(isinstance(d, dict) and d.get("id") in purged for d in deps)
 
-        for row in self.db.execute(
-            "SELECT id,dependencies FROM rendered_artifacts WHERE tenant=? AND state='retained'",
-            (tenant,),
-        ).fetchall():
-            if depends(row["dependencies"]):
-                self.db.execute(
-                    "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
-                    (tenant, row["id"]),
-                )
-        checkpoints = [
-            row["id"]
+        # A fixed point: whatever is retired here joins the purged set, so anything
+        # derived from it (a summary of a purged checkpoint, an atlas page over a
+        # handoff view, an artifact over a retired experience record) goes too.
+        retired = 0
+        purged_checkpoints: set[str] = set()
+        purged_artifacts: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
             for row in self.db.execute(
                 "SELECT id,dependencies FROM checkpoints WHERE tenant=? AND state!='purged'",
                 (tenant,),
-            ).fetchall()
-            if depends(row["dependencies"])
-        ]
-        for checkpoint in checkpoints:
+            ).fetchall():
+                if depends(row["dependencies"]):
+                    self.db.execute(
+                        "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                        (tenant, row["id"]),
+                    )
+                    purged.update(
+                        handoff[0]
+                        for handoff in self.db.execute(
+                            "SELECT id FROM handoffs WHERE tenant=? AND checkpoint=?",
+                            (tenant, row["id"]),
+                        ).fetchall()
+                    )
+                    self.db.execute(
+                        "UPDATE handoffs SET state='purged' WHERE tenant=? AND checkpoint=?",
+                        (tenant, row["id"]),
+                    )
+                    purged.add(row["id"])
+                    purged_checkpoints.add(row["id"])
+                    changed = True
+            for row in self.db.execute(
+                "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL",
+                (tenant,),
+            ).fetchall():
+                if depends(row["dependencies"]):
+                    self.db.execute(
+                        "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=? AND id=?",
+                        (tenant, row["id"]),
+                    )
+                    purged.add(row["id"])
+                    retired += 1
+                    changed = True
+            for row in self.db.execute(
+                "SELECT id,dependencies FROM rendered_artifacts WHERE tenant=? AND state='retained'",
+                (tenant,),
+            ).fetchall():
+                if depends(row["dependencies"]):
+                    self.db.execute(
+                        "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                        (tenant, row["id"]),
+                    )
+                    purged.add(row["id"])
+                    purged_artifacts.add(row["id"])
+                    changed = True
+        # Session summaries hold verbatim checkpoint text: erase every summary of a
+        # purged checkpoint or whose artifact was purged.
+        for identifier in purged_checkpoints:
             self.db.execute(
-                "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=? AND id=?",
-                (tenant, checkpoint),
+                "DELETE FROM session_summaries WHERE tenant=? AND checkpoint=?",
+                (tenant, identifier),
             )
+        for identifier in purged_artifacts:
             self.db.execute(
-                "UPDATE handoffs SET state='purged' WHERE tenant=? AND checkpoint=?",
-                (tenant, checkpoint),
+                "DELETE FROM session_summaries WHERE tenant=? AND id=?", (tenant, identifier)
             )
         self.db.execute(
             "UPDATE retries SET result=NULL WHERE tenant=? AND namespace IN ('working-v1','handoff-v1','experience-v1')",
             (tenant,),
         )
-        retired = 0
-        for row in self.db.execute(
-            "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL",
-            (tenant,),
-        ).fetchall():
-            if depends(row["dependencies"]):
-                self.db.execute(
-                    "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=? AND id=?",
-                    (tenant, row["id"]),
-                )
-                retired += 1
         if retired:
             self.db.execute(
                 "UPDATE ranking_state SET configuration=NULL,version=version+1,reconciliation=0 WHERE tenant=?",
@@ -1137,10 +1167,27 @@ class StoreCore:
                 ).fetchall()
                 for row in rows:
                     path = self.root / "blobs" / tenant / row["blob"]
-                    private_file(path)
-                    raw = path.read_bytes()
-                    if hashlib.sha256(raw).hexdigest() != row["blob"]:
-                        raise LocalError("blob_corrupt")
+                    try:
+                        private_file(path)
+                        raw = path.read_bytes()
+                        if hashlib.sha256(raw).hexdigest() != row["blob"]:
+                            raise LocalError("blob_corrupt")
+                    except (LocalError, OSError):
+                        # One unreadable blob costs only its own job an attempt (with the
+                        # worker backoff, dead at MAX_ATTEMPTS); the pass continues.
+                        attempts = self.db.execute(
+                            "SELECT attempts FROM jobs WHERE tenant=? AND id=?", (tenant, row["id"])
+                        ).fetchone()[0]
+                        self.db.execute(
+                            "UPDATE jobs SET state=?,fence=fence+1,attempts=attempts+1,available=? WHERE tenant=? AND id=?",
+                            (
+                                "dead" if attempts + 1 >= MAX_ATTEMPTS else "pending",
+                                at + min(60000, (2 ** (attempts + 1)) * 1000),
+                                tenant,
+                                row["id"],
+                            ),
+                        )
+                        continue
                     self.db.execute(
                         upsert("projection_items"),
                         (

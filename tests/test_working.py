@@ -241,6 +241,31 @@ class WorkingTests(unittest.TestCase):
         ]
         self.assertIn("summary_derived", kinds)
 
+    def test_purge_erases_summaries_derived_from_a_purged_checkpoint(self):
+        body = checkpoint()
+        body["objective"] = "SECRET-OBJECTIVE quoted"
+        body["references"] = [{"kind": "observation", "id": self.obs["observation"]}]
+        saved = self.save(body, key="save")
+        result = self.summarize(key="s1")
+        self.assertIn("SECRET-OBJECTIVE", result["summary"])
+        self.store.purge(self.owner, self.obs["observation"])
+        db = self.store.db
+        self.assertEqual(
+            db.execute(
+                "SELECT state FROM checkpoints WHERE id=?", (saved["checkpoint"],)
+            ).fetchone()[0],
+            "purged",
+        )
+        artifact = db.execute(
+            "SELECT state,body FROM rendered_artifacts WHERE id=?", (result["receipt"],)
+        ).fetchone()
+        self.assertEqual((artifact["state"], artifact["body"]), ("purged", None))
+        self.assertIsNone(
+            db.execute(
+                "SELECT text FROM session_summaries WHERE id=?", (result["receipt"],)
+            ).fetchone()
+        )
+
     def test_idle_summaries_are_derived_once_by_the_owner_between_requests(self):
         clock = self.clock()
         saved = self.save()

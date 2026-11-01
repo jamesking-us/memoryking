@@ -175,7 +175,10 @@ class Inference:
                     credential, action, args, at, decision, receipt
                 )
                 self._receipt(who, receipt, raw, released, at, None)
-                self.s._event(who["tenant"], "egress_" + status, identifier, at, who["principal"])
+                position = self.s._event(
+                    who["tenant"], "egress_" + status, identifier, at, who["principal"]
+                )
+                self.s._enqueue(who["tenant"], position, None, who["principal"])
                 self.s.fault("after_validation")
                 released.check(self.s.clock)
                 self.s._expose()
@@ -304,9 +307,10 @@ class Inference:
             raw = canonical_bytes({**result, "receipt": receipt})
             epochs = (args["binding"]["authorization_epoch"], args["binding"]["purge_epoch"])
             self._receipt(who, receipt, raw, released, at, epochs)
-            self.s._event(
+            position = self.s._event(
                 who["tenant"], "inference_" + result["status"], identifier, at, who["principal"]
             )
+            self.s._enqueue(who["tenant"], position, None, who["principal"])
             self.s.fault("after_validation")
             released.check(self.s.clock)
         self.s._expose()

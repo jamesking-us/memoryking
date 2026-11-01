@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,7 @@ from memoryking.adapters.local_ipc import StoreOperations
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure
 
 
 class SharedService:
@@ -18,8 +21,28 @@ class SharedService:
     ):
         self.pool, self.root, self.control, self.audience = pool, root, control, audience
         self.dashboard: Any = None
+        # Retention runs per tenant at most hourly from request traffic: a store is
+        # built per request, so the timer lives here, not on the store.
+        self._housekeeping: dict[str, float] = {}
+        self._housekeeping_lock = threading.Lock()
 
     egress_policy: Any | None = None
+
+    HOUSEKEEPING_S = 3600
+
+    def _retention(self, tenant: str, store: PostgresStore) -> None:
+        """Expire results, receipts, usage, egress audit and summaries for this tenant."""
+        now = time.monotonic()
+        with self._housekeeping_lock:
+            if now - self._housekeeping.get(tenant, -self.HOUSEKEEPING_S) < self.HOUSEKEEPING_S:
+                return
+            self._housekeeping[tenant] = now
+        try:
+            store.expire_results()
+        except LocalError:
+            pass
+        except Exception as exc:
+            failure("shared_service", exc, action="retention")
 
     def store(self, tenant: str, credential: str, *, release_only: bool = False) -> PostgresStore:
         store = PostgresStore(
@@ -70,6 +93,8 @@ class SharedService:
         release_only = request["operation"] in {"read", "export", "context", "status", "namespace"}
         with self.store(tenant, credential, release_only=release_only) as store:
             outcome = StoreOperations(store).execute(value)
+            if not release_only:
+                self._retention(tenant, store)
             if request["operation"] == "capture":
                 # A tenant that captures also drains its own audit jobs, so the shared
                 # profile never depends solely on the scheduled worker to stay under
@@ -78,4 +103,7 @@ class SharedService:
                     store.drain(limit=64)
                 except LocalError:
                     pass
+                except Exception as exc:
+                    # The capture already committed: never turn it into an error reply.
+                    failure("shared_service", exc, action="drain")
             return outcome
