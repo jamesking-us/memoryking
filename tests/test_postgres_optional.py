@@ -114,7 +114,7 @@ class NativeOptionalUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "7",
+                        "8",
                     )
                     with db.transaction():
                         db.execute("SELECT set_config('memoryking.tenant','legacy',true)")

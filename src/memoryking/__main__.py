@@ -576,6 +576,11 @@ def main() -> int:
     rec.add_argument(
         "--as-of", help="Brief as the project stood then: a date, ISO date-time, or Unix ms"
     )
+    rec.add_argument(
+        "--salience",
+        action="store_true",
+        help="Let your own recent use of memories nudge the ranking (bounded, reported)",
+    )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     infl = commands.add_parser(
         "influence", help="Where one observation went: every record built from it and who got it"
@@ -769,6 +774,7 @@ def main() -> int:
                 text=not args.json,
                 task=args.task,
                 as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
+                salience=args.salience,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,

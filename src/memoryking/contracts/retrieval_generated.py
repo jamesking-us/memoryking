@@ -20,6 +20,7 @@ class Brief(TypedDict):
     dense: NotRequired[DenseQuery]
     format: NotRequired[Literal["json", "text"]]
     as_of_ms: NotRequired[int]
+    salience: NotRequired[Literal["on", "off"]]
 
 class Fetch(TypedDict):
     project: str

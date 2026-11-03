@@ -582,6 +582,12 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "salience": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
               }
             },
             "required": [
@@ -1040,6 +1046,12 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "salience": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
               }
             },
             "required": [

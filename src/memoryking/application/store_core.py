@@ -322,6 +322,7 @@ class StoreCore:
                     self.db.execute(
                         "INSERT INTO lexical VALUES (?,?,?)", (tenant, obs, request["text"])
                     )
+                    self._index_anchors(tenant, obs, request["text"])
                     from memoryking.adapters.trust import Trust
 
                     trust = Trust(self)
@@ -351,6 +352,18 @@ class StoreCore:
         with self.lock:
             self._expose()
         return result
+
+    def _index_anchors(self, tenant: str, observation: str, text: str) -> int:
+        """Record the exact names the text carries; deterministic, bounded, no model."""
+        from memoryking.domain.anchors import extract
+
+        found = extract(text)
+        for kind, anchor in found:
+            self.db.execute(
+                insert_ignore("anchors", 4),
+                (tenant, observation, anchor, kind),
+            )
+        return len(found)
 
     def _capture_result(self, tenant: str, observation: str, position: int) -> dict[str, Any]:
         return {
@@ -783,6 +796,7 @@ class StoreCore:
                 (tenant, obs),
             )
             self.db.execute("DELETE FROM lexical WHERE tenant=? AND id=?", (tenant, obs))
+            self.db.execute("DELETE FROM anchors WHERE tenant=? AND id=?", (tenant, obs))
             self.db.execute(
                 "DELETE FROM projection_items WHERE tenant=? AND observation=?", (tenant, obs)
             )
@@ -1253,6 +1267,14 @@ class StoreCore:
 
     def _reindex(self, tenant: str) -> None:
         self.db.execute("DELETE FROM projection_items WHERE tenant=?", (tenant,))
+        # Anchors are derived from the retained text, so a reindex rebuilds them too:
+        # stores created before anchors existed gain them without a re-capture.
+        self.db.execute("DELETE FROM anchors WHERE tenant=?", (tenant,))
+        for row in self.db.execute(
+            "SELECT l.id,l.text FROM lexical l JOIN observations o ON o.tenant=l.tenant AND o.id=l.id WHERE l.tenant=? AND o.deleted=0",
+            (tenant,),
+        ).fetchall():
+            self._index_anchors(tenant, row["id"], row["text"])
         self.db.execute(
             "UPDATE projections SET incarnation=?,generation=generation+1,frontier=0 WHERE tenant=?",
             (self.incarnation, tenant),

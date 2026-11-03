@@ -16,6 +16,7 @@ export interface Brief {
   dense?: DenseQuery;
   format?: "json" | "text";
   as_of_ms?: number;
+  salience?: "on" | "off";
 }
 
 export interface Fetch {
