@@ -371,6 +371,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `history_changed` | The store's history id changed (restore or reset); refresh with memory_status and rebuild context before retrying. |
 
+## hold
+
+| Code | What to do |
+| --- | --- |
+| `hold_unavailable` | No held capture with that id in this project; it was released, purged, or never held. |
+
 ## hook
 
 | Code | What to do |
@@ -955,6 +961,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `transport_unavailable` | The daemon socket is unreachable; is `memoryking serve` running? |
+
+## trust
+
+| Code | What to do |
+| --- | --- |
+| `trust_level_invalid` | A source is trusted or untrusted; nothing else. |
 
 ## unavailable
 

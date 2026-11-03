@@ -100,6 +100,54 @@
           "project",
           "observation"
         ]
+      },
+      "TrustRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_-]{1,96}|\\*)(?![\\s\\S])"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[A-Za-z0-9_.:*?-]{1,96}(?![\\s\\S])"
+          },
+          "level": {
+            "enum": [
+              "trusted",
+              "untrusted"
+            ]
+          },
+          "explicit": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project",
+          "source",
+          "level"
+        ]
+      },
+      "Release": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "observation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "observation"
+        ]
       }
     },
     "oneOf": [
@@ -281,6 +329,120 @@
           },
           "args": {
             "$ref": "#/$defs/Influence"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "trust"
+          },
+          "args": {
+            "$ref": "#/$defs/TrustRule"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "release"
+          },
+          "args": {
+            "$ref": "#/$defs/Release"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "trust_list"
+          },
+          "args": {
+            "$ref": "#/$defs/Project"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "held"
+          },
+          "args": {
+            "$ref": "#/$defs/Project"
           }
         },
         "required": [

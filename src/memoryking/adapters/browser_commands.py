@@ -96,6 +96,10 @@ def execute(
             "retention_preview",
             "purge",
             "influence",
+            "trust",
+            "trust_list",
+            "held",
+            "release",
         },
         "inference": {"audit"},
     }

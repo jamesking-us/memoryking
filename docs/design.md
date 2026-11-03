@@ -118,6 +118,10 @@ Embedding vectors, compressed summaries, graph projections and ranked procedures
 
 Repository inspection is passive: it records Git identity, tracked/dirty artifacts and supported source structure without executing repository code. Bounded or missing coverage stays explicit. The dashboard observes stored state and can submit authorized review actions; it does not schedule agents. An active Memory view renews itself every five seconds while visible: every read passes the current authorization gate, an unchanged result leaves the open details and graph selection in place, and a hidden tab, an expired lease, a changed session or a clock rollback clears private content rather than extending it.
 
+## Source trust
+
+Claims have always had a review lifecycle: a model's proposal is quarantined until a person accepts it. Source trust applies the same idea to raw evidence. A capture from a source an admin marked untrusted is recorded in full and backed up, but held: no read, briefing, graph, resume or proposal can see it, and nothing can be built on it, until an admin releases it. The decision, like every policy, goes through the signed control journal, so a restore replays it and the policy epoch retires views made before it. The store keeps the raw evidence, because the point of quarantine is review, not loss; purge remains the way to erase.
+
 ## Where a memory went
 
 Every delivery, checkpoint, handoff and summary records what it was built from, and a purge follows those dependencies to retire derived copies. The influence report reads the same graph without changing anything: for one observation it enumerates the claims that cite it, every record derived from it transitively, the retained deliveries that included it, and the principals those reached. It makes a security property that was only enforced, that a poisoned record can be traced and removed, visible to the owner before deciding anything. It is honest about its edges: retention expiry, exports, provider dispatches and backups are outside the recorded graph and are named as such.

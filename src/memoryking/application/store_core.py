@@ -283,7 +283,12 @@ class StoreCore:
                         raise LocalError("source_retired")
                     if occurrence["payload_hash"] != digest:
                         raise LocalError("source_conflict")
-                    result = self._capture_result(tenant, occurrence["id"], occurrence["position"])
+                    from memoryking.adapters.trust import Trust
+
+                    result = {
+                        **self._capture_result(tenant, occurrence["id"], occurrence["position"]),
+                        "held": Trust(self).held(tenant, occurrence["id"]),
+                    }
                 else:
                     count = self.db.execute(
                         "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')",
@@ -317,8 +322,22 @@ class StoreCore:
                     self.db.execute(
                         "INSERT INTO lexical VALUES (?,?,?)", (tenant, obs, request["text"])
                     )
+                    from memoryking.adapters.trust import Trust
+
+                    trust = Trust(self)
+                    held = trust.level(tenant, request["project"], request["source"]) == "untrusted"
+                    if held:
+                        # Recorded exactly like any capture, but invisible to every read
+                        # until an admin releases it; nothing is derived from it meanwhile.
+                        trust.hold(
+                            tenant,
+                            request["project"],
+                            obs,
+                            request["source"],
+                            decision.evaluated_ms,
+                        )
                     self._enqueue(tenant, position, obs, who["principal"])
-                    result = self._capture_result(tenant, obs, position)
+                    result = {**self._capture_result(tenant, obs, position), "held": held}
                 self.db.execute(
                     "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
@@ -367,6 +386,15 @@ class StoreCore:
 
     def _visible(self, who: dict[str, Any], row: Row, at: int) -> bool:
         if row["deleted"]:
+            return False
+        # A held capture is on nobody's reading list until an admin releases it.
+        if (
+            self.db.execute(
+                "SELECT 1 FROM observation_holds WHERE tenant=? AND id=? AND state='held'",
+                (row["tenant"], row["id"]),
+            ).fetchone()
+            is not None
+        ):
             return False
         try:
             self._subject_auth(
@@ -797,6 +825,10 @@ class StoreCore:
             from memoryking.adapters.working import Working
 
             Working(self).apply_operation(action)
+        elif kind in {"trust", "hold"}:
+            from memoryking.adapters.trust import Trust
+
+            Trust(self).apply_policy(action, at)
         else:
             raise LocalError("journal_invalid")
         if kind == "purge":

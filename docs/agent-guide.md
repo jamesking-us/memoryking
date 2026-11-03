@@ -172,6 +172,18 @@ Two host differences to know. Grok ignores hook stdout, so on Grok the session-s
 
 What the hooks save is evidence, not a summary: a reviewer sees the transcript tail with its source, and the checkpoint lists its defaulted sections as gaps so a resume says what was never written. `tools/hooks_demo.py` runs all three against a disposable service and shows the installer's output for each host.
 
+## Source trust: holding captures you do not yet trust
+
+Everything captured is evidence, but not every source deserves to reach a briefing before a person has looked. An admin can mark a source untrusted for one project or for every project (`*`), by exact name or glob:
+
+```sh
+.venv/bin/python -m memoryking --profile home trust set --project demo --source "scraper-*" --level untrusted
+```
+
+A capture from a matching source is recorded exactly like any other (same event id, same replay, same backup) but is **held**: invisible to every read, briefing, graph page, resume and claim proposal, and absent from the influence of anything built afterwards, until an admin releases it. `memoryking trust held --project demo` lists what is waiting with a 256-byte preview; `memoryking trust release OBSERVATION --project demo` releases one; `memoryking trust list` shows the rules. The dashboard's **Review & conflicts** view shows the same queue with a Release button and a form for rules. Rules and releases are journaled policy decisions: a restore replays them, and the policy epoch retires any view built before the decision. The most specific rule wins: an exact source beats a pattern, and a project rule beats a `*` rule, so one untrusted host can be allowed back for one project without touching the rest. Purge works on a held capture exactly as on any other.
+
+This is the quarantine lifecycle claims already had, applied one layer down: a poisoned capture from a feed, a scraper or a host hook on a machine you do not control never reaches a model unreviewed, and if it did reach one, the influence report says where.
+
 ## Where this left off: session summaries
 
 A resume packet is exact but long. Every resume now begins with a three-sentence summary when one exists: where the task stands, what was learned or tried, and what comes next. Summaries are derived artifacts with their own receipt, stored beside the checkpoint they summarize; the checkpoint remains the record and the summary never adds facts to it.
