@@ -20,6 +20,11 @@ export interface Purge {
   confirm: string;
 }
 
+export interface Influence {
+  project: string;
+  observation: string;
+}
+
 export interface Inspection0 {
   version: 1;
   incarnation: string;
@@ -63,4 +68,11 @@ export interface Inspection5 {
   key: string;
 }
 
-export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5;
+export interface Inspection6 {
+  version: 1;
+  incarnation: string;
+  action: "influence";
+  args: Influence;
+}
+
+export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5 | Inspection6;

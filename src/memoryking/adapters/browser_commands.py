@@ -88,7 +88,15 @@ def execute(
         "repository": {"impact", "history", "coverage"},
         "working": {"resume", "operations"},
         "handoff": {"prepare", "preview", "materialize", "cancel"},
-        "inspection": {"history", "operations", "cost", "handoffs", "retention_preview", "purge"},
+        "inspection": {
+            "history",
+            "operations",
+            "cost",
+            "handoffs",
+            "retention_preview",
+            "purge",
+            "influence",
+        },
         "inference": {"audit"},
     }
     if (

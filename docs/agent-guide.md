@@ -148,7 +148,7 @@ MemoryKing never reads a conversation on its own, but it is easy to feed from th
 - **From Claude Code:** a `PostToolUse` hook on `Bash` that pipes the tool's output into `memoryking capture --source claude-code` when the command was a test or build. Codex and other hosts with shell hooks use the same command; hosts without hooks rely on the model calling `remember`.
 - **At the session's edges:** the three host hooks below load memory when a session starts and save it before compaction and at the end, with no model involvement.
 
-Hook captures record the observation time to the day unless `--observed-ms` is given, so a rerun sends identical bytes and replays; the store's own event log keeps the exact time of each capture. Hook captures are evidence like any other: a briefing cites them with their source, and a reviewer can promote or quarantine what they contain.
+Hook captures record the observation time to the day unless `--observed-ms` is given, so a rerun sends identical bytes and replays; the store's own event log keeps the exact time of each capture. Hook captures are evidence like any other: a briefing cites them with their source, a reviewer can promote or quarantine what they contain, and the owner can ask where any of them went with `memoryking influence OBSERVATION --project P` or the dashboard's **Where did this go** view.
 
 ## Hooks that load and save memory by themselves
 

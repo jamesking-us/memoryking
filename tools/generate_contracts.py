@@ -86,8 +86,10 @@ def generate() -> dict[Path, bytes]:
     processing = generate_processing(
         embedding[ROOT / "src/memoryking/adapters/local_wire.schema.json"]
     )
+    experience = generate_experience(
+        processing[ROOT / "src/memoryking/adapters/local_wire.schema.json"]
+    )
     return {
-        **generate_inspection(),
         **generate_retrieval(),
         **working,
         **handoff,
@@ -95,7 +97,8 @@ def generate() -> dict[Path, bytes]:
         **repository,
         **embedding,
         **processing,
-        **generate_experience(processing[ROOT / "src/memoryking/adapters/local_wire.schema.json"]),
+        **experience,
+        **generate_inspection(experience[ROOT / "src/memoryking/adapters/local_wire.schema.json"]),
         **generate_stdio(),
         ROOT / "src/memoryking/contracts/generated.py": ("\n".join(py).rstrip() + "\n").encode(),
         ROOT / "packages/contracts/src/generated.ts": ("\n".join(ts).rstrip() + "\n").encode(),

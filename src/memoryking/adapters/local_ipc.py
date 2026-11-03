@@ -15,6 +15,7 @@ from memoryking.adapters.embedding_store import Embeddings
 from memoryking.adapters.experience import Experience
 from memoryking.adapters.handoff import Handoff
 from memoryking.adapters.inference import Inference
+from memoryking.adapters.inspection import Inspection
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
 from memoryking.adapters.processing_store import Processing
@@ -110,6 +111,8 @@ class StoreOperations:
             return Retrieval(store).execute(credential, args["command"])
         if op == "knowledge":
             return Knowledge(store).execute(credential, args["command"])
+        if op == "inspection":
+            return Inspection(store).execute(credential, args["command"])
         if op == "dashboard_bootstrap":
             dashboard = getattr(store, "dashboard", None)
             if dashboard is None:

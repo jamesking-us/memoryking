@@ -6,7 +6,7 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 
 | Interface | Entry point | Scope |
 | --- | --- | --- |
-| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, status, doctor, credentials, capture and recall, host hooks (`hook`, `hooks install`), dashboard sign-in, JSON requests and offline recovery. |
+| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, status, doctor, credentials, capture and recall, host hooks (`hook`, `hooks install`), `influence` (where an observation went), dashboard sign-in, JSON requests and offline recovery. |
 | pytest plugin | `pytest -p memoryking.pytest_plugin` | Records failing tests as observations when the environment names a store. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
@@ -131,6 +131,10 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 ### Dashboard receipt trail
 
 `GET /api/citations/{project}/{node}` on a signed-in session lists the session principal's retained receipts (briefings, fetches and reruns, newest first, up to 32) whose recorded dependencies include the node: an observation id, a claim revision or a checkpoint id, URL-encoded. Each item has the same fields as the receipts listing plus `dependency_kind`. A receipt the principal may no longer replay is omitted, exactly as in the receipts listing. The memory graph uses this route when a node is selected.
+
+### Influence report
+
+`memoryking influence OBSERVATION --project P` (or `--json`), the Memory view **Where did this go**, and the `inspection` socket operation's `influence` action list every record built on one observation and who received them: the claims that cite it; the checkpoints, handoffs, summaries and experience records that recorded a dependency on it or on anything derived from it (the same fixed point a purge follows, read without changing anything); the retained briefings, fetches, reruns and graph pages that included it, each with its principal and time; and the sorted set of principals those reached. Lists are bounded to 256 entries each and truncation is named. It requires the admin capability, because it reveals who read what. It covers recorded dependencies in this project and retained deliveries only: a delivery whose retention expired, a prior export, a provider dispatch or a backup leaves no record here, and the report says so in its coverage field. This is the causal-attribution view the memory-poisoning literature asks for, built from the receipts MemoryKing already keeps.
 
 ### Dashboard plans
 

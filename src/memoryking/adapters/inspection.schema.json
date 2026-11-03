@@ -80,6 +80,24 @@
         "preview",
         "confirm"
       ]
+    },
+    "Influence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "observation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "project",
+        "observation"
+      ]
     }
   },
   "oneOf": [
@@ -242,6 +260,32 @@
         "action",
         "args",
         "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "influence"
+        },
+        "args": {
+          "$ref": "#/$defs/Influence"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args"
       ]
     }
   ]
