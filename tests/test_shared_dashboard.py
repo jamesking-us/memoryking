@@ -230,7 +230,7 @@ class SharedDashboardTests(unittest.TestCase):
         with self.fetch("/api/events", headers={"Last-Event-ID": old}) as response:
             frame = self.event(response)
             self.assertEqual("resync", frame["event"])
-            self.assertEqual([], json.loads(frame["data"])["phases"])
+            self.assertEqual(1, json.loads(frame["data"])["schema_version"])
         self.login()  # Replaces the current browser session; its old cursor is unusable.
         with self.fetch("/api/events", headers={"Last-Event-ID": old}) as response:
             self.assertEqual(409, response.status)

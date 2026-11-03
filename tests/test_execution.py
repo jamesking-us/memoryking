@@ -205,10 +205,9 @@ class ExecutionTests(unittest.TestCase):
 
     def test_http_execution_is_session_authenticated_and_readonly(self):
         import http.client
-        from pathlib import Path
 
         self.save()
-        web = Dashboard(self.store, Path(__file__).resolve().parents[1])
+        web = Dashboard(self.store)
         web.start()
         try:
 

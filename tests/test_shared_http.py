@@ -45,9 +45,6 @@ class SharedHTTPTests(unittest.TestCase):
             hosts=[f"127.0.0.1:{self.port}"],
             origins=[self.url],
             loopback_http=True,
-            plan_root=Path(__file__).resolve().parents[1]
-            if getattr(self, "dashboard", False)
-            else None,
             dashboard_tenant=self.tenant if getattr(self, "dashboard", False) else None,
         )
         self.server = uvicorn.Server(

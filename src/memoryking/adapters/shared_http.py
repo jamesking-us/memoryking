@@ -6,7 +6,6 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import anyio
@@ -149,7 +148,6 @@ def create_app(
     hosts: list[str],
     origins: list[str],
     loopback_http: bool = False,
-    plan_root: Path | None = None,
     dashboard_tenant: str | None = None,
 ) -> Any:
     async def operations(request: Request) -> Response:
@@ -184,13 +182,11 @@ def create_app(
 
     mcp = SharedMCP(service, hosts=hosts, origins=origins)
     dashboard_routes = []
-    if plan_root is not None or dashboard_tenant is not None:
-        if plan_root is None or dashboard_tenant is None:
-            raise LocalError("dashboard_configuration_incomplete")
+    if dashboard_tenant is not None:
         from memoryking.adapters.shared_dashboard import SharedDashboard
 
         service.dashboard = SharedDashboard(
-            service, plan_root, dashboard_tenant, origins, secure=not loopback_http
+            service, dashboard_tenant, origins, secure=not loopback_http
         )
         dashboard_routes = service.dashboard.routes()
 

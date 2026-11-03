@@ -85,8 +85,6 @@ def main() -> None:
                 str(key),
                 "--origin",
                 url,
-                "--plan-root",
-                str(Path(__file__).resolve().parents[1]),
                 "--dashboard-tenant",
                 "demo",
             ],

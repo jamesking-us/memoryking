@@ -8,7 +8,6 @@ import secrets
 import threading
 import time
 from collections import OrderedDict, deque
-from pathlib import Path
 from typing import Any
 
 import anyio
@@ -16,7 +15,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
-from memoryking.adapters.dashboard import ASSETS, SAFE_HEADERS, STATIC, PlanFiles
+from memoryking.adapters.dashboard import ASSETS, SAFE_HEADERS, STATIC, workspace_snapshot
 from memoryking.adapters.execution import Execution
 from memoryking.adapters.local_store import identifier, uid
 from memoryking.adapters.retrieval import Retrieval
@@ -69,12 +68,10 @@ class CursorHistory:
 
 
 class SharedDashboard:
-    def __init__(
-        self, service: SharedService, root: Path, tenant: str, origins: list[str], *, secure: bool
-    ):
+    def __init__(self, service: SharedService, tenant: str, origins: list[str], *, secure: bool):
         if not origins:
             raise LocalError("dashboard_origin_required")
-        self.service, self.files, self.tenant = service, PlanFiles(root), identifier(tenant)
+        self.service, self.tenant = service, identifier(tenant)
         self.origins, self.secure = set(origins), secure
         self.lock = threading.RLock()
         self.codes: dict[str, dict[str, Any]] = {}
@@ -125,9 +122,6 @@ class SharedDashboard:
 
     def read(self, session: str, route: str, previous: str | None = None) -> Released:
         value = self.current(session)
-        # Plan/report hashing is independent of the database. Prepare bounded bytes before
-        # taking the authorization gate; only the freshly authorized result can leave it.
-        prepared = self.files.snapshot(0) if route == "/api/snapshot" else None
         with self.service.store(value["tenant"], value["credential"], release_only=True) as store:
             with store.transaction() as decision:
                 at = decision.evaluated_ms
@@ -142,11 +136,8 @@ class SharedDashboard:
                         self.sessions.pop(session, None)
                     raise LocalError("session_changed")
                 if route == "/api/snapshot":
-                    assert prepared is not None
-                    result = prepared
+                    result = workspace_snapshot(at)
                     result.update(
-                        observed_ms=at,
-                        fresh_until_ms=at + 15000,
                         csrf=value["csrf"],
                         incarnation=store.incarnation,
                         tenant=value["tenant"],
@@ -154,7 +145,6 @@ class SharedDashboard:
                         authorization_epoch=epoch[0],
                         capacity=store._capacity(value["tenant"]),
                         streaming=True,
-                        adapter="shared-plan-files / authorized read only",
                     )
                     binding = canonical_hash(
                         {
@@ -276,12 +266,6 @@ class SharedDashboard:
                             ),
                         }
                     )
-                elif route.startswith("/api/artifact/"):
-                    artifact = self.files.artifacts().get(route.removeprefix("/api/artifact/"))
-                    if artifact is None:
-                        raise LocalError("unavailable")
-                    path, _ = artifact
-                    raw = self.files.read(path, 4194304)
                 else:
                     raise LocalError("route_unavailable")
                 receipt = uid("rcpt")
@@ -508,9 +492,6 @@ class SharedDashboard:
             result = await anyio.to_thread.run_sync(self.read, session, target)
             response = ReleaseResponse(result)
             response.headers.update(SAFE_HEADERS)
-            if route.startswith("/api/artifact/"):
-                entry = self.files.artifacts().get(route.removeprefix("/api/artifact/"))
-                response.headers["content-type"] = entry[1] if entry else "application/octet-stream"
             if request.method == "HEAD":
                 response.body = b""
                 response.headers["content-length"] = "0"
@@ -630,6 +611,5 @@ class SharedDashboard:
                 ("/api/activity/{project}/{days}", ["GET", "HEAD"]),
                 ("/api/export/{project}", ["GET", "HEAD"]),
                 ("/api/admin/revoke", ["POST"]),
-                ("/api/artifact/{artifact}", ["GET", "HEAD"]),
             ]
         ]
