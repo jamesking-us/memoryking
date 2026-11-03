@@ -30,6 +30,21 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             load_strict("[" * 66 + "0" + "]" * 66)
 
+    def test_unicode_boundaries_keys_and_nested_values_keep_canonical_bytes(self):
+        valid = ["\ud7ff", "\ue000", "\U0001f418", "long text " * 10000]
+        value = {"boundary": valid, "\U0001f418": {"value": "\ud7ff\ue000"}}
+        expected = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        self.assertEqual(canonical_bytes(value), expected)
+        for bad in ("\ud800", "\udfff", "\ud83d\udc18", "prefix\ud900suffix"):
+            for value in (bad, {bad: "value"}, {"nested": [bad]}):
+                with (
+                    self.subTest(value=repr(value)),
+                    self.assertRaisesRegex(ContractError, "^invalid_unicode$"),
+                ):
+                    canonical_bytes(value)
+
     def test_incarnation_and_counter_are_not_floats(self):
         event = json.loads((ROOT / "fixtures/contracts/event.json").read_text())
         validate_contract("ObservationEvent", event)

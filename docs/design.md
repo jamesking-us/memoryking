@@ -263,3 +263,13 @@ is exposed. PDF/EPUB export stays outside the viewer.
 Plans are typed work records stored on task-level checkpoint streams. Stable phase and step IDs preserve identity through reorderings; a bounded acyclic prerequisite graph rejects undefined or cyclic references. Each revision is immutable. Writes use existing writer ownership, CAS and history-aware retries; reads use current permissions and dependency availability. Full-plan revisions record scope changes without rewriting older versions.
 
 The pure progress calculation is shared by both stores and both dashboards. Completed work counts effective done steps against declared scope. Skips remain distinct; unresolved historical proof becomes unknown. The objective, step definition and transitive prerequisite state/evidence bind completion evidence. A reopen followed by an old proof cannot turn a changed definition back into verified completion. This remains source-attributed reported work, not a substitute for an orchestrator’s independent test/review gates.
+
+
+### Canonical text and long plan histories
+
+Canonical JSON preserves valid Unicode text and rejects unpaired UTF-16 surrogate
+code points in both keys and values. The surrogate search runs in the regular
+expression engine, avoiding a Python callback for every character when repeated
+plan-history definitions are hashed. Canonical bytes and hashes are unchanged.
+Plan reads retain current evidence authorization and the existing response
+deadline; this optimization neither caches authorization nor extends a release.
