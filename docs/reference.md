@@ -10,7 +10,7 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 | pytest plugin | `pytest -p memoryking.pytest_plugin` | Records failing tests as observations when the environment names a store. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
-| MCP stdio | `python -m memoryking.adapters.stdio` | Eight model-facing memory tools; daemon must already run. |
+| MCP stdio | `python -m memoryking.adapters.stdio` | Nine model-facing memory tools; daemon must already run. |
 | Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp` | Authenticated Streamable HTTP transport. |
 | Reference agent | `python -m memoryking.reference_agent --help` | Create-file/readback task harness, checkpoint/recovery, the local recording provider or a policy adapter. |
 | Provider adapters | `memoryking.providers.adapter(policy, name, model)` | Anthropic, OpenAI-compatible and Vertex AI dispatch for `AuthorizedConversation`, built from the daemon's egress policy. |
@@ -131,6 +131,10 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 
 `GET /api/citations/{project}/{node}` on a signed-in session lists the session principal's retained receipts (briefings, fetches and reruns, newest first, up to 32) whose recorded dependencies include the node: an observation id, a claim revision or a checkpoint id, URL-encoded. Each item has the same fields as the receipts listing plus `dependency_kind`. A receipt the principal may no longer replay is omitted, exactly as in the receipts listing. The memory graph uses this route when a node is selected.
 
+### Dashboard plans
+
+`GET /api/plans/{project}` (optional `cursor`) and `GET /api/plans/{project}/{plan}` on a signed-in session return the project's structured plans and one plan's detail with computed progress, under the same session, `Host`/`Origin` and project-access checks as the other dashboard reads; they accept no mutations and no other query parameters. **Task activity** shows the plans beside ordinary checkpoints.
+
 ### Metrics
 
 `GET /metrics` on the dashboard port, authenticated with `Authorization: Bearer <admin credential>` and no cookie, returns Prometheus text: requests and errors by operation and code, a latency histogram per operation, capacity used and limit per resource, jobs by state, position and frontier. Counters live in the daemon's memory and reset on restart; nothing in them names content or principals. For the same figures per request rather than aggregated, start the daemon with `serve --trace` (see [deployment](deployment.md#local-configuration)).
@@ -138,6 +142,14 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 ### Dashboard agent endpoint
 
 The local dashboard port also serves `POST /api/v1/retrieval` for an agent on the same machine: a retrieval command (`brief`, `fetch`, `receipt`, `replay`, `receipts`, `atlas`) in the request body, authenticated with `Authorization: Bearer <credential>` instead of a browser session, with exact `Host` and `Origin` checks and no cookies. It exists so a host can reuse the dashboard's loopback listener; the Unix socket remains the primary local transport and the shared service offers the same operations over HTTPS.
+
+## Plan tracking contracts
+
+`memory_plan` groups four working-state actions. `plan_save` creates or revises a typed plan; `plan_step` updates one step; `plan_get` reads the current or an earlier revision; `plan_list` pages the project's current plans. Read and checkpoint capabilities, current project and audience authorization, writer ownership, compare-and-set revisions, durable retry keys and the history id are enforced by the existing working-state transaction. A plan is stored as a checkpoint on its task stream, so no schema migration or second store is involved, and backup, restore and purge treat it like any checkpoint. An ordinary task stream cannot turn into a plan, or a plan into an ordinary stream.
+
+Limits are 32 ordered phases, 256 steps, 64 prerequisite ids per step, 16 evidence references per step, 32 lesson references and the checkpoint's 128 distinct dependencies. The working request limit stays 128 KiB, so the maximal fields cannot all be used at once. The tenant's 4,096-checkpoint capacity also bounds plan revision history. A read verifies the available history up to that capacity; a historical revision the reader cannot open conservatively makes the affected completion `unknown`. A listing inspects at most 64 task streams per page, returns at most 50 plans and stops before the page exceeds 96 KiB; continue an opaque cursor even when a page is empty. A changed frontier, authorization or history invalidates the cursor; restart the listing.
+
+The dashboard shows the agent-reported lifecycle separately from computed progress. Percent complete is not an estimate of elapsed time, cost or remaining effort. Nothing advances a plan automatically; agents call the plan commands with recorded results.
 
 ## Troubleshooting
 

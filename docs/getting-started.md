@@ -120,6 +120,8 @@ Agents should not use the owner credential. Issue each one a scoped credential:
 
 `credential list` shows what is issued and `credential revoke` withdraws one.
 
+To follow a multi-step piece of work rather than one agent's checkpoint, have the agents keep a structured plan with the `memory_plan` tool described in the [agent guide](agent-guide.md#structured-plans); `.venv/bin/python tools/plans_demo.py` runs a disposable example. In the dashboard, choose the project under **Task activity** and open **Plans**: a phase shows its steps, evidence and progress.
+
 For multiple machines or tenants, use the [shared deployment](deployment.md#shared-postgresql). Do not expose the local loopback dashboard through a network proxy.
 
 ## If something goes wrong

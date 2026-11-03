@@ -507,6 +507,7 @@ class SDKTests(unittest.TestCase):
                 "memory_fetch",
                 "memory_checkpoint",
                 "memory_resume",
+                "memory_plan",
                 "memory_handoff",
                 "memory_feedback",
             },

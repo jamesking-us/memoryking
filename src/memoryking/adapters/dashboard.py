@@ -592,6 +592,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 raw = canonical_bytes(
                     {"items": visible_projects(store, value["credential"], decision.evaluated_ms)}
                 )
+            elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/plans/"):
+                from memoryking.adapters.plan_dashboard import read as read_plans
+
+                raw = canonical_bytes(
+                    read_plans(store, value["credential"], self.path, decision.evaluated_ms)
+                )
             elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/execution/"):
                 from memoryking.adapters.execution import Execution
                 from memoryking.adapters.local_store import identifier

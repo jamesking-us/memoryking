@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 MAX_BYTES = 1_048_576
 MAX_DEPTH = 64
 MAX_INTEGER = 9_007_199_254_740_991
+# A C-level search keeps the MK-C14N-1 rejection without a Python call per character.
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
 
 
 class ContractError(ValueError):
@@ -37,7 +40,7 @@ def _check(value: Any, depth: int = 0) -> None:
         if abs(value) > MAX_INTEGER:
             raise ContractError("unsafe_integer")
     elif isinstance(value, str):
-        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+        if _SURROGATE.search(value) is not None:
             raise ContractError("invalid_unicode")
     elif isinstance(value, list):
         for item in value:

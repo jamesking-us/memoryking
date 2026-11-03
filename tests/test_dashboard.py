@@ -63,6 +63,46 @@ class DashboardTests(unittest.TestCase):
         self.cookie = result[1]["Set-Cookie"].split(";")[0]
         return issued
 
+    def test_structured_plan_list_and_detail_are_session_bound_reads(self):
+        from test_plans import plan
+
+        from memoryking.adapters.working import Working
+
+        Working(self.store).execute(
+            self.owner,
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "plan_save",
+                "key": "dashboard-plan",
+                "args": {
+                    "project": "demo",
+                    "task": "checkout",
+                    "expected_revision": 0,
+                    "readers": ["owner"],
+                    "plan": plan(),
+                },
+            },
+        )
+        self.assertEqual(self.call("GET", "/api/plans/demo")[0], 403)
+        self.login()
+        status, _, raw = self.call("GET", "/api/plans/demo")
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(json.loads(raw)["plans"][0]["id"], "checkout")
+        status, _, raw = self.call("GET", "/api/plans/demo/checkout")
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(json.loads(raw)["detail"]["progress"]["total"], 2)
+        for path in (
+            "/api/plans/demo?cursor=bad",
+            "/api/plans/demo?unknown=1",
+            "/api/plans/demo/checkout?cursor=bad",
+        ):
+            self.assertEqual(self.call("GET", path)[0], 403)
+        self.assertEqual(
+            self.call("GET", "/api/plans/demo", headers={"Origin": "https://hostile.invalid"})[0],
+            403,
+        )
+
     def test_browser_command_auth_receipt_origin_and_epoch(self):
         self.login()
         snapshot = json.loads(self.call("GET", "/api/snapshot")[2])

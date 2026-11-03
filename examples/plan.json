@@ -1,0 +1,42 @@
+{
+  "title": "Reliable checkout",
+  "objective": "Never charge twice",
+  "context": "",
+  "status": "active",
+  "closure_note": "",
+  "lessons": [],
+  "phases": [
+    {
+      "id": "design",
+      "title": "Design"
+    },
+    {
+      "id": "verify",
+      "title": "Verify"
+    }
+  ],
+  "steps": [
+    {
+      "id": "inspect",
+      "phase": "design",
+      "description": "Inspect retry behavior",
+      "status": "todo",
+      "notes": "",
+      "depends_on": [],
+      "evidence": [],
+      "decision": null
+    },
+    {
+      "id": "test",
+      "phase": "verify",
+      "description": "Test duplicate retry",
+      "status": "todo",
+      "notes": "",
+      "depends_on": [
+        "inspect"
+      ],
+      "evidence": [],
+      "decision": null
+    }
+  ]
+}

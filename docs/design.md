@@ -118,6 +118,12 @@ Embedding vectors, compressed summaries, graph projections and ranked procedures
 
 Repository inspection is passive: it records Git identity, tracked/dirty artifacts and supported source structure without executing repository code. Bounded or missing coverage stays explicit. The dashboard observes stored state and can submit authorized review actions; it does not schedule agents.
 
+## Structured execution plans
+
+Plans are typed work records stored on task-level checkpoint streams. Stable phase and step ids preserve identity through reorderings; a bounded acyclic prerequisite graph rejects undefined or cyclic references. Each revision is immutable. Writes use the existing writer ownership, compare-and-set and history-aware retries; reads use current permissions and dependency availability. A full-plan revision records a scope change without rewriting older versions.
+
+The pure progress calculation is shared by both stores and the dashboard. Completed work counts effective done steps against the declared scope. Skips stay distinct; unverifiable historical proof becomes unknown. The objective, the step definition and the transitive prerequisite states and evidence bind a completion's evidence, so a reopen followed by the old proof cannot turn a changed definition back into verified completion. This remains source-attributed reported work, not a substitute for an orchestrator's independent test and review gates.
+
 ## What this architecture does not establish
 
 Passing implementation tests does not establish better real-task outcomes, cost savings, production throughput, complete browser support, automatic failover or disaster-recovery service levels. The current [feature limits](reference.md#current-limits) preserve those distinctions.

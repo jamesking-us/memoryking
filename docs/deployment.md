@@ -261,6 +261,10 @@ Do not run an older binary against a newer schema or manually lower a schema ver
 
 Offline local `gc` expires retained result bodies and removes unreferenced blobs; consumed request keys remain consumed. Purge and retention previews are privileged operations with explicit dependency effects. They do not erase copies already exported or delivered. There is no installed backup/retention scheduler.
 
+### Enabling plan tracking
+
+Structured plans use the existing core store and checkpoint permissions; there is no additional service, port, provider or configuration flag. Upgrade the service and its bundled dashboard together, then reconnect MCP clients so their tool catalog includes `memory_plan`; updating a client alone is not enough, because the installed service must accept the plan commands. Existing checkpoints stay compatible, and plan revisions use the same archive, restore and purge paths. An older binary rejects plan-bearing checkpoints, so keep the matching service version when restoring an archive that contains plans.
+
 Stop services before removing runtime environments or images. Removing software does not remove data, control, archives or migration bundles. Keep or deliberately dispose of those separately under your retention policy.
 
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)

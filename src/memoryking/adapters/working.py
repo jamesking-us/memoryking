@@ -28,7 +28,15 @@ from memoryking.domain.local import Decision, LocalError, Released
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("working.schema.json").read_text())
 )
-MUTATIONS = {"save", "assign_writer", "operation_intent", "operation_transition", "summarize"}
+MUTATIONS = {
+    "save",
+    "assign_writer",
+    "operation_intent",
+    "operation_transition",
+    "summarize",
+    "plan_save",
+    "plan_step",
+}
 SUMMARY_LIMIT = 4096
 RECENT_OBSERVATIONS = 16
 
@@ -116,7 +124,11 @@ class Working:
     def _preflight(
         self, credential: str, who: dict[str, Any], action: str, args: dict[str, Any], at: int
     ) -> None:
-        if action == "save":
+        if action.startswith("plan_"):
+            from memoryking.adapters.plans import Plans
+
+            Plans(self).preflight(who, action, args, at)
+        elif action == "save":
             self._writer(who, args, create=True)
             if who["principal"] not in args["readers"]:
                 raise LocalError("checkpoint_writer_audience_required")
@@ -200,6 +212,16 @@ class Working:
                 if old["result"] is None or at >= old["expires"]:
                     raise LocalError("idempotency_result_expired")
                 result = json.loads(old["result"])
+            elif action.startswith("plan_"):
+                from memoryking.adapters.plans import Plans
+
+                plans = Plans(self)
+                if action in {"plan_save", "plan_step"}:
+                    result = plans.save(who, action, args, at)
+                elif action == "plan_get":
+                    result = plans.get(who, args, at)
+                else:
+                    result = plans.listing(who, args, at)
             elif action == "save":
                 result = self._save(who, args, at)
             elif action == "assign_writer":
@@ -261,6 +283,21 @@ class Working:
         # None opts out of compare-and-set: the caller accepts the current revision.
         if args["expected_revision"] is not None and args["expected_revision"] != current:
             raise LocalError("checkpoint_revision_conflict")
+        previous = None
+        if stream is not None:
+            old = self.db.execute(
+                "SELECT body FROM checkpoints WHERE tenant=? AND id=?",
+                (who["tenant"], stream["latest"]),
+            ).fetchone()
+            previous = json.loads(old["body"]) if old and old["body"] else None
+        if previous is not None and ("plan" in previous) != ("plan" in args["checkpoint"]):
+            raise LocalError("plan_stream_type_changed")
+        if "plan" in args["checkpoint"]:
+            from memoryking.domain.plans import validate
+
+            if args["run"] is not None:
+                raise LocalError("plan_task_stream_required")
+            validate(args["checkpoint"]["plan"], previous.get("plan") if previous else None)
         total, size = self.db.execute(
             "SELECT count(*),coalesce(sum("
             + self.s.dialect.byte_length("body")
@@ -510,7 +547,14 @@ class Working:
         self.s._enqueue(who["tenant"], position, None, who["principal"])
         return {"revision": row["revision"] + 1, "writer": args["writer"], "reason": args["reason"]}
 
-    def _checkpoint(self, who: dict[str, Any], args: dict[str, Any], at: int) -> sqlite3.Row:
+    def _checkpoint(
+        self,
+        who: dict[str, Any],
+        args: dict[str, Any],
+        at: int,
+        *,
+        checked_dependencies: set[tuple[str, str]] | None = None,
+    ) -> sqlite3.Row:
         identifier = args["checkpoint"]
         if identifier is None:
             stream = self._stream(who, args)
@@ -528,7 +572,15 @@ class Working:
         if hashlib.sha256(row["body"].encode()).hexdigest() != row["body_hash"]:
             raise LocalError("checkpoint_integrity_failure")
         for dep in json.loads(row["dependencies"]):
+            identity = (dep["kind"], dep["id"])
+            if checked_dependencies is not None and identity in checked_dependencies:
+                continue
             self._dependency(who, dep, at)
+            # Plans.get owns this bounded, positive-only set for one caller and
+            # evaluated time inside its existing canonical transaction. It is
+            # never reused across transactions, releases or principals.
+            if checked_dependencies is not None and len(checked_dependencies) < 4096:
+                checked_dependencies.add(identity)
         return cast(sqlite3.Row, row)
 
     def _operations(

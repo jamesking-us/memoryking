@@ -80,6 +80,7 @@ export interface Checkpoint {
   references: Array<Dependency>;
   operation_ids: Array<string>;
   capture: Capture;
+  plan?: Plan;
 }
 
 export interface Save {
@@ -173,6 +174,64 @@ export interface Summarize {
   readers: Array<string> | null;
 }
 
+export interface PlanPhase {
+  id: string;
+  title: string;
+}
+
+export interface PlanStep {
+  id: string;
+  phase: string;
+  description: string;
+  status: "todo" | "doing" | "done" | "blocked" | "skipped" | "unknown";
+  notes: string;
+  depends_on: Array<string>;
+  evidence: Array<Dependency>;
+  decision: string | null;
+}
+
+export interface Plan {
+  title: string;
+  objective: string;
+  context: string;
+  status: "draft" | "active" | "done" | "abandoned";
+  closure_note: string;
+  phases: Array<PlanPhase>;
+  steps: Array<PlanStep>;
+  lessons: Array<Dependency>;
+}
+
+export interface PlanSave {
+  project: string;
+  task: string;
+  expected_revision: number;
+  readers: Array<string>;
+  plan: Plan;
+}
+
+export interface PlanStepUpdate {
+  project: string;
+  task: string;
+  expected_revision: number;
+  step: string;
+  status: "todo" | "doing" | "done" | "blocked" | "skipped" | "unknown";
+  notes: string;
+  evidence: Array<Dependency>;
+  decision: string | null;
+}
+
+export interface PlanGet {
+  project: string;
+  task: string;
+  revision: number | null;
+}
+
+export interface PlanList {
+  project: string;
+  cursor: string | null;
+  limit: number;
+}
+
 export interface Command0 {
   version: 1;
   incarnation: string;
@@ -234,4 +293,34 @@ export interface Command7 {
   key: string;
 }
 
-export type WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7;
+export interface Command8 {
+  version: 1;
+  incarnation: string;
+  action: "plan_save";
+  args: PlanSave;
+  key: string;
+}
+
+export interface Command9 {
+  version: 1;
+  incarnation: string;
+  action: "plan_step";
+  args: PlanStepUpdate;
+  key: string;
+}
+
+export interface Command10 {
+  version: 1;
+  incarnation: string;
+  action: "plan_get";
+  args: PlanGet;
+}
+
+export interface Command11 {
+  version: 1;
+  incarnation: string;
+  action: "plan_list";
+  args: PlanList;
+}
+
+export type WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7 | Command8 | Command9 | Command10 | Command11;

@@ -91,6 +91,11 @@ class SharedHTTPTests(unittest.TestCase):
     def command(self, operation, args, credential=None):
         return self.client._request(credential or self.credential, operation, args)
 
+    def test_plans_sdk_over_actual_http_and_native_postgres(self):
+        from tools.plans_demo import exercise
+
+        self.assertEqual(exercise(self.client)["work_percent"], 50)
+
     def test_experience_sdk_real_http_and_actual_provider_input(self):
         from tools.experience_demo import exercise
 
@@ -359,7 +364,7 @@ class SharedHTTPTests(unittest.TestCase):
                         initialized = await session.initialize()
                         self.assertEqual("2025-11-25", initialized.protocol_version)
                         listed = await session.list_tools()
-                        self.assertEqual(8, len(listed.tools))
+                        self.assertEqual(9, len(listed.tools))
                         status = await session.call_tool("memory_status", {"project": "demo"})
                         self.assertFalse(status.is_error)
                         body = json.loads(status.content[0].text)

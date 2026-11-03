@@ -208,6 +208,10 @@ class SharedDashboard:
                     raw = canonical_bytes(
                         {"items": visible_projects(store, value["credential"], at)}
                     )
+                elif route.startswith("/api/plans/"):
+                    from memoryking.adapters.plan_dashboard import read as read_plans
+
+                    raw = canonical_bytes(read_plans(store, value["credential"], route, at))
                 elif route.startswith("/api/execution/"):
                     project = identifier(route.removeprefix("/api/execution/"))
                     store._auth(value["credential"], "read", project, at)
@@ -496,7 +500,12 @@ class SharedDashboard:
                 return await self.events(session, request.headers.get("last-event-id"))
             if request.method not in {"GET", "HEAD"}:
                 raise LocalError("route_unavailable")
-            result = await anyio.to_thread.run_sync(self.read, session, route)
+            target = route + (
+                "?" + request.url.query
+                if route.startswith("/api/plans/") and request.url.query
+                else ""
+            )
+            result = await anyio.to_thread.run_sync(self.read, session, target)
             response = ReleaseResponse(result)
             response.headers.update(SAFE_HEADERS)
             if route.startswith("/api/artifact/"):
@@ -612,6 +621,8 @@ class SharedDashboard:
                 ("/api/snapshot", ["GET", "HEAD"]),
                 ("/api/events", ["GET"]),
                 ("/api/execution/{project}", ["GET", "HEAD"]),
+                ("/api/plans/{project}", ["GET", "HEAD"]),
+                ("/api/plans/{project}/{plan}", ["GET", "HEAD"]),
                 ("/api/receipts/{project}", ["GET", "HEAD"]),
                 ("/api/receipt/{project}/{receipt}", ["GET", "HEAD"]),
                 ("/api/citations/{project}/{node}", ["GET", "HEAD"]),
