@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError, Released
 from memoryking.domain.usage import UsageRecord, summarize
 
+CATALOG_TEXT_BYTES = 196608  # text per catalog page, under the inspection reply limit
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("inspection.schema.json").read_text())
 )
@@ -65,6 +67,8 @@ class Inspection:
                 result = self.trust_list(who, args, at)
             elif action == "held":
                 result = self.held(who, args, at)
+            elif action == "catalog":
+                result = self.catalog(who, args, at)
             elif action in {"trust", "release"}:
                 result = self.policy(who, command, at)
             else:
@@ -539,6 +543,193 @@ class Inspection:
         from memoryking.adapters.trust import Trust
 
         return {"rules": Trust(self.s).rules(who["tenant"], args["project"])}
+
+    def catalog(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        """The project's records as a catalog, newest first, paged by position.
+
+        `observations` lists every visible capture (optionally one source, one file
+        name with its versions, or one id); `claims` lists the latest unpurged
+        `knowledge` revision of every family, accepted ones for every reader and the
+        rest only for a reviewer. Text is included unless `text` is false, within a
+        page budget, so the memory-tool adapter and the vault export can read a whole
+        project without a model and without a briefing. Reads here leave no delivery
+        record; `fetch` is the receipted way to open one record."""
+        if args.get("kind", "observations") == "claims":
+            return self._claim_catalog(who, args, at)
+        return self._observation_catalog(who, args, at)
+
+    def _observation_catalog(
+        self, who: dict[str, Any], args: dict[str, Any], at: int
+    ) -> dict[str, Any]:
+        where = ["o.tenant=?", "o.project=?", "o.deleted=0"]
+        values: list[Any] = [who["tenant"], args["project"]]
+        if "source" in args:
+            where.append("o.source=?")
+            values.append(args["source"])
+        if "name" in args:
+            # A file's versions share its name: `name`, then `name__v2`, `name__v3`, ...
+            where.append("(o.source_event=? OR o.source_event LIKE ? ESCAPE '!')")
+            values.extend(
+                [args["name"], args["name"].replace("!", "!!").replace("_", "!_") + "!_!_v%"]
+            )
+        if "id" in args:
+            where.append("o.id=?")
+            values.append(args["id"])
+        total = self.db.execute(
+            "SELECT count(*) FROM observations o WHERE " + " AND ".join(where), values
+        ).fetchone()[0]
+        if "after" in args:
+            where.append("o.position<?")
+            values.append(args["after"])
+        limit = args.get("limit", 256)
+        rows = self.db.execute(
+            "SELECT o.*,e.at_ms AS recorded_ms FROM observations o JOIN events e ON e.tenant=o.tenant AND e.position=o.position WHERE "
+            + " AND ".join(where)
+            + " ORDER BY o.position DESC,o.id DESC LIMIT ?",
+            (*values, limit + 1),
+        ).fetchall()
+        version = re.compile(r"^(.+?)__v[0-9]+$")
+        items: list[dict[str, Any]] = []
+        used = 0
+        next_after: int | None = None
+        for index, row in enumerate(rows):
+            if index >= limit:
+                next_after = rows[index - 1]["position"]
+                break
+            if not self.s._visible(who, row, at):
+                continue
+            if "name" in args:
+                match = version.match(row["source_event"])
+                if (match.group(1) if match else row["source_event"]) != args["name"]:
+                    continue
+            raw = self.r._blob(row)
+            if items and args.get("text", True) and used + len(raw) > CATALOG_TEXT_BYTES:
+                next_after = row["position"] + 1
+                break
+            used += len(raw)
+            item = {
+                "id": row["id"],
+                "source": row["source"],
+                "source_event": row["source_event"],
+                "principal": row["principal"],
+                "position": row["position"],
+                "recorded_ms": row["recorded_ms"],
+                "observed_at_ms": row["observed_at_ms"],
+                "classification": row["classification"],
+                "readers": json.loads(row["readers"]),
+                "bytes": len(raw),
+                "hash": row["blob"],
+            }
+            if args.get("text", True):
+                item["text"] = raw.decode("utf-8", "replace")
+            items.append(item)
+        return {
+            "kind": "observations",
+            "items": items,
+            "total": total,
+            "next_after": next_after,
+            "coverage": "visible_observations_newest_first; one_page_per_call; text_within_page_budget",
+        }
+
+    def _claim_catalog(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        tenant = who["tenant"]
+        try:
+            self.s._subject_auth(
+                self.s._token("credential", tenant=tenant, principal=who["principal"]),
+                "review",
+                args["project"],
+                at,
+            )
+            reviewer = True
+        except LocalError:
+            reviewer = False
+        frontier = self.db.execute(
+            "SELECT position FROM tenants WHERE tenant=?", (tenant,)
+        ).fetchone()[0]
+        where = [
+            "r.tenant=?",
+            "f.project=?",
+            "r.kind='knowledge'",
+            "r.purged=0",
+            "r.created=(SELECT max(r2.created) FROM revisions r2 WHERE r2.tenant=r.tenant AND r2.family=r.family AND r2.purged=0)",
+        ]
+        values: list[Any] = [tenant, args["project"]]
+        if "name" in args:
+            where.append("f.logical_key=?")
+            values.append(args["name"])
+        if "id" in args:
+            where.append("r.id=?")
+            values.append(args["id"])
+        total = self.db.execute(
+            "SELECT count(*) FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE "
+            + " AND ".join(where),
+            values,
+        ).fetchone()[0]
+        if "after" in args:
+            where.append("r.created<?")
+            values.append(args["after"])
+        limit = args.get("limit", 256)
+        rows = self.db.execute(
+            "SELECT r.*,f.project,f.logical_key,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE "
+            + " AND ".join(where)
+            + " ORDER BY r.created DESC LIMIT ?",
+            (*values, limit + 1),
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        used = 0
+        next_after: int | None = None
+        for index, row in enumerate(rows):
+            if index >= limit:
+                next_after = rows[index - 1]["created"]
+                break
+            state, quarantined = self.r.k._state(tenant, row["id"], frontier)
+            if (state != "accepted" or quarantined) and not reviewer:
+                continue
+            if not self.r.k._available(who, row, at):
+                continue
+            body = json.loads(row["body"])
+            size = len(body["text"].encode())
+            if items and args.get("text", True) and used + size > CATALOG_TEXT_BYTES:
+                next_after = row["created"] + 1
+                break
+            used += size
+            item = {
+                "revision": row["id"],
+                "family": row["family"],
+                "logical_key": row["logical_key"],
+                "family_version": row["family_version"],
+                "state": state,
+                "quarantined": quarantined,
+                "kind": row["kind"],
+                "created": row["created"],
+                "issuer": row["issuer"],
+                "bytes": size,
+                "hash": hashlib.sha256(body["text"].encode()).hexdigest(),
+                "valid_start": body["valid_start"],
+                "valid_end": body["valid_end"],
+                "readers": body["readers"],
+                "evidence": sorted(
+                    {
+                        span["observation"]
+                        for span in self.db.execute(
+                            "SELECT observation FROM evidence_spans WHERE tenant=? AND revision=?",
+                            (tenant, row["id"]),
+                        ).fetchall()
+                    }
+                ),
+                "provenance": body.get("provenance", {}),
+            }
+            if args.get("text", True):
+                item["text"] = body["text"]
+            items.append(item)
+        return {
+            "kind": "claims",
+            "items": items,
+            "total": total,
+            "next_after": next_after,
+            "reviewer": reviewer,
+            "coverage": "latest_unpurged_knowledge_revision_per_family_newest_first; accepted_for_readers; every_state_for_reviewers",
+        }
 
     def held(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
         from memoryking.adapters.trust import Trust
