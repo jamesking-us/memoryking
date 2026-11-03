@@ -122,9 +122,7 @@ class PostgresStore(StoreCore):
         self.request_deadline = request_deadline
         from memoryking.adapters.postgres_pool import acquire, check
 
-        remaining = (
-            None if request_deadline is None else min(5.0, request_deadline - time.monotonic())
-        )
+        remaining = None if request_deadline is None else request_deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
             raise LocalError("service_busy")
         self.connection = acquire(pool, timeout=remaining)

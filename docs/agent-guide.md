@@ -146,8 +146,31 @@ MemoryKing never reads a conversation on its own, but it is easy to feed from th
 - **From pytest:** `pytest -p memoryking.pytest_plugin` with those environment variables set records each failing test's id and report tail under source `pytest`. Without the variables it stays silent, and a capture error never fails the run.
 - **From git:** a `post-commit` hook that runs the capture command above records each commit as an observation.
 - **From Claude Code:** a `PostToolUse` hook on `Bash` that pipes the tool's output into `memoryking capture --source claude-code` when the command was a test or build. Codex and other hosts with shell hooks use the same command; hosts without hooks rely on the model calling `remember`.
+- **At the session's edges:** the three host hooks below load memory when a session starts and save it before compaction and at the end, with no model involvement.
 
 Hook captures record the observation time to the day unless `--observed-ms` is given, so a rerun sends identical bytes and replays; the store's own event log keeps the exact time of each capture. Hook captures are evidence like any other: a briefing cites them with their source, and a reviewer can promote or quarantine what they contain.
+
+## Hooks that load and save memory by themselves
+
+Claude Code, Codex and Grok all run command hooks at the same three moments, and MemoryKing ships one command for each. Install them once per project (or per user) and every session on that host starts briefed and ends saved, whatever model is driving:
+
+```sh
+.venv/bin/python -m memoryking --profile home hooks install --host claude --project demo --task retry-fix
+```
+
+| Moment | Host event | What `memoryking hook …` does |
+| --- | --- | --- |
+| Session start, resume, or right after compaction | `SessionStart` | `session-start` prints the task's resume packet (when `--task` is set and a checkpoint exists) followed by a cited Markdown briefing for `--query`, the task, or the project. Claude Code and Codex add the output to the model's context. |
+| Before the transcript is compacted | `PreCompact` | `pre-compact` captures the tail of the transcript (assistant text from the JSONL, bounded to 16 KiB) plus any compaction instructions as an observation under source `<host>-compact`, and with `--task` saves a minimal checkpoint that references it. |
+| Session end | `SessionEnd` | `session-end` captures the host's last assistant message when it is given, else the transcript tail, under source `<host>-session`. |
+
+The installer merges into the host's own file and leaves every other hook alone: `.claude/settings.json` for Claude Code, `.codex/hooks.json` for Codex and `.grok/hooks/memoryking.json` for Grok, under the project directory or, with `--scope user`, under your home directory. `--print` shows the merged file without writing it and `--remove` takes MemoryKing's entries out again. Commands are written with absolute paths and the profile (or `--socket` and `--credential`) spelled out, because hosts run hooks without your shell's environment. Running the installer twice is a no-op.
+
+Hook captures use a deterministic event id from the host, the session and the text, and the hook checkpoint uses a stable retry key, so a hook that fires twice replays rather than duplicating; a later compaction with new text is a new observation. A hook never fails the host: errors go to stderr and the exit code stays zero (`--strict` for debugging). The hook reads the host's event JSON from stdin in either spelling (`hook_event_name` for Claude Code and Codex, `hookEventName` and the `GROK_*` variables for Grok).
+
+Two host differences to know. Grok ignores hook stdout, so on Grok the session-start briefing is not injected; the save hooks still work, and Grok also reads the Claude Code settings file, so one install serves both. Claude Code gives `SessionEnd` hooks about a second and a half by default; the installer sets a 10-second timeout for that hook, which Claude Code honours, and the capture is one local socket call.
+
+What the hooks save is evidence, not a summary: a reviewer sees the transcript tail with its source, and the checkpoint lists its defaulted sections as gaps so a resume says what was never written. `tools/hooks_demo.py` runs all three against a disposable service and shows the installer's output for each host.
 
 ## Where this left off: session summaries
 
@@ -181,6 +204,7 @@ These commands run disposable examples in the [contributor environment](../CONTR
 | `python tools/working_demo.py` | Checkpoint/resume and uncertain-operation reconciliation. |
 | `python tools/stdio_demo.py` | Python client and actual MCP stdio subprocess. |
 | `python tools/plans_demo.py` | A structured plan: create, prove a step, read an earlier revision, list. |
+| `python tools/hooks_demo.py` | The three host hooks: save before compaction, save at the end, load at the next start; installer output per host. |
 | `python tools/inference_demo.py` | Revoked content excluded from subsequent local provider requests. |
 | `python tools/repository_demo.py` | Repository snapshots and guidance freshness. |
 | `python tools/experience_demo.py` | Reviewed procedures, outcomes and bounded ranking. |

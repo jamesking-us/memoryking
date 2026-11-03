@@ -371,6 +371,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `history_changed` | The store's history id changed (restore or reset); refresh with memory_status and rebuild context before retrying. |
 
+## hook
+
+| Code | What to do |
+| --- | --- |
+| `hook_config_invalid` | The host's hook config file is not a JSON object; fix or remove it before installing. |
+| `hook_event_invalid` | The host sent something other than one JSON object on stdin; run the hook from the host, not by hand. |
+
 ## host
 
 | Code | What to do |
@@ -378,6 +385,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `host_authorization_expired` | The host's authorization for this content expired; authorize again. |
 | `host_authorization_required` | Host-supplied content needs a host authorization with a source hash. |
 | `host_rejected` | The Host header is not one the service was started with; pass it with `--host` or use the configured name. |
+| `host_unsupported` | Hooks are generated for claude, codex or grok; other hosts can run the same `memoryking hook` commands by hand. |
 
 ## idempotency
 

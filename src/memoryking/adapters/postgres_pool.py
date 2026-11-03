@@ -14,9 +14,13 @@ from memoryking.domain.local import LocalError
 def acquire(pool: Any, timeout: float | None = None) -> Any:
     """Admission fails before a connection, transaction or mutation exists.
 
-    `timeout` bounds the wait for a free connection (the pool's own limit otherwise)."""
+    A request deadline can only shorten the wait for a free connection; the pool's
+    own limit is the most any caller waits."""
+    limit = getattr(pool, "timeout", None)
+    if timeout is not None:
+        limit = timeout if limit is None else min(limit, timeout)
     try:
-        return pool.getconn() if timeout is None else pool.getconn(timeout=timeout)
+        return pool.getconn() if limit is None else pool.getconn(timeout=max(0.0, limit))
     except (PoolTimeout, TooManyRequests):
         raise LocalError("service_busy") from None
     except PoolClosed:

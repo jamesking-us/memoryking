@@ -6,7 +6,7 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 
 | Interface | Entry point | Scope |
 | --- | --- | --- |
-| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, status, doctor, credentials, capture and recall, dashboard sign-in, JSON requests and offline recovery. |
+| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, status, doctor, credentials, capture and recall, host hooks (`hook`, `hooks install`), dashboard sign-in, JSON requests and offline recovery. |
 | pytest plugin | `pytest -p memoryking.pytest_plugin` | Records failing tests as observations when the environment names a store. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
