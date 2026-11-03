@@ -35,7 +35,7 @@ flowchart LR
 
 | Need | What MemoryKing provides |
 | --- | --- |
-| Remember useful findings | Searchable observations with source attribution; reviewed knowledge stays distinct from unverified notes. |
+| Remember useful findings | Searchable observations with source attribution; reviewed knowledge stays distinct from unverified notes. Exact names (paths, symbols, tickets, hosts, error codes) are anchored at capture and found exactly; memories strengthen with use and fade with disuse without ever being deleted. |
 | Resume unfinished work | Checkpoints containing the objective, constraints, failed attempts, verification gaps and next actions, opened by a three-sentence "where this left off" summary. |
 | Work together | Handoffs bound to the recipient's current permissions. |
 | Follow a plan | Named plans with phases, prerequisites, completed steps and blockers; a step counts as done only with evidence, and the dashboard shows the same progress agents report. |

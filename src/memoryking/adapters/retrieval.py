@@ -23,6 +23,7 @@ from memoryking.adapters.local_store import (
 from memoryking.adapters.token_count import counter
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
+from memoryking.domain.anchors import anchors_in
 from memoryking.domain.briefing import (
     COMPILER,
     CONFIGURATION,
@@ -37,6 +38,12 @@ from memoryking.domain.briefing_text import textualize
 from memoryking.domain.local import Decision, LocalError, Released
 from memoryking.domain.selectors import bindings
 
+# Salience: a bounded, documented nudge from use, never a rewrite of the record.
+SALIENCE_WEIGHT = 100_000  # at most a tenth of a full lexical score, in millionths
+SALIENCE_WINDOW_MS = 90 * 86_400_000  # deliveries older than this do not count
+SALIENCE_HALF_LIFE_MS = 30 * 86_400_000  # use fades by half every thirty days
+ARCHIVE_AFTER_MS = 180 * 86_400_000  # never-used records older than this rank last
+ARCHIVAL_PENALTY = 4_000_000  # below any reachable score; archival stays searchable
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("retrieval.schema.json").read_text())
 )
@@ -575,7 +582,15 @@ class Retrieval:
                     knowledge["reason"] = "verification_unavailable"
             eligibility_finished = self.s.clock.monotonic_ms()
             groups, trace, cache = self._candidates(
-                who, args, knowledge, source, recorded, at, dense, ranking
+                who,
+                args,
+                knowledge,
+                source,
+                recorded,
+                at,
+                dense,
+                ranking,
+                evaluation=ranking_override is not None,
             )
             diag.update(
                 trace=[
@@ -693,8 +708,11 @@ class Retrieval:
         at: int,
         dense: dict[str, Any],
         ranking: dict[str, Any],
+        *,
+        evaluation: bool = False,
     ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]], str]:
         query = terms(args["query"])
+        anchors = anchors_in(args["query"])[:16]
         candidates = knowledge["items"]
         key = canonical_hash(
             {
@@ -742,11 +760,39 @@ class Retrieval:
                     for row in rows:
                         coverage[row["id"]] = coverage.get(row["id"], 0) + 1
                         position[row["id"]] = row["position"]
+                # An anchor in the query (a path, symbol, ticket, URL, host or error code)
+                # gets its own newest-first window too, and counts double in coverage:
+                # naming the thing exactly outranks sharing a word with it.
+                for anchor in anchors:
+                    rows = self.db.execute(
+                        "SELECT o.id,o.position FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
+                        (
+                            who["tenant"],
+                            args["project"],
+                            recorded,
+                            who["principal"],
+                            who["tenant"],
+                            anchor,
+                        ),
+                    ).fetchall()
+                    limited = limited or len(rows) > 256
+                    for row in rows:
+                        coverage[row["id"]] = coverage.get(row["id"], 0) + 2
+                        position[row["id"]] = row["position"]
                 ordered = sorted(coverage, key=lambda i: (-coverage[i], -position[i], i))
                 ids = ordered[:256] + (ordered[256:257] if limited or len(ordered) > 256 else [])
             if len(cache) >= 64:
                 cache.pop(next(iter(cache)))
             cache[key] = {"expires": at + 60000, "ids": ids}
+        anchor_sets: dict[str, set[str]] = {}
+        if anchors and ids:
+            for row in self.db.execute(
+                "SELECT id,anchor FROM anchors WHERE tenant=? AND id IN ("
+                + ",".join("?" for _ in ids)
+                + ")",
+                (who["tenant"], *ids),
+            ).fetchall():
+                anchor_sets.setdefault(row["id"], set()).add(row["anchor"])
         by_id = {i["revision"]: i for i in candidates}
         adjacency: dict[str, set[str]] = {i: set() for i in by_id}
         for left, right in knowledge.get("conflicts", []):
@@ -829,16 +875,24 @@ class Retrieval:
             score = max(relevance(query, by_id[i]["body"]["text"]) for i in group_ids)
             ranked.append((score, min(group_ids), group))
         dense_scores = dense["scores"]
+        positions: dict[str, int] = {}
         for observation in dict.fromkeys([*ids[:256], *dense_scores]):
             row = self.db.execute(
                 "SELECT * FROM observations WHERE tenant=? AND id=?", (who["tenant"], observation)
             ).fetchone()
             if row is None or not self.s._visible(who, row, at):
                 continue
+            positions[observation] = row["position"]
             raw = self._blob(row)
             # A whole atomic excerpt has attribution and bounds; never a paraphrase.
             full = raw.decode()
             score = relevance(query, full)
+            anchor_hits = 0
+            if anchors:
+                # Exact overlap of the query's anchors with the record's, in millionths,
+                # on the same scale as term overlap; the larger of the two is the score.
+                anchor_hits = sum(1 for a in anchors if a in anchor_sets.get(observation, ()))
+                score = max(score, anchor_hits * 1000000 // len(anchors))
             offset = 0
             if score and not relevance(query, raw[:4096].decode("utf-8", errors="ignore")):
                 # Locate an actual term in the original text; avoid byte/character
@@ -866,7 +920,9 @@ class Retrieval:
                                 "source": row["source"],
                                 "observed_at_ms": row["observed_at_ms"],
                                 "assurance": "actor_reported",
-                                "selection_reason": "literal_overlap"
+                                "selection_reason": "anchor_match"
+                                if anchor_hits
+                                else "literal_overlap"
                                 if score
                                 else "semantic_similarity",
                                 "lexical_score_ppm": score,
@@ -908,6 +964,53 @@ class Retrieval:
                 for _, reference, group in ranked
             ]
             ranked.sort(key=lambda item: (-item[0], item[1]))
+        historical = "recorded_position" in args or "valid_ms" in args
+        salience_trace: dict[str, Any] = {"stage": "salience_v1"}
+        if historical:
+            salience_trace["state"] = "disabled_for_historical_view"
+        elif evaluation:
+            # A ranking experiment compares two arms that must differ only by the
+            # adjustment under test; use-based strength would make the first arm's
+            # own delivery tilt the second.
+            salience_trace["state"] = "disabled_for_ranking_evaluation"
+        elif ranking["state"] != "disabled":
+            # An explicit, frozen ranking policy supersedes the implicit nudge: the
+            # operator's recorded decision is the only adjustment in force.
+            salience_trace["state"] = "disabled_for_active_ranking_policy"
+        elif args.get("salience") != "on":
+            # Off unless the caller asks: a briefing's order must not depend on what
+            # earlier briefings delivered unless that is what the caller wants.
+            salience_trace["state"] = "off_unless_requested"
+        else:
+            salience = self._salience(who, args["project"], positions, at)
+            archival = 0
+            rescored = []
+            for score, reference, group in ranked:
+                item = salience.get(reference)
+                if item is None:
+                    rescored.append((score, reference, group))
+                    continue
+                for entry in group:
+                    entry["salience"] = {
+                        "strength_ppm": item["strength_ppm"],
+                        "tier": item["tier"],
+                        "deliveries_90d": item["deliveries"],
+                        "helpful_votes": item["helpful"],
+                    }
+                score += SALIENCE_WEIGHT * item["strength_ppm"] // 1_000_000
+                if item["tier"] == "archival":
+                    # Still searchable and cited when nothing else matches; ranked last.
+                    score -= ARCHIVAL_PENALTY
+                    archival += 1
+                rescored.append((score, reference, group))
+            ranked = sorted(rescored, key=lambda item: (-item[0], item[1]))
+            salience_trace.update(
+                weight_ppm=SALIENCE_WEIGHT,
+                delivery_window_days=SALIENCE_WINDOW_MS // 86_400_000,
+                half_life_days=SALIENCE_HALF_LIFE_MS // 86_400_000,
+                archive_after_days=ARCHIVE_AFTER_MS // 86_400_000,
+                archival_candidates=archival,
+            )
         if ranking["state"] == "experimental":
             from memoryking.domain.learning import adjust
 
@@ -940,6 +1043,8 @@ class Retrieval:
                 },
             )
             trace[-1]["metric"] = "equal_channel_rrf60_v1"
+        # The rank stage stays last among the fixed stages; salience sits before it.
+        trace.insert(len(trace) - 1, salience_trace)
         if ranking["state"] != "disabled":
             trace.append(
                 {
@@ -948,6 +1053,90 @@ class Retrieval:
                 }
             )
         return [group for _, _, group in ranked[:limit]], trace, "hit" if hit else "miss"
+
+    def _salience(
+        self, who: dict[str, Any], project: str, positions: dict[str, int], at: int
+    ) -> dict[str, dict[str, Any]]:
+        """Strength from the caller's own use: how often this principal was delivered a
+        record lately, whether they said it helped, and how long ago; a record nobody at
+        all has used past the archive age sinks.
+
+        Receipts and feedback are private to the principal that holds them, and another
+        principal's feedback must never reorder a reader's briefing, so strength counts
+        only the caller's own deliveries and votes. The archival tier looks at whether
+        any principal used the record, which is a fact of the store's operation, not an
+        opinion. Nothing is written or deleted; an as-of view never sees any of it."""
+        import math
+
+        if not positions:
+            return {}
+        wanted = set(positions)
+        deliveries: dict[str, int] = {}
+        last_used: dict[str, int] = {}
+        used_by_anyone: set[str] = set()
+        for row in self.db.execute(
+            "SELECT principal,created,diagnostics,dependencies FROM rendered_artifacts WHERE tenant=? AND project=? AND state='retained' AND created>=?",
+            (who["tenant"], project, at - SALIENCE_WINDOW_MS),
+        ).fetchall():
+            diagnostics = json.loads(row["diagnostics"] or "{}")
+            if diagnostics.get("kind") == "atlas":
+                continue  # looking at the graph never counts as use
+            mine = row["principal"] == who["principal"]
+            for dep in json.loads(row["dependencies"]):
+                reference = dep.get("id")
+                if reference not in wanted:
+                    continue
+                used_by_anyone.add(reference)
+                if mine:
+                    deliveries[reference] = deliveries.get(reference, 0) + 1
+                    last_used[reference] = max(last_used.get(reference, 0), row["created"])
+        helpful: dict[str, int] = {}
+        for row in self.db.execute(
+            "SELECT body FROM experience_records WHERE tenant=? AND project=? AND principal=? AND kind='feedback' AND body IS NOT NULL",
+            (who["tenant"], project, who["principal"]),
+        ).fetchall():
+            body = json.loads(row["body"])
+            reference = body.get("reference")
+            if reference in wanted and body.get("usefulness") == "helpful":
+                helpful[reference] = helpful.get(reference, 0) + 1
+        recorded: dict[int, int] = {}
+        chunk = list(positions.values())
+        for start in range(0, len(chunk), 500):
+            part = chunk[start : start + 500]
+            for row in self.db.execute(
+                "SELECT position,at_ms FROM events WHERE tenant=? AND position IN ("
+                + ",".join("?" for _ in part)
+                + ")",
+                (who["tenant"], *part),
+            ).fetchall():
+                recorded[row["position"]] = row["at_ms"]
+        result: dict[str, dict[str, Any]] = {}
+        for reference, position in positions.items():
+            count = deliveries.get(reference, 0)
+            votes = helpful.get(reference, 0)
+            if count:
+                age = max(0, at - last_used[reference])
+                recency = 0.5 ** (age / SALIENCE_HALF_LIFE_MS)
+                use = min(1.0, math.log2(1 + count) / 4) * recency
+            else:
+                use = 0.0
+            strength = min(1_000_000, int(500_000 * use) + 250_000 * min(2, votes))
+            captured_ms = recorded.get(position, at)
+            tier = (
+                "archival"
+                if reference not in used_by_anyone
+                and not votes
+                and at - captured_ms > ARCHIVE_AFTER_MS
+                else "active"
+            )
+            if strength or tier == "archival":
+                result[reference] = {
+                    "strength_ppm": strength,
+                    "tier": tier,
+                    "deliveries": count,
+                    "helpful": votes,
+                }
+        return result
 
     def _blob(self, row: sqlite3.Row) -> bytes:
         path = self.s.root / "blobs" / row["tenant"] / row["blob"]

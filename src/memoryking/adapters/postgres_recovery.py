@@ -74,7 +74,9 @@ TABLES_V3 = TABLES_V2 + ("experience_records", "ranking_state", "ranking_history
 # written before those tables existed stay restorable.
 TABLES_V4 = TABLES_V3 + ("egress_audit", "session_summaries")
 # Schema 5 archives add source trust rules and observation holds.
-TABLES = TABLES_V4 + ("source_trust", "observation_holds")
+TABLES_V5 = TABLES_V4 + ("source_trust", "observation_holds")
+# Schema 6 archives add entity anchors.
+TABLES = TABLES_V5 + ("anchors",)
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
@@ -146,7 +148,7 @@ def backup(
         private_dir(destination, create=True)
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 5,
+            "schema": 6,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
@@ -291,12 +293,17 @@ def restore(
             records = controller.journal(anchor)
         private_file(archive / "manifest")
         manifest = controller.verify_document(archive / "manifest")
-        archive_tables = {1: TABLES_V1, 2: TABLES_V2, 3: TABLES_V3, 4: TABLES_V4, 5: TABLES}.get(
-            manifest.get("schema", 0), ()
-        )
+        archive_tables = {
+            1: TABLES_V1,
+            2: TABLES_V2,
+            3: TABLES_V3,
+            4: TABLES_V4,
+            5: TABLES_V5,
+            6: TABLES,
+        }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)

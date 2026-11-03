@@ -47,8 +47,30 @@ def query(
             "content_hash": row["blob"],
             "source": row["source"],
             "position": row["position"],
+            "anchors": [],
         }
         dependencies[row["id"]] = [{"kind": "observation", "id": row["id"]}]
+    # Exact names the loaded observations share (paths, symbols, tickets, hosts, errors)
+    # link them, A-MEM style, without any model: an anchor held by two to eight of the
+    # loaded records is rare enough to mean something; a commoner one is just a word.
+    by_anchor: dict[str, list[str]] = {}
+    if nodes:
+        loaded = list(nodes)
+        for start in range(0, len(loaded), 500):
+            chunk = loaded[start : start + 500]
+            for item in db.execute(
+                "SELECT id,anchor,kind FROM anchors WHERE tenant=? AND id IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY id,anchor",
+                (tenant, *chunk),
+            ).fetchall():
+                if len(nodes[item["id"]]["anchors"]) < 16:
+                    nodes[item["id"]]["anchors"].append(
+                        {"kind": item["kind"], "anchor": item["anchor"]}
+                    )
+                by_anchor.setdefault(item["anchor"], []).append(item["id"])
+
+    anchor_links = 0
 
     def edge(source: str, target: str, kind: str, provenance: dict[str, Any]) -> None:
         if source in nodes and target in nodes:
@@ -57,6 +79,17 @@ def query(
                 return
             item = {"source": source, "target": target, "type": kind, "provenance": provenance}
             edges.append({"id": canonical_hash(item), **item})
+
+    for anchor, holders in sorted(by_anchor.items()):
+        holders = sorted(set(holders))
+        if not 2 <= len(holders) <= 8:
+            continue
+        for left, right in zip(holders, holders[1:], strict=False):
+            if anchor_links >= 512:
+                limits.add("anchor_links")
+                break
+            edge(left, right, "shares_anchor", {"kind": "shared_anchor", "anchor": anchor})
+            anchor_links += 1
 
     attestation_count = 0
     # A reviewer also sees proposed, rejected, deprecated and quarantined claims, in the

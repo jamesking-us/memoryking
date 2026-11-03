@@ -51,4 +51,4 @@ Releasing is a local, owner-run sequence described in the [deployment guide](doc
 
 `tools/dependency_inventory.py` reads installed package metadata, license-file hashes and committed locks. Its output is an inventory, not a blanket license grant. Model downloads have their own manifest/license requirements.
 
-Ranking or candidate-selection changes must keep `tools/retrieval_benchmark.py --gate` green; `tools/check.py` runs it. Raise a threshold in `fixtures/evaluation/retrieval-gate.json` when a change improves a metric, never lower one without a note in the pull request.
+Ranking or candidate-selection changes must keep `tools/retrieval_benchmark.py --gate` and `tools/evidence_recall.py --gate` (on the committed sample) green; `tools/check.py` runs both. Report the pooled LongMemEval oracle figure from `tools/evidence_recall.py` in the change description when ranking moves. Raise a threshold in `fixtures/evaluation/retrieval-gate.json` when a change improves a metric, never lower one without a note in the pull request.

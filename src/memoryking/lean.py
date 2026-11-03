@@ -91,6 +91,11 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "Brief as the project stood then: a date (YYYY-MM-DD) or ISO "
                     "date-time. Omit for now.",
                 },
+                "salience": {
+                    "type": "boolean",
+                    "description": "Let your own recent use of memories nudge the ranking "
+                    "(bounded, reported per item). Default false.",
+                },
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -252,6 +257,8 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
             from memoryking.hooks import as_of_ms
 
             args["as_of_ms"] = as_of_ms(arguments["as_of"])
+        if arguments.get("salience"):
+            args["salience"] = "on"
         return client.tool("memory_brief", {"action": "brief", "args": args})
     if name == "save_progress":
         principal = client.binding[2]

@@ -94,6 +94,10 @@
             "minLength": 1,
             "maxLength": 40,
             "description": "Brief as the project stood then: a date (YYYY-MM-DD) or ISO date-time. Omit for now."
+          },
+          "salience": {
+            "type": "boolean",
+            "description": "Let your own recent use of memories nudge the ranking (bounded, reported per item). Default false."
           }
         },
         "required": [

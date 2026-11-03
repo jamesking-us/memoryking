@@ -138,6 +138,7 @@ def recall(
     text: bool = True,
     task: str | None = None,
     as_of: int | None = None,
+    salience: bool = False,
     **where: Any,
 ) -> dict[str, Any]:
     """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms."""
@@ -156,6 +157,8 @@ def recall(
         args["task"] = task
     if as_of is not None:
         args["as_of_ms"] = as_of
+    if salience:
+        args["salience"] = "on"
     command = {
         "version": 1,
         "incarnation": context["incarnation"],

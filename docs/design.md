@@ -118,6 +118,10 @@ Embedding vectors, compressed summaries, graph projections and ranked procedures
 
 Repository inspection is passive: it records Git identity, tracked/dirty artifacts and supported source structure without executing repository code. Bounded or missing coverage stays explicit. The dashboard observes stored state and can submit authorized review actions; it does not schedule agents. An active Memory view renews itself every five seconds while visible: every read passes the current authorization gate, an unchanged result leaves the open details and graph selection in place, and a hidden tab, an expired lease, a changed session or a clock rollback clears private content rather than extending it.
 
+## Anchors, salience and measurement
+
+Three ideas from the field fit the evidence-first design once they are made deterministic. Anchors are A-MEM's links and Zep's entities without a model: exact names extracted at capture, stored beside the record, matched exactly at query time and linking records that share a rare one. Salience is the forgetting-curve literature's lesson applied as a bounded nudge rather than a rewrite: use strengthens a record, disuse lets it fade into an archival tier, and nothing is ever deleted or altered by it; an as-of view never sees it. Both are measured with a judge-free harness on LongMemEval's evidence labels, so a ranking change is a number, not an argument.
+
 ## Source trust
 
 Claims have always had a review lifecycle: a model's proposal is quarantined until a person accepts it. Source trust applies the same idea to raw evidence. A capture from a source an admin marked untrusted is recorded in full and backed up, but held: no read, briefing, graph, resume or proposal can see it, and nothing can be built on it, until an admin releases it. The decision, like every policy, goes through the signed control journal, so a restore replays it and the policy epoch retires views made before it. The store keeps the raw evidence, because the point of quarantine is review, not loss; purge remains the way to erase.

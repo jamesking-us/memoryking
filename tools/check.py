@@ -37,6 +37,15 @@ def main():
         [sys.executable, "tools/check_docs.py"],
         [
             sys.executable,
+            "tools/evidence_recall.py",
+            "--data",
+            "fixtures/evaluation/longmemeval-sample.json",
+            "--gate",
+            "--output",
+            "tmp/checks/evidence-recall.json",
+        ],
+        [
+            sys.executable,
             "tools/retrieval_benchmark.py",
             "--gate",
             "--output",
