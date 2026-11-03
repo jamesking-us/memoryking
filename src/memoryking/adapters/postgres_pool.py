@@ -11,10 +11,12 @@ from memoryking.adapters.postgres_sql import record_factory
 from memoryking.domain.local import LocalError
 
 
-def acquire(pool: Any) -> Any:
-    """Admission fails before a connection, transaction or mutation exists."""
+def acquire(pool: Any, timeout: float | None = None) -> Any:
+    """Admission fails before a connection, transaction or mutation exists.
+
+    `timeout` bounds the wait for a free connection (the pool's own limit otherwise)."""
     try:
-        return pool.getconn()
+        return pool.getconn() if timeout is None else pool.getconn(timeout=timeout)
     except (PoolTimeout, TooManyRequests):
         raise LocalError("service_busy") from None
     except PoolClosed:

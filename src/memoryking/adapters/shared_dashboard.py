@@ -79,10 +79,17 @@ class SharedDashboard:
         self.history = CursorHistory()
         self.streams = threading.BoundedSemaphore(8)
 
+    @staticmethod
+    def deadline() -> float:
+        """Every dashboard request gets the same five-second budget as the HTTP API."""
+        return time.monotonic() + 5.0
+
     def issue(self, tenant: str, credential: str) -> dict[str, Any]:
         if tenant != self.tenant:
             raise LocalError("dashboard_unavailable")
-        with self.service.store(tenant, credential, release_only=True) as store:
+        with self.service.store(
+            tenant, credential, release_only=True, request_deadline=self.deadline()
+        ) as store:
             with store.transaction() as decision:
                 who = store._auth(credential, "admin", "*", decision.evaluated_ms)
                 epoch = store.db.execute("SELECT policy_epoch FROM tenants").fetchone()[0]
@@ -122,7 +129,12 @@ class SharedDashboard:
 
     def read(self, session: str, route: str, previous: str | None = None) -> Released:
         value = self.current(session)
-        with self.service.store(value["tenant"], value["credential"], release_only=True) as store:
+        with self.service.store(
+            value["tenant"],
+            value["credential"],
+            release_only=True,
+            request_deadline=self.deadline(),
+        ) as store:
             with store.transaction() as decision:
                 at = decision.evaluated_ms
                 who = store._auth(value["credential"], "admin", "*", at)
@@ -308,7 +320,12 @@ class SharedDashboard:
             value = self.codes.pop(hashlib.sha256(code.encode()).hexdigest(), None)
         if value is None:
             raise LocalError("bootstrap_invalid")
-        with self.service.store(value["tenant"], value["credential"], release_only=True) as store:
+        with self.service.store(
+            value["tenant"],
+            value["credential"],
+            release_only=True,
+            request_deadline=self.deadline(),
+        ) as store:
             with store.transaction() as decision:
                 store._auth(value["credential"], "admin", "*", decision.evaluated_ms)
                 epoch = store.db.execute("SELECT policy_epoch FROM tenants").fetchone()[0]
@@ -338,7 +355,9 @@ class SharedDashboard:
     def revoke(self, session: str, principal: str, project: str) -> dict[str, Any]:
         """Revoke a grant from the dashboard; the epoch advances, so sessions re-sign-in."""
         value = self.current(session)
-        with self.service.store(value["tenant"], value["credential"]) as store:
+        with self.service.store(
+            value["tenant"], value["credential"], request_deadline=self.deadline()
+        ) as store:
             # The same expiry, policy-epoch and incarnation checks as read(): a session
             # made stale by an earlier revoke, or expired, cannot keep revoking.
             with store.transaction() as decision:
@@ -362,7 +381,9 @@ class SharedDashboard:
         value = self.current(session)
         # The domain mutation owns the exclusive tenant gate. Session validation
         # runs inside that gate at the persisted authorization evaluation instant.
-        with self.service.store(value["tenant"], value["credential"]) as store:
+        with self.service.store(
+            value["tenant"], value["credential"], request_deadline=self.deadline()
+        ) as store:
             return execute(store, value, body, lambda: self.current(session))
 
     async def route(self, request: Request) -> Response:

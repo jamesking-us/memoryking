@@ -81,7 +81,12 @@ class PostgresStore(StoreCore):
         fault: Callable[[str], None] | None = None,
         release_only: bool = False,
         audience: str = "memoryking-shared",
+        request_deadline: float | None = None,
     ):
+        """`request_deadline` is a monotonic instant: checkout, the checkout checks and
+        every statement in this store's transactions stop at it, so a saturated pool or
+        a slow query fails as `service_busy` or `service_unavailable` within the caller's
+        own budget instead of past it."""
         identifier(tenant)
         paths(root, control)
         private_dir(root)
@@ -114,10 +119,21 @@ class PostgresStore(StoreCore):
         self.metrics: list[dict[str, float]] = []
         self.committed: dict[str, Any] | None = None
         self.pool = pool
+        self.request_deadline = request_deadline
         from memoryking.adapters.postgres_pool import acquire, check
 
-        self.connection = acquire(pool)
+        remaining = (
+            None if request_deadline is None else min(5.0, request_deadline - time.monotonic())
+        )
+        if remaining is not None and remaining <= 0:
+            raise LocalError("service_busy")
+        self.connection = acquire(pool, timeout=remaining)
         try:
+            if request_deadline is not None:
+                remaining_ms = max(1, int((request_deadline - time.monotonic()) * 1000))
+                self.connection.execute(
+                    "SELECT set_config('statement_timeout',%s,false)", (str(remaining_ms),)
+                )
             # getconn() does not run the pool's checkout check callback.
             check(self.connection)
             version = self.connection.execute(
@@ -126,8 +142,12 @@ class PostgresStore(StoreCore):
             if version is None or version[0] != "6":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
-        except BaseException:
+        except BaseException as exc:
             pool.putconn(self.connection)
+            if request_deadline is not None and (
+                time.monotonic() >= request_deadline or getattr(exc, "sqlstate", None) == "57014"
+            ):
+                raise LocalError("service_unavailable") from exc
             raise
 
     def close(self) -> None:
@@ -222,8 +242,15 @@ class PostgresStore(StoreCore):
     def _settings(self) -> None:
         self.connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
         self.connection.execute("SET LOCAL search_path=memoryking,pg_catalog")
-        self.connection.execute("SET LOCAL lock_timeout='5s'")
-        self.connection.execute("SET LOCAL statement_timeout='5s'")
+        remaining_ms = (
+            5000
+            if self.request_deadline is None
+            else min(5000, int((self.request_deadline - time.monotonic()) * 1000))
+        )
+        if remaining_ms <= 0:
+            raise LocalError("service_busy")
+        for setting in ("lock_timeout", "statement_timeout"):
+            self.connection.execute("SELECT set_config(%s,%s,true)", (setting, str(remaining_ms)))
         self.connection.execute("SELECT set_config('memoryking.tenant',%s,true)", (self.tenant,))
         self.connection.execute(
             "SELECT set_config('memoryking.principal',%s,true)", (self.principal,)

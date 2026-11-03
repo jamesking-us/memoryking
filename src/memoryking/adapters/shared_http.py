@@ -151,6 +151,7 @@ def create_app(
     dashboard_tenant: str | None = None,
 ) -> Any:
     async def operations(request: Request) -> Response:
+        request_started = time.monotonic()
         try:
             credential = bearer(request.headers)
             if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
@@ -164,8 +165,13 @@ def create_app(
             body = load_strict(bytes(data))
             if not isinstance(body, dict):
                 raise LocalError("invalid_request")
+            # The whole request, body included, shares one five-second budget.
             result = await anyio.to_thread.run_sync(
-                service.execute, request.path_params["tenant"], credential, body
+                service.execute,
+                request.path_params["tenant"],
+                credential,
+                body,
+                request_started + 5.0,
             )
             return ReleaseResponse(result)
         except (LocalError, ContractError) as exc:

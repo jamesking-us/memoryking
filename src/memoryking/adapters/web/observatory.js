@@ -94,6 +94,13 @@ export class Observatory {
     view;
     ticket = 0;
     expires = 0;
+    expiresMono = 0;
+    nextRefresh = 0;
+    lastWall = Date.now();
+    lastMono = performance.now();
+    cycle = null;
+    reader = null;
+    signature = "";
     graph = null;
     context = "";
     confirmed = null;
@@ -104,7 +111,7 @@ export class Observatory {
         this.current = current;
         this.openReceipt = openReceipt;
         this.root = root;
-        root.append(e("h2", "Memory"), e("p", "Browse stored memories, checkpoints, reviews and processing usage. Records reflect your current permissions; views expire after 15 seconds."));
+        root.append(e("h2", "Memory"), e("p", "Browse stored memories, checkpoints, reviews and processing usage. Active views refresh every five seconds while updates run, with current permission checks."));
         const form = e("form", "", "observatory-form");
         this.project = field(form, "Project", "", "text");
         this.project.required = true;
@@ -148,6 +155,15 @@ export class Observatory {
             ev.preventDefault();
             void this.load();
         };
+        for (const type of ["pointerdown", "keydown", "click", "beforeinput"])
+            root.addEventListener(type, (event) => {
+                const ticket = this.ticket;
+                this.tick(false);
+                if (ticket !== this.ticket) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                }
+            }, true);
     }
     clear() {
         this.clearResult("Session changed. Reconnect and select a project.");
@@ -158,6 +174,10 @@ export class Observatory {
     clearResult(message) {
         this.ticket++;
         this.expires = 0;
+        this.expiresMono = 0;
+        this.cycle = null;
+        this.reader = null;
+        this.signature = "";
         this.confirmed = null;
         this.lastRead = null;
         this.graph?.clear();
@@ -165,14 +185,46 @@ export class Observatory {
         this.output.replaceChildren();
         this.status.textContent = message;
     }
-    tick() {
+    clockValid() {
+        const wall = Date.now(), mono = performance.now();
+        if (wall < this.lastWall || mono < this.lastMono)
+            return false;
+        this.lastWall = wall;
+        this.lastMono = mono;
+        return true;
+    }
+    tick(refresh = true) {
+        if (!this.clockValid()) {
+            this.clearResult("Clock changed. Reload after the clock is stable.");
+            return;
+        }
         const ctx = this.current();
         if (this.context && (!ctx || JSON.stringify(ctx) !== this.context)) {
             this.clear();
             return;
         }
-        if (this.expires && Date.now() >= this.expires)
-            this.clearResult("Snapshot expired. Load again to recheck permission and source availability.");
+        if (this.expires &&
+            (document.hidden ||
+                Date.now() >= this.expires ||
+                performance.now() >= this.expiresMono)) {
+            this.clearResult("View expired or hidden. Load again to check current access.");
+            return;
+        }
+        if (refresh &&
+            this.reader &&
+            this.expires &&
+            !this.cycle &&
+            !this.writing &&
+            !document.hidden &&
+            performance.now() >= this.nextRefresh)
+            void this.run(this.reader, true, true);
+    }
+    /** Only skip DOM replacement after every read for this view has reauthorized. */
+    unchanged(...values) {
+        const signature = JSON.stringify(values.map((value) => Object.fromEntries(Object.entries(value).filter(([key]) => !["receipt", "evaluated_ms", "fresh_until_ms"].includes(key)))));
+        const same = this.cycle?.refreshing && signature === this.signature;
+        this.signature = signature;
+        return Boolean(same);
     }
     scope() {
         const b = JSON.parse(this.bindings.value);
@@ -185,9 +237,9 @@ export class Observatory {
     }
     async command(operation, action, args = {}, key, bare = false) {
         const ctx = this.current();
-        if (!ctx || document.hidden)
+        if (!ctx || document.hidden || !this.clockValid())
             throw Error("Current visible session required");
-        const stamp = JSON.stringify(ctx), ticket = this.ticket, project = this.project.value, started = Date.now();
+        const stamp = JSON.stringify(ctx), ticket = this.ticket, project = this.project.value, started = Date.now(), startedMono = performance.now(), cycle = this.cycle;
         // The inference contract binds history inside its arguments, not on the command.
         const command = bare
             ? { version: 1, action, args: { ...args, project } }
@@ -208,22 +260,55 @@ export class Observatory {
             JSON.stringify(this.current()) !== stamp ||
             project !== this.project.value ||
             document.hidden ||
+            !this.clockValid() ||
+            performance.now() >= startedMono + 15000 ||
             Date.now() >= started + 15000)
             throw Error("View changed while checking access");
         this.context = stamp;
         const deadline = typeof result.fresh_until_ms === "number"
             ? result.fresh_until_ms
             : started + 15000;
-        this.expires = Math.min(this.expires || Infinity, started + 15000, deadline);
-        if (Date.now() >= this.expires)
+        const expires = Math.min(started + 15000, deadline), monotonic = Math.min(startedMono + 15000, performance.now() + expires - Date.now());
+        if (Date.now() >= expires || performance.now() >= monotonic)
             throw Error("Snapshot expired");
-        this.status.textContent = `Current permission checked · ${project} · ${ctx.tenant} / ${ctx.principal} · history ${ctx.incarnation}. Snapshot valid for at most 15 seconds.`;
+        if (cycle) {
+            cycle.expires = Math.min(cycle.expires, expires);
+            cycle.monotonic = Math.min(cycle.monotonic, monotonic);
+        }
+        else {
+            // A one-off export or confirmation cannot renew unrelated retained content.
+            this.expires = Math.min(this.expires || Infinity, expires);
+            this.expiresMono = Math.min(this.expiresMono || Infinity, monotonic);
+        }
+        this.status.textContent = `Current permission checked · ${project} · ${ctx.tenant} / ${ctx.principal} · history ${ctx.incarnation}.`;
         return result;
     }
-    async run(action) {
+    async run(action, wholeView = false, refreshing = false) {
+        if (wholeView) {
+            this.ticket++;
+            this.cycle = {
+                ticket: this.ticket,
+                expires: Infinity,
+                monotonic: Infinity,
+                refreshing,
+            };
+        }
         const ticket = this.ticket;
+        const cycle = wholeView ? this.cycle : null;
         try {
             await action();
+            if (cycle && cycle === this.cycle && ticket === this.ticket) {
+                if (!this.clockValid() ||
+                    document.hidden ||
+                    Date.now() >= cycle.expires ||
+                    performance.now() >= cycle.monotonic)
+                    throw Error("Snapshot expired");
+                if (Number.isFinite(cycle.expires)) {
+                    this.expires = cycle.expires;
+                    this.expiresMono = cycle.monotonic;
+                }
+                this.nextRefresh = performance.now() + 5000;
+            }
         }
         catch (error) {
             if (ticket === this.ticket) {
@@ -233,6 +318,10 @@ export class Observatory {
                         : "request failed") +
                     ". Reload to reconcile; mutations are never automatically retried.");
             }
+        }
+        finally {
+            if (cycle && cycle === this.cycle)
+                this.cycle = null;
         }
     }
     async load() {
@@ -271,7 +360,7 @@ export class Observatory {
                     this.retention();
                     break;
             }
-        });
+        }, true);
         requestAnimationFrame(() => {
             this.root.dataset.viewReadyMs = String(Math.round(performance.now() - started));
         });
@@ -299,6 +388,7 @@ export class Observatory {
         this.output.append(exportButton);
     }
     async atlas(focus, cursor) {
+        this.reader = () => this.atlas(focus, cursor);
         const args = {
             bindings: this.scope(),
             max_nodes: focus ? 500 : 200,
@@ -330,15 +420,23 @@ export class Observatory {
         this.output.querySelector("[data-export]")?.remove();
         const footer = e("div", "", "atlas-footer");
         if (data.next_cursor)
-            footer.append(button("Next bounded page", () => void this.run(() => this.atlas(focus, String(data.next_cursor)))));
+            footer.append(button("Next bounded page", () => void this.run(() => this.atlas(focus, String(data.next_cursor)), true)));
         if (focus)
-            footer.append(button("Return to overview", () => void this.run(() => this.atlas())));
+            footer.append(button("Return to overview", () => void this.run(() => this.atlas(), true)));
         this.output.append(footer);
         this.exportCurrent(load);
     }
     async history(position, baseline) {
+        this.reader = () => this.history(position, baseline);
         const load = () => this.command("inspection", "history", position === undefined ? {} : { recorded_position: position });
         const data = await load();
+        const previous = baseline === undefined
+            ? null
+            : await this.command("inspection", "history", {
+                recorded_position: baseline,
+            });
+        if (this.unchanged(data, ...(previous ? [previous] : [])))
+            return;
         this.output.replaceChildren(e("h3", position === undefined
             ? "Live checkpoint state"
             : `Historical state at position ${position}`));
@@ -364,7 +462,7 @@ export class Observatory {
         }
         if (baseline !== undefined)
             base.value = String(baseline);
-        controls.append(pick, base, button("Inspect selected frame", () => void this.run(() => this.history(Number(pick.value), base.value ? Number(base.value) : undefined))), button("Return to live", () => void this.run(() => this.history())));
+        controls.append(pick, base, button("Inspect selected frame", () => void this.run(() => this.history(Number(pick.value), base.value ? Number(base.value) : undefined), true)), button("Return to live", () => void this.run(() => this.history(), true)));
         this.output.append(controls);
         if (frames.length) {
             const slider = e("input");
@@ -375,7 +473,7 @@ export class Observatory {
             slider.setAttribute("aria-label", "Checkpoint timeline");
             slider.onchange = () => {
                 const next = Number(frames[Number(slider.value)].position);
-                void this.run(() => this.history(next, base.value ? Number(base.value) : undefined));
+                void this.run(() => this.history(next, base.value ? Number(base.value) : undefined), true);
             };
             this.output.append(slider);
         }
@@ -383,10 +481,8 @@ export class Observatory {
             this.output.append(e("p", "No currently accessible checkpoints."));
         const projection = doc(data.projection), tasks = rows(projection.tasks);
         this.output.append(this.taskTable(tasks));
-        if (baseline !== undefined) {
-            const previous = await this.command("inspection", "history", {
-                recorded_position: baseline,
-            }), before = rows(doc(previous.projection).tasks), changes = [];
+        if (previous) {
+            const before = rows(doc(previous.projection).tasks), changes = [];
             const all = [
                 ...tasks,
                 ...before.filter((old) => !tasks.some((t) => t.task === old.task && t.run === old.run)),
@@ -431,6 +527,7 @@ export class Observatory {
         })), ["task", "run", "revision", "writer", "passed", "total", "heartbeat"]);
     }
     async review() {
+        this.reader = () => this.review();
         const bindings = this.scope();
         const knowledge = await this.command("knowledge", "query", {
             bindings,
@@ -443,6 +540,9 @@ export class Observatory {
             bindings,
             diagnostic: true,
         });
+        const ranking = await this.command("experience", "ranking_inspect");
+        if (this.unchanged(knowledge, constraints, procedures, ranking))
+            return;
         this.output.replaceChildren(e("h3", "Review queue & evidence quality"), e("p", "Source content is untrusted evidence. Review changes lifecycle authority; procedure activation is separate and grants no execution privileges. A policy change requires a new browser sign-in.", "integrity"));
         for (const [name, data, operation] of [
             ["Knowledge", knowledge, "knowledge"],
@@ -480,7 +580,6 @@ export class Observatory {
             section.append(detail("Resolution and completeness details", data));
             this.output.append(section);
         }
-        const ranking = await this.command("experience", "ranking_inspect");
         this.output.append(detail("Active ranking and evaluation evidence", ranking));
         this.composer();
     }
@@ -515,10 +614,19 @@ export class Observatory {
     async mutate(operation, action, args) {
         if (this.writing)
             throw Error("A command is already pending");
+        // Never replay writes or let a background read repaint their result.
+        const ticket = ++this.ticket;
+        this.cycle = null;
+        this.reader = null;
         this.writing = true;
         let result;
         try {
             result = await this.command(operation, action, args, crypto.randomUUID());
+        }
+        catch (error) {
+            if (ticket === this.ticket)
+                this.clearResult("Command result unavailable. Reload to reconcile; the command will not be retried automatically.");
+            throw error;
         }
         finally {
             this.writing = false;
@@ -578,7 +686,10 @@ export class Observatory {
         this.output.append(d);
     }
     async cost() {
+        this.reader = () => this.cost();
         const load = () => this.command("inspection", "cost"), data = await load(), summary = doc(data.processing);
+        if (this.unchanged(data))
+            return;
         this.output.replaceChildren(e("h3", "Processing attempts"), e("p", "Known usage is a lower bound when any attempts are unknown. Failed calls, retries and background processing remain included. Provider reports and actor outcomes are not independent metering.", "integrity"));
         const metrics = e("div", "", "metrics");
         for (const [name, value] of [
@@ -632,7 +743,10 @@ export class Observatory {
         this.exportCurrent(load);
     }
     async operations() {
+        this.reader = () => this.operations();
         const load = () => this.command("inspection", "operations"), data = await load();
+        if (this.unchanged(data))
+            return;
         this.output.replaceChildren(e("h3", "Jobs & primary health"), e("p", readable(data.health)), table(rows(data.jobs), [
             "id",
             "state",
@@ -691,7 +805,10 @@ export class Observatory {
         this.output.append(section);
     }
     async handoffs() {
+        this.reader = () => this.handoffs();
         const data = await this.command("inspection", "handoffs");
+        if (this.unchanged(data))
+            return;
         this.output.replaceChildren(e("h3", "Handoff lifecycle"), e("p", "Only handoffs involving this principal and a currently accessible checkpoint are shown. Role labels grant no authority. Preview uses the sender–recipient permission intersection; this screen never acknowledges work or changes the active writer."), table(rows(data.items), [
             "id",
             "task",
@@ -751,21 +868,24 @@ export class Observatory {
         const result = e("div");
         f.onsubmit = (ev) => {
             ev.preventDefault();
-            void this.run(async () => {
-                const args = {
-                    repository: repository.value,
-                    snapshot: snapshot.value,
-                    paths: paths.value
-                        .split(",")
-                        .map((x) => x.trim())
-                        .filter(Boolean),
-                }, value = await this.command("repository", "impact", {
+            const args = {
+                repository: repository.value,
+                snapshot: snapshot.value,
+                paths: paths.value
+                    .split(",")
+                    .map((x) => x.trim())
+                    .filter(Boolean),
+            }, bindings = this.scope();
+            const read = async () => {
+                const value = await this.command("repository", "impact", {
                     ...args,
                     limit: 128,
                 }), coverage = await this.command("repository", "coverage", {
                     ...args,
-                    bindings: this.scope(),
+                    bindings,
                 });
+                if (this.unchanged(value, coverage))
+                    return;
                 result.replaceChildren(detail("Evidence and affected claims", value), detail("Parser and policy coverage", coverage));
                 const host = e("div");
                 result.prepend(host);
@@ -789,7 +909,9 @@ export class Observatory {
                     coverage: "Direct current evidence dependencies; no similarity inference",
                     truncation: value.truncated ? ["impact_limit"] : [],
                 });
-            });
+            };
+            this.reader = read;
+            void this.run(read, true);
         };
         this.output.append(f, result);
     }

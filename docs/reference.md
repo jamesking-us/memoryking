@@ -70,6 +70,7 @@ The model installer command is `python -m memoryking.model_install --destination
 | Area | Implemented bound / behavior |
 | --- | --- |
 | Local request | 256 KiB wire body; 64 KiB captured text; one request per socket connection; up to eight connections served concurrently, more wait up to five seconds and then receive `service_busy`. |
+| Shared request | Every HTTP, MCP and dashboard request carries one five-second budget from its first byte: waiting for a pooled connection, the connection checks and every statement in the request's transactions stop at that deadline, so a saturated pool or a slow query returns `service_busy` or `service_unavailable` inside the budget rather than after it. |
 | Query | Up to 32 distinct searchable terms. Longer queries are searched on their leading terms and the receipt diagnostics record `query_terms_truncated`. |
 | Candidate window | Each query term contributes its 256 newest matches in the project; the merged set is ordered by how many terms a document matches, then by recency, and the top 256 are scored. A common word therefore cannot crowd out documents that match the rare terms. |
 | Policy journal | 256 KiB per signed record, enforced before writing (`journal_record_limit`) and on reading. A torn final line beyond the anchored sequence is discarded on the next append; damage anywhere else stays fatal. |
@@ -85,7 +86,7 @@ The model installer command is `python -m memoryking.model_install --destination
 | Dense retrieval | Exact authorized scan capped at 10,000 eligible vectors and 256 candidates; insufficient index/frontier is explicit. |
 | Processing usage | Up to 100,000 retained attempts per tenant; unknown costs stay null, with known lower bounds. Attempts past their 30-day retention are pruned by `gc` and when the cap is reached. |
 | Experience | 10,000 immutable records; up to 256 latest visible records per listing; no unbounded pagination/compaction. |
-| Browser | 60-second bootstrap, 15-minute session, five-second polling and 15-second snapshot freshness; hidden/expired views clear. |
+| Browser | 60-second bootstrap, 15-minute session, five-second polling and 15-second snapshot freshness; an active Memory view re-reads every five seconds while the tab is visible, re-checks permission on every read, repaints only when the result changed, and clears when hidden, expired or after a clock rollback. A briefing is never re-read in the background, because each read retains a receipt. |
 | Shared live updates | Eight streams, bounded samples/cursor history, resync/polling fallback. Not an unbounded event replay service. |
 
 ### Retrieval quality gate
