@@ -37,6 +37,17 @@ export interface Release {
   observation: string;
 }
 
+export interface Catalog {
+  project: string;
+  kind?: "observations" | "claims";
+  source?: string;
+  name?: string;
+  id?: string;
+  after?: number;
+  limit?: number;
+  text?: boolean;
+}
+
 export interface Inspection0 {
   version: 1;
   incarnation: string;
@@ -117,4 +128,11 @@ export interface Inspection10 {
   args: Project;
 }
 
-export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5 | Inspection6 | Inspection7 | Inspection8 | Inspection9 | Inspection10;
+export interface Inspection11 {
+  version: 1;
+  incarnation: string;
+  action: "catalog";
+  args: Catalog;
+}
+
+export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5 | Inspection6 | Inspection7 | Inspection8 | Inspection9 | Inspection10 | Inspection11;

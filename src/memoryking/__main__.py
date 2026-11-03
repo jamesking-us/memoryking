@@ -591,6 +591,24 @@ def main() -> int:
     dr.add_argument("--limit", type=int, default=16)
     dr.add_argument("--key", help="Retry key; default: one per project and day")
     dr.add_argument("--json", action="store_true")
+    vault = commands.add_parser(
+        "vault", help="Export memory as a Markdown vault for hand editing, or import one"
+    )
+    vault_commands = vault.add_subparsers(dest="vault_command", required=True)
+    for name, text in (
+        ("export", "Write every observation and claim as <project>/<source>/<name>.md"),
+        ("import", "Capture changed or new files as versions; claim files become proposals"),
+    ):
+        sub = vault_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        sub.add_argument("--dir", type=Path, required=True, help="The vault directory")
+        sub.add_argument("--json", action="store_true")
+        if name == "import":
+            sub.add_argument(
+                "--dry-run", action="store_true", help="Report what would change; write nothing"
+            )
     infl = commands.add_parser(
         "influence", help="Where one observation went: every record built from it and who got it"
     )
@@ -942,6 +960,39 @@ def main() -> int:
                     f"{len(report['drafted'])} draft(s) filed for review from {report['window']} observations; "
                     f"skipped {json.dumps(report['skipped'], sort_keys=True)}"
                 )
+        elif args.command == "vault":
+            from memoryking import vault as vault_module
+
+            client = vault_module.connect(
+                socket=args.socket, credential=args.credential, project=args.project
+            )
+            if args.vault_command == "export":
+                report = vault_module.export(args.dir, client)
+            else:
+                report = vault_module.import_(args.dir, client, dry_run=args.dry_run)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            elif args.vault_command == "export":
+                print(
+                    f"Exported {report['observations']} file(s) from {report['versions']} "
+                    f"observation(s) and {report['claims']} claim(s) to {report['directory']}"
+                )
+            else:
+                verb = "Would capture" if report["dry_run"] else "Captured"
+                for item in report["captured"]:
+                    print(f"{verb} {item['file']} as version {item['version']}")
+                for item in report["proposed"]:
+                    print(
+                        f"{verb.replace('capture', 'propose')} {item['file']} (claim {item['key']})"
+                    )
+                for item in report["errors"]:
+                    print(f"Skipped {item['file']}: {item['error']}", file=sys.stderr)
+                print(
+                    f"{len(report['captured'])} captured, {len(report['proposed'])} proposed, "
+                    f"{report['unchanged']} unchanged, {len(report['errors'])} skipped"
+                )
+                if report["errors"]:
+                    return 1
         elif args.command == "trust":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})

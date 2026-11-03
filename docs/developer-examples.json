@@ -232,5 +232,14 @@
     ],
     "exit_code": 0,
     "contains": "Hooks replayed"
+  },
+  {
+    "id": "memory-tool-demo",
+    "command": [
+      "{python}",
+      "tools/memory_tool_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "Memory tool demo passed."
   }
 ]

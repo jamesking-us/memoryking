@@ -1010,6 +1010,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `usage_record_invalid` | The usage record is malformed. |
 | `usage_retention_limit` | 100,000 usage attempts are retained; expired rows are pruned automatically, otherwise wait for retention to pass. |
 
+## vault
+
+| Code | What to do |
+| --- | --- |
+| `vault_missing` | The vault directory has no `<project>` folder; export first, or pass the directory that holds it. |
+
 ## vector
 
 | Code | What to do |

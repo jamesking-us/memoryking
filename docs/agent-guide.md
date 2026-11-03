@@ -109,6 +109,32 @@ The bridge is a plain stdio MCP server, so any host that launches one works the 
 
 Hosts differ in how they surface tool descriptions and how many tools they tolerate; the lean profile is the safer default for a model-driven host. No host is a certified integration; test yours with `tools/stdio_demo.py`.
 
+## Memory as files: the Anthropic memory tool and the Markdown vault
+
+Anthropic's [memory tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool) is a file interface: a Claude API agent views, creates, edits, deletes and renames files under `/memories`, and the application answers each command. `memoryking.memory_tool.MemoryTool` answers them from a MemoryKing project, so an agent built on the Claude API uses MemoryKing as its memory backend with no prompt changes, and every write is an ordinary receipted capture or proposal:
+
+```python
+from memoryking.memory_tool import DEFINITION, MemoryTool
+from memoryking.sdk import LocalClient
+
+memory = MemoryTool(LocalClient(socket_path, credential_path, "demo"))
+# In the tool-use loop: send DEFINITION in `tools`; for each memory tool_use block
+# append memory.tool_result(block.id, block.input) to the next user message.
+```
+
+`tool_result` returns the `tool_result` block, with `is_error` set when the command was refused; `execute` returns the text alone and raises `MemoryToolError` with the text to send back. With the Python SDK's `BetaAbstractMemoryTool` helper, each of the six methods can delegate to `execute(command)`, which reads a dict or an SDK command object alike.
+
+The files are the project's records. Every directory under `/memories/<project>` is a source and every file is one observation: the newest version of a note whose name is its event id, opened by a provenance block (id, source, version, who captured it, when, its hash) followed by the text exactly as stored. `str_replace`, `insert` and `create` on an existing file add a version (`<name>__v2`, `__v3`, ...) and keep the earlier ones as evidence; re-creating a file with the same text records nothing. `view` on a file is a receipted fetch, so what an agent reads counts as a delivery; `view` on a directory lists sources, files and sizes, newest first and bounded, and `README.md` explains the model to the agent. `claims/` holds reviewed knowledge, one file per claim: creating or editing a file there proposes a claim that waits for review like any proposal, and it needs an `evidence: [notes/acme, obs_...]` line in a leading `---` block naming the files or observation ids that support it; a reader sees accepted claims, a reviewer every state. `delete` and `rename` need an administrator credential, because memory is evidence; an agent credential is told to replace the content instead. Names that are not identifiers are mapped deterministically (`Meeting Notes/Acme Corp.md` becomes `Meeting-Notes/Acme-Corp.md`), paths outside the root or shaped like traversal are refused, and a capture from an untrusted source is held exactly as it would be from any other route. `tools/memory_tool_demo.py` runs the six commands against a disposable service.
+
+The same file model is a **Markdown vault** for hand editing and portability:
+
+```sh
+.venv/bin/python -m memoryking --profile home vault export --project demo --dir ~/memory-vault
+.venv/bin/python -m memoryking --profile home vault import --project demo --dir ~/memory-vault --dry-run
+```
+
+Export writes every visible observation (newest version per file) and claim as `<dir>/demo/<source>/<name>.md` and `<dir>/demo/claims/<key>.md`, private files in private directories, plus a README with the export time and the import instructions. Edit the text below a file's provenance block, add files, add a claim file with its evidence line, then import: a changed file becomes a new version, a new file a new observation, a claim file a proposal; unchanged files record nothing, and a file whose name is not an identifier or whose evidence does not resolve is reported and skipped. Nothing is deleted or overwritten in the store, so the vault can be re-exported after an import, carried to another store, or opened in any Markdown editor. Only `knowledge` claims are exported; constraints stay in the knowledge command.
+
 ## Structured plans
 
 A plan records **what the agents intend to do and what they have actually reported doing**. It has a title, objective, optional context, ordered phases and steps with stable ids. Each step has a description, status, notes, prerequisite step ids and evidence references. A plan complements the checkpoint an individual agent resumes from: the checkpoint says where one agent stopped, the plan says how far the whole piece of work has come. It does not dispatch agents or authorize builds, merges or external actions.
@@ -237,6 +263,7 @@ These commands run disposable examples in the [contributor environment](../CONTR
 | `python tools/stdio_demo.py` | Python client and actual MCP stdio subprocess. |
 | `python tools/plans_demo.py` | A structured plan: create, prove a step, read an earlier revision, list. |
 | `python tools/hooks_demo.py` | The three host hooks: save before compaction, save at the end, load at the next start; installer output per host. |
+| `python tools/memory_tool_demo.py` | Anthropic's memory tool over a project: view, create, edit, propose a claim, refuse delete for an agent, export the vault. |
 | `python tools/inference_demo.py` | Revoked content excluded from subsequent local provider requests. |
 | `python tools/repository_demo.py` | Repository snapshots and guidance freshness. |
 | `python tools/experience_demo.py` | Reviewed procedures, outcomes and bounded ranking. |

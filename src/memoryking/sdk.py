@@ -184,6 +184,23 @@ class LocalClient:
         credential, _ = self._current()
         return self._request(credential, "working", {"command": command})
 
+    def inspection(self, command: dict[str, Any]) -> dict[str, Any]:
+        """A bounded inspection (`catalog`, `history`, `cost`, ...) over the socket."""
+        self._bound(command)
+        credential, _ = self._current()
+        return self._request(credential, "inspection", {"command": command})
+
+    def knowledge(self, command: dict[str, Any]) -> dict[str, Any]:
+        """A knowledge command (`propose`, `query`, `review`, ...); the store validates it."""
+        self._bound(command)
+        credential, _ = self._current()
+        return self._request(credential, "knowledge", {"command": command})
+
+    def purge(self, observation: str) -> None:
+        """Erase one observation and what was built from it; denied without an admin grant."""
+        credential, _ = self._current()
+        self._request(credential, "purge", {"observation": observation})
+
     def capture(self, key: str, observation: dict[str, Any]) -> dict[str, Any]:
         if observation.get("project") != self.project:
             raise LocalError("scope_mismatch")

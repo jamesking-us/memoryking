@@ -194,6 +194,7 @@ HINTS: dict[str, str] = {
     "hook_config_invalid": "The host's hook config file is not a JSON object; fix or remove it before installing.",
     "host_unsupported": "Hooks are generated for claude, codex or grok; other hosts can run the same `memoryking hook` commands by hand.",
     "trust_level_invalid": "A source is trusted or untrusted; nothing else.",
+    "vault_missing": "The vault directory has no `<project>` folder; export first, or pass the directory that holds it.",
     "hold_unavailable": "No held capture with that id in this project; it was released, purged, or never held.",
     "response_limit": "The plan view exceeds the dashboard response limit; open one plan at a time or page with the cursor.",
     "invalid_checkpoint": "The checkpoint body does not match the contract; start from the fixture shape.",
