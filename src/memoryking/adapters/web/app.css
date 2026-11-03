@@ -881,6 +881,9 @@ summary:focus-visible,
 [data-authority="procedure"] {
   --authority: var(--violet);
 }
+[data-authority="plan"] {
+  --authority: var(--amber);
+}
 [data-authority="working"] {
   --authority: var(--steel);
 }
@@ -889,6 +892,7 @@ summary:focus-visible,
 }
 .atlas-node[data-authority="attestation"] circle,
 .atlas-node[data-authority="procedure"] circle,
+.atlas-node[data-authority="plan"] circle,
 .atlas-node[data-authority="proposed"] circle {
   fill: var(--panel);
   stroke: var(--authority);
@@ -928,6 +932,14 @@ summary:focus-visible,
 .graph-legend li[data-authority="quarantined"]::before,
 .graph-legend li[data-authority="retired"]::before {
   border-style: dashed;
+}
+.atlas-edge.declares,
+.atlas-edge.cites {
+  stroke-dasharray: 5 4;
+}
+.graph-panes > svg {
+  touch-action: none;
+  cursor: grab;
 }
 .graph-list button[data-authority] {
   box-shadow: inset 3px 0 var(--authority);
