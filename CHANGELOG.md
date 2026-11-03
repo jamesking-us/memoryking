@@ -4,7 +4,11 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
-Everything below is on `main` since 0.1.0a2 and installs from a checkout; the next pre-release will carry it to PyPI and the container image.
+Nothing yet.
+
+## 0.1.0a3 (2026-11-03)
+
+The ten items of the November 2026 gap analysis, in one pre-release. Install with `pip install --pre memoryking==0.1.0a3`; the local-daemon image is `ghcr.io/jamesking-us/memoryking:0.1.0a3`.
 
 ### Optional local reranker
 
