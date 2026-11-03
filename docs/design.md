@@ -138,6 +138,10 @@ Anthropic's memory tool and the field's Markdown vaults are the same idea: memor
 
 Every delivery, checkpoint, handoff and summary records what it was built from, and a purge follows those dependencies to retire derived copies. The influence report reads the same graph without changing anything: for one observation it enumerates the claims that cite it, every record derived from it transitively, the retained deliveries that included it, and the principals those reached. It makes a security property that was only enforced, that a poisoned record can be traced and removed, visible to the owner before deciding anything. It is honest about its edges: retention expiry, exports, provider dispatches and backups are outside the recorded graph and are named as such.
 
+## Memory health without a judge
+
+Whether memory is paying for itself is a question other systems answer with a model grading its own retrievals. MemoryKing answers it from receipts: feedback actors reported against a receipt they verifiably received, the status each briefing recorded, the dependencies each delivery retained, the lifecycle of each claim and the age of each proposal. The health report aggregates those into counts and ratios for one project and a window, names no principal and quotes no text, and applies fixed thresholds that the reference states, so the report can be wrong only in ways a reader can check. Its edges are the retention window of deliveries, which it names: an observation that reached a briefing whose retention expired is counted as never delivered, so reach is a floor, never a claim.
+
 ## Structured execution plans
 
 Plans are typed work records stored on task-level checkpoint streams. Stable phase and step ids preserve identity through reorderings; a bounded acyclic prerequisite graph rejects undefined or cyclic references. Each revision is immutable. Writes use the existing writer ownership, compare-and-set and history-aware retries; reads use current permissions and dependency availability. A full-plan revision records a scope change without rewriting older versions.
