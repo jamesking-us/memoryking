@@ -77,6 +77,46 @@ class RetrievalTests(unittest.TestCase):
         self.review(proposed)
         return proposed
 
+    def test_as_of_brief_sees_only_what_was_recorded_by_then_and_replays(self):
+        first_at = self.store.clock.utc_ms()
+        clock = self.clock()
+        clock.utc = first_at + 60_000
+        later = self.store.capture(
+            self.owner,
+            self.ns,
+            "later",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "later",
+                "text": "A later timeout finding recorded a minute afterwards.",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        clock.utc = first_at + 120_000
+        now = self.run_r()
+        self.assertIn(later["observation"], [g["reference"] for g in now["guidance"]])
+        then = self.run_r(args=self.brief_args(as_of_ms=first_at + 1))
+        refs = [g["reference"] for g in then["guidance"]]
+        self.assertIn(self.obs["observation"], refs)
+        self.assertNotIn(later["observation"], refs)
+        self.assertEqual(then["snapshot"]["as_of_ms"], first_at + 1)
+        self.assertEqual(then["snapshot"]["valid_ms"], first_at + 1)
+        self.assertLess(then["snapshot"]["recorded_position"], now["snapshot"]["recorded_position"])
+        replay = self.run_r("replay", {"project": "p", "receipt": then["receipt"]})
+        self.assertEqual(replay, then)
+        text = self.run_r(args=self.brief_args(as_of_ms=first_at + 1, format="text"))
+        self.assertIn("as of", text["text"].splitlines()[1])
+        nothing = self.run_r(args=self.brief_args(as_of_ms=0))
+        self.assertEqual(nothing["guidance"], [])
+        self.fails(
+            "invalid_request",
+            lambda: self.run_r(args=self.brief_args(as_of_ms=first_at, recorded_position=0)),
+        )
+
     def test_mandatory_survives_zero_similarity_and_top_k_zero(self):
         self.constraint()
         result = self.run_r(args=self.brief_args(query="astronomy", top_k=0))

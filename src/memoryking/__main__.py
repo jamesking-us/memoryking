@@ -573,6 +573,9 @@ def main() -> int:
     rec.add_argument("--query", required=True)
     rec.add_argument("--budget", type=int, default=6000)
     rec.add_argument("--task")
+    rec.add_argument(
+        "--as-of", help="Brief as the project stood then: a date, ISO date-time, or Unix ms"
+    )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     infl = commands.add_parser(
         "influence", help="Where one observation went: every record built from it and who got it"
@@ -765,6 +768,7 @@ def main() -> int:
                 budget=args.budget,
                 text=not args.json,
                 task=args.task,
+                as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,

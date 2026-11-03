@@ -129,6 +129,40 @@ class OperatorCommandTests(unittest.TestCase):
         self.assertEqual(report["principals"], ["owner"])
         self.cli("influence", "obs_missing", "--project", "demo", *common, expect=2)
 
+    def test_recall_as_of_accepts_dates_and_excludes_later_captures(self):
+        from memoryking.hooks import as_of_ms
+
+        self.assertEqual(as_of_ms("1700000000000"), 1700000000000)
+        self.assertEqual(as_of_ms("2026-10-20"), 1792540799999)
+        self.assertEqual(as_of_ms("2026-10-20T12:00:00+00:00"), 1792497600000)
+        self.assertEqual(as_of_ms("2026-10-20T12:00:00"), 1792497600000)
+        with self.assertRaises(LocalError):
+            as_of_ms("yesterday")
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        namespace = self.store.namespace(self.credential.read_text(), "demo")
+        self.store.capture(
+            self.credential.read_text(),
+            namespace,
+            "as-of",
+            {
+                "version": 1,
+                "project": "demo",
+                "source": "cli-test",
+                "source_event": "as-of",
+                "text": "Timeout finding for the as-of test.",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        now = self.cli("recall", "--project", "demo", "--query", "timeout", *common)
+        self.assertIn("Timeout finding", now)
+        then = self.cli(
+            "recall", "--project", "demo", "--query", "timeout", "--as-of", "2000-01-01", *common
+        )
+        self.assertNotIn("Timeout finding", then)
+        self.assertIn("as of 2000-01-01", then)
+
     def test_summarize_prints_the_summary_and_its_receipt(self):
         from test_working import checkpoint
 

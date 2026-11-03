@@ -19,6 +19,7 @@ class Brief(TypedDict):
     freshness: NotRequired[Literal["any", "attested"]]
     dense: NotRequired[DenseQuery]
     format: NotRequired[Literal["json", "text"]]
+    as_of_ms: NotRequired[int]
 
 class Fetch(TypedDict):
     project: str

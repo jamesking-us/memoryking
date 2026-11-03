@@ -16,6 +16,7 @@ WARNING_NOTES = {
     "host_and_protocol_tokens_excluded": "Token counts exclude host and protocol wrappers.",
     "token_estimate_no_exact_guarantee": "Token counts are a byte estimate, not exact.",
     "optional_coverage_uncalibrated": "Optional guidance coverage is not calibrated.",
+    "procedures_require_current_query": "Procedures are withheld from an as-of or historical briefing.",
 }
 ENVELOPE_FIELDS = (
     "version",
@@ -70,8 +71,12 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     objective = packet.get("objective") or "briefing"
     lines.append(f"# Briefing: {objective}")
     usage = packet.get("usage", {})
+    snapshot: dict[str, Any] = (
+        packet["snapshot"] if isinstance(packet.get("snapshot"), dict) else {}
+    )
+    as_of = f" · as of {_stamp(snapshot['as_of_ms'])}" if snapshot.get("as_of_ms") else ""
     lines.append(
-        f"_Status {packet.get('status', 'unknown')} · receipt {packet.get('receipt', '?')} ·"
+        f"_Status {packet.get('status', 'unknown')} · receipt {packet.get('receipt', '?')}{as_of} ·"
         f" {len(packet.get('constraints', []))} constraints ·"
         f" {len(packet.get('guidance', []))} guidance items ·"
         f" budget {usage.get('max_output_tokens', '?')} tokens_"

@@ -85,6 +85,12 @@ TOOLS: list[dict[str, Any]] = [
                     **IDENTIFIER,
                     "description": "Task id, when the briefing is for a specific task.",
                 },
+                "as_of": {
+                    **TEXT,
+                    "maxLength": 40,
+                    "description": "Brief as the project stood then: a date (YYYY-MM-DD) or ISO "
+                    "date-time. Omit for now.",
+                },
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -242,6 +248,10 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
         }
         if "task" in arguments:
             args["task"] = arguments["task"]
+        if "as_of" in arguments:
+            from memoryking.hooks import as_of_ms
+
+            args["as_of_ms"] = as_of_ms(arguments["as_of"])
         return client.tool("memory_brief", {"action": "brief", "args": args})
     if name == "save_progress":
         principal = client.binding[2]

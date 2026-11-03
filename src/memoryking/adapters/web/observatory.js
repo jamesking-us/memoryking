@@ -1014,18 +1014,23 @@ export class Observatory {
         const budget = field(f, "Token budget", "6000", "number");
         budget.min = "256";
         budget.max = "100000";
+        const asOf = field(f, "As of (optional)", "", "datetime-local");
+        asOf.title =
+            "Brief as the project stood at this moment: only what was recorded by then, with claim validity judged then.";
         f.append(e("button", "Brief me"));
         const result = e("div", "", "briefing");
         f.onsubmit = (event) => {
             event.preventDefault();
             void this.run(async () => {
                 result.replaceChildren(e("p", "Checking current permission…"));
+                const instant = asOf.value ? new Date(asOf.value).getTime() : NaN;
                 const packet = await this.command("retrieval", "brief", {
                     query: query.value,
                     bindings: [{}],
                     max_output_tokens: Number(budget.value) || 6000,
                     tokenizer: "utf8-byte-estimate-v1",
                     format: "text",
+                    ...(Number.isFinite(instant) ? { as_of_ms: instant } : {}),
                 });
                 result.replaceChildren(...markdown(String(packet.text ?? "")));
                 const usage = (packet.usage ?? {});

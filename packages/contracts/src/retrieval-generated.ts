@@ -15,6 +15,7 @@ export interface Brief {
   freshness?: "any" | "attested";
   dense?: DenseQuery;
   format?: "json" | "text";
+  as_of_ms?: number;
 }
 
 export interface Fetch {

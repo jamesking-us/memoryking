@@ -112,15 +112,35 @@ def capture(
     )
 
 
+def as_of_ms(value: str) -> int:
+    """A wall-clock instant for `--as-of`: Unix ms, a date, or an ISO date-time (UTC default)."""
+    from datetime import datetime, timezone
+
+    text = value.strip()
+    if text.isdigit():
+        return int(text)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise LocalError("invalid_request") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    if len(text) == 10:
+        # A bare date means the end of that day: everything recorded on it counts.
+        parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999000)
+    return int(parsed.timestamp() * 1000)
+
+
 def recall(
     query: str,
     *,
     budget: int = 6000,
     text: bool = True,
     task: str | None = None,
+    as_of: int | None = None,
     **where: Any,
 ) -> dict[str, Any]:
-    """A briefing through the socket, as cited Markdown by default."""
+    """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms."""
     socket, token, project = connection(**where)
     context = request(socket, token, "context", {"project": project})
     args: dict[str, Any] = {
@@ -134,6 +154,8 @@ def recall(
         args["format"] = "text"
     if task:
         args["task"] = task
+    if as_of is not None:
+        args["as_of_ms"] = as_of
     command = {
         "version": 1,
         "incarnation": context["incarnation"],

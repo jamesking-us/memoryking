@@ -443,6 +443,18 @@ class Retrieval:
         count, usage = counter(args["tokenizer"])
         from memoryking.adapters.ranking import Ranking
 
+        tenant_row = self.db.execute("SELECT * FROM tenants WHERE tenant=?", (tenant,)).fetchone()
+        source = tenant_row["position"]
+        if "as_of_ms" in args:
+            # One instant stands for both clocks: the history frontier as it was then
+            # (the last event recorded by that wall time) and the claim validity time.
+            if "recorded_position" in args or "valid_ms" in args:
+                raise LocalError("invalid_request")
+            frontier = self.db.execute(
+                "SELECT coalesce(max(position),0) FROM events WHERE tenant=? AND at_ms<=?",
+                (tenant, args["as_of_ms"]),
+            ).fetchone()[0]
+            args = {**args, "recorded_position": int(frontier), "valid_ms": args["as_of_ms"]}
         ranking: dict[str, Any] = (
             ranking_override
             if ranking_override is not None
@@ -450,8 +462,6 @@ class Retrieval:
             if "recorded_position" in args or "valid_ms" in args
             else Ranking(self.s).active(who, args["project"], at)
         )
-        tenant_row = self.db.execute("SELECT * FROM tenants WHERE tenant=?", (tenant,)).fetchone()
-        source = tenant_row["position"]
         consistency = args.get("consistency", {})
         target_position = source
         if token := consistency.get("at_least_watermark"):
@@ -501,6 +511,7 @@ class Retrieval:
                 "source_position": source,
                 "recorded_position": recorded,
                 "valid_ms": args.get("valid_ms", at),
+                **({"as_of_ms": args["as_of_ms"]} if "as_of_ms" in args else {}),
             },
         )
         diag: dict[str, Any] = {
@@ -525,6 +536,7 @@ class Retrieval:
             "deadline_ms": decision.deadline_ms,
             "valid_ms": args.get("valid_ms", at),
             "recorded_position": recorded,
+            **({"as_of_ms": args["as_of_ms"]} if "as_of_ms" in args else {}),
             "repository_validation": "exact_snapshot_for_declared_code_dependencies",
             "model_fingerprints": [dense["fingerprint"]] if "fingerprint" in dense else [],
             "scope_assumptions": ["local_default_workspace"],
