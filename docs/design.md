@@ -118,6 +118,10 @@ Embedding vectors, compressed summaries, graph projections and ranked procedures
 
 Repository inspection is passive: it records Git identity, tracked/dirty artifacts and supported source structure without executing repository code. Bounded or missing coverage stays explicit. The dashboard observes stored state and can submit authorized review actions; it does not schedule agents. An active Memory view renews itself every five seconds while visible: every read passes the current authorization gate, an unchanged result leaves the open details and graph selection in place, and a hidden tab, an expired lease, a changed session or a clock rollback clears private content rather than extending it.
 
+## Drafting without extraction
+
+Mem0's extraction phase is the field's answer to an empty knowledge layer: a model writes facts on every capture. The evidence-first design forbids that, so the proposal engine drafts instead of extracting. It finds names that several independent observations share, lifts the latest sentence that carries each, and files a proposal with the supporting spans attached. The claim enters the same review lifecycle as a human proposal, with its method and support recorded in its provenance, and nothing it drafts has any authority until a reviewer gives it some. The queue is never empty, and the invariant is intact.
+
 ## Anchors, salience and measurement
 
 Three ideas from the field fit the evidence-first design once they are made deterministic. Anchors are A-MEM's links and Zep's entities without a model: exact names extracted at capture, stored beside the record, matched exactly at query time and linking records that share a rare one. Salience is the forgetting-curve literature's lesson applied as a bounded nudge rather than a rewrite: use strengthens a record, disuse lets it fade into an archival tier, and nothing is ever deleted or altered by it; an as-of view never sees it. Both are measured with a judge-free harness on LongMemEval's evidence labels, so a ranking change is a number, not an argument.

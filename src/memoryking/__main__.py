@@ -582,6 +582,15 @@ def main() -> int:
         help="Let your own recent use of memories nudge the ranking (bounded, reported)",
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
+    dr = commands.add_parser(
+        "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
+    )
+    dr.add_argument("--socket", type=Path)
+    dr.add_argument("--credential", type=Path)
+    dr.add_argument("--project", required=True)
+    dr.add_argument("--limit", type=int, default=16)
+    dr.add_argument("--key", help="Retry key; default: one per project and day")
+    dr.add_argument("--json", action="store_true")
     infl = commands.add_parser(
         "influence", help="Where one observation went: every record built from it and who got it"
     )
@@ -680,7 +689,16 @@ def main() -> int:
         optional = (
             {"socket", "credential"}
             if args.command
-            in {"doctor", "capture", "recall", "hook", "hooks", "influence", "trust"}
+            in {
+                "doctor",
+                "capture",
+                "recall",
+                "hook",
+                "hooks",
+                "influence",
+                "trust",
+                "draft-proposals",
+            }
             else set()
         )
         for field in ("store", "control", "socket", "credential"):
@@ -894,6 +912,35 @@ def main() -> int:
                 print(
                     f"receipt {result['receipt']} · {result['method']} · "
                     f"checkpoint {result['checkpoint']} revision {result['revision']}"
+                )
+        elif args.command == "draft-proposals":
+            token = read_credential(args.credential)
+            context = request(args.socket, token, "context", {"project": args.project})
+            day = int(time.time() * 1000) // 86_400_000
+            report = request(
+                args.socket,
+                token,
+                "knowledge",
+                {
+                    "command": {
+                        "version": 1,
+                        "incarnation": context["incarnation"],
+                        "action": "draft",
+                        "key": args.key or f"draft-{args.project}-{day}",
+                        "args": {"project": args.project, "limit": args.limit},
+                    }
+                },
+            )
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            else:
+                for item in report["drafted"]:
+                    print(
+                        f"{item['revision']} [{item['basis']} {item['topic']}, {item['support']} sources] {item['text']}"
+                    )
+                print(
+                    f"{len(report['drafted'])} draft(s) filed for review from {report['window']} observations; "
+                    f"skipped {json.dumps(report['skipped'], sort_keys=True)}"
                 )
         elif args.command == "trust":
             token = read_credential(args.credential)

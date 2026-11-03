@@ -75,7 +75,7 @@ def execute(
     operation, command = body["operation"], body["command"]
     allowed = {
         "retrieval": {"atlas", "fetch", "replay", "brief", "rerun"},
-        "knowledge": {"query", "constraints", "propose", "review", "attest"},
+        "knowledge": {"query", "constraints", "propose", "draft", "review", "attest"},
         "experience": {
             "query",
             "records",
