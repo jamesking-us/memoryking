@@ -230,6 +230,10 @@ A capture from a matching source is recorded exactly like any other (same event 
 
 This is the quarantine lifecycle claims already had, applied one layer down: a poisoned capture from a feed, a scraper or a host hook on a machine you do not control never reaches a model unreviewed, and if it did reach one, the influence report says where.
 
+## Is memory paying for itself: the health report
+
+Request and latency metrics say the service is up; they do not say the memory is any good. `memoryking health --project demo` (or the **Memory health** section of the dashboard's Jobs & health view) answers from records the store already keeps, with counts only: how much of the feedback agents gave was helpful, how many briefings found no relevant memory, how much of what was captured ever reached a delivery, how many claims lost their evidence to a purge or were replaced, and how long the oldest proposal has waited for review. Five signals say what the numbers suggest; each `watch` or `attention` line names the next move, such as reviewing the backlog, capturing what agents keep asking about, or re-proposing a claim from evidence that remains. Ratios stay `unknown` until there are enough votes or briefings to mean anything, and the thresholds are fixed and documented in the [reference](reference.md#memory-health), so a change in the report is a change in the project, not in the judge. It needs an admin credential because it aggregates every principal's feedback and deliveries, but it names none of them.
+
 ## Where this left off: session summaries
 
 A resume packet is exact but long. Every resume now begins with a three-sentence summary when one exists: where the task stands, what was learned or tried, and what comes next. Summaries are derived artifacts with their own receipt, stored beside the checkpoint they summarize; the checkpoint remains the record and the summary never adds facts to it.

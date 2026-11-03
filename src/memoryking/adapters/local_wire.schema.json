@@ -7292,6 +7292,24 @@
           "required": [
             "project"
           ]
+        },
+        "Health": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "days": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365
+            }
+          },
+          "required": [
+            "project"
+          ]
         }
       },
       "oneOf": [
@@ -7613,6 +7631,32 @@
             },
             "args": {
               "$ref": "#/$defs/Inspection/$defs/Catalog"
+            }
+          },
+          "required": [
+            "version",
+            "incarnation",
+            "action",
+            "args"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "const": 1,
+              "type": "integer"
+            },
+            "incarnation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "action": {
+              "const": "health"
+            },
+            "args": {
+              "$ref": "#/$defs/Inspection/$defs/Health"
             }
           },
           "required": [

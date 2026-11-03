@@ -397,6 +397,44 @@ def render_influence(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_health(report: dict[str, Any]) -> str:
+    """The memory-health report as readable text: signals first, then the counts."""
+    window = report["window"]
+    observations, briefings = report["observations"], report["briefings"]
+    feedback, claims, backlog = report["feedback"], report["claims"], report["backlog"]
+
+    def ratio(ppm: int | None) -> str:
+        return "n/a" if ppm is None else f"{ppm / 10000:.0f}%"
+
+    lines = [f"Memory health for {report['project']} over the last {window['days']} day(s)", ""]
+    for item in report["signals"]:
+        lines.append(f"[{item['level']}] {item['name']}: {item['text']}")
+    lines += [
+        "",
+        f"Observations: {observations['total']} live, {observations['recent']} captured in the window, {observations['held']} held, {observations['purged']} purged",
+        f"  reached a retained delivery: {observations['delivered']}; never delivered: {observations['never_delivered']} ({ratio(observations['never_delivered_ppm'])})",
+        f"Briefings: {briefings['total']} retained; no relevant memory: {briefings['no_relevant_memory']} ({ratio(briefings['no_relevant_memory_ppm'])}); deliveries of every kind: {briefings['deliveries']}",
+        f"Feedback: {feedback['votes']} vote(s), {feedback['rated']} rated, {feedback['helpful']} helpful ({ratio(feedback['helpful_ppm'])})",
+        f"Claims: {claims['families']} families; "
+        + ", ".join(f"{count} {state}" for state, count in claims["by_state"].items())
+        + f"; {claims['quarantined']} quarantined, {claims['evidence_purged']} lost their evidence, {claims['superseded']} replaced",
+        f"Review backlog: {backlog['proposed']} waiting"
+        + (
+            f", oldest {backlog['oldest_age_ms'] // 86_400_000} day(s)"
+            if backlog["oldest_age_ms"] is not None
+            else ""
+        ),
+    ]
+    for item in backlog["items"]:
+        lines.append(
+            f"  - {item['revision']} {item['logical_key']} ({item['kind']} by {item['issuer']}, {item['age_ms'] // 86_400_000} day(s))"
+        )
+    if backlog["truncated"]:
+        lines.append("  - ...")
+    lines += ["", f"Coverage: {report['coverage'].replace('_', ' ')}"]
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
@@ -617,6 +655,15 @@ def main() -> int:
     infl.add_argument("--credential", type=Path)
     infl.add_argument("--project", required=True)
     infl.add_argument("--json", action="store_true", help="Print the structured report instead")
+    health = commands.add_parser(
+        "health",
+        help="Is memory paying for itself: feedback, empty briefings, lost evidence, backlog",
+    )
+    health.add_argument("--socket", type=Path)
+    health.add_argument("--credential", type=Path)
+    health.add_argument("--project", required=True)
+    health.add_argument("--days", type=int, default=30, help="Trailing window, 1 to 365 (30)")
+    health.add_argument("--json", action="store_true", help="Print the structured report instead")
     tr = commands.add_parser("trust", help="Source trust: hold captures from untrusted sources")
     tr_commands = tr.add_subparsers(dest="trust_command", required=True)
     for name, text in (
@@ -1032,6 +1079,26 @@ def main() -> int:
                     print("No held captures.")
             else:
                 print(json.dumps(report))
+        elif args.command == "health":
+            token = read_credential(args.credential)
+            context = request(args.socket, token, "context", {"project": args.project})
+            report = request(
+                args.socket,
+                token,
+                "inspection",
+                {
+                    "command": {
+                        "version": 1,
+                        "incarnation": context["incarnation"],
+                        "action": "health",
+                        "args": {"project": args.project, "days": args.days},
+                    }
+                },
+            )
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            else:
+                print(render_health(report), end="")
         elif args.command == "influence":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})

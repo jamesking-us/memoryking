@@ -48,6 +48,11 @@ export interface Catalog {
   text?: boolean;
 }
 
+export interface Health {
+  project: string;
+  days?: number;
+}
+
 export interface Inspection0 {
   version: 1;
   incarnation: string;
@@ -135,4 +140,11 @@ export interface Inspection11 {
   args: Catalog;
 }
 
-export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5 | Inspection6 | Inspection7 | Inspection8 | Inspection9 | Inspection10 | Inspection11;
+export interface Inspection12 {
+  version: 1;
+  incarnation: string;
+  action: "health";
+  args: Health;
+}
+
+export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5 | Inspection6 | Inspection7 | Inspection8 | Inspection9 | Inspection10 | Inspection11 | Inspection12;

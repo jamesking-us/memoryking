@@ -100,6 +100,7 @@ def execute(
             "trust_list",
             "held",
             "release",
+            "health",
         },
         "inference": {"audit"},
     }

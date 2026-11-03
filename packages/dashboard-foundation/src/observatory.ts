@@ -1135,6 +1135,7 @@ export class Observatory {
       data = await load();
     if (this.unchanged(data)) return;
     this.output.replaceChildren(
+      await this.memoryHealth(),
       e("h3", "Jobs & primary health"),
       e("p", readable(data.health)),
       table(rows(data.jobs), [
@@ -1156,6 +1157,103 @@ export class Observatory {
     );
     await this.egress();
     this.exportCurrent(load);
+  }
+  /** Whether memory is paying for itself: counts the store already keeps, never content. */
+  private async memoryHealth(): Promise<HTMLElement> {
+    const section = e("section", "", "memory-health");
+    section.append(e("h3", "Memory health"));
+    let data: Doc;
+    try {
+      data = await this.command("inspection", "health");
+    } catch (error) {
+      section.append(
+        e(
+          "p",
+          "Memory health unavailable under this session: " +
+            (error instanceof Error
+              ? readable(error.message)
+              : "request failed"),
+          "caption",
+        ),
+      );
+      return section;
+    }
+    const window = doc(data.window),
+      observations = doc(data.observations),
+      briefings = doc(data.briefings),
+      feedback = doc(data.feedback),
+      claims = doc(data.claims),
+      backlog = doc(data.backlog),
+      percent = (ppm: unknown) =>
+        typeof ppm === "number" ? `${Math.round(ppm / 10000)}%` : "n/a",
+      days = (ms: unknown) =>
+        typeof ms === "number" ? `${Math.floor(ms / 86400000)} day(s)` : "n/a";
+    section.append(
+      e(
+        "p",
+        `Last ${readable(window.days)} day(s) of this project.`,
+        "caption",
+      ),
+    );
+    const signals = e("ul", "", "health-signals");
+    for (const signal of rows(data.signals)) {
+      const item = e("li");
+      item.dataset.level = String(signal.level);
+      item.append(
+        e("strong", `${readable(signal.level)} · ${readable(signal.name)}`),
+        document.createTextNode(` ${readable(signal.text)}`),
+      );
+      signals.append(item);
+    }
+    section.append(signals);
+    section.append(
+      table(
+        [
+          {
+            measure: "Helpful share of rated feedback",
+            value: `${readable(feedback.helpful)} of ${readable(feedback.rated)} (${percent(feedback.helpful_ppm)})`,
+          },
+          {
+            measure: "Briefings with no relevant memory",
+            value: `${readable(briefings.no_relevant_memory)} of ${readable(briefings.total)} (${percent(briefings.no_relevant_memory_ppm)})`,
+          },
+          {
+            measure: "Observations never delivered",
+            value: `${readable(observations.never_delivered)} of ${readable(observations.total)} (${percent(observations.never_delivered_ppm)})`,
+          },
+          {
+            measure: "Claims that lost their evidence / were replaced",
+            value: `${readable(claims.evidence_purged)} / ${readable(claims.superseded)} of ${readable(claims.families)} families`,
+          },
+          {
+            measure: "Proposals waiting for review",
+            value: `${readable(backlog.proposed)}; oldest ${days(backlog.oldest_age_ms)}`,
+          },
+          {
+            measure: "Held and purged observations",
+            value: `${readable(observations.held)} held, ${readable(observations.purged)} purged`,
+          },
+        ],
+        ["measure", "value"],
+      ),
+    );
+    const waiting = rows(backlog.items).map((item) => ({
+      ...item,
+      waiting: days(item.age_ms),
+    }));
+    if (waiting.length)
+      section.append(
+        e("h4", "Oldest proposals waiting"),
+        table(waiting, [
+          "revision",
+          "logical_key",
+          "kind",
+          "issuer",
+          "waiting",
+        ]),
+      );
+    section.append(detail("Health counts and coverage", data));
+    return section;
   }
   /** What left this store for a model provider, under which policy, and whether it arrived. */
   private async egress(): Promise<void> {

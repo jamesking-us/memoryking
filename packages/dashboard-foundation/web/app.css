@@ -1002,6 +1002,30 @@ summary:focus-visible,
 .cost-bars > div {
   margin: 18px 0;
 }
+.health-signals {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 18px;
+  display: grid;
+  gap: 8px;
+}
+.health-signals li {
+  border-left: 2px solid var(--steel);
+  padding-left: 13px;
+}
+.health-signals li[data-level="ok"] {
+  border-color: var(--good);
+}
+.health-signals li[data-level="watch"] {
+  border-color: var(--amber);
+}
+.health-signals li[data-level="attention"] {
+  border-color: var(--bad);
+}
+.health-signals strong {
+  text-transform: capitalize;
+  margin-right: 6px;
+}
 .cost-bars meter {
   display: block;
   width: 100%;

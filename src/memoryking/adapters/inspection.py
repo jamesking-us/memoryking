@@ -21,6 +21,10 @@ from memoryking.domain.local import LocalError, Released
 from memoryking.domain.usage import UsageRecord, summarize
 
 CATALOG_TEXT_BYTES = 196608  # text per catalog page, under the inspection reply limit
+DAY_MS = 86_400_000
+BACKLOG_ITEMS = 16  # oldest waiting proposals listed by the health report
+HEALTH_MIN_SAMPLE = 5  # votes or briefings before a ratio becomes a signal
+BACKLOG_ATTENTION_MS = 7 * DAY_MS  # a proposal waiting longer than this needs a reviewer
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("inspection.schema.json").read_text())
 )
@@ -49,6 +53,7 @@ class Inspection:
                 "trust_list",
                 "held",
                 "release",
+                "health",
             }:
                 self.s._auth(credential, "admin", "*", at)
             if action == "history":
@@ -69,6 +74,8 @@ class Inspection:
                 result = self.held(who, args, at)
             elif action == "catalog":
                 result = self.catalog(who, args, at)
+            elif action == "health":
+                result = self.health(who, args, at)
             elif action in {"trust", "release"}:
                 result = self.policy(who, command, at)
             else:
@@ -537,6 +544,277 @@ class Inspection:
             "truncation": sorted(truncation),
             "coverage": "recorded_dependencies_in_this_project; retained_deliveries_only; prior_exports_provider_deliveries_and_backups_not_tracked",
             "source_position": state["position"],
+        }
+
+    def health(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        """Whether memory is paying for itself, from records the store already keeps.
+
+        Counts over one project and a trailing window: helpful feedback against every
+        rated vote, briefings that found no relevant memory, observations no retained
+        delivery ever included, claims retired because their evidence was purged or
+        replaced by a successor, and how long the oldest proposal has waited. Every
+        figure is a count or a ratio of counts; no text and no principal is named, so
+        the report reveals usage, not content. Admin only, because it aggregates every
+        principal's feedback and deliveries in the project. Each signal says what the
+        numbers suggest and the thresholds are fixed and documented, not learned."""
+        tenant, project = who["tenant"], args["project"]
+        days = args.get("days", 30)
+        since = at - days * DAY_MS
+        frontier = self.db.execute(
+            "SELECT position FROM tenants WHERE tenant=?", (tenant,)
+        ).fetchone()[0]
+
+        def count(sql: str, *values: Any) -> int:
+            return int(self.db.execute(sql, (tenant, project, *values)).fetchone()[0])
+
+        observations: dict[str, Any] = {
+            "total": count(
+                "SELECT count(*) FROM observations WHERE tenant=? AND project=? AND deleted=0"
+            ),
+            "recent": count(
+                "SELECT count(*) FROM observations o JOIN events e ON e.tenant=o.tenant AND e.position=o.position WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND e.at_ms>=?",
+                since,
+            ),
+            "held": count(
+                "SELECT count(*) FROM observation_holds h JOIN observations o ON o.tenant=h.tenant AND o.id=h.id WHERE h.tenant=? AND h.project=? AND h.state='held' AND o.deleted=0"
+            ),
+            "purged": count(
+                "SELECT count(*) FROM observations WHERE tenant=? AND project=? AND deleted=1"
+            ),
+        }
+        # Retained deliveries in the window: briefings (and reruns) by status, every kind
+        # by count, and the observations any of them carried.
+        by_kind: dict[str, int] = {}
+        by_status: dict[str, int] = {}
+        carried: set[str] = set()
+        for row in self.db.execute(
+            "SELECT diagnostics,dependencies FROM rendered_artifacts WHERE tenant=? AND project=? AND state='retained' AND created>=?",
+            (tenant, project, since),
+        ).fetchall():
+            diag = json.loads(row["diagnostics"] or "{}")
+            kind = str(diag.get("kind") or diag.get("operation") or "brief")
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            if kind == "brief":
+                status = str(diag.get("status", "unknown"))
+                by_status[status] = by_status.get(status, 0) + 1
+            for dep in json.loads(row["dependencies"] or "[]"):
+                if (
+                    isinstance(dep, dict)
+                    and dep.get("kind") == "observation"
+                    and isinstance(dep.get("id"), str)
+                ):
+                    carried.add(dep["id"])
+        delivered = 0
+        ids = sorted(carried)
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            delivered += count(
+                "SELECT count(*) FROM observations WHERE tenant=? AND project=? AND deleted=0 AND id IN ("
+                + ",".join("?" for _ in chunk)
+                + ")",
+                *chunk,
+            )
+        observations["delivered"] = delivered
+        observations["never_delivered"] = observations["total"] - delivered
+        observations["never_delivered_ppm"] = (
+            observations["never_delivered"] * 1_000_000 // observations["total"]
+            if observations["total"]
+            else None
+        )
+        briefings_total = sum(by_status.values())
+        empty = by_status.get("no_relevant_memory", 0)
+        briefings = {
+            "total": briefings_total,
+            "by_status": dict(sorted(by_status.items())),
+            "no_relevant_memory": empty,
+            "no_relevant_memory_ppm": (
+                empty * 1_000_000 // briefings_total if briefings_total else None
+            ),
+            "deliveries": sum(by_kind.values()),
+            "deliveries_by_kind": dict(sorted(by_kind.items())),
+        }
+        # Feedback: the latest revision of each vote, counted once, in the window.
+        latest: dict[tuple[str, str, str], tuple[int, int, dict[str, Any]]] = {}
+        for row in self.db.execute(
+            "SELECT e.principal,e.incarnation,e.logical_key,e.revision,e.body,ev.at_ms FROM experience_records e JOIN events ev ON ev.tenant=e.tenant AND ev.position=e.position WHERE e.tenant=? AND e.project=? AND e.kind='feedback' AND e.body IS NOT NULL",
+            (tenant, project),
+        ).fetchall():
+            key = (row["principal"], row["incarnation"], row["logical_key"])
+            if key not in latest or latest[key][0] < row["revision"]:
+                latest[key] = (row["revision"], row["at_ms"], json.loads(row["body"]))
+        by_usefulness: dict[str, int] = {}
+        by_use: dict[str, int] = {}
+        for _, at_ms, body in latest.values():
+            if at_ms < since:
+                continue
+            usefulness = str(body.get("usefulness", "unknown"))
+            by_usefulness[usefulness] = by_usefulness.get(usefulness, 0) + 1
+            use = str(body.get("use", "unknown"))
+            by_use[use] = by_use.get(use, 0) + 1
+        votes = sum(by_usefulness.values())
+        rated = votes - by_usefulness.get("unknown", 0)
+        helpful = by_usefulness.get("helpful", 0)
+        feedback = {
+            "votes": votes,
+            "rated": rated,
+            "helpful": helpful,
+            "helpful_ppm": helpful * 1_000_000 // rated if rated else None,
+            "by_usefulness": dict(sorted(by_usefulness.items())),
+            "by_use": dict(sorted(by_use.items())),
+        }
+        # Claims: the latest revision of every non-procedure family, purged ones included,
+        # so a family retired because its evidence was purged still counts.
+        by_state: dict[str, int] = {}
+        quarantined = 0
+        evidence_purged = 0
+        families = 0
+        waiting: list[dict[str, Any]] = []
+        for row in self.db.execute(
+            "SELECT r.id,r.family,r.kind,r.issuer,r.purged,f.logical_key,ev.at_ms FROM revisions r JOIN families f ON f.tenant=r.tenant AND f.id=r.family JOIN events ev ON ev.tenant=r.tenant AND ev.position=r.created WHERE r.tenant=? AND f.project=? AND r.kind!='procedure' AND r.created=(SELECT max(r2.created) FROM revisions r2 WHERE r2.tenant=r.tenant AND r2.family=r.family) ORDER BY r.created,r.id",
+            (tenant, project),
+        ).fetchall():
+            families += 1
+            if row["purged"]:
+                evidence_purged += 1
+                continue
+            state, quarantine = self.r.k._state(tenant, row["id"], frontier)
+            by_state[state] = by_state.get(state, 0) + 1
+            if quarantine:
+                quarantined += 1
+            if state == "proposed":
+                waiting.append(
+                    {
+                        "revision": row["id"],
+                        "family": row["family"],
+                        "logical_key": row["logical_key"],
+                        "kind": row["kind"],
+                        "issuer": row["issuer"],
+                        "quarantined": quarantine,
+                        "age_ms": max(0, at - row["at_ms"]),
+                    }
+                )
+        superseded = count(
+            "SELECT count(DISTINCT rp.predecessor) FROM replacements rp JOIN revisions r ON r.tenant=rp.tenant AND r.id=rp.predecessor JOIN families f ON f.tenant=r.tenant AND f.id=r.family WHERE rp.tenant=? AND f.project=?"
+        )
+        claims = {
+            "families": families,
+            "by_state": dict(sorted(by_state.items())),
+            "quarantined": quarantined,
+            "evidence_purged": evidence_purged,
+            "superseded": superseded,
+        }
+        waiting.sort(key=lambda item: (-item["age_ms"], item["revision"]))
+        backlog = {
+            "proposed": len(waiting),
+            "oldest_age_ms": waiting[0]["age_ms"] if waiting else None,
+            "items": waiting[:BACKLOG_ITEMS],
+            "truncated": len(waiting) > BACKLOG_ITEMS,
+        }
+        signals: list[dict[str, str]] = []
+
+        def signal(name: str, level: str, text: str) -> None:
+            signals.append({"name": name, "level": level, "text": text})
+
+        if rated < HEALTH_MIN_SAMPLE:
+            signal(
+                "feedback",
+                "unknown",
+                f"{rated} rated vote(s) in {days} day(s); at least {HEALTH_MIN_SAMPLE} are needed before the helpful ratio means anything.",
+            )
+        elif by_usefulness.get("harmful", 0) or by_usefulness.get("misleading", 0):
+            signal(
+                "feedback",
+                "attention",
+                f"{by_usefulness.get('harmful', 0)} harmful and {by_usefulness.get('misleading', 0)} misleading vote(s): look at what was delivered and consider quarantine.",
+            )
+        elif helpful * 2 < rated:
+            signal(
+                "feedback",
+                "watch",
+                f"{helpful} of {rated} rated votes were helpful: under half of what memory delivered was worth reading.",
+            )
+        else:
+            signal("feedback", "ok", f"{helpful} of {rated} rated votes were helpful.")
+        if briefings_total < HEALTH_MIN_SAMPLE:
+            signal(
+                "briefings",
+                "unknown",
+                f"{briefings_total} retained briefing(s) in {days} day(s); at least {HEALTH_MIN_SAMPLE} are needed before the empty share means anything.",
+            )
+        elif empty * 2 > briefings_total:
+            signal(
+                "briefings",
+                "watch",
+                f"{empty} of {briefings_total} briefings found no relevant memory: agents ask about things nothing was captured for.",
+            )
+        elif by_status.get("budget_insufficient", 0) * 4 > briefings_total:
+            signal(
+                "briefings",
+                "watch",
+                f"{by_status.get('budget_insufficient', 0)} of {briefings_total} briefings ran out of output budget: raise max_output_tokens or ask narrower questions.",
+            )
+        else:
+            signal(
+                "briefings",
+                "ok",
+                f"{briefings_total - empty} of {briefings_total} briefings carried relevant memory.",
+            )
+        if not waiting:
+            signal("backlog", "ok", "No proposal is waiting for review.")
+        elif waiting[0]["age_ms"] > BACKLOG_ATTENTION_MS:
+            signal(
+                "backlog",
+                "attention",
+                f"{len(waiting)} proposal(s) waiting; the oldest for {waiting[0]['age_ms'] // DAY_MS} day(s). Reviewed knowledge is not growing.",
+            )
+        else:
+            signal("backlog", "watch", f"{len(waiting)} proposal(s) waiting for review.")
+        if quarantined:
+            signal(
+                "evidence",
+                "attention",
+                f"{quarantined} claim(s) quarantined; {evidence_purged} retired because evidence was purged; {superseded} replaced.",
+            )
+        elif evidence_purged:
+            signal(
+                "evidence",
+                "watch",
+                f"{evidence_purged} claim(s) retired because their evidence was purged; propose again from evidence that remains. {superseded} replaced.",
+            )
+        else:
+            signal(
+                "evidence",
+                "ok",
+                f"No claim lost its evidence; {superseded} replaced by a successor.",
+            )
+        if observations["total"] < 4 * HEALTH_MIN_SAMPLE:
+            signal(
+                "reach",
+                "unknown",
+                f"{observations['total']} observation(s); too few to judge how much of memory is read.",
+            )
+        elif observations["never_delivered"] * 10 > observations["total"] * 9:
+            signal(
+                "reach",
+                "watch",
+                f"{observations['never_delivered']} of {observations['total']} observations were in no retained delivery in {days} day(s): memory is written far more than it is read.",
+            )
+        else:
+            signal(
+                "reach",
+                "ok",
+                f"{delivered} of {observations['total']} observations reached a retained delivery in {days} day(s).",
+            )
+        return {
+            "window": {"days": days, "since_ms": since},
+            "observations": observations,
+            "briefings": briefings,
+            "feedback": feedback,
+            "claims": claims,
+            "backlog": backlog,
+            "signals": signals,
+            "coverage": "counts_only_no_text_no_principals; retained_deliveries_in_window_only; latest_vote_per_actor_and_item; latest_revision_per_family; thresholds_fixed_not_learned",
+            "source_position": frontier,
         }
 
     def trust_list(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:

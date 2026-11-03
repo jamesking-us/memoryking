@@ -129,6 +129,32 @@ class OperatorCommandTests(unittest.TestCase):
         self.assertEqual(report["principals"], ["owner"])
         self.cli("influence", "obs_missing", "--project", "demo", *common, expect=2)
 
+    def test_health_prints_signals_and_counts_for_a_project(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        self.cli(
+            "capture",
+            "--project",
+            "demo",
+            "--source",
+            "cli-test",
+            "--text",
+            "The retry budget in payments/retry.py is three per request.",
+            *common,
+        )
+        text = self.cli("health", "--project", "demo", "--days", "7", *common)
+        self.assertIn("Memory health for demo over the last 7 day(s)", text)
+        self.assertIn("[ok] backlog: No proposal is waiting for review.", text)
+        self.assertIn("Observations: 1 live, 1 captured in the window, 0 held, 0 purged", text)
+        self.assertIn("Review backlog: 0 waiting", text)
+        report = json.loads(self.cli("health", "--project", "demo", "--json", *common))
+        self.assertEqual(report["window"]["days"], 30)
+        self.assertEqual(report["observations"]["never_delivered"], 1)
+        self.assertEqual(
+            {s["name"] for s in report["signals"]},
+            {"feedback", "briefings", "backlog", "evidence", "reach"},
+        )
+        self.cli("health", "--project", "demo", "--days", "0", *common, expect=2)
+
     def test_recall_as_of_accepts_dates_and_excludes_later_captures(self):
         from memoryking.hooks import as_of_ms
 
