@@ -31,6 +31,7 @@ TOOL_VALIDATORS = {
 }
 DEFAULT_BUDGET = 6000
 MUTATION_TOOLS = {"memory_checkpoint", "memory_handoff", "memory_feedback"}
+PLAN_MUTATIONS = {"plan_save", "plan_step"}
 
 
 def _resolve(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
@@ -226,7 +227,8 @@ class LocalClient:
                 arguments["request"] = {"version": 1, "project": self.project, **request}
             return arguments
         arguments = {"version": 1, "incarnation": self.binding[-1], **arguments}
-        if name in MUTATION_TOOLS and "key" not in arguments:
+        plan_write = name == "memory_plan" and arguments.get("action") in PLAN_MUTATIONS
+        if (name in MUTATION_TOOLS or plan_write) and "key" not in arguments:
             # Without a caller-supplied key there is nothing to replay, so a fresh key
             # keeps the call valid; supply a stable key to make retries idempotent.
             arguments["key"] = "auto-" + secrets.token_hex(12)

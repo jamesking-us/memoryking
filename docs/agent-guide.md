@@ -83,13 +83,13 @@ The local bridge connects an MCP-capable host to an already running local servic
 
 This illustrates the common `mcpServers` shape; each host has its own configuration location and support requirements. The bridge itself is exercised, but third-party hosts are not certified integrations.
 
-Eight tools are exposed: `memory_status`, `memory_capture`, `memory_brief`, `memory_fetch`, `memory_checkpoint`, `memory_resume`, `memory_handoff` and `memory_feedback`. Their exact input schemas are in the [tool catalog](../src/memoryking/adapters/stdio.tools.json); each description says when to call the tool, what comes back and the one mistake to avoid. Feedback accepts outcome/feedback actions; it cannot activate a procedure. Administration, policy changes, source registration and model configuration are deliberately outside this tool surface.
+Nine tools are exposed: `memory_status`, `memory_capture`, `memory_brief`, `memory_fetch`, `memory_checkpoint`, `memory_resume`, `memory_plan`, `memory_handoff` and `memory_feedback`. Their exact input schemas are in the [tool catalog](../src/memoryking/adapters/stdio.tools.json); each description says when to call the tool, what comes back and the one mistake to avoid. Feedback accepts outcome/feedback actions; it cannot activate a procedure. Administration, policy changes, source registration and model configuration are deliberately outside this tool surface.
 
 When the service runs with a local embedding model and the project is enabled for it, every briefing also searches by meaning: the service embeds the query itself and fuses the dense and lexical candidates, so an agent gets semantic recall without computing vectors. A briefing's `coverage.dense` says whether that channel was used.
 
 Briefings and resume packets can be delivered as text. Pass `format: "text"` to `brief` or `resume` and the reply is a compact envelope: the same `receipt`, `status`, `usage` and `warnings`, plus `text`, a Markdown briefing with constraints first, numbered guidance carrying `[g1]`-style citations, caveats, and a Sources footer, and `sources`, the citation-to-record map. The envelope is what replay returns, byte for byte, so receipts and budgets behave exactly as for JSON. Use text when a model will read the briefing directly; use JSON when a program will.
 
-A checkpoint can be saved progressively. Through the bridge, `memory_checkpoint` needs only `objective` and `current_state` (plus `task`); every other section defaults to empty, the repository to "none recorded", and each defaulted section is listed in `capture.gaps` as `defaulted:<section>` so the next resume says what was never written. `expected_revision` may be omitted or `null` to accept the current revision without a compare-and-set check; pass the revision you last saw when two writers might race. A missing retry `key` on checkpoint, handoff and feedback calls is minted by the bridge; pass your own stable key when a retry must replay the first result.
+A checkpoint can be saved progressively. Through the bridge, `memory_checkpoint` needs only `objective` and `current_state` (plus `task`); every other section defaults to empty, the repository to "none recorded", and each defaulted section is listed in `capture.gaps` as `defaulted:<section>` so the next resume says what was never written. `expected_revision` may be omitted or `null` to accept the current revision without a compare-and-set check; pass the revision you last saw when two writers might race. A missing retry `key` on checkpoint, plan write, handoff and feedback calls is minted by the bridge; pass your own stable key when a retry must replay the first result.
 
 The bridge fills what the session already knows, so a minimal call works: `version`, `incarnation`, `project`, `bindings` (`[{}]`), `max_output_tokens` (6,000) and `tokenizer` (the exact tokenizer when installed, otherwise the disclosed byte estimate) default when omitted, and `memory_capture` fills `request.version` and `request.project`. Explicit values always win, and the service validates the completed command exactly as before, so a stale explicit `incarnation` is still rejected as `history_changed`.
 
@@ -97,7 +97,7 @@ The shared profile also exposes authenticated Streamable HTTP MCP at `/v1/tenant
 
 ### Lean profile for any host
 
-Add `--profile lean` to the bridge command and the host sees five flat tools instead of eight schema-heavy ones: `remember`, `recall`, `save_progress`, `resume` and `hand_off`. Their catalog is under 8 KB with no `oneOf`, every call has defaults, briefings and resumes come back as cited Markdown, and each tool maps onto the full profile through the same client, so authorization, receipts and idempotency are unchanged. The catalog is in [`contracts/stdio.tools.lean.json`](../contracts/stdio.tools.lean.json). Use the full profile when a program, not a model, drives the tools.
+Add `--profile lean` to the bridge command and the host sees five flat tools instead of nine schema-heavy ones: `remember`, `recall`, `save_progress`, `resume` and `hand_off`. Their catalog is under 8 KB with no `oneOf`, every call has defaults, briefings and resumes come back as cited Markdown, and each tool maps onto the full profile through the same client, so authorization, receipts and idempotency are unchanged. The catalog is in [`contracts/stdio.tools.lean.json`](../contracts/stdio.tools.lean.json). Use the full profile when a program, not a model, drives the tools.
 
 The bridge is a plain stdio MCP server, so any host that launches one works the same way. Where the configuration lives differs by host:
 
@@ -108,6 +108,34 @@ The bridge is a plain stdio MCP server, so any host that launches one works the 
 | Grok and other hosts | The host's stdio MCP server setting; supply the same command and args. | command and args |
 
 Hosts differ in how they surface tool descriptions and how many tools they tolerate; the lean profile is the safer default for a model-driven host. No host is a certified integration; test yours with `tools/stdio_demo.py`.
+
+## Structured plans
+
+A plan records **what the agents intend to do and what they have actually reported doing**. It has a title, objective, optional context, ordered phases and steps with stable ids. Each step has a description, status, notes, prerequisite step ids and evidence references. A plan complements the checkpoint an individual agent resumes from: the checkpoint says where one agent stopped, the plan says how far the whole piece of work has come. It does not dispatch agents or authorize builds, merges or external actions.
+
+The normal flow is:
+
+1. Create the plan with `plan_save`, `expected_revision: 0`, an explicit reader audience and a stable retry key.
+2. Read `current_revision` with `plan_get`. Mark a ready step `doing` with `plan_step` and that revision.
+3. Capture the actual result as an observation, then mark the step `done` with its evidence reference. Use `blocked` with a reason when work cannot proceed.
+4. Revise the whole plan with `plan_save` to add or reorder phases and steps. Keep the ids. Resolve a revision conflict by reading and reconciling the current plan.
+5. Close the plan as `done` or `abandoned` with a closure note and a captured lesson. `done` requires a non-empty plan whose steps are all done or explicitly skipped.
+
+All four actions, `plan_save`, `plan_step`, `plan_get` and `plan_list`, are one tool, **`memory_plan`**, in MCP, and `client.working(command)` in both Python clients; the CLI sends the same command to the `working` operation with `memoryking request`. The [closed command schema](../contracts/working-v1.schema.json) is authoritative and [`examples/plan.json`](../examples/plan.json) is a complete input. The same tool works from Claude Code, Codex, Grok or any other MCP host; nothing in it is host-specific.
+
+```sh
+.venv/bin/python tools/plans_demo.py
+```
+
+This disposable example uses the real local service and the model-facing tool contract: it creates two steps, captures inspection evidence, records one completed step, reads the earlier revision and lists the current plan. The same exercise runs over the shared HTTP service with native PostgreSQL in the test suite.
+
+Every plan command carries `version: 1`, the current `incarnation`, `action` and `args.project`. Writes also carry `key` and `args.expected_revision`. A plan lives on a task stream named by `args.task`; use a separate task id from an ordinary agent checkpoint, because a stream cannot change from one kind to the other. `plan_step` requires `step`, `status`, `notes`, `evidence` and a nullable `decision`, and changes only those fields; `plan_save` replaces the whole plan. A read returns `revision` (the snapshot you got) and `current_revision` (the compare-and-set revision to write with, which differs after an operator reassigns the writer). `plan_get` takes a nullable `revision`, null for the current state; `plan_list` takes `limit` (1 to 50) and a nullable `cursor`. Read responses add derived progress and `reported_status` per step; strip those projection fields before using a read as a write body.
+
+Step statuses are `todo`, `doing`, `done`, `blocked`, `skipped` and `unknown`. `doing` and `done` need every prerequisite done or skipped. `blocked` needs a note; `skipped` needs a note and a scope decision, and does not count as completed work. Changing the objective, a completed step's definition or its prerequisites needs fresh evidence or reopening the step; reordering, dropping or duplicating old evidence links is not fresh proof, and reopening then re-citing the old proof does not launder a changed definition. If a prerequisite changes, revise the affected steps together in one `plan_save`.
+
+Progress is counted in equal steps, rounded down to a whole percent: completed steps over the current total. An empty plan has no percentage. The separate resolved count includes justified skips. Adding scope lowers progress. The declared lifecycle (`draft`, `active`, `done`, `abandoned`) is separate from effective completion: evidence the reader can no longer open, or history the reader cannot verify, turns the affected steps `unknown` rather than letting them pass. Recorded evidence is an agent's report, not independent certification.
+
+Before stopping, an agent should capture its findings, save its checkpoint, then update the plan with evidence-backed progress, and read the plan back: a successful write alone does not establish that the next agent can read it.
 
 ## Capturing automatically
 
@@ -152,6 +180,7 @@ These commands run disposable examples in the [contributor environment](../CONTR
 | `python tools/briefing_demo.py` | Briefing, bounded evidence fetch, exact replay and explicit rerun. |
 | `python tools/working_demo.py` | Checkpoint/resume and uncertain-operation reconciliation. |
 | `python tools/stdio_demo.py` | Python client and actual MCP stdio subprocess. |
+| `python tools/plans_demo.py` | A structured plan: create, prove a step, read an earlier revision, list. |
 | `python tools/inference_demo.py` | Revoked content excluded from subsequent local provider requests. |
 | `python tools/repository_demo.py` | Repository snapshots and guidance freshness. |
 | `python tools/experience_demo.py` | Reviewed procedures, outcomes and bounded ranking. |

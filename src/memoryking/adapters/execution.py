@@ -224,6 +224,7 @@ class Execution:
                     "reason": "current_source_authorization_unavailable",
                 }
             task = {
+                **({"plan_id": stream["task"]} if "plan" in body else {}),
                 "task": stream["task"],
                 "run": args["run"],
                 "checkpoint": row["id"],

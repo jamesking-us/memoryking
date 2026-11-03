@@ -53,6 +53,14 @@ DESCRIPTIONS = {
         "`blocked` or `partial` packet lists what is missing. Budget and tokenizer "
         "default to the session's."
     ),
+    "memory_plan": (
+        "Track a multi-step plan on a task: `plan_save` creates or revises the whole plan "
+        "(phases, steps with stable ids, prerequisites), `plan_step` updates one step's "
+        "status, notes and evidence, `plan_get` reads the current or an earlier revision "
+        "with computed progress, `plan_list` pages the project's plans. A step counts as "
+        "done only with evidence; a changed definition needs fresh evidence. Progress is "
+        "recorded work, not independent certification."
+    ),
     "memory_handoff": (
         "Pass a task to another principal with their current permissions: `prepare` a "
         "handoff from a checkpoint, `preview` what the recipient would receive, "
@@ -150,7 +158,14 @@ def generate():
                 ("memory_fetch", {"fetch", "receipt", "replay", "receipts"}, True),
             ],
         ),
-        ("working", [("memory_checkpoint", {"save"}, False), ("memory_resume", {"resume"}, True)]),
+        (
+            "working",
+            [
+                ("memory_checkpoint", {"save"}, False),
+                ("memory_resume", {"resume"}, True),
+                ("memory_plan", {"plan_save", "plan_step", "plan_get", "plan_list"}, False),
+            ],
+        ),
         ("experience", [("memory_feedback", {"outcome", "feedback"}, False)]),
     ]:
         schema = json.loads((ROOT / f"contracts/{source}-v1.schema.json").read_text())

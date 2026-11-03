@@ -633,8 +633,20 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `plan_closure_evidence_required` | Closing a plan as done or abandoned needs a closure note and at least one lesson reference. |
+| `plan_dependency_cycle` | Step prerequisites form a cycle; remove the circular depends_on link. |
+| `plan_dependency_unresolved` | A step can be doing or done only when every prerequisite is done or skipped. |
+| `plan_duplicate_id` | Phase and step ids must be unique within a plan. |
+| `plan_reason_required` | A blocked or skipped step needs a note explaining why. |
+| `plan_reference_invalid` | Every step must name an existing phase and existing prerequisite step ids. |
+| `plan_reverification_required` | A completed step's definition or prerequisites changed; cite fresh evidence or reopen the step as todo. |
 | `plan_source_invalid` | A plan file is outside the plan root or malformed. |
 | `plan_source_unavailable` | No plan root is configured, or the file is missing. |
+| `plan_step_unavailable` | The plan has no step with that id; read the current plan and use a stable step id. |
+| `plan_stream_type_changed` | A task stream cannot switch between ordinary checkpoints and a plan; use a separate task id. |
+| `plan_task_stream_required` | Plans live on the task stream; send run as null. |
+| `plan_unavailable` | No plan on this task stream (or the revision does not exist); save one with plan_save or check the task id. |
+| `plan_unresolved_steps` | A done plan needs at least one step, each done or skipped; finish or skip the rest first. |
 
 ## pool
 
@@ -791,6 +803,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `request_key_required` | Mutations need a stable `key` so retries replay instead of duplicating. |
 | `request_too_large` | The request exceeds 256 KiB; reduce the payload. |
+
+## response
+
+| Code | What to do |
+| --- | --- |
+| `response_limit` | The plan view exceeds the dashboard response limit; open one plan at a time or page with the cursor. |
 
 ## retention
 

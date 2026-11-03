@@ -63,6 +63,37 @@ class SharedDashboardTests(unittest.TestCase):
             key, value = line.split(":", 1)
             result[key] = value.strip()
 
+    def test_structured_plan_list_detail_and_strict_query_over_shared_http(self):
+        from test_plans import plan
+
+        self.command(
+            "working",
+            {
+                "command": {
+                    "version": 1,
+                    "incarnation": self.client.binding[-1],
+                    "action": "plan_save",
+                    "key": "shared-dashboard-plan",
+                    "args": {
+                        "project": "demo",
+                        "task": "checkout",
+                        "expected_revision": 0,
+                        "readers": ["owner"],
+                        "plan": plan(),
+                    },
+                }
+            },
+        )
+        self.login()
+        for path in ("/api/plans/demo", "/api/plans/demo/checkout"):
+            with self.fetch(path) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["project"], "demo")
+        with self.fetch("/api/plans/demo?cursor=bad") as response:
+            self.assertEqual(response.status, 403)
+        with self.fetch("/api/plans/demo?unknown=1") as response:
+            self.assertEqual(response.status, 403)
+
     def test_pool_pressure_is_503_on_http_mcp_and_browser_without_retiring_session(self):
         self.login()
         pool = create_pool(self.cluster.dsn("mk_runtime"), size=1, timeout=1)

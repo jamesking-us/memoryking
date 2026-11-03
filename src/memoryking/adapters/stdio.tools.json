@@ -1782,6 +1782,9 @@
               },
               "capture": {
                 "$ref": "#/$defs/Capture"
+              },
+              "plan": {
+                "$ref": "#/$defs/Plan"
               }
             },
             "required": [
@@ -2334,6 +2337,331 @@
               "readers"
             ],
             "additionalProperties": false
+          },
+          "PlanPhase": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "PlanStep": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "phase": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done",
+                  "blocked",
+                  "skipped",
+                  "unknown"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 64,
+                "uniqueItems": true
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "phase",
+              "description",
+              "status",
+              "notes",
+              "depends_on",
+              "evidence",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          "Plan": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "objective": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "context": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 4096
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "active",
+                  "done",
+                  "abandoned"
+                ]
+              },
+              "closure_note": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "phases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/PlanPhase"
+                },
+                "maxItems": 32
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/PlanStep"
+                },
+                "maxItems": 256
+              },
+              "lessons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 32
+              }
+            },
+            "required": [
+              "title",
+              "objective",
+              "context",
+              "status",
+              "closure_note",
+              "phases",
+              "steps",
+              "lessons"
+            ],
+            "additionalProperties": false
+          },
+          "PlanSave": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740990
+              },
+              "readers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "plan": {
+                "$ref": "#/$defs/Plan"
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "expected_revision",
+              "readers",
+              "plan"
+            ],
+            "additionalProperties": false
+          },
+          "PlanStepUpdate": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740990
+              },
+              "step": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done",
+                  "blocked",
+                  "skipped",
+                  "unknown"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "expected_revision",
+              "step",
+              "status",
+              "notes",
+              "evidence",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          "PlanGet": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "revision": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "revision"
+            ],
+            "additionalProperties": false
+          },
+          "PlanList": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              }
+            },
+            "required": [
+              "project",
+              "cursor",
+              "limit"
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -2852,6 +3180,9 @@
               },
               "capture": {
                 "$ref": "#/$defs/Capture"
+              },
+              "plan": {
+                "$ref": "#/$defs/Plan"
               }
             },
             "required": [
@@ -3414,6 +3745,331 @@
               "readers"
             ],
             "additionalProperties": false
+          },
+          "PlanPhase": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "PlanStep": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "phase": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done",
+                  "blocked",
+                  "skipped",
+                  "unknown"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 64,
+                "uniqueItems": true
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "phase",
+              "description",
+              "status",
+              "notes",
+              "depends_on",
+              "evidence",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          "Plan": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "objective": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "context": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 4096
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "active",
+                  "done",
+                  "abandoned"
+                ]
+              },
+              "closure_note": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "phases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/PlanPhase"
+                },
+                "maxItems": 32
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/PlanStep"
+                },
+                "maxItems": 256
+              },
+              "lessons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 32
+              }
+            },
+            "required": [
+              "title",
+              "objective",
+              "context",
+              "status",
+              "closure_note",
+              "phases",
+              "steps",
+              "lessons"
+            ],
+            "additionalProperties": false
+          },
+          "PlanSave": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740990
+              },
+              "readers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "plan": {
+                "$ref": "#/$defs/Plan"
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "expected_revision",
+              "readers",
+              "plan"
+            ],
+            "additionalProperties": false
+          },
+          "PlanStepUpdate": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740990
+              },
+              "step": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done",
+                  "blocked",
+                  "skipped",
+                  "unknown"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "expected_revision",
+              "step",
+              "status",
+              "notes",
+              "evidence",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          "PlanGet": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "revision": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "revision"
+            ],
+            "additionalProperties": false
+          },
+          "PlanList": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              }
+            },
+            "required": [
+              "project",
+              "cursor",
+              "limit"
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -3421,6 +4077,1492 @@
         "readOnlyHint": true,
         "destructiveHint": false,
         "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "memory_plan",
+      "description": "Track a multi-step plan on a task: `plan_save` creates or revises the whole plan (phases, steps with stable ids, prerequisites), `plan_step` updates one step's status, notes and evidence, `plan_get` reads the current or an earlier revision with computed progress, `plan_list` pages the project's plans. A step counts as done only with evidence; a changed definition needs fresh evidence. Progress is recorded work, not independent certification.",
+      "inputSchema": {
+        "type": "object",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "incarnation": {
+                "type": "string",
+                "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+              },
+              "action": {
+                "const": "plan_save"
+              },
+              "args": {
+                "$ref": "#/$defs/PlanSave"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "action",
+              "args"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "incarnation": {
+                "type": "string",
+                "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+              },
+              "action": {
+                "const": "plan_step"
+              },
+              "args": {
+                "$ref": "#/$defs/PlanStepUpdate"
+              },
+              "key": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "action",
+              "args"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "incarnation": {
+                "type": "string",
+                "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+              },
+              "action": {
+                "const": "plan_get"
+              },
+              "args": {
+                "$ref": "#/$defs/PlanGet"
+              }
+            },
+            "required": [
+              "action",
+              "args"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "incarnation": {
+                "type": "string",
+                "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+              },
+              "action": {
+                "const": "plan_list"
+              },
+              "args": {
+                "$ref": "#/$defs/PlanList"
+              }
+            },
+            "required": [
+              "action",
+              "args"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "$defs": {
+          "Dependency": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "observation",
+                  "revision"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "Artifact": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "availability": {
+                "enum": [
+                  "stored",
+                  "external",
+                  "missing"
+                ]
+              },
+              "observation": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "content_hash": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "path",
+              "availability",
+              "observation",
+              "content_hash",
+              "required"
+            ],
+            "additionalProperties": false
+          },
+          "Repository": {
+            "type": "object",
+            "properties": {
+              "repository": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "base_commit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "current_commit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dirty": {
+                "type": "boolean"
+              },
+              "artifacts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Artifact"
+                },
+                "maxItems": 32
+              },
+              "snapshot_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "environment": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "change_scope": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "minItems": 1,
+                "maxItems": 256,
+                "uniqueItems": true
+              },
+              "deleted_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "maxItems": 256,
+                "uniqueItems": true
+              },
+              "clone": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "repository",
+              "base_commit",
+              "current_commit",
+              "dirty",
+              "artifacts"
+            ],
+            "additionalProperties": false
+          },
+          "Criterion": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "state": {
+                "enum": [
+                  "pending",
+                  "passed",
+                  "failed",
+                  "waived"
+                ]
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "weight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "description": "Declared relative criterion weight; absent means 1. Weight changes alter the scope denominator, not evidence validity."
+              }
+            },
+            "required": [
+              "id",
+              "text",
+              "state",
+              "evidence",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          "Finding": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "kind": {
+                "enum": [
+                  "decision",
+                  "hypothesis"
+                ]
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              }
+            },
+            "required": [
+              "text",
+              "kind",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "FailedAttempt": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "outcome": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "do_not_repeat_when": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              }
+            },
+            "required": [
+              "action",
+              "outcome",
+              "do_not_repeat_when"
+            ],
+            "additionalProperties": false
+          },
+          "Verification": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "target_revision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "environment": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "result": {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "not_evaluated",
+                  "inconclusive"
+                ]
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              }
+            },
+            "required": [
+              "name",
+              "target_revision",
+              "environment",
+              "result",
+              "evidence"
+            ],
+            "additionalProperties": false
+          },
+          "Blocker": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "owner": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "text",
+              "owner"
+            ],
+            "additionalProperties": false
+          },
+          "Capture": {
+            "type": "object",
+            "properties": {
+              "last_event": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "observed_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "gaps": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "maxItems": 32
+              }
+            },
+            "required": [
+              "last_event",
+              "observed_ms",
+              "gaps"
+            ],
+            "additionalProperties": false
+          },
+          "Checkpoint": {
+            "type": "object",
+            "properties": {
+              "objective": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "acceptance": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Criterion"
+                },
+                "maxItems": 32
+              },
+              "hard_constraints": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "maxItems": 32
+              },
+              "current_state": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "repository": {
+                "$ref": "#/$defs/Repository"
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Finding"
+                },
+                "maxItems": 32
+              },
+              "failed_attempts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/FailedAttempt"
+                },
+                "maxItems": 32
+              },
+              "verification": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Verification"
+                },
+                "maxItems": 32
+              },
+              "blockers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Blocker"
+                },
+                "maxItems": 32
+              },
+              "next_actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "maxItems": 32
+              },
+              "references": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 128
+              },
+              "operation_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 32
+              },
+              "capture": {
+                "$ref": "#/$defs/Capture"
+              },
+              "plan": {
+                "$ref": "#/$defs/Plan"
+              }
+            },
+            "required": [
+              "objective",
+              "acceptance",
+              "hard_constraints",
+              "current_state",
+              "repository",
+              "findings",
+              "failed_attempts",
+              "verification",
+              "blockers",
+              "next_actions",
+              "references",
+              "operation_ids",
+              "capture"
+            ],
+            "additionalProperties": false
+          },
+          "Save": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected_revision": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The revision last seen; null accepts the current revision without a compare-and-set check."
+              },
+              "readers": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who may read the checkpoint; null keeps the stream's current readers (the writer alone on a first save)."
+              },
+              "checkpoint": {
+                "$ref": "#/$defs/Checkpoint"
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "expected_revision",
+              "readers",
+              "checkpoint"
+            ],
+            "additionalProperties": false
+          },
+          "Resume": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkpoint": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "bindings": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "maxItems": 256
+              },
+              "max_output_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65536
+              },
+              "tokenizer": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "format": {
+                "enum": [
+                  "json",
+                  "text"
+                ],
+                "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "checkpoint",
+              "bindings",
+              "max_output_tokens",
+              "tokenizer"
+            ],
+            "additionalProperties": false
+          },
+          "AssignWriter": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "writer": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "reason": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "expected_revision",
+              "writer",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          "OperationIntent": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "target_hash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "parameters_hash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "method": {
+                "enum": [
+                  "readback",
+                  "idempotent_retry",
+                  "manual"
+                ]
+              },
+              "provider_key": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "operation",
+              "target_hash",
+              "parameters_hash",
+              "method",
+              "provider_key"
+            ],
+            "additionalProperties": false
+          },
+          "OperationTransition": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "operation": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "state": {
+                "enum": [
+                  "dispatching",
+                  "unknown",
+                  "succeeded",
+                  "failed"
+                ]
+              },
+              "reconciled": {
+                "type": "boolean"
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "result_hash": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "operation",
+              "expected_revision",
+              "state",
+              "reconciled",
+              "evidence",
+              "result_hash"
+            ],
+            "additionalProperties": false
+          },
+          "OperationList": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run"
+            ],
+            "additionalProperties": false
+          },
+          "AdapterResume": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkpoint": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "bindings": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                },
+                "maxItems": 256
+              },
+              "max_output_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65536
+              },
+              "tokenizer": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "base": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/AdapterBase"
+                  }
+                ]
+              },
+              "adapter_context": {
+                "$ref": "#/$defs/AdapterContext"
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "checkpoint",
+              "bindings",
+              "max_output_tokens",
+              "tokenizer",
+              "base",
+              "adapter_context"
+            ],
+            "additionalProperties": false
+          },
+          "AdapterBase": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "hash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "sequence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "schema": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96
+              }
+            },
+            "required": [
+              "id",
+              "hash",
+              "sequence",
+              "schema"
+            ]
+          },
+          "AdapterContext": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model_session": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "context_epoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "model_session",
+              "context_epoch"
+            ]
+          },
+          "Summarize": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkpoint": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "enum": [
+                  "extractive",
+                  "provider"
+                ]
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "permit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^permit_[a-f0-9]{32}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "readers": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "minItems": 1,
+                    "maxItems": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "checkpoint",
+              "source",
+              "text",
+              "permit",
+              "readers"
+            ],
+            "additionalProperties": false
+          },
+          "PlanPhase": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "PlanStep": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "phase": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done",
+                  "blocked",
+                  "skipped",
+                  "unknown"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 64,
+                "uniqueItems": true
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "phase",
+              "description",
+              "status",
+              "notes",
+              "depends_on",
+              "evidence",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          "Plan": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "objective": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "context": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 4096
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "active",
+                  "done",
+                  "abandoned"
+                ]
+              },
+              "closure_note": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "phases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/PlanPhase"
+                },
+                "maxItems": 32
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/PlanStep"
+                },
+                "maxItems": 256
+              },
+              "lessons": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 32
+              }
+            },
+            "required": [
+              "title",
+              "objective",
+              "context",
+              "status",
+              "closure_note",
+              "phases",
+              "steps",
+              "lessons"
+            ],
+            "additionalProperties": false
+          },
+          "PlanSave": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740990
+              },
+              "readers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "plan": {
+                "$ref": "#/$defs/Plan"
+              }
+            },
+            "required": [
+              "task",
+              "expected_revision",
+              "readers",
+              "plan"
+            ],
+            "additionalProperties": false
+          },
+          "PlanStepUpdate": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "expected_revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740990
+              },
+              "step": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "status": {
+                "enum": [
+                  "todo",
+                  "doing",
+                  "done",
+                  "blocked",
+                  "skipped",
+                  "unknown"
+                ]
+              },
+              "notes": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 2048
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 16
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "task",
+              "expected_revision",
+              "step",
+              "status",
+              "notes",
+              "evidence",
+              "decision"
+            ],
+            "additionalProperties": false
+          },
+          "PlanGet": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "revision": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "task",
+              "revision"
+            ],
+            "additionalProperties": false
+          },
+          "PlanList": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              }
+            },
+            "required": [
+              "cursor",
+              "limit"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
         "openWorldHint": false
       }
     },

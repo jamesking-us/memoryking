@@ -13,6 +13,13 @@ def stream_name(run: str | None) -> str:
 
 def dependencies(body: dict[str, Any]) -> list[dict[str, str]]:
     deps = list(body["references"])
+    if "plan" in body:
+        from memoryking.domain.plans import validate
+
+        validate(body["plan"])
+        deps.extend(body["plan"]["lessons"])
+        for step in body["plan"]["steps"]:
+            deps.extend(step["evidence"])
     for field in ("acceptance", "findings", "verification"):
         for item in body[field]:
             deps.extend(item["evidence"])

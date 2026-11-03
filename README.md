@@ -38,6 +38,7 @@ flowchart LR
 | Remember useful findings | Searchable observations with source attribution; reviewed knowledge stays distinct from unverified notes. |
 | Resume unfinished work | Checkpoints containing the objective, constraints, failed attempts, verification gaps and next actions, opened by a three-sentence "where this left off" summary. |
 | Work together | Handoffs bound to the recipient's current permissions. |
+| Follow a plan | Named plans with phases, prerequisites, completed steps and blockers; a step counts as done only with evidence, and the dashboard shows the same progress agents report. |
 | Keep context manageable | Focused briefings with explicit output budgets and links back to evidence. |
 | Avoid stale advice | Repository identity, applicability rules and freshness checks for guidance tied to code. |
 | Recover safely | Records of uncertain operations and history-aware backup/restore, so a restart does not silently authorize repeating an action. |
@@ -72,11 +73,16 @@ The dashboard helps you inspect recorded work without reading a long chat transc
 
 - **Overview:** capacity use for each bounded resource, with a warning from 80 percent.
 - **Task activity:** saved goals, completed and pending criteria, blockers and observed heartbeats.
+- **Plans:** how much of a piece of work is complete, which phase needs attention and what remains; open a phase for its steps, notes, prerequisites and evidence. Skipped work is shown separately and never counts as done.
 - **Memory:** ask for the briefing an agent would receive and verify its replay, browse the project timeline, review proposed knowledge, preview a purge, and explore an interactive graph of memories and evidence, coloured by how far each record has been reviewed, with a tap through to the briefings that used it.
 - **History and review:** inspect changes, review proposals and preview affected content.
 - **Retrieval history:** see the exact briefing returned, its sources and recorded usage.
 - **Team:** who did what in a project, the permissions that allow it, a revoke button, and an audit export; the overview lists your projects as cards you can open and link to.
 - **Appearance:** textured dark and light themes, a crowned cybernetic elephant, an optional depth-tilt animation that respects reduced motion, and a phone layout for checking on agents away from the desk.
+
+![MemoryKing Task activity view with a synthetic task beside a structured plan at 50 percent, its Design phase open to show a completed step and the observation it cites](https://raw.githubusercontent.com/jamesking-us/memoryking/main/docs/images/plans.jpg)
+
+*Task activity with a synthetic plan: progress counts only steps backed by evidence, and the remaining Verify phase stays visible for the next agent and for you.*
 
 Agents must publish their state through the supported interfaces. A displayed heartbeat is an observation, not proof that an agent is still working; missing cost data stays unknown.
 
