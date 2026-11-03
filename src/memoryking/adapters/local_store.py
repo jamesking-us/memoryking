@@ -155,6 +155,7 @@ class LocalStore(StoreCore):
         self.counters = Metrics()
         # A loaded local embedding model lets briefings embed their own queries.
         self.embedder: Any | None = None
+        self.reranker: Any | None = None
         # A scheduled backup policy the daemon checks between requests.
         self.backup_policy: Any | None = None
         # Idle threshold for owner-derived session summaries; 0 disables.

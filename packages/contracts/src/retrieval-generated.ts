@@ -17,6 +17,7 @@ export interface Brief {
   format?: "json" | "text";
   as_of_ms?: number;
   salience?: "on" | "off";
+  rerank?: "on" | "off";
 }
 
 export interface Fetch {

@@ -21,6 +21,7 @@ class Brief(TypedDict):
     format: NotRequired[Literal["json", "text"]]
     as_of_ms: NotRequired[int]
     salience: NotRequired[Literal["on", "off"]]
+    rerank: NotRequired[Literal["on", "off"]]
 
 class Fetch(TypedDict):
     project: str

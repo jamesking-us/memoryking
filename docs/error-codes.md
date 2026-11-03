@@ -809,6 +809,16 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `request_key_required` | Mutations need a stable `key` so retries replay instead of duplicating. |
 | `request_too_large` | The request exceeds 256 KiB; reduce the payload. |
 
+## reranker
+
+| Code | What to do |
+| --- | --- |
+| `reranker_failure` | The reranker runtime failed on this request; the briefing fell back to the fused order. |
+| `reranker_input_limit` | The reranker scores at most 32 texts of at most 16 KiB each per call. |
+| `reranker_model_checksum_mismatch` | The reranker files do not match the manifest checksums. |
+| `reranker_model_invalid` | The reranker model could not be loaded by the pinned runtime. |
+| `reranker_model_not_installed` | Install the reranker with `python -m memoryking.model_install --model reranker --destination DIR`. |
+
 ## response
 
 | Code | What to do |

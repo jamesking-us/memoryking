@@ -98,6 +98,10 @@
           "salience": {
             "type": "boolean",
             "description": "Let your own recent use of memories nudge the ranking (bounded, reported per item). Default false."
+          },
+          "rerank": {
+            "type": "boolean",
+            "description": "Let the service's local cross-encoder reorder the top candidates by relevance to the query, when one is installed (reported per item). Default false."
           }
         },
         "required": [

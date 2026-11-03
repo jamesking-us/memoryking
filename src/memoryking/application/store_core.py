@@ -119,6 +119,7 @@ class StoreCore:
     # Daemon-side policies default off; the serving backend sets them from its flags.
     backup_policy: Any | None = None
     embedder: Any | None = None
+    reranker: Any | None = None
     summary_idle_ms = 0
     _last_housekeeping = 0
     _last_summary_scan = 0

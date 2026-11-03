@@ -320,6 +320,12 @@
                           "on",
                           "off"
                         ]
+                      },
+                      "rerank": {
+                        "enum": [
+                          "on",
+                          "off"
+                        ]
                       }
                     },
                     "required": [
