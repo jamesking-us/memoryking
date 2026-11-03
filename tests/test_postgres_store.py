@@ -221,6 +221,8 @@ class PostgresStoreTests(unittest.TestCase):
             pool.close()
 
     def test_pool_exhaustion_is_bounded_pressure_without_mutation(self):
+        import time
+
         for role in ("mk_runtime", "mk_worker"):
             with self.subTest(role=role):
                 pool = create_pool(self.cluster.dsn(role), size=1, timeout=1)
@@ -230,6 +232,21 @@ class PostgresStoreTests(unittest.TestCase):
                     with self.assertRaises(LocalError) as caught:
                         PostgresStore(pool, self.root, self.control, self.tenant, self.credential)
                     self.assertEqual("service_busy", caught.exception.code)
+                    # A request deadline shorter than the pool's own wait fails at the
+                    # deadline; one already past fails before any wait at all.
+                    for deadline, limit in ((0.3, 0.9), (-1.0, 0.1)):
+                        started = time.monotonic()
+                        with self.assertRaises(LocalError) as caught:
+                            PostgresStore(
+                                pool,
+                                self.root,
+                                self.control,
+                                self.tenant,
+                                self.credential,
+                                request_deadline=time.monotonic() + deadline,
+                            )
+                        self.assertEqual("service_busy", caught.exception.code)
+                        self.assertLess(time.monotonic() - started, limit)
                     self.assertEqual(before, (self.control / self.tenant / "anchor").read_bytes())
                     pool.putconn(held)
                     held = None

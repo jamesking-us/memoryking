@@ -116,7 +116,7 @@ External tool effects need their own operation records and reconciliation. A loc
 
 Embedding vectors, compressed summaries, graph projections and ranked procedures derive from current canonical sources. Workers receive bounded leases tied to history, source and policy. Stale completions are rejected. Disabling an optional model leaves the default lexical path available; a projection never grants authority or proves truth.
 
-Repository inspection is passive: it records Git identity, tracked/dirty artifacts and supported source structure without executing repository code. Bounded or missing coverage stays explicit. The dashboard observes stored state and can submit authorized review actions; it does not schedule agents.
+Repository inspection is passive: it records Git identity, tracked/dirty artifacts and supported source structure without executing repository code. Bounded or missing coverage stays explicit. The dashboard observes stored state and can submit authorized review actions; it does not schedule agents. An active Memory view renews itself every five seconds while visible: every read passes the current authorization gate, an unchanged result leaves the open details and graph selection in place, and a hidden tab, an expired lease, a changed session or a clock rollback clears private content rather than extending it.
 
 ## Structured execution plans
 

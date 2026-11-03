@@ -9,6 +9,12 @@ export interface AuthContext {
   authorization_epoch?: number;
 }
 type Request = (path: string, body?: unknown) => Promise<Doc>;
+interface ReadCycle {
+  ticket: number;
+  expires: number;
+  monotonic: number;
+  refreshing: boolean;
+}
 const e = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
   text = "",
@@ -115,6 +121,13 @@ export class Observatory {
   private view: HTMLSelectElement;
   private ticket = 0;
   private expires = 0;
+  private expiresMono = 0;
+  private nextRefresh = 0;
+  private lastWall = Date.now();
+  private lastMono = performance.now();
+  private cycle: ReadCycle | null = null;
+  private reader: (() => Promise<void>) | null = null;
+  private signature = "";
   private graph: AtlasView | null = null;
   private context = "";
   private confirmed: Doc | null = null;
@@ -131,7 +144,7 @@ export class Observatory {
       e("h2", "Memory"),
       e(
         "p",
-        "Browse stored memories, checkpoints, reviews and processing usage. Records reflect your current permissions; views expire after 15 seconds.",
+        "Browse stored memories, checkpoints, reviews and processing usage. Active views refresh every five seconds while updates run, with current permission checks.",
       ),
     );
     const form = e("form", "", "observatory-form");
@@ -188,6 +201,19 @@ export class Observatory {
       ev.preventDefault();
       void this.load();
     };
+    for (const type of ["pointerdown", "keydown", "click", "beforeinput"])
+      root.addEventListener(
+        type,
+        (event) => {
+          const ticket = this.ticket;
+          this.tick(false);
+          if (ticket !== this.ticket) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        },
+        true,
+      );
   }
   clear(): void {
     this.clearResult("Session changed. Reconnect and select a project.");
@@ -198,6 +224,10 @@ export class Observatory {
   private clearResult(message: string): void {
     this.ticket++;
     this.expires = 0;
+    this.expiresMono = 0;
+    this.cycle = null;
+    this.reader = null;
+    this.signature = "";
     this.confirmed = null;
     this.lastRead = null;
     this.graph?.clear();
@@ -205,16 +235,61 @@ export class Observatory {
     this.output.replaceChildren();
     this.status.textContent = message;
   }
-  tick(): void {
+  private clockValid(): boolean {
+    const wall = Date.now(),
+      mono = performance.now();
+    if (wall < this.lastWall || mono < this.lastMono) return false;
+    this.lastWall = wall;
+    this.lastMono = mono;
+    return true;
+  }
+  tick(refresh = true): void {
+    if (!this.clockValid()) {
+      this.clearResult("Clock changed. Reload after the clock is stable.");
+      return;
+    }
     const ctx = this.current();
     if (this.context && (!ctx || JSON.stringify(ctx) !== this.context)) {
       this.clear();
       return;
     }
-    if (this.expires && Date.now() >= this.expires)
+    if (
+      this.expires &&
+      (document.hidden ||
+        Date.now() >= this.expires ||
+        performance.now() >= this.expiresMono)
+    ) {
       this.clearResult(
-        "Snapshot expired. Load again to recheck permission and source availability.",
+        "View expired or hidden. Load again to check current access.",
       );
+      return;
+    }
+    if (
+      refresh &&
+      this.reader &&
+      this.expires &&
+      !this.cycle &&
+      !this.writing &&
+      !document.hidden &&
+      performance.now() >= this.nextRefresh
+    )
+      void this.run(this.reader, true, true);
+  }
+  /** Only skip DOM replacement after every read for this view has reauthorized. */
+  private unchanged(...values: Doc[]): boolean {
+    const signature = JSON.stringify(
+      values.map((value) =>
+        Object.fromEntries(
+          Object.entries(value).filter(
+            ([key]) =>
+              !["receipt", "evaluated_ms", "fresh_until_ms"].includes(key),
+          ),
+        ),
+      ),
+    );
+    const same = this.cycle?.refreshing && signature === this.signature;
+    this.signature = signature;
+    return Boolean(same);
   }
   private scope(): Doc[] {
     const b: unknown = JSON.parse(this.bindings.value);
@@ -235,12 +310,14 @@ export class Observatory {
     bare = false,
   ): Promise<Doc> {
     const ctx = this.current();
-    if (!ctx || document.hidden)
+    if (!ctx || document.hidden || !this.clockValid())
       throw Error("Current visible session required");
     const stamp = JSON.stringify(ctx),
       ticket = this.ticket,
       project = this.project.value,
-      started = Date.now();
+      started = Date.now(),
+      startedMono = performance.now(),
+      cycle = this.cycle;
     // The inference contract binds history inside its arguments, not on the command.
     const command: Doc = bare
       ? { version: 1, action, args: { ...args, project } }
@@ -261,6 +338,8 @@ export class Observatory {
       JSON.stringify(this.current()) !== stamp ||
       project !== this.project.value ||
       document.hidden ||
+      !this.clockValid() ||
+      performance.now() >= startedMono + 15000 ||
       Date.now() >= started + 15000
     )
       throw Error("View changed while checking access");
@@ -269,19 +348,56 @@ export class Observatory {
       typeof result.fresh_until_ms === "number"
         ? result.fresh_until_ms
         : started + 15000;
-    this.expires = Math.min(
-      this.expires || Infinity,
-      started + 15000,
-      deadline,
-    );
-    if (Date.now() >= this.expires) throw Error("Snapshot expired");
-    this.status.textContent = `Current permission checked · ${project} · ${ctx.tenant} / ${ctx.principal} · history ${ctx.incarnation}. Snapshot valid for at most 15 seconds.`;
+    const expires = Math.min(started + 15000, deadline),
+      monotonic = Math.min(
+        startedMono + 15000,
+        performance.now() + expires - Date.now(),
+      );
+    if (Date.now() >= expires || performance.now() >= monotonic)
+      throw Error("Snapshot expired");
+    if (cycle) {
+      cycle.expires = Math.min(cycle.expires, expires);
+      cycle.monotonic = Math.min(cycle.monotonic, monotonic);
+    } else {
+      // A one-off export or confirmation cannot renew unrelated retained content.
+      this.expires = Math.min(this.expires || Infinity, expires);
+      this.expiresMono = Math.min(this.expiresMono || Infinity, monotonic);
+    }
+    this.status.textContent = `Current permission checked · ${project} · ${ctx.tenant} / ${ctx.principal} · history ${ctx.incarnation}.`;
     return result;
   }
-  private async run(action: () => Promise<void>): Promise<void> {
+  private async run(
+    action: () => Promise<void>,
+    wholeView = false,
+    refreshing = false,
+  ): Promise<void> {
+    if (wholeView) {
+      this.ticket++;
+      this.cycle = {
+        ticket: this.ticket,
+        expires: Infinity,
+        monotonic: Infinity,
+        refreshing,
+      };
+    }
     const ticket = this.ticket;
+    const cycle = wholeView ? this.cycle : null;
     try {
       await action();
+      if (cycle && cycle === this.cycle && ticket === this.ticket) {
+        if (
+          !this.clockValid() ||
+          document.hidden ||
+          Date.now() >= cycle.expires ||
+          performance.now() >= cycle.monotonic
+        )
+          throw Error("Snapshot expired");
+        if (Number.isFinite(cycle.expires)) {
+          this.expires = cycle.expires;
+          this.expiresMono = cycle.monotonic;
+        }
+        this.nextRefresh = performance.now() + 5000;
+      }
     } catch (error) {
       if (ticket === this.ticket) {
         this.clearResult(
@@ -292,6 +408,8 @@ export class Observatory {
             ". Reload to reconcile; mutations are never automatically retried.",
         );
       }
+    } finally {
+      if (cycle && cycle === this.cycle) this.cycle = null;
     }
   }
   private async load(): Promise<void> {
@@ -330,7 +448,7 @@ export class Observatory {
           this.retention();
           break;
       }
-    });
+    }, true);
     requestAnimationFrame(() => {
       this.root.dataset.viewReadyMs = String(
         Math.round(performance.now() - started),
@@ -373,6 +491,7 @@ export class Observatory {
     this.output.append(exportButton);
   }
   private async atlas(focus?: string, cursor?: string): Promise<void> {
+    this.reader = () => this.atlas(focus, cursor);
     const args: Doc = {
       bindings: this.scope(),
       max_nodes: focus ? 500 : 200,
@@ -413,17 +532,24 @@ export class Observatory {
         button(
           "Next bounded page",
           () =>
-            void this.run(() => this.atlas(focus, String(data.next_cursor))),
+            void this.run(
+              () => this.atlas(focus, String(data.next_cursor)),
+              true,
+            ),
         ),
       );
     if (focus)
       footer.append(
-        button("Return to overview", () => void this.run(() => this.atlas())),
+        button(
+          "Return to overview",
+          () => void this.run(() => this.atlas(), true),
+        ),
       );
     this.output.append(footer);
     this.exportCurrent(load);
   }
   private async history(position?: number, baseline?: number): Promise<void> {
+    this.reader = () => this.history(position, baseline);
     const load = () =>
       this.command(
         "inspection",
@@ -431,6 +557,13 @@ export class Observatory {
         position === undefined ? {} : { recorded_position: position },
       );
     const data = await load();
+    const previous =
+      baseline === undefined
+        ? null
+        : await this.command("inspection", "history", {
+            recorded_position: baseline,
+          });
+    if (this.unchanged(data, ...(previous ? [previous] : []))) return;
     this.output.replaceChildren(
       e(
         "h3",
@@ -475,14 +608,16 @@ export class Observatory {
       button(
         "Inspect selected frame",
         () =>
-          void this.run(() =>
-            this.history(
-              Number(pick.value),
-              base.value ? Number(base.value) : undefined,
-            ),
+          void this.run(
+            () =>
+              this.history(
+                Number(pick.value),
+                base.value ? Number(base.value) : undefined,
+              ),
+            true,
           ),
       ),
-      button("Return to live", () => void this.run(() => this.history())),
+      button("Return to live", () => void this.run(() => this.history(), true)),
     );
     this.output.append(controls);
     if (frames.length) {
@@ -499,8 +634,9 @@ export class Observatory {
       slider.setAttribute("aria-label", "Checkpoint timeline");
       slider.onchange = () => {
         const next = Number(frames[Number(slider.value)]!.position);
-        void this.run(() =>
-          this.history(next, base.value ? Number(base.value) : undefined),
+        void this.run(
+          () => this.history(next, base.value ? Number(base.value) : undefined),
+          true,
         );
       };
       this.output.append(slider);
@@ -508,11 +644,8 @@ export class Observatory {
     const projection = doc(data.projection),
       tasks = rows(projection.tasks);
     this.output.append(this.taskTable(tasks));
-    if (baseline !== undefined) {
-      const previous = await this.command("inspection", "history", {
-          recorded_position: baseline,
-        }),
-        before = rows(doc(previous.projection).tasks),
+    if (previous) {
+      const before = rows(doc(previous.projection).tasks),
         changes: Doc[] = [];
       const all = [
         ...tasks,
@@ -576,6 +709,7 @@ export class Observatory {
     );
   }
   private async review(): Promise<void> {
+    this.reader = () => this.review();
     const bindings = this.scope();
     const knowledge = await this.command("knowledge", "query", {
       bindings,
@@ -588,6 +722,8 @@ export class Observatory {
       bindings,
       diagnostic: true,
     });
+    const ranking = await this.command("experience", "ranking_inspect");
+    if (this.unchanged(knowledge, constraints, procedures, ranking)) return;
     this.output.replaceChildren(
       e("h3", "Review queue & evidence quality"),
       e(
@@ -657,7 +793,6 @@ export class Observatory {
       section.append(detail("Resolution and completeness details", data));
       this.output.append(section);
     }
-    const ranking = await this.command("experience", "ranking_inspect");
     this.output.append(
       detail("Active ranking and evaluation evidence", ranking),
     );
@@ -720,10 +855,20 @@ export class Observatory {
     args: Doc,
   ): Promise<void> {
     if (this.writing) throw Error("A command is already pending");
+    // Never replay writes or let a background read repaint their result.
+    const ticket = ++this.ticket;
+    this.cycle = null;
+    this.reader = null;
     this.writing = true;
     let result: Doc;
     try {
       result = await this.command(operation, action, args, crypto.randomUUID());
+    } catch (error) {
+      if (ticket === this.ticket)
+        this.clearResult(
+          "Command result unavailable. Reload to reconcile; the command will not be retried automatically.",
+        );
+      throw error;
     } finally {
       this.writing = false;
     }
@@ -809,9 +954,11 @@ export class Observatory {
     this.output.append(d);
   }
   private async cost(): Promise<void> {
+    this.reader = () => this.cost();
     const load = () => this.command("inspection", "cost"),
       data = await load(),
       summary = doc(data.processing);
+    if (this.unchanged(data)) return;
     this.output.replaceChildren(
       e("h3", "Processing attempts"),
       e(
@@ -887,8 +1034,10 @@ export class Observatory {
     this.exportCurrent(load);
   }
   private async operations(): Promise<void> {
+    this.reader = () => this.operations();
     const load = () => this.command("inspection", "operations"),
       data = await load();
+    if (this.unchanged(data)) return;
     this.output.replaceChildren(
       e("h3", "Jobs & primary health"),
       e("p", readable(data.health)),
@@ -978,7 +1127,9 @@ export class Observatory {
     this.output.append(section);
   }
   private async handoffs(): Promise<void> {
+    this.reader = () => this.handoffs();
     const data = await this.command("inspection", "handoffs");
+    if (this.unchanged(data)) return;
     this.output.replaceChildren(
       e("h3", "Handoff lifecycle"),
       e(
@@ -1073,23 +1224,25 @@ export class Observatory {
     const result = e("div");
     f.onsubmit = (ev) => {
       ev.preventDefault();
-      void this.run(async () => {
-        const args = {
-            repository: repository.value,
-            snapshot: snapshot.value,
-            paths: paths.value
-              .split(",")
-              .map((x) => x.trim())
-              .filter(Boolean),
-          },
-          value = await this.command("repository", "impact", {
+      const args = {
+          repository: repository.value,
+          snapshot: snapshot.value,
+          paths: paths.value
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean),
+        },
+        bindings = this.scope();
+      const read = async () => {
+        const value = await this.command("repository", "impact", {
             ...args,
             limit: 128,
           }),
           coverage = await this.command("repository", "coverage", {
             ...args,
-            bindings: this.scope(),
+            bindings,
           });
+        if (this.unchanged(value, coverage)) return;
         result.replaceChildren(
           detail("Evidence and affected claims", value),
           detail("Parser and policy coverage", coverage),
@@ -1117,7 +1270,9 @@ export class Observatory {
             "Direct current evidence dependencies; no similarity inference",
           truncation: value.truncated ? ["impact_limit"] : [],
         });
-      });
+      };
+      this.reader = read;
+      void this.run(read, true);
     };
     this.output.append(f, result);
   }

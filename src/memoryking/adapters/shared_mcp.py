@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import anyio
@@ -36,7 +37,10 @@ class RequestClient(LocalClient):
 
     def _request(self, credential: str, operation: str, args: dict[str, Any]) -> dict[str, Any]:
         result = self.service.execute(
-            self.tenant, credential, {"version": 1, "operation": operation, "args": args}
+            self.tenant,
+            credential,
+            {"version": 1, "operation": operation, "args": args},
+            time.monotonic() + 5.0,
         )
         if isinstance(result, Released):
             output: list[bytes] = []
@@ -132,6 +136,7 @@ class SharedMCP:
                     "operation": "context",
                     "args": {"project": request.path_params["project"]},
                 },
+                time.monotonic() + 5.0,
             )
             scope["memoryking_release"] = released
         except LocalError as exc:

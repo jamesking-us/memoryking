@@ -44,7 +44,14 @@ class SharedService:
         except Exception as exc:
             failure("shared_service", exc, action="retention")
 
-    def store(self, tenant: str, credential: str, *, release_only: bool = False) -> PostgresStore:
+    def store(
+        self,
+        tenant: str,
+        credential: str,
+        *,
+        release_only: bool = False,
+        request_deadline: float | None = None,
+    ) -> PostgresStore:
         store = PostgresStore(
             self.pool,
             self.root,
@@ -53,13 +60,19 @@ class SharedService:
             credential,
             audience=self.audience,
             release_only=release_only,
+            request_deadline=request_deadline,
         )
         store.egress_policy = self.egress_policy
         return store
 
     def execute(
-        self, tenant: str, credential: str, request: dict[str, Any]
+        self,
+        tenant: str,
+        credential: str,
+        request: dict[str, Any],
+        deadline: float | None = None,
     ) -> dict[str, Any] | Released:
+        """`deadline` is the request's monotonic budget; checkout and statements stop at it."""
         if (
             not isinstance(request, dict)
             or set(request) != {"version", "operation", "args"}
@@ -80,7 +93,7 @@ class SharedService:
                 isinstance(v, str) for v in args["capabilities"]
             ):
                 raise LocalError("invalid_request")
-            with self.store(tenant, credential) as store:
+            with self.store(tenant, credential, request_deadline=deadline) as store:
                 return {"credential": store.delegate(**args)}
         if not VALIDATOR.is_valid(value):
             raise LocalError("invalid_request")
@@ -91,7 +104,9 @@ class SharedService:
             return result
         # Domain writes and stateful permit/lease/CAS operations stay exclusive.
         release_only = request["operation"] in {"read", "export", "context", "status", "namespace"}
-        with self.store(tenant, credential, release_only=release_only) as store:
+        with self.store(
+            tenant, credential, release_only=release_only, request_deadline=deadline
+        ) as store:
             outcome = StoreOperations(store).execute(value)
             if not release_only:
                 self._retention(tenant, store)
