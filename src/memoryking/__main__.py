@@ -521,6 +521,33 @@ def main() -> int:
     rec.add_argument("--budget", type=int, default=6000)
     rec.add_argument("--task")
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
+    hk = commands.add_parser(
+        "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
+    )
+    hk.add_argument("kind", choices=("session-start", "pre-compact", "session-end"))
+    hk.add_argument("--host", choices=("claude", "codex", "grok"), help="Host that is calling")
+    hk.add_argument("--socket", type=Path)
+    hk.add_argument("--credential", type=Path)
+    hk.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+    hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
+    hk.add_argument("--query", help="Briefing query at session start; default: task or project")
+    hk.add_argument("--budget", type=int, default=6000)
+    hk.add_argument(
+        "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
+    )
+    hks = commands.add_parser("hooks", help="Install or remove the host hooks")
+    hks_commands = hks.add_subparsers(dest="hooks_command", required=True)
+    inst = hks_commands.add_parser("install", help="Write the three hooks into a host's config")
+    inst.add_argument("--host", required=True, choices=("claude", "codex", "grok"))
+    inst.add_argument("--scope", default="project", choices=("project", "user"))
+    inst.add_argument("--project", required=True)
+    inst.add_argument("--socket", type=Path)
+    inst.add_argument("--credential", type=Path)
+    inst.add_argument("--task", help="Task the hooks resume and checkpoint")
+    inst.add_argument("--query", help="Fixed briefing query for session start")
+    inst.add_argument("--cwd", type=Path, help="Project directory; default: current")
+    inst.add_argument("--print", action="store_true", help="Show the merged config, write nothing")
+    inst.add_argument("--remove", action="store_true", help="Remove MemoryKing's hooks")
     rpc = commands.add_parser(
         "request", help="Read a versioned operation/args JSON object from stdin"
     )
@@ -562,7 +589,9 @@ def main() -> int:
             return 0
         profiles.apply(args, args.profile, args.config)
         optional = (
-            {"socket", "credential"} if args.command in {"doctor", "capture", "recall"} else set()
+            {"socket", "credential"}
+            if args.command in {"doctor", "capture", "recall", "hook", "hooks"}
+            else set()
         )
         for field in ("store", "control", "socket", "credential"):
             if hasattr(args, field) and getattr(args, field) is None and field not in optional:
@@ -662,6 +691,61 @@ def main() -> int:
                 sys.stdout.buffer.write(canonical_bytes(packet) + b"\n")
             else:
                 print(packet["text"], end="")
+        elif args.command == "hook":
+            from memoryking import host_hooks
+
+            try:
+                raw = "" if sys.stdin.isatty() else sys.stdin.read()
+                payload = host_hooks.read_event(raw)
+                where = {
+                    "socket": args.socket,
+                    "credential": args.credential,
+                    "project": args.project,
+                    "profile": args.profile,
+                    "config": args.config,
+                }
+                if args.kind == "session-start":
+                    sys.stdout.write(
+                        host_hooks.session_start(
+                            payload, query=args.query, task=args.task, budget=args.budget, **where
+                        )
+                    )
+                else:
+                    summary = host_hooks.save(
+                        payload, args.kind, host=args.host, task=args.task, **where
+                    )
+                    print(json.dumps(summary), file=sys.stderr)
+            except (LocalError, OSError, ValueError, KeyError) as exc:
+                code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
+                print(f"memoryking hook {args.kind}: {code}", file=sys.stderr)
+                if args.strict:
+                    return 1
+            return 0
+        elif args.command == "hooks":
+            from memoryking import host_hooks
+
+            result = host_hooks.install(
+                host=args.host,
+                scope=args.scope,
+                project=args.project,
+                cwd=(args.cwd or Path.cwd()).resolve(),
+                home=Path.home(),
+                profile=args.profile,
+                socket=args.socket if args.profile is None else None,
+                credential=args.credential if args.profile is None else None,
+                task=args.task,
+                query=args.query,
+                remove=args.remove,
+                write=not args.print,
+            )
+            if args.print:
+                print(json.dumps(result["config"], indent=2))
+            else:
+                print(
+                    json.dumps(
+                        {k: result[k] for k in ("host", "path", "events", "removed", "note")}
+                    )
+                )
         elif args.command == "doctor":
             findings = doctor(
                 args.store,

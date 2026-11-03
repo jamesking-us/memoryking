@@ -234,7 +234,8 @@ class PostgresStoreTests(unittest.TestCase):
                     self.assertEqual("service_busy", caught.exception.code)
                     # A request deadline shorter than the pool's own wait fails at the
                     # deadline; one already past fails before any wait at all.
-                    for deadline, limit in ((0.3, 0.9), (-1.0, 0.1)):
+                    # A generous deadline never waits past the pool's own one-second limit.
+                    for deadline, limit in ((0.3, 0.9), (-1.0, 0.1), (30.0, 1.9)):
                         started = time.monotonic()
                         with self.assertRaises(LocalError) as caught:
                             PostgresStore(
