@@ -588,6 +588,13 @@ export class Observatory {
         }
         this.output.append(detail("Active ranking and evaluation evidence", ranking));
         this.output.append(this.heldSection(held, rules));
+        const drafting = e("section");
+        drafting.append(e("h3", "Draft proposals from repeated evidence"), e("p", "Files a proposal for every name that several independent observations share, with one evidence span per source. Drafts wait here for review like any proposal; nothing becomes knowledge by itself.", "integrity"), button("Draft proposals", () => {
+            void this.run(async () => {
+                await this.mutate("knowledge", "draft", { limit: 16 });
+            });
+        }));
+        this.output.append(drafting);
         this.composer();
     }
     reviewAction(operation, action, item, extra) {

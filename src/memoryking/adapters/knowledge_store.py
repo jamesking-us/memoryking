@@ -38,6 +38,7 @@ class Knowledge:
         action, args = command["action"], command["args"]
         cap = {
             "propose": "capture",
+            "draft": "capture",
             "review": "review",
             "attest": "attest",
             "promote": "review",
@@ -60,7 +61,7 @@ class Knowledge:
                 source = self._revision(who["tenant"], args["revision"])
                 self.s._auth(credential, "review", source["project"], at)
                 self.s._auth(credential, "export", source["project"], at)
-            mutation = action in {"propose", "review", "attest", "promote"}
+            mutation = action in {"propose", "draft", "review", "attest", "promote"}
             key = command.get("key")
             if mutation and not key:
                 raise LocalError("request_key_required")
@@ -93,6 +94,10 @@ class Knowledge:
                     )
             elif action == "propose":
                 result = self.propose(credential, who, args, at)
+            elif action == "draft":
+                from memoryking.adapters.proposals import Proposals
+
+                result = Proposals(self).draft(credential, who, args, at)
             elif action == "promote":
                 result = self.promote(credential, who, args, at)
             elif action == "review":
