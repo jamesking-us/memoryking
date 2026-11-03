@@ -294,7 +294,7 @@ def main():
                     "tokenizer": "cl100k_base",
                 },
             )
-            web = Dashboard(store, ROOT, args.dashboard_port)
+            web = Dashboard(store, args.dashboard_port)
             web.start()
 
             def bootstrap():

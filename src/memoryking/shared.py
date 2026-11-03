@@ -105,7 +105,6 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--tls-key", type=Path)
             item.add_argument("--loopback-http", action="store_true")
             item.add_argument("--pool-size", type=int, default=8)
-            item.add_argument("--plan-root", type=Path)
             item.add_argument("--dashboard-tenant")
             item.add_argument("--log-level", default="warning", choices=LEVELS)
             item.add_argument(
@@ -252,7 +251,6 @@ def run(args: Any) -> dict[str, Any]:
                 hosts=args.host,
                 origins=args.origin,
                 loopback_http=args.loopback_http,
-                plan_root=args.plan_root,
                 dashboard_tenant=args.dashboard_tenant,
             )
             uvicorn.run(

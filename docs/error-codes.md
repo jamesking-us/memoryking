@@ -176,7 +176,6 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `dashboard_action_unsupported` | The dashboard command is not one of the supported browser actions. |
-| `dashboard_configuration_incomplete` | The shared dashboard needs both a plan root and a dashboard tenant. |
 | `dashboard_disabled` | Start `serve` with `--dashboard-port` to enable the dashboard. |
 | `dashboard_origin_required` | Configure the exact Origin the shared dashboard accepts with `--origin`. |
 | `dashboard_unavailable` | The dashboard failed internally; find the request id in the daemon log. |
@@ -640,8 +639,6 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `plan_reason_required` | A blocked or skipped step needs a note explaining why. |
 | `plan_reference_invalid` | Every step must name an existing phase and existing prerequisite step ids. |
 | `plan_reverification_required` | A completed step's definition or prerequisites changed; cite fresh evidence or reopen the step as todo. |
-| `plan_source_invalid` | A plan file is outside the plan root or malformed. |
-| `plan_source_unavailable` | No plan root is configured, or the file is missing. |
 | `plan_step_unavailable` | The plan has no step with that id; read the current plan and use a stable step id. |
 | `plan_stream_type_changed` | A task stream cannot switch between ordinary checkpoints and a plan; use a separate task id. |
 | `plan_task_stream_required` | Plans live on the task stream; send run as null. |
@@ -770,12 +767,6 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `replay_integrity_failure` | The retained bytes do not match their hash; restore from backup. |
 | `replay_missing` | No artifact with that receipt for this principal and project. |
 | `replay_purged` | A source of the artifact was purged; request a fresh briefing. |
-
-## report
-
-| Code | What to do |
-| --- | --- |
-| `report_evidence_invalid` | The report evidence file is malformed. |
 
 ## repository
 

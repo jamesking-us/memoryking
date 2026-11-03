@@ -25,9 +25,6 @@
           ⌁ &nbsp; Retrieval history
         </button>
         <button class="nav" id="team-nav">☷ &nbsp; Team</button>
-        <button class="nav" id="record-nav" hidden>
-          ▤ &nbsp; Development record
-        </button>
         <div class="side-note">
           Permissions
           <p>
@@ -203,59 +200,6 @@
             </form>
             <div id="team-output"></div>
           </section>
-          <div id="development-record" hidden>
-            <section
-              id="metrics"
-              class="metrics"
-              aria-label="Separate completion and verification indicators"
-            ></section>
-            <section class="card trajectory">
-              <div class="section-head">
-                <div>
-                  <h2>Phase dependencies</h2>
-                </div>
-                <span id="baseline" class="tag"></span>
-              </div>
-              <div
-                id="phase-map"
-                class="phase-map"
-                aria-label="Ordered phase dependencies"
-              ></div>
-              <p class="caption">
-                Ordered dependencies · equal visual spacing does not represent
-                duration or percentage complete.
-              </p>
-            </section>
-            <div class="workspace">
-              <section class="card phase-list">
-                <div class="section-head">
-                  <h2>Execution plan</h2>
-                  <span class="tag">12 phases</span>
-                </div>
-                <div id="phases"></div>
-              </section>
-              <section
-                id="detail"
-                class="card detail"
-                aria-live="polite"
-              ></section>
-            </div>
-            <section class="bottom-grid">
-              <article class="card">
-                <h2>Task evidence</h2>
-                <p>
-                  Connect a project below to inspect actual reference-harness
-                  checkpoints, criteria, blockers and activity. The roadmap and
-                  connected tasks retain separate completion records.
-                </p>
-                <span class="tag">No inferred ETA or agent status</span>
-              </article>
-              <article class="card">
-                <h2>Architecture decisions</h2>
-                <div id="adrs" class="adr-list"></div>
-              </article>
-            </section>
-          </div>
           <footer id="provenance"></footer>
         </div>
       </main>

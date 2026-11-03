@@ -382,7 +382,6 @@ def main() -> int:
                 type=int,
                 help="Opt-in loopback port; 0 chooses a free port; a profile may set it",
             )
-            cmd.add_argument("--plan-root", type=Path, help="Explicit trusted plan/report checkout")
             cmd.add_argument("--backup-dir", type=Path, help="Directory for scheduled backups")
             cmd.add_argument("--backup-every", help="Backup interval such as 12h or 1d")
             cmd.add_argument(
@@ -820,7 +819,7 @@ def main() -> int:
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")
-                        dashboard = Dashboard(store, args.plan_root, args.dashboard_port)
+                        dashboard = Dashboard(store, args.dashboard_port)
                         store.dashboard = dashboard
                         dashboard.start()
                     try:

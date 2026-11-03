@@ -1,44 +1,10 @@
 import { Observatory } from "./observatory.js";
 import { installEmblem } from "./brand.js";
 import { Team } from "./team.js";
-interface Evidence {
-  report: string;
-  verification: string;
-  smtp: string;
-  device: string;
-  links: string[];
-  code_revision?: string;
-  platform?: string;
-  source_hash?: string;
-  checks?: { name: string; exit_code: number; duration_ms: number }[];
-}
-interface Phase {
-  id: string;
-  title: string;
-  outcome: string;
-  criteria: string[];
-  execution: string;
-  approval: string;
-  approval_basis: string;
-  evidence: Evidence;
-}
 interface Snapshot {
   schema_version: number;
-  plan_id: string;
-  plan_revision: string;
-  source_hash: string;
-  register_hash: string;
   observed_ms: number;
   fresh_until_ms: number;
-  adapter: string;
-  phases: Phase[];
-  counts: {
-    closed: number;
-    report_closeouts: number;
-    total: number;
-    historical_jobs_passed: number;
-  };
-  adrs: { id: string; url: string }[];
   csrf: string;
   incarnation: string;
   principal: string;
@@ -341,7 +307,6 @@ get<HTMLFormElement>("team-form").addEventListener("submit", (event) => {
 });
 installEmblem(get<HTMLButtonElement>("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
-let selected = "P05";
 let paused = false;
 let busy = false;
 let loggedOut = false;
@@ -384,7 +349,6 @@ function startStream(): void {
         const value = JSON.parse((event as MessageEvent).data) as Snapshot;
         if (
           value.schema_version !== 1 ||
-          ![0, 12].includes(value.phases.length) ||
           value.tenant !== snapshot.tenant ||
           value.principal !== snapshot.principal ||
           value.incarnation !== snapshot.incarnation ||
@@ -446,11 +410,6 @@ function clear(message: string): void {
   get("receipt-notice").textContent = "Sign in to inspect retained receipts.";
   snapshot = null;
   get("content").hidden = true;
-  get("phases").replaceChildren();
-  get("detail").replaceChildren();
-  get("metrics").replaceChildren();
-  get("phase-map").replaceChildren();
-  get("adrs").replaceChildren();
   get("provenance").textContent = "";
   get("notice").textContent = message;
   get("login").hidden = false;
@@ -477,115 +436,8 @@ async function api(
     );
   return value;
 }
-function showDetail(): void {
-  if (!snapshot) return;
-  const p =
-    snapshot.phases.find((p) => p.id === selected) ?? snapshot.phases[0]!;
-  const box = get("detail");
-  box.replaceChildren(
-    el("div", p.id + " / PHASE INSPECTOR", "eyebrow"),
-    el("h2", p.title),
-    el("p", p.outcome),
-  );
-  const statuses = el("div", "", "status-grid");
-  for (const [title, value] of [
-    ["Execution", label(p.execution)],
-    ["Verification", label(p.evidence.verification)],
-    ["Human review", p.approval],
-    ["Report QA", label(p.evidence.report)],
-    ["Email submission", label(p.evidence.smtp)],
-    ["Kindle device", p.evidence.device],
-  ]) {
-    const cell = el("div", "", "status-cell");
-    cell.append(el("small", title.toUpperCase()), el("strong", value));
-    statuses.append(cell);
-  }
-  box.append(statuses);
-  if (p.evidence.checks?.length) {
-    const checks = el("details");
-    checks.append(
-      el("summary", "Verification jobs at the recorded code revision"),
-    );
-    for (const check of p.evidence.checks)
-      checks.append(
-        el(
-          "p",
-          `${label(check.name)} · ${check.exit_code === 0 ? "passed" : "failed"} · ${check.duration_ms}ms`,
-        ),
-      );
-    checks.append(
-      el(
-        "p",
-        "A passing job does not establish every acceptance scenario or real-task efficacy. Read the acceptance matrix for the actual qualification scope.",
-        "caption",
-      ),
-    );
-    box.append(checks);
-  }
-  const source = el("p", p.approval_basis, "integrity");
-  box.append(source, el("h3", "Acceptance scope"));
-  const list = el("ul");
-  for (const item of p.criteria) list.append(el("li", item));
-  box.append(
-    list,
-    el(
-      "p",
-      "Criterion-level execution is not instrumented in this adapter. Completed reports provide the frozen verification record; phase state alone does not mark these criteria passed.",
-      "caption",
-    ),
-  );
-  const actions = el("div", "", "actions");
-  for (const url of p.evidence.links) {
-    const a = el(
-      "a",
-      url.endsWith("-pdf")
-        ? "Read phase PDF"
-        : url.endsWith("-epub")
-          ? "Kindle edition"
-          : label(url.split("-").slice(1).join("-")),
-    );
-    a.href = url;
-    a.target = "_blank";
-    a.rel = "noopener";
-    actions.append(a);
-  }
-  const roadmap = el("a", "Full roadmap");
-  roadmap.href = "/api/artifact/roadmap";
-  roadmap.target = "_blank";
-  roadmap.rel = "noopener";
-  actions.append(roadmap);
-  box.append(actions);
-  if (p.evidence.code_revision)
-    box.append(
-      el(
-        "p",
-        "Verified code: " +
-          p.evidence.code_revision +
-          " · " +
-          p.evidence.platform,
-        "caption",
-      ),
-    );
-  if (p.evidence.report === "invalid_or_missing")
-    box.append(
-      el(
-        "p",
-        "Completion evidence is missing or changed. This phase is excluded from verified closeout totals.",
-        "integrity",
-      ),
-    );
-  for (const node of document.querySelectorAll<HTMLElement>("[data-phase]")) {
-    const active = node.dataset.phase === p.id;
-    node.classList.toggle("active", active);
-    node.setAttribute("aria-pressed", String(active));
-  }
-}
 function render(): void {
   if (!snapshot) return;
-  const focused = document.activeElement as HTMLElement | null;
-  const focusParent = focused?.parentElement?.id;
-  const focusPhase = focused?.dataset.phase;
-  const focusHref = focused instanceof HTMLAnchorElement ? focused.href : null;
   get("login").hidden = true;
   get("content").hidden = false;
   get("notice").textContent = "";
@@ -603,132 +455,8 @@ function render(): void {
       : "Current snapshot · polled every 5s";
   renderCapacity(snapshot.capacity);
   void loadProjects();
-  get("development-record").hidden = snapshot.phases.length === 0;
-  get("record-nav").hidden = snapshot.phases.length === 0;
-  if (!snapshot.phases.length) {
-    for (const id of ["phases", "detail", "metrics", "phase-map", "adrs"])
-      get(id).replaceChildren();
-    get("provenance").textContent =
-      `${snapshot.tenant} / ${snapshot.principal} · history ${snapshot.incarnation} · observed ${new Date(snapshot.observed_ms).toLocaleString()}`;
-    return;
-  }
-  get("baseline").textContent = "Plan " + snapshot.plan_revision;
-  const metrics = get("metrics");
-  metrics.replaceChildren();
-  const pending = snapshot.phases.filter(
-    (p) =>
-      ["complete", "partial", "blocked"].includes(p.execution) &&
-      p.evidence.report === "qa_passed" &&
-      p.approval !== "Report approved",
-  ).length;
-  for (const [title, value, note] of [
-    [
-      "TECHNICALLY COMPLETE",
-      `${snapshot.counts.closed} / ${snapshot.counts.total}`,
-      "Complete phases with intact reports; equal phase counts",
-    ],
-    [
-      "REPORT CLOSEOUTS",
-      `${snapshot.counts.report_closeouts} / ${snapshot.counts.total}`,
-      "QA accepted, including partial or blocked outcomes",
-    ],
-    [
-      "LOCAL VERIFICATION",
-      String(snapshot.counts.historical_jobs_passed),
-      "Passing jobs at recorded code revisions",
-    ],
-    [
-      "REVIEW QUEUE",
-      String(pending),
-      "Submitted phase reports awaiting review",
-    ],
-    [
-      "TASK TELEMETRY",
-      "Project view",
-      "Connect a project in Task activity below",
-    ],
-  ]) {
-    const card = el("article", "", "card metric");
-    card.append(
-      el("div", title, "eyebrow"),
-      el("strong", value),
-      el("p", note),
-    );
-    metrics.append(card);
-  }
-  get("phases").replaceChildren();
-  get("phase-map").replaceChildren();
-  for (const p of snapshot.phases) {
-    const button = el("button", "", "phase-row " + p.execution);
-    button.dataset.phase = p.id;
-    const text = el("div");
-    text.append(el("h3", p.title), el("small", label(p.execution)));
-    button.append(el("span", p.id, "phase-number"), text);
-    button.addEventListener("click", () => {
-      selected = p.id;
-      showDetail();
-    });
-    get("phases").append(button);
-    const node = el("button", "", "phase-node " + p.execution);
-    node.dataset.phase = p.id;
-    node.append(
-      el("strong", p.id),
-      el(
-        "span",
-        p.execution === "complete"
-          ? "Closed"
-          : p.execution === "in_progress"
-            ? "Active"
-            : p.execution === "partial"
-              ? "Partial"
-              : p.execution === "blocked"
-                ? "Blocked"
-                : p.execution === "closeout_pending"
-                  ? "Reporting"
-                  : "—",
-      ),
-    );
-    node.title = p.title;
-    node.setAttribute(
-      "aria-label",
-      p.id + " " + p.title + " " + label(p.execution),
-    );
-    node.addEventListener("click", () => {
-      selected = p.id;
-      showDetail();
-    });
-    get("phase-map").append(node);
-  }
-  get("adrs").replaceChildren();
-  for (const adr of snapshot.adrs) {
-    const a = el("a", "ADR " + adr.id.slice(0, 3));
-    a.href = adr.url;
-    a.title = adr.id;
-    a.target = "_blank";
-    a.rel = "noopener";
-    get("adrs").append(a);
-  }
   get("provenance").textContent =
-    `${snapshot.adapter} · ${snapshot.tenant} / ${snapshot.principal} · ${snapshot.incarnation} · observed ${new Date(snapshot.observed_ms).toLocaleString()} · plan SHA-256 ${snapshot.source_hash}`;
-  showDetail();
-  // Polling replaces nodes, so restore the user's existing keyboard position.
-  if (focusPhase && (focusParent === "phases" || focusParent === "phase-map")) {
-    for (const node of get(focusParent).querySelectorAll<HTMLElement>(
-      "[data-phase]",
-    )) {
-      if (node.dataset.phase === focusPhase)
-        node.focus({ preventScroll: true });
-    }
-  } else if (focusHref) {
-    for (const node of get("content").querySelectorAll<HTMLAnchorElement>(
-      "a",
-    )) {
-      if (node.href === focusHref) {
-        node.focus({ preventScroll: true });
-        break;
-      }
-    }
-  }
+    `${snapshot.tenant} / ${snapshot.principal} · history ${snapshot.incarnation} · observed ${new Date(snapshot.observed_ms).toLocaleString()}`;
 }
 async function refresh(): Promise<void> {
   if (busy || loggedOut) return;
@@ -737,8 +465,7 @@ async function refresh(): Promise<void> {
   try {
     const value = (await api("/api/snapshot")) as unknown as Snapshot;
     if (ticket !== generation) return;
-    if (value.schema_version !== 1 || ![0, 12].includes(value.phases.length))
-      throw new Error("Snapshot unavailable");
+    if (value.schema_version !== 1) throw new Error("Snapshot unavailable");
     if (
       snapshot &&
       (snapshot.incarnation !== value.incarnation ||
@@ -1698,9 +1425,6 @@ async function refreshExecution(): Promise<void> {
 }
 get("execution-nav").addEventListener("click", () =>
   get("execution-panel").scrollIntoView(),
-);
-get("record-nav").addEventListener("click", () =>
-  get("development-record").scrollIntoView(),
 );
 get("execution-project").addEventListener("change", () => {
   rememberProject(get<HTMLSelectElement>("execution-project").value);

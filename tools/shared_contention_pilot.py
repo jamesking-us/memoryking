@@ -216,7 +216,6 @@ def run_arm(cluster, base, fanout, repetitions):
         hosts=[f"127.0.0.1:{port}"],
         origins=[url],
         loopback_http=True,
-        plan_root=ROOT,
         dashboard_tenant=hot,
     )
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))

@@ -382,11 +382,7 @@ HINTS: dict[str, str] = {
     "shared_restore_command_required": "Use the shared restore command for PostgreSQL tenants.",
     "dashboard_disabled": "Start `serve` with `--dashboard-port` to enable the dashboard.",
     "dashboard_unavailable": "The dashboard failed internally; find the request id in the daemon log.",
-    "dashboard_configuration_incomplete": "The shared dashboard needs both a plan root and a dashboard tenant.",
     "invalid_dashboard_configuration": "The dashboard port must be between 0 and 65535.",
-    "plan_source_invalid": "A plan file is outside the plan root or malformed.",
-    "plan_source_unavailable": "No plan root is configured, or the file is missing.",
-    "report_evidence_invalid": "The report evidence file is malformed.",
     "internal_error": "The service failed unexpectedly; find the request id in the daemon log.",
     "local_io_or_configuration_error": "A file or directory could not be read or written; check the path, its permissions, and that the daemon is running.",
     # Legacy import

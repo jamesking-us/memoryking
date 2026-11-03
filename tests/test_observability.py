@@ -258,7 +258,7 @@ class MetricsTests(unittest.TestCase):
             base = Path(directory)
             LocalStore.initialize(base / "s", base / "c")
             with LocalStore(base / "s", base / "c") as store:
-                web = Dashboard(store, Path(__file__).resolve().parents[1])
+                web = Dashboard(store)
                 web.start()
                 try:
                     configure("warning", trace=True)

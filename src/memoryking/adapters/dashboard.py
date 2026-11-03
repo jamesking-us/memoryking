@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import secrets
 import threading
 import time
@@ -15,7 +14,7 @@ from typing import Any
 
 from memoryking.adapters.local_store import uid
 from memoryking.application.store_core import StoreCore
-from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
+from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
@@ -45,256 +44,17 @@ SAFE_HEADERS = {
 }
 
 
-class PlanFiles:
-    """Explicit file adapter: bounded, allowlisted, hash-observed and read-only."""
-
-    def __init__(self, root: Path | None):
-        # Without an explicit root the dashboard serves the workspace view only.
-        self.root = root.resolve() if root is not None else None
-
-    def read(self, relative: str, limit: int = 1048576) -> bytes:
-        if self.root is None:
-            raise LocalError("plan_source_unavailable")
-        path = self.root / relative
-        if path.is_symlink() or not path.resolve().is_relative_to(self.root):
-            raise LocalError("plan_source_invalid")
-        if not path.is_file() or path.stat().st_size > limit:
-            raise LocalError("plan_source_unavailable")
-        raw = path.read_bytes()
-        if len(raw) > limit:
-            raise LocalError("plan_source_invalid")
-        return raw
-
-    def json(self, relative: str) -> dict[str, Any]:
-        value = load_strict(self.read(relative))
-        if not isinstance(value, dict):
-            raise LocalError("plan_source_invalid")
-        return value
-
-    def artifacts(self) -> dict[str, tuple[str, str]]:
-        result = {"roadmap": ("docs/IMPLEMENTATION-ROADMAP.md", "text/plain; charset=utf-8")}
-        for n in range(1, 13):
-            for extension, content_type in (
-                ("pdf", "application/pdf"),
-                ("epub", "application/epub+zip"),
-            ):
-                result[f"P{n:02d}-{extension}"] = (
-                    f"docs/reports/phase-{n:02d}-report.{extension}",
-                    content_type,
-                )
-            for label, file in {
-                "acceptance": "acceptance.json",
-                "verification": "local-job/job.json",
-                "manifest": "manifest.json",
-                "report-qa": "report-qa.json",
-            }.items():
-                result[f"P{n:02d}-{label}"] = (
-                    f"docs/reports/evidence/phase-{n:02d}/{file}",
-                    "text/plain; charset=utf-8",
-                )
-        if self.root is None:
-            return result
-        for path in sorted((self.root / "docs/adr").glob("[0-9][0-9][0-9]-*.md"))[:40]:
-            result[path.stem] = (str(path.relative_to(self.root)), "text/plain; charset=utf-8")
-        return result
-
-    def snapshot(self, at: int) -> dict[str, Any]:
-        # The product dashboard operates without a development-report checkout.
-        # A partially configured or corrupt legacy checkout must still fail closed.
-        if self.root is None or not any(
-            (self.root / path).exists()
-            for path in ("docs/dashboard-plan.json", "docs/reports/phases.json")
-        ):
-            return {
-                "schema_version": 1,
-                "plan_id": "workspace",
-                "plan_revision": "none",
-                "source_hash": canonical_hash({}),
-                "register_hash": canonical_hash({}),
-                "observed_ms": at,
-                "fresh_until_ms": at + 15000,
-                "adapter": "workspace / current authorized inspection",
-                "phases": [],
-                "adrs": [],
-                "counts": {
-                    "closed": 0,
-                    "report_closeouts": 0,
-                    "total": 0,
-                    "historical_jobs_passed": 0,
-                },
-                "activity": {
-                    "status": "unknown",
-                    "reason": "Connect a project to inspect its tasks",
-                },
-            }
-        plan = self.json("docs/dashboard-plan.json")
-        register = self.json("docs/reports/phases.json")
-        if (
-            plan.get("version") != 1
-            or len(plan.get("phases", [])) != 12
-            or register.get("schema_version") != 1
-        ):
-            raise LocalError("plan_source_invalid")
-        if [p.get("id") for p in plan["phases"]] != [f"P{i:02d}" for i in range(1, 13)]:
-            raise LocalError("plan_source_invalid")
-        phases = []
-        for index, phase in enumerate(plan["phases"], 1):
-            state = register["phases"].get(str(index), {"status": "unknown"})
-            status = state.get("status", "unknown")
-            if status not in {
-                "not_started",
-                "in_progress",
-                "closeout_pending",
-                "complete",
-                "partial",
-                "blocked",
-                "unknown",
-            }:
-                raise LocalError("plan_source_invalid")
-            evidence: dict[str, Any] = {
-                "report": "not_generated",
-                "verification": "not_evaluated",
-                "smtp": "not_submitted",
-                "device": "unverified",
-                "links": [],
-            }
-            if status in {"complete", "partial", "blocked"}:
-                try:
-                    prefix = f"docs/reports/evidence/phase-{index:02d}/"
-                    qa, receipt = (
-                        self.json(prefix + "report-qa.json"),
-                        self.json(prefix + "kindle-submission.json"),
-                    )
-                    files = {
-                        "source": f"docs/reports/phase-{index:02d}-report.md",
-                        "pdf": f"docs/reports/phase-{index:02d}-report.pdf",
-                        "epub": f"docs/reports/phase-{index:02d}-report.epub",
-                        "readme": prefix + "README.snapshot.md",
-                        "evidence": prefix + "manifest.json",
-                    }
-                    hashes = {
-                        key: hashlib.sha256(self.read(path, 4194304)).hexdigest()
-                        for key, path in files.items()
-                    }
-                    if (
-                        hashes != qa["hashes"]
-                        or hashes != receipt["hashes"]
-                        or not all(
-                            qa.get(k) is True
-                            for k in (
-                                "pdf_reviewed",
-                                "epub_reviewed",
-                                "evidence_reviewed",
-                                "readme_reviewed",
-                            )
-                        )
-                        or receipt["status"] != "smtp_accepted"
-                    ):
-                        raise LocalError("report_evidence_invalid")
-                    manifest = self.json(prefix + "manifest.json")
-                    job_path = prefix + "local-job/job.json"
-                    expected = next(
-                        (f["sha256"] for f in manifest["files"] if f["path"] == job_path), None
-                    )
-                    raw_job = self.read(job_path)
-                    if hashlib.sha256(raw_job).hexdigest() != expected:
-                        raise LocalError("report_evidence_invalid")
-                    job = json.loads(raw_job)
-                    if not isinstance(job, dict):
-                        raise LocalError("report_evidence_invalid")
-                    evidence = {
-                        "report": "qa_passed",
-                        "verification": "passed_at_revision"
-                        if job.get("passed") is True
-                        else "failed",
-                        "code_revision": job["revision"],
-                        "platform": job["platform"],
-                        "smtp": receipt["status"],
-                        "device": receipt.get("device_delivery", "unverified"),
-                        "links": [
-                            f"/api/artifact/P{index:02d}-pdf",
-                            f"/api/artifact/P{index:02d}-epub",
-                        ],
-                        "source_hash": hashes["source"],
-                        "checks": [
-                            {
-                                "name": step["name"],
-                                "exit_code": step["exit_code"],
-                                "duration_ms": round(step["seconds"] * 1000),
-                            }
-                            for step in job.get("steps", [])[:32]
-                        ],
-                    }
-                    for label, file in {
-                        "acceptance": "acceptance.json",
-                        "verification": "local-job/job.json",
-                        "manifest": "manifest.json",
-                        "report-qa": "report-qa.json",
-                        "submission": "kindle-submission.json",
-                    }.items():
-                        if (self.root / prefix / file).is_file():
-                            evidence["links"].append(f"/api/artifact/P{index:02d}-{label}")
-                except (LocalError, KeyError, TypeError, ValueError, OSError):
-                    evidence = {
-                        "report": "invalid_or_missing",
-                        "verification": "unknown",
-                        "smtp": "unknown",
-                        "device": "unverified",
-                        "links": [],
-                    }
-            phases.append(
-                {
-                    **phase,
-                    "execution": status,
-                    "started_at": state.get("started_at"),
-                    "closed_at": state.get("closed_at"),
-                    "evidence": evidence,
-                }
-            )
-        return {
-            "schema_version": 1,
-            "plan_id": plan["id"],
-            "plan_revision": plan["revision"],
-            "source_hash": canonical_hash(plan),
-            "register_hash": canonical_hash(register),
-            "observed_ms": at,
-            "fresh_until_ms": at + 15000,
-            "adapter": "local-plan-files / read only",
-            "phases": phases,
-            "counts": {
-                "closed": sum(
-                    p["execution"] == "complete" and p["evidence"]["report"] == "qa_passed"
-                    for p in phases
-                ),
-                "report_closeouts": sum(
-                    p["execution"] in {"complete", "partial", "blocked"}
-                    and p["evidence"]["report"] == "qa_passed"
-                    and p["evidence"]["smtp"] == "smtp_accepted"
-                    for p in phases
-                ),
-                "total": 12,
-                "historical_jobs_passed": sum(
-                    p["evidence"]["verification"] == "passed_at_revision" for p in phases
-                ),
-            },
-            "activity": {
-                "status": "unknown",
-                "reason": "Choose a project in Task activity for reference-harness observations",
-            },
-            "adrs": [
-                {"id": k, "url": "/api/artifact/" + k}
-                for k in self.artifacts()
-                if re.match(r"\d{3}-", k)
-            ],
-        }
+def workspace_snapshot(at: int) -> dict[str, Any]:
+    """The session's view of the store itself; every project view is loaded on demand."""
+    return {"schema_version": 1, "observed_ms": at, "fresh_until_ms": at + 15000}
 
 
 class Dashboard(ThreadingHTTPServer):
     request_queue_size = 8
     daemon_threads = True
 
-    def __init__(self, store: StoreCore, root: Path | None, port: int = 0):
-        self.store, self.files = store, PlanFiles(root)
+    def __init__(self, store: StoreCore, port: int = 0):
+        self.store = store
         self.codes: dict[str, dict[str, Any]] = {}
         self.sessions: dict[str, dict[str, Any]] = {}
         super().__init__(("127.0.0.1", port), DashboardHandler)
@@ -561,7 +321,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 raw = b'{"ok":true}'
                 cookie = "mk_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
             elif self.command in {"GET", "HEAD"} and self.path == "/api/snapshot":
-                result = dashboard.files.snapshot(decision.evaluated_ms)
+                result = workspace_snapshot(decision.evaluated_ms)
                 result.update(
                     csrf=value["csrf"],
                     incarnation=store.incarnation,
@@ -683,13 +443,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         ),
                     }
                 )
-            elif self.command in {"GET", "HEAD"} and self.path.startswith("/api/artifact/"):
-                name = self.path.removeprefix("/api/artifact/")
-                entry = dashboard.files.artifacts().get(name)
-                if entry is None:
-                    raise LocalError("unavailable")
-                path, content_type = entry
-                raw = dashboard.files.read(path, 4194304)
             else:
                 raise LocalError("route_unavailable")
             who = store._decode(value["credential"], "credential")
