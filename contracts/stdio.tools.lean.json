@@ -88,6 +88,12 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,96}$",
             "description": "Task id, when the briefing is for a specific task."
+          },
+          "as_of": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Brief as the project stood then: a date (YYYY-MM-DD) or ISO date-time. Omit for now."
           }
         },
         "required": [

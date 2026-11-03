@@ -150,6 +150,10 @@ MemoryKing never reads a conversation on its own, but it is easy to feed from th
 
 Hook captures record the observation time to the day unless `--observed-ms` is given, so a rerun sends identical bytes and replays; the store's own event log keeps the exact time of each capture. Hook captures are evidence like any other: a briefing cites them with their source, a reviewer can promote or quarantine what they contain, and the owner can ask where any of them went with `memoryking influence OBSERVATION --project P` or the dashboard's **Where did this go** view.
 
+## Briefings as of a moment
+
+Every claim carries the time it became valid and the position at which it was recorded, and every observation its recorded position, so a briefing can be asked for the project as it stood at an instant. Pass `as_of_ms` to `brief`: the service resolves it to the history frontier at that wall time and judges claim validity at that time, the packet reports `as_of_ms`, `recorded_position` and `valid_ms`, and the receipt replays exactly. Nothing recorded after that instant appears, and a claim retired since then is still in force. The CLI takes `memoryking recall --as-of 2026-10-20` (a date means the end of that day), the lean `recall` tool takes `as_of`, and the dashboard's briefing form has an **As of** field. Ranking adjustments learned since then are disabled for an as-of briefing, and procedures are withheld, because both would import later knowledge into an earlier view. Passing `as_of_ms` together with an explicit `recorded_position` or `valid_ms` is refused.
+
 ## Hooks that load and save memory by themselves
 
 Claude Code, Codex and Grok all run command hooks at the same three moments, and MemoryKing ships one command for each. Install them once per project (or per user) and every session on that host starts briefed and ends saved, whatever model is driving:
