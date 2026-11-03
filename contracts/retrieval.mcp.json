@@ -177,6 +177,12 @@
                   "on",
                   "off"
                 ]
+              },
+              "rerank": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
               }
             },
             "required": [
@@ -644,6 +650,12 @@
                 "maximum": 9007199254740991
               },
               "salience": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
+              },
+              "rerank": {
                 "enum": [
                   "on",
                   "off"

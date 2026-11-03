@@ -6,6 +6,10 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 Everything below is on `main` since 0.1.0a2 and installs from a checkout; the next pre-release will carry it to PyPI and the container image.
 
+### Optional local reranker
+
+A pinned cross-encoder (`cross-encoder/ms-marco-MiniLM-L6-v2`, Apache 2.0) installed with `python -m memoryking.model_install --model reranker` and loaded with `serve --reranker-model DIR` reorders the top 16 fused candidates of a briefing that asks for it (`rerank: "on"`, `recall --rerank`, lean `recall(rerank=true)`). Off unless requested, no egress, never admits or removes a record; each item reports `rerank_score_ppm`, the trace reports the stage, and the recall harness measures it with `--reranker-model`: on the pooled LongMemEval oracle set, session recall at eight 0.576 to 0.682 and MRR 0.477 to 0.633 for about 0.7 s more per briefing. [Reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#local-reranker) · [Agent guide](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md#reranking-the-shortlist-with-a-local-cross-encoder)
+
 ### Memory health report
 
 `memoryking health --project P`, the **Memory health** section of the dashboard's Jobs & health view, and the `inspection` action `health` say whether memory is paying for itself, from records the store already keeps: the helpful share of rated feedback, briefings that found no relevant memory, observations no retained delivery ever carried, claims that lost their evidence to a purge or were replaced, and how long the oldest proposal has waited for review. Counts and ratios only, no text and no principal, fixed documented thresholds, five one-line signals. [Reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#memory-health) · [Agent guide](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md#is-memory-paying-for-itself-the-health-report)

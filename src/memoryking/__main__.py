@@ -222,6 +222,8 @@ def doctor(
     embedding_model: Path | None = None,
     backup_dir: Path | None = None,
     backup_every: str | None = None,
+    *,
+    reranker_model: Path | None = None,
 ) -> list[tuple[str, str, str]]:
     """Health checks an operator can run while the daemon is up. Each is (level, name, detail)."""
     import sqlite3
@@ -322,6 +324,19 @@ def doctor(
             "embedding model",
             "no model configured; `serve --embedding-model DIR` after installing one enables semantic search",
         )
+    if reranker_model is not None:
+        try:
+            from memoryking.adapters.local_embeddings import RERANKER, model_files, model_manifest
+
+            model_files(reranker_model, model_manifest(RERANKER))
+            record("ok", "reranker model", f"{reranker_model} verified")
+        except (LocalError, OSError) as exc:
+            code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
+            record(
+                "fail",
+                "reranker model",
+                f"{reranker_model}: {code}; run `python -m memoryking.model_install --model reranker --destination DIR`",
+            )
     from memoryking.backups import check as backup_check
 
     level, detail = backup_check(backup_dir, backup_every, int(time.time() * 1000))
@@ -458,6 +473,7 @@ def main() -> int:
     adder.add_argument("--socket", type=Path, help="Default: STORE/service.sock")
     adder.add_argument("--dashboard-port", type=int)
     adder.add_argument("--embedding-model", type=Path, help="Installed local model directory")
+    adder.add_argument("--reranker-model", type=Path, help="Installed local reranker directory")
     adder.add_argument("--backup-dir", type=Path)
     adder.add_argument("--backup-every", help="Such as 12h or 1d")
     adder.add_argument("--backup-keep", type=int)
@@ -483,6 +499,12 @@ def main() -> int:
                 type=Path,
                 help="Installed local model directory; the daemon then embeds queries and "
                 "indexes every enabled project itself (a profile may set it)",
+            )
+            cmd.add_argument(
+                "--reranker-model",
+                type=Path,
+                help="Installed local cross-encoder; briefings that ask for `rerank` have "
+                "their top candidates reordered by it (a profile may set it)",
             )
             cmd.add_argument(
                 "--log-level",
@@ -531,6 +553,7 @@ def main() -> int:
     doc.add_argument("--socket", type=Path, help="Also query the running daemon")
     doc.add_argument("--credential", type=Path, help="Admin credential for the daemon query")
     doc.add_argument("--embedding-model", type=Path, help="Model directory to verify")
+    doc.add_argument("--reranker-model", type=Path, help="Reranker directory to verify")
     doc.add_argument("--backup-dir", type=Path, help="Scheduled backup directory to check")
     doc.add_argument("--backup-every", help="Backup policy interval the directory should meet")
     cred = commands.add_parser("credential", help="Issue, list and revoke agent credentials")
@@ -618,6 +641,11 @@ def main() -> int:
         "--salience",
         action="store_true",
         help="Let your own recent use of memories nudge the ranking (bounded, reported)",
+    )
+    rec.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Let the daemon's local cross-encoder reorder the top candidates (needs serve --reranker-model)",
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     dr = commands.add_parser(
@@ -733,7 +761,13 @@ def main() -> int:
                     "store": str(args.store.resolve()),
                     "control": str(args.control.resolve()),
                 }
-                for field in ("credential", "socket", "embedding_model", "backup_dir"):
+                for field in (
+                    "credential",
+                    "socket",
+                    "embedding_model",
+                    "reranker_model",
+                    "backup_dir",
+                ):
                     if getattr(args, field) is not None:
                         values[field] = str(getattr(args, field).resolve())
                 for field in ("dashboard_port", "backup_every", "backup_keep"):
@@ -858,6 +892,7 @@ def main() -> int:
                 task=args.task,
                 as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
                 salience=args.salience,
+                rerank=args.rerank,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
@@ -930,6 +965,7 @@ def main() -> int:
                 args.embedding_model,
                 args.backup_dir,
                 args.backup_every,
+                reranker_model=args.reranker_model,
             )
             width = max(len(name) for _, name, _ in findings)
             for level, name, detail in findings:
@@ -1216,6 +1252,10 @@ def main() -> int:
                         from memoryking.embedding_loop import EmbeddingLoop
 
                         store.embedder = LocalOnnxEmbedding(args.embedding_model)
+                    if args.reranker_model is not None:
+                        from memoryking.adapters.local_embeddings import LocalOnnxReranker
+
+                        store.reranker = LocalOnnxReranker(args.reranker_model)
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")

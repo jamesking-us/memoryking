@@ -139,6 +139,7 @@ def recall(
     task: str | None = None,
     as_of: int | None = None,
     salience: bool = False,
+    rerank: bool = False,
     **where: Any,
 ) -> dict[str, Any]:
     """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms."""
@@ -159,6 +160,8 @@ def recall(
         args["as_of_ms"] = as_of
     if salience:
         args["salience"] = "on"
+    if rerank:
+        args["rerank"] = "on"
     command = {
         "version": 1,
         "incarnation": context["incarnation"],

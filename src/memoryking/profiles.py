@@ -23,11 +23,20 @@ FIELDS = (
     "credential",
     "dashboard_port",
     "embedding_model",
+    "reranker_model",
     "backup_dir",
     "backup_every",
     "backup_keep",
 )
-PATH_FIELDS = ("store", "control", "socket", "credential", "embedding_model", "backup_dir")
+PATH_FIELDS = (
+    "store",
+    "control",
+    "socket",
+    "credential",
+    "embedding_model",
+    "reranker_model",
+    "backup_dir",
+)
 
 
 def config_path() -> Path:

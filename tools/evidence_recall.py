@@ -84,7 +84,13 @@ class StampClock:
 
 
 def run(
-    questions: list[dict[str, Any]], *, top_k: int, pool: bool, as_of: bool, budget: int
+    questions: list[dict[str, Any]],
+    *,
+    top_k: int,
+    pool: bool,
+    as_of: bool,
+    budget: int,
+    reranker: Any | None = None,
 ) -> dict[str, Any]:
     def project_of(item: dict[str, Any]) -> str:
         return (
@@ -108,6 +114,7 @@ def run(
         root = Path(directory)
         credential = LocalStore.initialize(root / "db", root / "ctl").read_text()
         with LocalStore(root / "db", root / "ctl", clock=clock) as store:
+            store.reranker = reranker
             retrieval = Retrieval(store)
             captured: dict[str, tuple[str, bool]] = {}  # observation -> (session, has_answer)
             namespaces: dict[str, str] = {}
@@ -174,6 +181,8 @@ def run(
                 }
                 if as_of and when is not None:
                     args["as_of_ms"] = when
+                if reranker is not None:
+                    args["rerank"] = "on"
                 command = {
                     "version": 1,
                     "incarnation": store.incarnation,
@@ -200,6 +209,7 @@ def run(
         "pooled": pool,
         "as_of_question_date": as_of,
         "top_k": top_k,
+        "reranker": getattr(reranker, "fingerprint", None),
         "session_recall_at_k": round(statistics.fmean(session_hits), 4) if session_hits else None,
         "answer_turn_recall_at_k": round(statistics.fmean(turn_hits), 4) if turn_hits else None,
         "session_mrr": round(statistics.fmean(reciprocal), 4) if reciprocal else None,
@@ -241,10 +251,27 @@ def main() -> int:
         help="Do not brief as of the question date",
     )
     parser.add_argument("--gate", action="store_true", help="Fail when a threshold is missed")
+    parser.add_argument(
+        "--reranker-model",
+        type=Path,
+        help="Installed local cross-encoder directory; every briefing then asks for `rerank`",
+    )
     args = parser.parse_args()
+    reranker = None
+    if args.reranker_model is not None:
+        from memoryking.adapters.local_embeddings import LocalOnnxReranker
+
+        reranker = LocalOnnxReranker(args.reranker_model)
     raw = args.data.read_bytes()
     questions = load(args.data, args.questions, set(args.types.split(",")) if args.types else None)
-    report = run(questions, top_k=args.top_k, pool=args.pool, as_of=args.as_of, budget=args.budget)
+    report = run(
+        questions,
+        top_k=args.top_k,
+        pool=args.pool,
+        as_of=args.as_of,
+        budget=args.budget,
+        reranker=reranker,
+    )
     report["data"] = {"path": str(args.data), "sha256": hashlib.sha256(raw).hexdigest()}
     report["gate"] = json.loads(GATE.read_text()) if GATE.exists() else {}
     report["failures"] = gate(report, report["gate"]) if args.gate else []

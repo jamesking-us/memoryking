@@ -11,7 +11,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from memoryking.adapters.local_embeddings import MODEL, model_files, model_manifest
+from memoryking.adapters.local_embeddings import MODEL, RERANKER, model_files, model_manifest
 from memoryking.domain.embeddings import fingerprint
 from memoryking.domain.local import LocalError
 
@@ -23,11 +23,11 @@ class HTTPSOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def install(destination: Path) -> dict[str, str]:
-    manifest = model_manifest()
+def install(destination: Path, model: str = MODEL) -> dict[str, str]:
+    manifest = model_manifest(model)
     if destination.exists():
-        model_files(destination)
-        return {"status": "already_verified", "model": MODEL, "fingerprint": fingerprint(manifest)}
+        model_files(destination, manifest)
+        return {"status": "already_verified", "model": model, "fingerprint": fingerprint(manifest)}
     destination.parent.mkdir(parents=True, exist_ok=True)
     opener = urllib.request.build_opener(HTTPSOnly())
     with tempfile.TemporaryDirectory(prefix=".model-download-", dir=destination.parent) as temp:
@@ -47,20 +47,27 @@ def install(destination: Path) -> dict[str, str]:
                     output.write(chunk)
             if received != file["bytes"] or digest.hexdigest() != file["sha256"]:
                 raise LocalError("model_download_checksum_mismatch")
-        model_files(staging)
+        model_files(staging, manifest)
         # All files are checked before the destination becomes available.
         if destination.exists():
             raise LocalError("model_destination_exists")
         shutil.move(str(staging), destination)
-    return {"status": "installed_verified", "model": MODEL, "fingerprint": fingerprint(manifest)}
+    return {"status": "installed_verified", "model": model, "fingerprint": fingerprint(manifest)}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
+    parser.add_argument(
+        "--model",
+        choices=["embedding", "reranker"],
+        default="embedding",
+        help="Which pinned manifest to install: the embedding model (default) or the reranker",
+    )
     args = parser.parse_args()
     try:
-        print(json.dumps(install(args.destination.resolve()), sort_keys=True))
+        model = RERANKER if args.model == "reranker" else MODEL
+        print(json.dumps(install(args.destination.resolve(), model), sort_keys=True))
     except Exception as exc:
         raise SystemExit(
             exc.code if isinstance(exc, LocalError) else "model_download_failed"

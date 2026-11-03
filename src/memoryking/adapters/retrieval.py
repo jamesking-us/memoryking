@@ -39,6 +39,8 @@ from memoryking.domain.local import Decision, LocalError, Released
 from memoryking.domain.selectors import bindings
 
 # Salience: a bounded, documented nudge from use, never a rewrite of the record.
+RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
+RERANK_TEXT_BYTES = 16384  # the reranker's per-text limit
 SALIENCE_WEIGHT = 100_000  # at most a tenth of a full lexical score, in millionths
 SALIENCE_WINDOW_MS = 90 * 86_400_000  # deliveries older than this do not count
 SALIENCE_HALF_LIFE_MS = 30 * 86_400_000  # use fades by half every thirty days
@@ -592,6 +594,9 @@ class Retrieval:
                 ranking,
                 evaluation=ranking_override is not None,
             )
+            for stage in trace:
+                if stage.get("stage") == "rerank_v1" and "model" in stage:
+                    diag["model_fingerprints"].append(stage["model"])
             diag.update(
                 trace=[
                     {
@@ -1011,6 +1016,50 @@ class Retrieval:
                 archive_after_days=ARCHIVE_AFTER_MS // 86_400_000,
                 archival_candidates=archival,
             )
+        rerank_trace: dict[str, Any] = {"stage": "rerank_v1"}
+        reranker = self.s.reranker
+        if args.get("rerank") != "on":
+            # Off unless asked: a model's opinion of relevance enters a briefing only
+            # when the caller wants it, and the trace says so either way.
+            rerank_trace["state"] = "off_unless_requested"
+        elif evaluation:
+            rerank_trace["state"] = "disabled_for_ranking_evaluation"
+        elif ranking["state"] not in {"disabled", "historical_override_disabled"}:
+            rerank_trace["state"] = "disabled_for_active_ranking_policy"
+        elif reranker is None:
+            rerank_trace["state"] = "unavailable_no_model"
+        else:
+            # The cross-encoder reads the query against each of the top fused candidates
+            # and reorders that window only; everything below keeps the fused order, and
+            # a model failure keeps it too. Authority, policy and conflict expansion are
+            # untouched: the model moves records, it never admits or removes one.
+            started = self.s.clock.monotonic_ms()
+            head = ranked[:RERANK_WINDOW]
+            texts = [
+                (group[0].get("text") or reference)
+                .encode()[:RERANK_TEXT_BYTES]
+                .decode("utf-8", errors="ignore")
+                or reference
+                for _, reference, group in head
+            ]
+            try:
+                scores = reranker.score(args["query"], texts) if head else []
+            except LocalError as exc:
+                rerank_trace.update(state="failed_fused_order_kept", error=exc.code)
+            else:
+                order = sorted(range(len(head)), key=lambda i: (-scores[i], i))
+                for index, (_, _, group) in enumerate(head):
+                    for entry in group:
+                        entry["rerank_score_ppm"] = scores[index]
+                ranked = [head[i] for i in order] + ranked[len(head) :]
+                rerank_trace.update(
+                    state="applied",
+                    model=reranker.fingerprint,
+                    window=RERANK_WINDOW,
+                    candidates=len(head),
+                    moved=sum(1 for new, old in enumerate(order) if new != old),
+                    duration_ms=max(0, self.s.clock.monotonic_ms() - started),
+                )
         if ranking["state"] == "experimental":
             from memoryking.domain.learning import adjust
 
@@ -1043,8 +1092,10 @@ class Retrieval:
                 },
             )
             trace[-1]["metric"] = "equal_channel_rrf60_v1"
-        # The rank stage stays last among the fixed stages; salience sits before it.
+        # The rank stage stays last among the fixed stages; salience and the reranker
+        # sit before it, in the order they ran.
         trace.insert(len(trace) - 1, salience_trace)
+        trace.insert(len(trace) - 1, rerank_trace)
         if ranking["state"] != "disabled":
             trace.append(
                 {
