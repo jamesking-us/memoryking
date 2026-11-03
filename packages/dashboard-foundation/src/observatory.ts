@@ -164,6 +164,7 @@ export class Observatory {
       ["operations", "Jobs & health"],
       ["handoffs", "Handoffs & checkpoints"],
       ["impact", "Change impact"],
+      ["influence", "Where did this go"],
       ["retention", "Retention & purge"],
     ]) {
       const o = e("option", name);
@@ -443,6 +444,9 @@ export class Observatory {
           break;
         case "impact":
           this.impact();
+          break;
+        case "influence":
+          this.influence();
           break;
         case "retention":
           this.retention();
@@ -1381,6 +1385,59 @@ export class Observatory {
           });
         result.append(replay);
       });
+    };
+    this.output.append(f, result);
+  }
+  private influence(): void {
+    this.status.textContent =
+      "Enter an observation to list every record built from it and who received them.";
+    this.output.replaceChildren(
+      e("h3", "Where did this memory go"),
+      e(
+        "p",
+        "The claims that cite the observation, the checkpoints, handoffs, summaries and experience records built on it or on anything derived from it, and the retained briefings, fetches, reruns and graph pages that included it, with the principals they reached. The same recorded dependencies a purge would follow, read without changing anything. Prior exports, provider deliveries and backups leave no record here.",
+      ),
+    );
+    const f = e("form", "", "observatory-form"),
+      observation = field(f, "Observation ID");
+    observation.required = true;
+    f.append(e("button", "Trace"));
+    const result = e("div");
+    observation.oninput = () => result.replaceChildren();
+    f.onsubmit = (ev) => {
+      ev.preventDefault();
+      const id = observation.value;
+      const read = async () => {
+        const value = await this.command("inspection", "influence", {
+          observation: id,
+        });
+        if (this.unchanged(value)) return;
+        const counts = doc(value.counts);
+        result.replaceChildren(
+          e(
+            "p",
+            `Captured by ${String(value.captured_by)} from ${String(value.source)} · reached ${String(counts.principals)} principal(s): ${(value.principals as string[]).join(", ") || "none"}`,
+            "eyebrow",
+          ),
+        );
+        for (const [title, key] of [
+          ["Claims citing it", "claims"],
+          ["Checkpoints built on it", "checkpoints"],
+          ["Handoffs that carried it", "handoffs"],
+          ["Summaries derived from it", "summaries"],
+          ["Deliveries that included it", "deliveries"],
+          ["Experience records", "experience"],
+        ] as const) {
+          const items = rows(value[key]);
+          const truncated = (value.truncation as string[]).includes(key)
+            ? " (truncated)"
+            : "";
+          result.append(detail(`${title}: ${items.length}${truncated}`, items));
+        }
+        result.append(e("p", readable(value.coverage), "caption"));
+      };
+      this.reader = read;
+      void this.run(read, true);
     };
     this.output.append(f, result);
   }

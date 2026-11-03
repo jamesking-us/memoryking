@@ -344,6 +344,59 @@ def doctor(
     return findings
 
 
+def render_influence(report: dict[str, Any]) -> str:
+    """A reverse-dependency report as readable text: what was built from the record."""
+    counts = report["counts"]
+
+    def stamp(ms: int) -> str:
+        return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+    lines = [
+        f"Observation {report['observation']} from {report['source']} by {report['captured_by']}",
+        f"Reached {counts['principals']} principal(s): {', '.join(report['principals']) or 'none'}",
+        "",
+    ]
+    for title, key, render in (
+        (
+            "Claims citing it",
+            "claims",
+            lambda c: f"{c['revision']} ({c['kind']} by {c['issuer']}, family {c['family']})",
+        ),
+        (
+            "Checkpoints built on it",
+            "checkpoints",
+            lambda c: (
+                f"{c['checkpoint']} task {c['task']} rev {c['revision']} by {c['writer']} for {', '.join(c['readers'])} at {stamp(c['created_ms'])}"
+            ),
+        ),
+        (
+            "Handoffs that carried it",
+            "handoffs",
+            lambda h: (
+                f"{h['handoff']} {h['sender']} -> {h['recipient']} ({h['state']}) at {stamp(h['created_ms'])}"
+            ),
+        ),
+        (
+            "Summaries derived from it",
+            "summaries",
+            lambda s: f"{s['summary']} of {s['checkpoint']} by {s['principal']} ({s['method']})",
+        ),
+        (
+            "Deliveries that included it",
+            "deliveries",
+            lambda d: f"{d['receipt']} {d['kind']} to {d['principal']} at {stamp(d['created_ms'])}",
+        ),
+        ("Experience records", "experience", lambda x: x["record"]),
+    ):
+        items = report[key]
+        lines.append(
+            f"{title}: {len(items)}" + (" (truncated)" if key in report["truncation"] else "")
+        )
+        lines.extend(f"  - {render(item)}" for item in items)
+    lines += ["", f"Coverage: {report['coverage'].replace('_', ' ').replace(';', ';')}"]
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
@@ -521,6 +574,14 @@ def main() -> int:
     rec.add_argument("--budget", type=int, default=6000)
     rec.add_argument("--task")
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
+    infl = commands.add_parser(
+        "influence", help="Where one observation went: every record built from it and who got it"
+    )
+    infl.add_argument("observation")
+    infl.add_argument("--socket", type=Path)
+    infl.add_argument("--credential", type=Path)
+    infl.add_argument("--project", required=True)
+    infl.add_argument("--json", action="store_true", help="Print the structured report instead")
     hk = commands.add_parser(
         "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
     )
@@ -590,7 +651,7 @@ def main() -> int:
         profiles.apply(args, args.profile, args.config)
         optional = (
             {"socket", "credential"}
-            if args.command in {"doctor", "capture", "recall", "hook", "hooks"}
+            if args.command in {"doctor", "capture", "recall", "hook", "hooks", "influence"}
             else set()
         )
         for field in ("store", "control", "socket", "credential"):
@@ -803,6 +864,26 @@ def main() -> int:
                     f"receipt {result['receipt']} · {result['method']} · "
                     f"checkpoint {result['checkpoint']} revision {result['revision']}"
                 )
+        elif args.command == "influence":
+            token = read_credential(args.credential)
+            context = request(args.socket, token, "context", {"project": args.project})
+            report = request(
+                args.socket,
+                token,
+                "inspection",
+                {
+                    "command": {
+                        "version": 1,
+                        "incarnation": context["incarnation"],
+                        "action": "influence",
+                        "args": {"project": args.project, "observation": args.observation},
+                    }
+                },
+            )
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            else:
+                print(render_influence(report), end="")
         elif args.command == "egress-audit":
             result = request(
                 args.socket,

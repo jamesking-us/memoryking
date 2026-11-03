@@ -73,6 +73,62 @@ class OperatorCommandTests(unittest.TestCase):
         self.assertEqual(run.returncode, expect, run.stdout + run.stderr)
         return run.stdout
 
+    def test_influence_prints_where_an_observation_went(self):
+        from test_working import checkpoint
+
+        from memoryking.adapters.working import Working
+
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        namespace = self.store.namespace(self.credential.read_text(), "demo")
+        captured = self.store.capture(
+            self.credential.read_text(),
+            namespace,
+            "cli-influence",
+            {
+                "version": 1,
+                "project": "demo",
+                "source": "cli-test",
+                "source_event": "cli-influence",
+                "text": "Timeout observed in the demo service.",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        body = checkpoint()
+        body["acceptance"][0].update(
+            state="passed", evidence=[{"kind": "observation", "id": captured["observation"]}]
+        )
+        output = []
+        Working(self.store).execute(
+            self.credential.read_text(),
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "save",
+                "key": "cli-influence-ckpt",
+                "args": {
+                    "project": "demo",
+                    "task": "task",
+                    "run": None,
+                    "expected_revision": 0,
+                    "readers": ["owner"],
+                    "checkpoint": body,
+                },
+            },
+        ).emit(output.append)
+        text = self.cli("influence", captured["observation"], "--project", "demo", *common)
+        self.assertIn(f"Observation {captured['observation']} from cli-test by owner", text)
+        self.assertIn("Reached 1 principal(s): owner", text)
+        self.assertIn("Checkpoints built on it: 1", text)
+        self.assertIn("task task rev 1 by owner for owner", text)
+        self.assertIn("Deliveries that included it: 0", text)
+        raw = self.cli("influence", captured["observation"], "--project", "demo", "--json", *common)
+        report = json.loads(raw)
+        self.assertEqual(report["counts"]["checkpoints"], 1)
+        self.assertEqual(report["principals"], ["owner"])
+        self.cli("influence", "obs_missing", "--project", "demo", *common, expect=2)
+
     def test_summarize_prints_the_summary_and_its_receipt(self):
         from test_working import checkpoint
 

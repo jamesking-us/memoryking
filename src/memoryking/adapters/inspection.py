@@ -38,7 +38,7 @@ class Inspection:
         with self.s.transaction() as decision:
             at = decision.evaluated_ms
             who = self.s._auth(credential, "read", args["project"], at)
-            if action in {"operations", "purge", "retention_preview"}:
+            if action in {"operations", "purge", "retention_preview", "influence"}:
                 self.s._auth(credential, "admin", "*", at)
             if action == "history":
                 result = self.history(who, args, at)
@@ -50,6 +50,8 @@ class Inspection:
                 result = self.handoffs(who, args, at)
             elif action == "retention_preview":
                 result = self.retention(who, args, at)
+            elif action == "influence":
+                result = self.influence(who, args, at)
             else:
                 result = self.purge(who, command, at)
             result.update(
@@ -334,6 +336,189 @@ class Inspection:
             expires=at + 15000,
         )
         return preview
+
+    def influence(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        """Where one observation went: every record built from it and who received it.
+
+        The same recorded dependencies a purge would follow, read without changing
+        anything: the claims that cite the observation, the checkpoints, handoffs,
+        summaries, experience records and retained deliveries (briefings, fetches,
+        reruns, graph pages) that recorded a dependency on it or on anything derived
+        from it, and the principals those reached. Bounded per list; truncation is
+        explicit. Prior exports, provider deliveries and backups leave no record here."""
+        tenant = who["tenant"]
+        row = self.db.execute(
+            "SELECT * FROM observations WHERE tenant=? AND id=? AND project=?",
+            (tenant, args["observation"], args["project"]),
+        ).fetchone()
+        if row is None or row["deleted"]:
+            raise LocalError("unavailable")
+        self.r._blob(row)
+        limit = 256
+        truncation: set[str] = set()
+        derived = {row["id"]}
+        claims: list[dict[str, Any]] = []
+        for ref in self.db.execute(
+            "SELECT DISTINCT revision FROM evidence_spans WHERE tenant=? AND observation=? ORDER BY revision LIMIT 257",
+            (tenant, row["id"]),
+        ).fetchall()[: limit + 1]:
+            if len(claims) >= limit:
+                truncation.add("claims")
+                break
+            claim = self.r.k._revision(tenant, ref["revision"])
+            derived.add(claim["id"])
+            claims.append(
+                {
+                    "revision": claim["id"],
+                    "family": claim["family"],
+                    "kind": claim["kind"],
+                    "issuer": claim["issuer"],
+                    "readable_now": self.r.k._available(who, claim, at),
+                }
+            )
+
+        def depends(raw: Any) -> bool:
+            try:
+                deps = json.loads(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                return False
+            return isinstance(deps, list) and any(
+                isinstance(d, dict) and d.get("id") in derived for d in deps
+            )
+
+        checkpoints: dict[str, dict[str, Any]] = {}
+        experience: dict[str, dict[str, Any]] = {}
+        deliveries: dict[str, dict[str, Any]] = {}
+        changed = True
+        while changed:
+            changed = False
+            for item in self.db.execute(
+                "SELECT id,task,stream,revision,writer,readers,created,state,dependencies FROM checkpoints WHERE tenant=? AND project=? AND state!='purged' ORDER BY created,id",
+                (tenant, args["project"]),
+            ).fetchall():
+                if item["id"] in checkpoints or not depends(item["dependencies"]):
+                    continue
+                if len(checkpoints) >= limit:
+                    truncation.add("checkpoints")
+                    continue
+                checkpoints[item["id"]] = {
+                    "checkpoint": item["id"],
+                    "task": item["task"],
+                    "stream": item["stream"],
+                    "revision": item["revision"],
+                    "writer": item["writer"],
+                    "readers": json.loads(item["readers"]),
+                    "created_ms": item["created"],
+                    "state": item["state"],
+                }
+                derived.add(item["id"])
+                changed = True
+            for item in self.db.execute(
+                "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL ORDER BY id",
+                (tenant,),
+            ).fetchall():
+                if item["id"] in experience or not depends(item["dependencies"]):
+                    continue
+                if len(experience) >= limit:
+                    truncation.add("experience")
+                    continue
+                experience[item["id"]] = {"record": item["id"]}
+                derived.add(item["id"])
+                changed = True
+            for item in self.db.execute(
+                "SELECT id,principal,created,state,diagnostics,dependencies FROM rendered_artifacts WHERE tenant=? AND project=? AND state='retained' ORDER BY created,id",
+                (tenant, args["project"]),
+            ).fetchall():
+                if item["id"] in deliveries or not depends(item["dependencies"]):
+                    continue
+                if len(deliveries) >= limit:
+                    truncation.add("deliveries")
+                    continue
+                diag = json.loads(item["diagnostics"] or "{}")
+                deliveries[item["id"]] = {
+                    "receipt": item["id"],
+                    "kind": diag.get("kind", "brief"),
+                    "principal": item["principal"],
+                    "created_ms": item["created"],
+                    "status": diag.get("status"),
+                }
+                derived.add(item["id"])
+                changed = True
+        handoffs: list[dict[str, Any]] = []
+        summaries: list[dict[str, Any]] = []
+        for identifier in checkpoints:
+            for item in self.db.execute(
+                "SELECT id,sender,recipient,role,stage,state,created FROM handoffs WHERE tenant=? AND checkpoint=? ORDER BY created,id",
+                (tenant, identifier),
+            ).fetchall():
+                if len(handoffs) >= limit:
+                    truncation.add("handoffs")
+                    break
+                handoffs.append(
+                    {
+                        "handoff": item["id"],
+                        "checkpoint": identifier,
+                        "sender": item["sender"],
+                        "recipient": item["recipient"],
+                        "role": item["role"],
+                        "stage": item["stage"],
+                        "state": item["state"],
+                        "created_ms": item["created"],
+                    }
+                )
+        for item in self.db.execute(
+            "SELECT id,checkpoint,principal,method,readers,created FROM session_summaries WHERE tenant=? AND project=? ORDER BY created,id",
+            (tenant, args["project"]),
+        ).fetchall():
+            if item["checkpoint"] not in checkpoints and item["id"] not in deliveries:
+                continue
+            if len(summaries) >= limit:
+                truncation.add("summaries")
+                break
+            summaries.append(
+                {
+                    "summary": item["id"],
+                    "checkpoint": item["checkpoint"],
+                    "principal": item["principal"],
+                    "method": item["method"],
+                    "readers": json.loads(item["readers"]),
+                    "created_ms": item["created"],
+                }
+            )
+        principals: set[str] = {d["principal"] for d in deliveries.values()}
+        for value in checkpoints.values():
+            principals.update(value["readers"])
+        for value in handoffs:
+            principals.update((value["sender"], value["recipient"]))
+        for value in summaries:
+            principals.update(value["readers"])
+        state = self.db.execute("SELECT position FROM tenants WHERE tenant=?", (tenant,)).fetchone()
+        return {
+            "observation": row["id"],
+            "source": row["source"],
+            "captured_by": row["principal"],
+            "position": row["position"],
+            "content_hash": row["blob"],
+            "claims": claims,
+            "checkpoints": list(checkpoints.values()),
+            "handoffs": handoffs,
+            "summaries": summaries,
+            "experience": list(experience.values()),
+            "deliveries": list(deliveries.values()),
+            "principals": sorted(principals),
+            "counts": {
+                "claims": len(claims),
+                "checkpoints": len(checkpoints),
+                "handoffs": len(handoffs),
+                "summaries": len(summaries),
+                "experience": len(experience),
+                "deliveries": len(deliveries),
+                "principals": len(principals),
+            },
+            "truncation": sorted(truncation),
+            "coverage": "recorded_dependencies_in_this_project; retained_deliveries_only; prior_exports_provider_deliveries_and_backups_not_tracked",
+            "source_position": state["position"],
+        }
 
     def purge(self, who: dict[str, Any], command: dict[str, Any], at: int) -> dict[str, Any]:
         args = command["args"]
