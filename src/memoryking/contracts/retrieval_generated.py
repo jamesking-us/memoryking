@@ -49,7 +49,7 @@ class Atlas(TypedDict):
     valid_ms: NotRequired[int]
     recorded_position: NotRequired[int]
     query: NotRequired[str]
-    types: NotRequired[list[Literal["observation", "claim", "attestation", "procedure", "checkpoint", "task", "run"]]]
+    types: NotRequired[list[Literal["observation", "claim", "attestation", "procedure", "checkpoint", "plan", "step", "task", "run"]]]
     focus: NotRequired[list[str]]
     max_nodes: NotRequired[int]
     max_edges: NotRequired[int]

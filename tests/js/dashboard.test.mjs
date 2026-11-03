@@ -172,12 +172,16 @@ test("node colour follows recorded authority and size follows citations, bounded
   assert.equal(authorityOf({ type: "procedure" }), "procedure");
   for (const type of ["checkpoint", "task", "run", "unknown"])
     assert.equal(authorityOf({ type }), "working");
+  for (const type of ["plan", "step"])
+    assert.equal(authorityOf({ type }), "plan");
   const legend = new Set(AUTHORITY_LEGEND.map(([k]) => k));
   for (const type of [
     "observation",
     "claim",
     "attestation",
     "procedure",
+    "plan",
+    "step",
     "task",
   ])
     assert.ok(legend.has(authorityOf({ type, state: "proposed" })));

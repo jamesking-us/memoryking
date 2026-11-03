@@ -186,16 +186,61 @@ def query(
         ):
             continue
         ident = task["checkpoint"]
+        row = db.execute(
+            "SELECT body,dependencies FROM checkpoints WHERE tenant=? AND id=?", (tenant, ident)
+        ).fetchone()
+        body = json.loads(row["body"]) if row is not None and row["body"] else {}
+        plan = body.get("plan")
         nodes[ident] = {
             "id": ident,
-            "type": "checkpoint",
-            "label": task["objective"][:256],
-            "authority": "producer_checkpoint",
+            "type": "plan" if plan else "checkpoint",
+            "label": (plan["title"] if plan else task["objective"])[:256],
+            "authority": "recorded_plan" if plan else "producer_checkpoint",
             "position": task["source_position"],
             "revision": task["revision"],
             "content_hash": task["body_hash"],
+            **({"status": plan["status"]} if plan else {}),
         }
         dependencies[ident] = [{"kind": "checkpoint", "id": ident}]
+        if plan:
+            # Steps are the plan's own structure: declared by the plan, ordered by their
+            # prerequisites, and tied to the observations they cite as proof. A step
+            # shares the plan's receipt dependency; it never becomes evidence itself.
+            for step in plan["steps"]:
+                sid = "step:" + ident + ":" + step["id"]
+                nodes[sid] = {
+                    "id": sid,
+                    "type": "step",
+                    "label": step["description"][:256],
+                    "authority": "recorded_plan_step",
+                    "position": task["source_position"],
+                    "status": step["status"],
+                    "phase": step["phase"],
+                }
+                dependencies[sid] = dependencies[ident]
+            for step in plan["steps"]:
+                sid = "step:" + ident + ":" + step["id"]
+                edge(ident, sid, "declares", {"kind": "plan_step", "checkpoint": ident})
+                for prerequisite in step["depends_on"]:
+                    edge(
+                        sid,
+                        "step:" + ident + ":" + prerequisite,
+                        "depends_on",
+                        {"kind": "plan_step_prerequisite", "checkpoint": ident},
+                    )
+                for proof in step["evidence"]:
+                    edge(
+                        sid,
+                        proof["id"],
+                        "cites",
+                        {
+                            "kind": "plan_step_evidence",
+                            "checkpoint": ident,
+                            "status": step["status"],
+                        },
+                    )
+            for lesson in plan["lessons"]:
+                edge(ident, lesson["id"], "cites", {"kind": "plan_lesson", "checkpoint": ident})
         tid = "task:" + args["project"] + ":" + task["task"]
         nodes[tid] = {
             "id": tid,
@@ -218,10 +263,7 @@ def query(
             dependencies[rid] = dependencies[ident]
             edge(rid, tid, "documented_in", {"kind": "checkpoint_scope", "checkpoint": ident})
             edge(ident, rid, "documented_in", {"kind": "checkpoint_scope", "checkpoint": ident})
-        row = db.execute(
-            "SELECT dependencies FROM checkpoints WHERE tenant=? AND id=?", (tenant, ident)
-        ).fetchone()
-        for dep in json.loads(row["dependencies"]):
+        for dep in json.loads(row["dependencies"]) if row is not None else []:
             edge(
                 ident,
                 dep["id"],
@@ -241,7 +283,17 @@ def query(
     wanted_types = set(
         args.get(
             "types",
-            ["observation", "claim", "attestation", "procedure", "checkpoint", "task", "run"],
+            [
+                "observation",
+                "claim",
+                "attestation",
+                "procedure",
+                "checkpoint",
+                "plan",
+                "step",
+                "task",
+                "run",
+            ],
         )
     )
     visible = {i for i, node in nodes.items() if node["type"] in wanted_types}

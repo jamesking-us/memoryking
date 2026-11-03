@@ -44,6 +44,54 @@ class AtlasCases:
         receipts = self.run_r("receipts", {"project": "p"})
         self.assertEqual(receipts["items"][0]["status"], "partial")
 
+    def test_plan_steps_join_the_graph_with_their_evidence_and_prerequisites(self):
+        from test_plans import plan
+
+        from memoryking.adapters.working import Working
+
+        body = plan()
+        body["steps"][0].update(
+            status="done", evidence=[{"kind": "observation", "id": self.obs["observation"]}]
+        )
+        output = []
+        Working(self.store).execute(
+            self.owner,
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "plan_save",
+                "key": "atlas-plan",
+                "args": {
+                    "project": "p",
+                    "task": "checkout",
+                    "expected_revision": 0,
+                    "readers": ["owner"],
+                    "plan": body,
+                },
+            },
+        ).emit(output.append)
+        checkpoint = json.loads(output[0])["checkpoint"]
+        result = self.atlas()
+        nodes = {n["id"]: n for n in result["nodes"]}
+        self.assertEqual(nodes[checkpoint]["type"], "plan")
+        self.assertEqual(nodes[checkpoint]["label"], "Reliable checkout")
+        inspect, test = f"step:{checkpoint}:inspect", f"step:{checkpoint}:test"
+        self.assertEqual(nodes[inspect]["status"], "done")
+        self.assertEqual(nodes[test]["phase"], "verify")
+        edges = {(e["source"], e["target"], e["type"]) for e in result["edges"]}
+        self.assertIn((checkpoint, inspect, "declares"), edges)
+        self.assertIn((test, inspect, "depends_on"), edges)
+        self.assertIn((inspect, self.obs["observation"], "cites"), edges)
+        self.assertEqual(result["counts"]["plan"], 1)
+        self.assertEqual(result["counts"]["step"], 2)
+        only = self.atlas(types=["step"])
+        self.assertEqual({n["type"] for n in only["nodes"]}, {"step"})
+        # Purging the proof removes the plan (its checkpoint depends on it), not the graph.
+        self.store.purge(self.owner, self.obs["observation"])
+        after = {n["id"] for n in self.atlas()["nodes"]}
+        self.assertNotIn(checkpoint, after)
+        self.assertNotIn(inspect, after)
+
     def test_citations_count_the_callers_briefings_but_not_atlas_pages(self):
         claim = self.accepted()
         first = self.atlas()

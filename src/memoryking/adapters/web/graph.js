@@ -8,6 +8,7 @@ export const AUTHORITY_LEGEND = [
     ["constraint", "Mandatory constraint"],
     ["attestation", "Attestation by an actor"],
     ["procedure", "Procedure"],
+    ["plan", "Plan or plan step"],
     ["working", "Checkpoint, task or run"],
 ];
 /** Authority is what the store recorded about the node; layout never changes it. */
@@ -19,6 +20,9 @@ export function authorityOf(node) {
             return "attestation";
         case "procedure":
             return "procedure";
+        case "plan":
+        case "step":
+            return "plan";
         case "checkpoint":
         case "task":
         case "run":
@@ -94,6 +98,8 @@ export class AtlasView {
             "attestation",
             "procedure",
             "checkpoint",
+            "plan",
+            "step",
             "task",
             "run",
             "file",
@@ -111,6 +117,8 @@ export class AtlasView {
             ["Re-layout", () => this.settle()],
             ["Freeze layout", () => this.freeze()],
             ["Fit all", () => this.fit()],
+            ["Zoom in", () => this.zoom(1 / 1.3)],
+            ["Zoom out", () => this.zoom(1.3)],
             [
                 "Fit selection",
                 () => {
@@ -157,6 +165,7 @@ export class AtlasView {
             legend.append(item);
         }
         this.status.setAttribute("role", "status");
+        this.installNavigation();
         const pane = html("div");
         pane.className = "graph-panes";
         const details = html("div");
@@ -166,7 +175,7 @@ export class AtlasView {
         this.inspector.setAttribute("aria-label", "Selected node or edge");
         details.append(this.list, this.inspector);
         pane.append(this.graph, details);
-        root.append(controls, legend, this.status, pane, html("p", "Colour is the recorded authority and size is how many of your receipts cited the record. Layout distance is not confidence. Lines describe recorded relations within the loaded, authorized window. Dragging changes presentation only. On a narrow screen the list stands in for the drawing."));
+        root.append(controls, legend, this.status, pane, html("p", "Colour is the recorded authority and size is how many of your receipts cited the record. Layout distance is not confidence. Lines describe recorded relations within the loaded, authorized window. Dragging a node, panning the canvas, the wheel and pinching change presentation only. On a narrow screen the list stands in for the drawing."));
     }
     clear() {
         this.freeze();
@@ -198,11 +207,95 @@ export class AtlasView {
                     y: 240 + 170 * Math.sin(i * 2.399),
                 });
         });
-        if (this.selected && !ids.has(this.selected))
+        if (this.selected &&
+            !ids.has(this.selected) &&
+            !this.data.edges.some((edge) => edge.id === this.selected))
             this.selected = null;
-        this.inspector.replaceChildren();
+        // A refreshed view keeps the selection and its inspector when it still exists.
+        if (this.selected)
+            this.inspect(this.selected);
+        else
+            this.inspector.replaceChildren();
         this.draw();
         this.settle();
+    }
+    /** The current viewBox as numbers; the frame falls back to the default. */
+    frame() {
+        const parts = (this.graph.getAttribute("viewBox") ?? "0 0 900 480")
+            .split(/\s+/)
+            .map(Number);
+        return parts.length === 4 && parts.every(Number.isFinite)
+            ? parts
+            : [0, 0, 900, 480];
+    }
+    /** Scale the frame around a point (default: its centre). Presentation only. */
+    zoom(factor, around) {
+        const [x, y, w, h] = this.frame();
+        const width = Math.min(8000, Math.max(120, w * factor)), height = Math.min(8000, Math.max(64, h * factor));
+        const cx = around?.x ?? x + w / 2, cy = around?.y ?? y + h / 2;
+        const nx = cx - ((cx - x) * width) / w, ny = cy - ((cy - y) * height) / h;
+        this.graph.setAttribute("viewBox", `${Math.round(nx)} ${Math.round(ny)} ${Math.round(width)} ${Math.round(height)}`);
+    }
+    /** Pointer position in graph units, or null without a rendered frame. */
+    graphPoint(ev) {
+        const matrix = this.graph.getScreenCTM();
+        return matrix
+            ? new DOMPoint(ev.clientX, ev.clientY).matrixTransform(matrix.inverse())
+            : null;
+    }
+    /** Wheel zooms around the pointer; dragging empty canvas pans; pinch zooms. */
+    installNavigation() {
+        this.graph.addEventListener("wheel", (ev) => {
+            ev.preventDefault();
+            const point = this.graphPoint(ev);
+            this.zoom(ev.deltaY > 0 ? 1.15 : 1 / 1.15, point ?? undefined);
+        }, { passive: false });
+        const touches = new Map();
+        let pinch = null;
+        this.graph.addEventListener("pointerdown", (ev) => {
+            if (ev.target !== this.graph)
+                return;
+            touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+            this.graph.setPointerCapture(ev.pointerId);
+            if (touches.size === 2) {
+                const [a, b] = [...touches.values()];
+                pinch = Math.hypot(a.x - b.x, a.y - b.y);
+            }
+        });
+        this.graph.addEventListener("pointermove", (ev) => {
+            const previous = touches.get(ev.pointerId);
+            if (!previous)
+                return;
+            if (touches.size === 2 && pinch) {
+                touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+                const [a, b] = [...touches.values()];
+                const distance = Math.hypot(a.x - b.x, a.y - b.y);
+                if (distance > 0) {
+                    const centre = this.graphPoint({
+                        clientX: (a.x + b.x) / 2,
+                        clientY: (a.y + b.y) / 2,
+                    });
+                    this.zoom(pinch / distance, centre ?? undefined);
+                    pinch = distance;
+                }
+                return;
+            }
+            const from = this.graphPoint({
+                clientX: previous.x,
+                clientY: previous.y,
+            }), to = this.graphPoint(ev);
+            touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+            if (!from || !to)
+                return;
+            const [x, y, w, h] = this.frame();
+            this.graph.setAttribute("viewBox", `${Math.round(x - (to.x - from.x))} ${Math.round(y - (to.y - from.y))} ${w} ${h}`);
+        });
+        for (const type of ["pointerup", "pointercancel"])
+            this.graph.addEventListener(type, (ev) => {
+                touches.delete(ev.pointerId);
+                if (touches.size < 2)
+                    pinch = null;
+            });
     }
     freeze() {
         this.worker?.terminate();

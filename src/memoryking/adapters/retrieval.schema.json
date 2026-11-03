@@ -445,7 +445,7 @@
           "type": "array",
           "uniqueItems": true,
           "minItems": 1,
-          "maxItems": 7,
+          "maxItems": 9,
           "items": {
             "type": "string",
             "enum": [
@@ -454,6 +454,8 @@
               "attestation",
               "procedure",
               "checkpoint",
+              "plan",
+              "step",
               "task",
               "run"
             ]
