@@ -44,6 +44,10 @@ UPSERTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         ("tenant", "revision"),
     ),
+    "source_trust": (
+        ("tenant", "project", "source", "level", "decided_by", "decided"),
+        ("tenant", "project", "source"),
+    ),
     "code_validations": (
         (
             "tenant",

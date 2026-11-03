@@ -545,7 +545,9 @@ export class Observatory {
             diagnostic: true,
         });
         const ranking = await this.command("experience", "ranking_inspect");
-        if (this.unchanged(knowledge, constraints, procedures, ranking))
+        const held = await this.command("inspection", "held");
+        const rules = await this.command("inspection", "trust_list");
+        if (this.unchanged(knowledge, constraints, procedures, ranking, held, rules))
             return;
         this.output.replaceChildren(e("h3", "Review queue & evidence quality"), e("p", "Source content is untrusted evidence. Review changes lifecycle authority; procedure activation is separate and grants no execution privileges. A policy change requires a new browser sign-in.", "integrity"));
         for (const [name, data, operation] of [
@@ -585,6 +587,7 @@ export class Observatory {
             this.output.append(section);
         }
         this.output.append(detail("Active ranking and evaluation evidence", ranking));
+        this.output.append(this.heldSection(held, rules));
         this.composer();
     }
     reviewAction(operation, action, item, extra) {
@@ -614,6 +617,53 @@ export class Observatory {
         this.output.querySelector(".review-confirm")?.remove();
         this.output.append(form);
         reason.focus();
+    }
+    /** Held captures from untrusted sources, with release buttons and the trust rules. */
+    heldSection(held, rules) {
+        const section = e("section");
+        const items = rows(held.held);
+        section.append(e("h3", "Held captures"), e("p", "Captures from a source marked untrusted are recorded but invisible to every read, briefing, graph and review until released here. Releasing is a journaled policy decision.", "integrity"));
+        if (!items.length)
+            section.append(e("p", "No held captures in this project."));
+        for (const item of items) {
+            const card = e("article", "", "review-card");
+            card.append(e("h4", String(item.preview)), e("p", `${String(item.observation)} · ${String(item.source)} by ${String(item.captured_by)} · ${readable(item.reason)} · held ${new Date(Number(item.held_ms)).toLocaleString()}`));
+            const release = button("Release", () => {
+                void this.run(async () => {
+                    await this.mutate("inspection", "release", {
+                        observation: String(item.observation),
+                    });
+                });
+            });
+            card.append(release);
+            section.append(card);
+        }
+        const ruleList = rows(rules.rules);
+        section.append(e("h4", "Trust rules"), e("p", ruleList.length
+            ? ruleList
+                .map((r) => `${String(r.project)} · ${String(r.source)} · ${String(r.level)} (by ${String(r.decided_by)})`)
+                .join(" · ")
+            : "No rules; every source is trusted."));
+        const f = e("form", "", "observatory-form"), source = field(f, "Source name or glob"), level = e("select");
+        for (const value of ["untrusted", "trusted"]) {
+            const option = e("option", value);
+            option.value = value;
+            level.append(option);
+        }
+        level.setAttribute("aria-label", "Trust level");
+        source.required = true;
+        f.append(level, e("button", "Set rule"));
+        f.onsubmit = (ev) => {
+            ev.preventDefault();
+            void this.run(async () => {
+                await this.mutate("inspection", "trust", {
+                    source: source.value,
+                    level: level.value,
+                });
+            });
+        };
+        section.append(f);
+        return section;
     }
     async mutate(operation, action, args) {
         if (this.writing)

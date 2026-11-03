@@ -38,7 +38,16 @@ class Inspection:
         with self.s.transaction() as decision:
             at = decision.evaluated_ms
             who = self.s._auth(credential, "read", args["project"], at)
-            if action in {"operations", "purge", "retention_preview", "influence"}:
+            if action in {
+                "operations",
+                "purge",
+                "retention_preview",
+                "influence",
+                "trust",
+                "trust_list",
+                "held",
+                "release",
+            }:
                 self.s._auth(credential, "admin", "*", at)
             if action == "history":
                 result = self.history(who, args, at)
@@ -52,6 +61,12 @@ class Inspection:
                 result = self.retention(who, args, at)
             elif action == "influence":
                 result = self.influence(who, args, at)
+            elif action == "trust_list":
+                result = self.trust_list(who, args, at)
+            elif action == "held":
+                result = self.held(who, args, at)
+            elif action in {"trust", "release"}:
+                result = self.policy(who, command, at)
             else:
                 result = self.purge(who, command, at)
             result.update(
@@ -519,6 +534,73 @@ class Inspection:
             "coverage": "recorded_dependencies_in_this_project; retained_deliveries_only; prior_exports_provider_deliveries_and_backups_not_tracked",
             "source_position": state["position"],
         }
+
+    def trust_list(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        from memoryking.adapters.trust import Trust
+
+        return {"rules": Trust(self.s).rules(who["tenant"], args["project"])}
+
+    def held(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        from memoryking.adapters.trust import Trust
+
+        items = Trust(self.s).listing(who, args["project"])
+        return {
+            "held": items,
+            "coverage": "oldest_64_held_captures_in_this_project; preview_is_the_first_256_bytes",
+        }
+
+    def policy(self, who: dict[str, Any], command: dict[str, Any], at: int) -> dict[str, Any]:
+        """A trust rule or a release is a journaled policy decision with a retry key."""
+        action, args = command["action"], command["args"]
+        lookup = (
+            who["tenant"],
+            self.s.incarnation,
+            "dashboard-trust-v1",
+            who["principal"],
+            action,
+            command["key"],
+        )
+        old = self.db.execute(
+            "SELECT * FROM retries WHERE tenant=? AND incarnation=? AND namespace=? AND principal=? AND operation=? AND key=?",
+            lookup,
+        ).fetchone()
+        if old is not None:
+            if old["hash"] != canonical_hash(command):
+                raise LocalError("idempotency_conflict")
+            if old["result"] is None or at >= old["expires"]:
+                raise LocalError("idempotency_result_expired")
+            return {**json.loads(old["result"]), "replayed": True}
+        record: dict[str, Any] = {"tenant": who["tenant"], "actor": who["principal"]}
+        if action == "trust":
+            record.update(
+                kind="trust",
+                project=args["project"],
+                source=args["source"],
+                level=args["level"],
+                explicit=args.get("explicit", True),
+            )
+            result = {
+                "project": args["project"],
+                "source": args["source"],
+                "level": args["level"],
+                "status": "recorded",
+                "replayed": False,
+            }
+        else:
+            row = self.db.execute(
+                "SELECT 1 FROM observation_holds WHERE tenant=? AND id=? AND project=? AND state='held'",
+                (who["tenant"], args["observation"], args["project"]),
+            ).fetchone()
+            if row is None:
+                raise LocalError("hold_unavailable")
+            record.update(kind="hold", observation=args["observation"])
+            result = {"observation": args["observation"], "status": "released", "replayed": False}
+        self.s._apply(self.s._journal(record), at)
+        self.db.execute(
+            "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
+        )
+        return result
 
     def purge(self, who: dict[str, Any], command: dict[str, Any], at: int) -> dict[str, Any]:
         args = command["args"]

@@ -582,6 +582,26 @@ def main() -> int:
     infl.add_argument("--credential", type=Path)
     infl.add_argument("--project", required=True)
     infl.add_argument("--json", action="store_true", help="Print the structured report instead")
+    tr = commands.add_parser("trust", help="Source trust: hold captures from untrusted sources")
+    tr_commands = tr.add_subparsers(dest="trust_command", required=True)
+    for name, text in (
+        ("set", "Mark a source (exact name or glob) trusted or untrusted for a project or *"),
+        ("list", "Show the trust rules that apply to a project"),
+        ("held", "List held captures awaiting review in a project"),
+        ("release", "Release one held capture so reads, briefings and reviews may use it"),
+    ):
+        sub = tr_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True, help="Project, or * for every project on set")
+        sub.add_argument("--json", action="store_true")
+        if name == "set":
+            sub.add_argument("--source", required=True)
+            sub.add_argument("--level", required=True, choices=("trusted", "untrusted"))
+            sub.add_argument("--key", help="Retry key; default: derived from the rule")
+        if name == "release":
+            sub.add_argument("observation")
+            sub.add_argument("--key", help="Retry key; default: derived from the observation")
     hk = commands.add_parser(
         "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
     )
@@ -651,7 +671,8 @@ def main() -> int:
         profiles.apply(args, args.profile, args.config)
         optional = (
             {"socket", "credential"}
-            if args.command in {"doctor", "capture", "recall", "hook", "hooks", "influence"}
+            if args.command
+            in {"doctor", "capture", "recall", "hook", "hooks", "influence", "trust"}
             else set()
         )
         for field in ("store", "control", "socket", "credential"):
@@ -864,6 +885,45 @@ def main() -> int:
                     f"receipt {result['receipt']} · {result['method']} · "
                     f"checkpoint {result['checkpoint']} revision {result['revision']}"
                 )
+        elif args.command == "trust":
+            token = read_credential(args.credential)
+            context = request(args.socket, token, "context", {"project": args.project})
+            command: dict[str, Any] = {
+                "version": 1,
+                "incarnation": context["incarnation"],
+                "action": {
+                    "set": "trust",
+                    "list": "trust_list",
+                    "held": "held",
+                    "release": "release",
+                }[args.trust_command],
+                "args": {"project": args.project},
+            }
+            if args.trust_command == "set":
+                command["args"].update(source=args.source, level=args.level)
+                command["key"] = args.key or f"trust-{args.project}-{args.source}-{args.level}"
+            elif args.trust_command == "release":
+                command["args"]["observation"] = args.observation
+                command["key"] = args.key or f"release-{args.observation}"
+            report = request(args.socket, token, "inspection", {"command": command})
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            elif args.trust_command == "list":
+                for rule in report["rules"]:
+                    print(
+                        f"{rule['project']:<16} {rule['source']:<32} {rule['level']} (by {rule['decided_by']})"
+                    )
+                if not report["rules"]:
+                    print("No trust rules; every source is trusted.")
+            elif args.trust_command == "held":
+                for item in report["held"]:
+                    print(
+                        f"{item['observation']} from {item['source']} by {item['captured_by']}: {item['preview']!r}"
+                    )
+                if not report["held"]:
+                    print("No held captures.")
+            else:
+                print(json.dumps(report))
         elif args.command == "influence":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})

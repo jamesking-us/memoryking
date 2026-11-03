@@ -25,6 +25,18 @@ export interface Influence {
   observation: string;
 }
 
+export interface TrustRule {
+  project: string;
+  source: string;
+  level: "trusted" | "untrusted";
+  explicit?: boolean;
+}
+
+export interface Release {
+  project: string;
+  observation: string;
+}
+
 export interface Inspection0 {
   version: 1;
   incarnation: string;
@@ -75,4 +87,34 @@ export interface Inspection6 {
   args: Influence;
 }
 
-export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5 | Inspection6;
+export interface Inspection7 {
+  version: 1;
+  incarnation: string;
+  action: "trust";
+  args: TrustRule;
+  key: string;
+}
+
+export interface Inspection8 {
+  version: 1;
+  incarnation: string;
+  action: "release";
+  args: Release;
+  key: string;
+}
+
+export interface Inspection9 {
+  version: 1;
+  incarnation: string;
+  action: "trust_list";
+  args: Project;
+}
+
+export interface Inspection10 {
+  version: 1;
+  incarnation: string;
+  action: "held";
+  args: Project;
+}
+
+export type InspectionCommand = Inspection0 | Inspection1 | Inspection2 | Inspection3 | Inspection4 | Inspection5 | Inspection6 | Inspection7 | Inspection8 | Inspection9 | Inspection10;

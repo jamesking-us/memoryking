@@ -48,7 +48,7 @@ class LocalExperienceMigrations(unittest.TestCase):
                 db.execute("SELECT 1 FROM sqlite_master WHERE name='experience_records'").fetchone()
             )
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 11)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 12)
         self.assertEqual(
             self.store.db.execute("SELECT blob FROM observations").fetchone()[0],
             self.span["content_hash"],
@@ -66,7 +66,7 @@ class LocalExperienceMigrations(unittest.TestCase):
         atomic(archive / "manifest", self.store.control.sign(manifest).encode())
         self.store.purge(self.owner, self.obs["observation"])
         restore_fixture(self, archive)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 11)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 12)
         self.assertEqual(self.store.db.execute("SELECT deleted FROM observations").fetchone()[0], 1)
 
 
@@ -123,7 +123,7 @@ class NativeExperienceStorage(NativeFixture):
         # Archives written before egress_audit and session_summaries existed.
         archive = backup_fixture(self)
         manifest = self.store.control.verify_document(archive / "manifest")
-        self.assertEqual(manifest["schema"], 4)
+        self.assertEqual(manifest["schema"], 5)
         manifest["schema"] = 3
         manifest["tables"] = {
             name: meta for name, meta in manifest["tables"].items() if name in TABLES_V3
@@ -180,7 +180,7 @@ class NativeExperienceUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "6",
+                        "7",
                     )
         finally:
             cluster.close()

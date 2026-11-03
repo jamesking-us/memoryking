@@ -6,7 +6,7 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 
 | Interface | Entry point | Scope |
 | --- | --- | --- |
-| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, status, doctor, credentials, capture and recall, host hooks (`hook`, `hooks install`), `influence` (where an observation went), dashboard sign-in, JSON requests and offline recovery. |
+| Local CLI | `python -m memoryking` / `memoryking` | Initialization, serving, status, doctor, credentials, capture and recall, host hooks (`hook`, `hooks install`), `influence` (where an observation went), `trust` (hold captures from untrusted sources), dashboard sign-in, JSON requests and offline recovery. |
 | pytest plugin | `pytest -p memoryking.pytest_plugin` | Records failing tests as observations when the environment names a store. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
@@ -135,6 +135,10 @@ Each imported row becomes restricted historical evidence; legacy approval and ro
 ### Influence report
 
 `memoryking influence OBSERVATION --project P` (or `--json`), the Memory view **Where did this go**, and the `inspection` socket operation's `influence` action list every record built on one observation and who received them: the claims that cite it; the checkpoints, handoffs, summaries and experience records that recorded a dependency on it or on anything derived from it (the same fixed point a purge follows, read without changing anything); the retained briefings, fetches, reruns and graph pages that included it, each with its principal and time; and the sorted set of principals those reached. Lists are bounded to 256 entries each and truncation is named. It requires the admin capability, because it reveals who read what. It covers recorded dependencies in this project and retained deliveries only: a delivery whose retention expired, a prior export, a provider dispatch or a backup leaves no record here, and the report says so in its coverage field. This is the causal-attribution view the memory-poisoning literature asks for, built from the receipts MemoryKing already keeps.
+
+### Source trust
+
+`memoryking trust set|list|held|release`, the **Review & conflicts** view, and the `inspection` operation's `trust`, `trust_list`, `held` and `release` actions (all admin). A rule names a project or `*`, a source by exact name or glob, and a level. A capture whose source resolves to `untrusted` (most specific rule wins) is stored but held: `_visible` is false for every principal until an admin releases it, so reads, briefings, the graph, resume evidence, claim proposals and the influence of later records exclude it; the capture reply carries `held: true`. `held` lists the oldest 64 held captures in a project with a 256-byte preview. Rules and releases are journal records (`trust`, `hold`) replayed on restore; `source_trust` and `observation_holds` are content tables in schema SQLite 12 / PostgreSQL 7 and archive schema 5.
 
 ### Dashboard plans
 
