@@ -638,7 +638,7 @@ with LocalStore(root, ctl, fault=fail) as store:
     def test_queue_and_worker_bounds_and_current_source_permission(self):
         from unittest.mock import patch
 
-        with patch("memoryking.adapters.local_store.QUEUE_LIMIT", 1):
+        with patch("memoryking.application.store_core.QUEUE_LIMIT", 1):
             self.capture()
             self.error("queue_full", self.capture, 2)
         for number in range(2, 6):
@@ -663,6 +663,68 @@ with LocalStore(root, ctl, fault=fail) as store:
         next_lease = self.store.claim(worker, "demo")
         self.store.revoke(self.credential, "worker", "demo")
         self.error("denied", self.store.finish, worker, "demo", next_lease["lease"], "complete")
+
+    def test_receipts_expire_after_thirty_days_through_hourly_housekeeping(self):
+        self.capture()
+        delivered(self.store.read(self.credential, "demo"))
+        count = lambda: self.store.db.execute("SELECT count(*) FROM receipts").fetchone()[0]  # noqa: E731
+        self.assertEqual(count(), 1)
+        self.assertTrue(self.store.housekeeping())
+        self.assertFalse(self.store.housekeeping(), "housekeeping runs at most once per hour")
+        self.assertEqual(count(), 1)
+        self.clock.advance(RETRY_MS + 1)
+        self.assertTrue(self.store.housekeeping())
+        self.assertEqual(count(), 0)
+
+    def test_unreadable_blob_costs_only_its_own_job_and_never_stops_the_daemon(self):
+        self.capture(1, text="first memory")
+        self.capture(2, text="second memory")
+        first = self.store.db.execute(
+            "SELECT o.blob FROM jobs j JOIN observations o ON j.observation=o.id ORDER BY j.position LIMIT 1"
+        ).fetchone()[0]
+        next(p for p in (self.store.root / "blobs").rglob(first)).unlink()
+        self.assertEqual(self.store.drain(), 1)  # the readable job still completes
+        rows = self.store.db.execute("SELECT state,attempts FROM jobs ORDER BY position").fetchall()
+        self.assertEqual([tuple(r) for r in rows], [("pending", 1), ("complete", 1)])
+        for _ in range(10):
+            self.clock.advance(61_000)
+            self.store.drain()
+        self.assertEqual(
+            self.store.db.execute("SELECT state FROM jobs ORDER BY position").fetchone()[0], "dead"
+        )
+        with Server(self.store) as server:
+            server.service_actions()  # neither drain nor housekeeping escapes
+
+    def test_daemon_drains_audit_jobs_so_default_captures_never_hit_queue_full(self):
+        # Default configuration, no patched limits, no separate worker: the serving
+        # daemon completes audit_probe jobs between requests.
+        with Server(self.store) as server:
+            thread = threading.Thread(
+                target=lambda: server.serve_forever(poll_interval=0.005), daemon=True
+            )
+            thread.start()
+            try:
+                for number in range(1, 1002):
+                    self.capture(number)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+        self.store.drain()
+        states = dict(self.store.db.execute("SELECT state,count(*) FROM jobs GROUP BY state"))
+        self.assertEqual(states, {"complete": 1001})
+        status = self.store.status(self.credential, "demo")
+        self.assertEqual(status["projection"]["frontier"], status["position"])
+        self.assertEqual(status["capacity"]["jobs"], {"used": 0, "limit": 1000, "warning": False})
+        self.assertEqual(
+            set(status["capacity"]),
+            {
+                "jobs",
+                "rendered_artifacts",
+                "rendered_bytes",
+                "operation_intents",
+                "processing_usage",
+            },
+        )
 
     def test_anchor_write_failure_returns_no_ack_and_retry_recovers(self):
         def fail(point):

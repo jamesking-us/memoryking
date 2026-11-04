@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from memoryking.adapters.local_files import Ownership, atomic, private_dir, private_file
-from memoryking.adapters.local_store import LocalStore, uid
 from memoryking.adapters.report_store import Reports
+from memoryking.application.store_core import StoreCore, uid
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
 from memoryking.domain.local import LocalError
 from memoryking.domain.reporting import ARTIFACT_LIMIT, BUILD_TIMEOUT, CHUNK_LIMIT
@@ -22,7 +22,7 @@ OUTPUTS = {"report.pdf", "report.epub", "reader.json", "reader-pages.json"}
 
 
 def build_one(
-    store: LocalStore, credential: str, project: str, *, protected: Sequence[Path] = ()
+    store: StoreCore, credential: str, project: str, *, protected: Sequence[Path] = ()
 ) -> dict[str, Any] | None:
     """Trusted worker entry, using an explicitly granted report-author credential.
 

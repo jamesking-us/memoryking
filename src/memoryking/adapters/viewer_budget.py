@@ -8,12 +8,12 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from memoryking.adapters.local_store import LocalStore
+from memoryking.application.store_core import StoreCore
 from memoryking.domain.local import LocalError
 
 
 @contextmanager
-def request_budget(store: LocalStore, deadline: float | None) -> Iterator[None]:
+def request_budget(store: StoreCore, deadline: float | None) -> Iterator[None]:
     if deadline is None:
         yield
         return
@@ -37,7 +37,7 @@ def request_budget(store: LocalStore, deadline: float | None) -> Iterator[None]:
 
             def cancel() -> None:
                 try:
-                    getattr(store, "connection").cancel_safe(timeout=1)
+                    store.connection.cancel_safe(timeout=1)
                 except Exception:
                     pass  # The request still owns the connection until cancellation is joined.
 

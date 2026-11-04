@@ -24,6 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=24, choices=range(1, 241), metavar="1..240")
+    parser.add_argument(
+        "--dashboard-port", type=int, default=0, help="Loopback port; 0 picks a free one"
+    )
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="mk-dashboard-demo-") as directory:
         base = Path(directory)
@@ -163,6 +166,7 @@ def main():
                     },
                     f"checkpoint{revision}",
                 )
+            # A structured plan beside the ordinary checkpoints, with one step proven.
             plan_body = json.loads((ROOT / "examples/plan.json").read_text())
             plan_body["steps"][0].update(
                 status="done",
@@ -180,6 +184,20 @@ def main():
                     "plan": plan_body,
                 },
                 "demo-plan",
+            )
+            # A "where this left off" summary, as the daemon would derive after idling.
+            command(
+                w,
+                "summarize",
+                {
+                    **scope,
+                    "checkpoint": None,
+                    "source": "extractive",
+                    "text": None,
+                    "permit": None,
+                    "readers": None,
+                },
+                "demo-summary",
             )
             if args.count == 1:
                 command(
@@ -276,7 +294,7 @@ def main():
                     "tokenizer": "cl100k_base",
                 },
             )
-            web = Dashboard(store, ROOT)
+            web = Dashboard(store, args.dashboard_port)
             web.start()
 
             def bootstrap():

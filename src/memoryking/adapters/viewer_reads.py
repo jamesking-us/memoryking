@@ -13,9 +13,9 @@ from typing import Any
 
 from memoryking.adapters.execution import Execution
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_store import LocalStore, uid
 from memoryking.adapters.report_store import Reports
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.store_core import StoreCore, uid
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.contracts.viewer import validate_viewer
 from memoryking.domain.local import LocalError, Released, temporal_valid
@@ -36,7 +36,7 @@ def clipped(value: str, limit: int) -> tuple[str, bool]:
 
 
 class ViewerReads:
-    def __init__(self, store: LocalStore, config: dict[str, Any]):
+    def __init__(self, store: StoreCore, config: dict[str, Any]):
         self.s, self.db, self.config = store, store.db, config
         self.limits = config["limits"]
 
@@ -214,7 +214,7 @@ class ViewerReads:
             if row[0] is not None:
                 fresh = min(fresh, row[0])
         for column in ("starts", "expires"):
-            expression = f"CAST(json_extract(body,'$.{column}') AS BIGINT)"
+            expression = self.s.dialect.report_boundary(column)
             row = self.db.execute(
                 f"SELECT MIN({expression}) FROM report_sources WHERE tenant=? AND project=? AND {expression}>?",
                 (who["tenant"], project or "_session", at),

@@ -1,0 +1,12 @@
+MemoryKing
+Copyright 2026 James King
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this software except in compliance with the License. A copy of the License is in
+the file LICENSE and at http://www.apache.org/licenses/LICENSE-2.0.
+
+This distribution includes the cl100k_base tokenizer vocabulary from the tiktoken
+project, Copyright (c) 2022 OpenAI, Shantanu Jain, under the MIT License; its notice
+is kept at src/memoryking/adapters/tokenizers/LICENSE. The optional local embedding
+model is not included; its manifest records the model's own Apache-2.0 licence and
+it is downloaded only on request.

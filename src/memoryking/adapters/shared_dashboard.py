@@ -6,8 +6,8 @@ import hashlib
 import json
 import secrets
 import threading
+import time
 from collections import OrderedDict, deque
-from pathlib import Path
 from typing import Any
 
 import anyio
@@ -15,13 +15,15 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
-from memoryking.adapters.dashboard import ASSETS, SAFE_HEADERS, STATIC, PlanFiles
+from memoryking.adapters.dashboard import ASSETS, SAFE_HEADERS, STATIC, workspace_snapshot
 from memoryking.adapters.execution import Execution
 from memoryking.adapters.local_store import identifier, uid
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
+from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure, trace, tracing
 
 
 def stable(value: Any) -> Any:
@@ -66,12 +68,10 @@ class CursorHistory:
 
 
 class SharedDashboard:
-    def __init__(
-        self, service: SharedService, root: Path, tenant: str, origins: list[str], *, secure: bool
-    ):
+    def __init__(self, service: SharedService, tenant: str, origins: list[str], *, secure: bool):
         if not origins:
             raise LocalError("dashboard_origin_required")
-        self.service, self.files, self.tenant = service, PlanFiles(root), identifier(tenant)
+        self.service, self.tenant = service, identifier(tenant)
         self.origins, self.secure = set(origins), secure
         self.lock = threading.RLock()
         self.codes: dict[str, dict[str, Any]] = {}
@@ -79,10 +79,17 @@ class SharedDashboard:
         self.history = CursorHistory()
         self.streams = threading.BoundedSemaphore(8)
 
+    @staticmethod
+    def deadline() -> float:
+        """Every dashboard request gets the same five-second budget as the HTTP API."""
+        return time.monotonic() + 5.0
+
     def issue(self, tenant: str, credential: str) -> dict[str, Any]:
         if tenant != self.tenant:
             raise LocalError("dashboard_unavailable")
-        with self.service.store(tenant, credential, release_only=True) as store:
+        with self.service.store(
+            tenant, credential, release_only=True, request_deadline=self.deadline()
+        ) as store:
             with store.transaction() as decision:
                 who = store._auth(credential, "admin", "*", decision.evaluated_ms)
                 epoch = store.db.execute("SELECT policy_epoch FROM tenants").fetchone()[0]
@@ -122,10 +129,12 @@ class SharedDashboard:
 
     def read(self, session: str, route: str, previous: str | None = None) -> Released:
         value = self.current(session)
-        # Plan/report hashing is independent of the database. Prepare bounded bytes before
-        # taking the authorization gate; only the freshly authorized result can leave it.
-        prepared = self.files.snapshot(0) if route == "/api/snapshot" else None
-        with self.service.store(value["tenant"], value["credential"], release_only=True) as store:
+        with self.service.store(
+            value["tenant"],
+            value["credential"],
+            release_only=True,
+            request_deadline=self.deadline(),
+        ) as store:
             with store.transaction() as decision:
                 at = decision.evaluated_ms
                 who = store._auth(value["credential"], "admin", "*", at)
@@ -139,18 +148,15 @@ class SharedDashboard:
                         self.sessions.pop(session, None)
                     raise LocalError("session_changed")
                 if route == "/api/snapshot":
-                    assert prepared is not None
-                    result = prepared
+                    result = workspace_snapshot(at)
                     result.update(
-                        observed_ms=at,
-                        fresh_until_ms=at + 15000,
                         csrf=value["csrf"],
                         incarnation=store.incarnation,
                         tenant=value["tenant"],
                         principal=who["principal"],
                         authorization_epoch=epoch[0],
+                        capacity=store._capacity(value["tenant"]),
                         streaming=True,
-                        adapter="shared-plan-files / authorized read only",
                     )
                     binding = canonical_hash(
                         {
@@ -182,6 +188,28 @@ class SharedDashboard:
                         old is not None and old.get("expires", 0) <= at
                     )
                     raw = canonical_bytes(result)
+                elif route.startswith("/api/timeline/"):
+                    from memoryking.adapters.timeline import timeline
+
+                    parts = route.split("/")
+                    if len(parts) not in {4, 5} or (len(parts) == 5 and not parts[4].isdigit()):
+                        raise LocalError("invalid_request")
+                    project = identifier(parts[3])
+                    reader = store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(
+                        timeline(
+                            store,
+                            reader,
+                            project,
+                            before=int(parts[4]) if len(parts) == 5 else None,
+                        )
+                    )
+                elif route == "/api/projects":
+                    from memoryking.adapters.projects import visible_projects
+
+                    raw = canonical_bytes(
+                        {"items": visible_projects(store, value["credential"], at)}
+                    )
                 elif route.startswith("/api/plans/"):
                     from memoryking.adapters.plan_dashboard import read as read_plans
 
@@ -211,12 +239,45 @@ class SharedDashboard:
                         )
                     else:
                         raise LocalError("route_unavailable")
-                elif route.startswith("/api/artifact/"):
-                    artifact = self.files.artifacts().get(route.removeprefix("/api/artifact/"))
-                    if artifact is None:
-                        raise LocalError("unavailable")
-                    path, _ = artifact
-                    raw = self.files.read(path, 4194304)
+                elif route.startswith("/api/activity/"):
+                    from memoryking.adapters.team import activity
+
+                    parts = route.split("/")
+                    if len(parts) not in {4, 5} or (len(parts) == 5 and not parts[4].isdigit()):
+                        raise LocalError("invalid_request")
+                    project = identifier(parts[3])
+                    reader = store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(
+                        activity(
+                            store,
+                            reader,
+                            project,
+                            at,
+                            days=int(parts[4]) if len(parts) == 5 else 30,
+                        )
+                    )
+                elif route.startswith("/api/export/"):
+                    from memoryking.adapters.team import export
+
+                    project = identifier(route.removeprefix("/api/export/"))
+                    store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(export(store, who, project, at))
+                elif route.startswith("/api/citations/"):
+                    from urllib.parse import unquote
+
+                    parts = route.split("/")
+                    if len(parts) != 5:
+                        raise LocalError("invalid_request")
+                    project = identifier(parts[3])
+                    store._auth(value["credential"], "read", project, at)
+                    raw = canonical_bytes(
+                        {
+                            "node": unquote(parts[4]),
+                            "items": Retrieval(store).list_citations(
+                                who, project, unquote(parts[4]), at
+                            ),
+                        }
+                    )
                 else:
                     raise LocalError("route_unavailable")
                 receipt = uid("rcpt")
@@ -259,7 +320,12 @@ class SharedDashboard:
             value = self.codes.pop(hashlib.sha256(code.encode()).hexdigest(), None)
         if value is None:
             raise LocalError("bootstrap_invalid")
-        with self.service.store(value["tenant"], value["credential"], release_only=True) as store:
+        with self.service.store(
+            value["tenant"],
+            value["credential"],
+            release_only=True,
+            request_deadline=self.deadline(),
+        ) as store:
             with store.transaction() as decision:
                 store._auth(value["credential"], "admin", "*", decision.evaluated_ms)
                 epoch = store.db.execute("SELECT policy_epoch FROM tenants").fetchone()[0]
@@ -286,16 +352,55 @@ class SharedDashboard:
             }
         return session
 
+    def revoke(self, session: str, principal: str, project: str) -> dict[str, Any]:
+        """Revoke a grant from the dashboard; the epoch advances, so sessions re-sign-in."""
+        value = self.current(session)
+        with self.service.store(
+            value["tenant"], value["credential"], request_deadline=self.deadline()
+        ) as store:
+            # The same expiry, policy-epoch and incarnation checks as read(): a session
+            # made stale by an earlier revoke, or expired, cannot keep revoking.
+            with store.transaction() as decision:
+                at = decision.evaluated_ms
+                store._auth(value["credential"], "admin", "*", at)
+                epoch = store.db.execute("SELECT policy_epoch FROM tenants").fetchone()
+                if (
+                    value["expires"] <= at
+                    or value["epoch"] != epoch[0]
+                    or value["incarnation"] != store.incarnation
+                ):
+                    with self.lock:
+                        self.sessions.pop(session, None)
+                    raise LocalError("session_changed")
+            store.revoke(value["credential"], principal, project)
+        return {"revoked": principal, "project": project, "sign_in_required": True}
+
     def command(self, session: str, body: dict[str, Any]) -> Released:
         from memoryking.adapters.browser_commands import execute
 
         value = self.current(session)
         # The domain mutation owns the exclusive tenant gate. Session validation
         # runs inside that gate at the persisted authorization evaluation instant.
-        with self.service.store(value["tenant"], value["credential"]) as store:
+        with self.service.store(
+            value["tenant"], value["credential"], request_deadline=self.deadline()
+        ) as store:
             return execute(store, value, body, lambda: self.current(session))
 
     async def route(self, request: Request) -> Response:
+        if not tracing():
+            return await self._route(request)
+        started = time.monotonic()
+        response = await self._route(request)
+        trace(
+            "shared_dashboard",
+            method=request.method,
+            route="/".join(request.url.path.split("/")[:3]),
+            status=response.status_code,
+            elapsed_ms=round((time.monotonic() - started) * 1000, 3),
+        )
+        return response
+
+    async def _route(self, request: Request) -> Response:
         from memoryking.adapters.shared_http import ReleaseResponse, error
 
         try:
@@ -361,6 +466,26 @@ class SharedDashboard:
                 )
                 return response
             session = self.session(request)
+            if route == "/api/admin/revoke" and request.method == "POST":
+                if request.headers.getlist("content-type") != ["application/json"]:
+                    raise LocalError("invalid_request")
+                raw = await request.body()
+                if len(raw) > 4096:
+                    raise LocalError("invalid_request")
+                body = load_strict(raw)
+                value = self.current(session)
+                if (
+                    not isinstance(body, dict)
+                    or set(body) != {"csrf", "principal", "project"}
+                    or not isinstance(body["csrf"], str)
+                    or not secrets.compare_digest(body["csrf"], value["csrf"])
+                ):
+                    raise LocalError("csrf_rejected")
+                principal, project = identifier(body["principal"]), identifier(body["project"])
+                revoked = await anyio.to_thread.run_sync(self.revoke, session, principal, project)
+                return Response(
+                    canonical_bytes(revoked), media_type="application/json", headers=SAFE_HEADERS
+                )
             if route == "/api/command" and request.method == "POST":
                 if request.headers.getlist("authorization"):
                     raise LocalError("mixed_authentication")
@@ -388,17 +513,14 @@ class SharedDashboard:
             result = await anyio.to_thread.run_sync(self.read, session, target)
             response = ReleaseResponse(result)
             response.headers.update(SAFE_HEADERS)
-            if route.startswith("/api/artifact/"):
-                entry = self.files.artifacts().get(route.removeprefix("/api/artifact/"))
-                response.headers["content-type"] = entry[1] if entry else "application/octet-stream"
             if request.method == "HEAD":
                 response.body = b""
                 response.headers["content-length"] = "0"
             return response
         except LocalError as exc:
-            return error(exc.code, 403)
-        except Exception:
-            return error("dashboard_unavailable", 503)
+            return error(exc.code, http_status(exc.code, 403))
+        except Exception as exc:
+            return error("dashboard_unavailable", 503, failure("shared_dashboard", exc))
 
     async def events(self, session: str, cursor: str | None) -> Response:
         from memoryking.adapters.shared_http import error
@@ -505,6 +627,10 @@ class SharedDashboard:
                 ("/api/plans/{project}/{plan}", ["GET", "HEAD"]),
                 ("/api/receipts/{project}", ["GET", "HEAD"]),
                 ("/api/receipt/{project}/{receipt}", ["GET", "HEAD"]),
-                ("/api/artifact/{artifact}", ["GET", "HEAD"]),
+                ("/api/citations/{project}/{node}", ["GET", "HEAD"]),
+                ("/api/activity/{project}", ["GET", "HEAD"]),
+                ("/api/activity/{project}/{days}", ["GET", "HEAD"]),
+                ("/api/export/{project}", ["GET", "HEAD"]),
+                ("/api/admin/revoke", ["POST"]),
             ]
         ]

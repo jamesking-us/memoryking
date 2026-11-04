@@ -1,4 +1,4 @@
-/** A bounded depth tilt of the bundled emblem; no continuous rendering or network requests. */
+/** A bounded depth tilt of the bundled emblem on request; reduced-motion users never see it. */
 export function installEmblem(button: HTMLButtonElement): void {
   const img = button.querySelector("img")!;
   let visible = true,

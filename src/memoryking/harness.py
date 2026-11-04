@@ -21,6 +21,7 @@ from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load
 from memoryking.contracts.validation import validate_working
 from memoryking.domain.local import LocalError
 from memoryking.harness_context import AuthorizedConversation, LocalRecordingProvider
+from memoryking.providers import HttpAdapter
 from memoryking.sdk import BINDING_FIELDS, LocalClient
 
 
@@ -750,7 +751,7 @@ class ReferenceHarness:
             self._guard(ready=False)
             return self._recover_operation()
 
-    def model_turn(self, provider: LocalRecordingProvider) -> dict[str, str]:
+    def model_turn(self, provider: LocalRecordingProvider | HttpAdapter) -> dict[str, str]:
         with self.lock:
             self._guard()
             self.data["activity"] = {
@@ -759,7 +760,10 @@ class ReferenceHarness:
                 "outcome": "pending",
             }
             self._persist()
-            self._record("model_started", {"provider": "local-recording", "model": "echo-v1"})
+            name, model = "local-recording", "echo-v1"
+            if isinstance(provider, HttpAdapter):
+                name, model = provider.name, provider.model
+            self._record("model_started", {"provider": name, "model": model})
             try:
                 context = AuthorizedConversation(self.client, provider)
                 context.add_memory(self._guard())
@@ -782,7 +786,8 @@ class ReferenceHarness:
                     "request_hash": result["request_hash"],
                     "response_hash": hashlib.sha256(result["content"].encode()).hexdigest(),
                     "permit_receipt": result["permit_receipt"],
-                    "provider": "local-recording",
+                    "provider": name,
+                    "model": model,
                 },
             )
             self.data["activity"] = None

@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from memoryking.adapters.local_files import Ownership, private_dir
-from memoryking.adapters.local_store import LocalStore, uid
 from memoryking.adapters.report_store import Reports
+from memoryking.application.storage import insert_ignore
+from memoryking.application.store_core import StoreCore, uid
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError
 from memoryking.reporting.smtp import GmailDestination, Outcome, message, submit
@@ -27,7 +28,7 @@ class MailConfiguration:
     project: str | None = None
 
 
-def configured(store: LocalStore, destination: str | None, project: str) -> MailConfiguration:
+def configured(store: StoreCore, destination: str | None, project: str) -> MailConfiguration:
     value = getattr(store, "report_mail", None)
     if (
         not isinstance(value, MailConfiguration)
@@ -49,7 +50,7 @@ def cycle_attempts(body: dict[str, Any]) -> int:
 
 
 class Deliveries:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
 
     def sender_status(self, project: str) -> dict[str, Any]:
@@ -207,7 +208,7 @@ class Deliveries:
         if "retry" in action:
             retry = action["retry"]
             self.db.execute(
-                "INSERT OR IGNORE INTO report_control_retries VALUES (?,?,?,?,?)",
+                insert_ignore("report_control_retries", 5),
                 (
                     action["tenant"],
                     action["actor"],

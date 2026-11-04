@@ -77,6 +77,46 @@ class RetrievalTests(unittest.TestCase):
         self.review(proposed)
         return proposed
 
+    def test_as_of_brief_sees_only_what_was_recorded_by_then_and_replays(self):
+        first_at = self.store.clock.utc_ms()
+        clock = self.clock()
+        clock.utc = first_at + 60_000
+        later = self.store.capture(
+            self.owner,
+            self.ns,
+            "later",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "later",
+                "text": "A later timeout finding recorded a minute afterwards.",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        clock.utc = first_at + 120_000
+        now = self.run_r()
+        self.assertIn(later["observation"], [g["reference"] for g in now["guidance"]])
+        then = self.run_r(args=self.brief_args(as_of_ms=first_at + 1))
+        refs = [g["reference"] for g in then["guidance"]]
+        self.assertIn(self.obs["observation"], refs)
+        self.assertNotIn(later["observation"], refs)
+        self.assertEqual(then["snapshot"]["as_of_ms"], first_at + 1)
+        self.assertEqual(then["snapshot"]["valid_ms"], first_at + 1)
+        self.assertLess(then["snapshot"]["recorded_position"], now["snapshot"]["recorded_position"])
+        replay = self.run_r("replay", {"project": "p", "receipt": then["receipt"]})
+        self.assertEqual(replay, then)
+        text = self.run_r(args=self.brief_args(as_of_ms=first_at + 1, format="text"))
+        self.assertIn("as of", text["text"].splitlines()[1])
+        nothing = self.run_r(args=self.brief_args(as_of_ms=0))
+        self.assertEqual(nothing["guidance"], [])
+        self.fails(
+            "invalid_request",
+            lambda: self.run_r(args=self.brief_args(as_of_ms=first_at, recorded_position=0)),
+        )
+
     def test_mandatory_survives_zero_similarity_and_top_k_zero(self):
         self.constraint()
         result = self.run_r(args=self.brief_args(query="astronomy", top_k=0))
@@ -216,14 +256,22 @@ class RetrievalTests(unittest.TestCase):
 
     def test_source_purge_removes_retained_bytes_and_never_regenerates(self):
         result = self.run_r()
+        unrelated = self.run_r(args=self.brief_args(query="astronomy"))
         self.store.purge(self.owner, self.obs["observation"])
         self.fails(
             "replay_purged",
             lambda: self.run_r("replay", {"project": "p", "receipt": result["receipt"]}),
         )
-        row = self.store.db.execute("SELECT * FROM rendered_artifacts").fetchone()
+        row = self.store.db.execute(
+            "SELECT * FROM rendered_artifacts WHERE id=?", (result["receipt"],)
+        ).fetchone()
         self.assertIsNone(row["body"])
         self.assertIsNone(row["diagnostics"])
+        # An artifact that recorded no dependency on the source keeps replaying.
+        self.assertEqual(
+            self.run_r("replay", {"project": "p", "receipt": unrelated["receipt"]})["receipt"],
+            unrelated["receipt"],
+        )
         self.assertIsNone(row["request_json"])
 
     def test_expired_missing_and_corrupt_are_distinct(self):
@@ -356,10 +404,10 @@ class RetrievalTests(unittest.TestCase):
             else:
                 with self.assertRaises(ContractError):
                     validate_retrieval(vector["request"])
-        self.fails(
-            "query_term_limit",
-            lambda: self.run_r(args=self.brief_args(query=" ".join(f"word{i}" for i in range(33)))),
-        )
+        # A long query is searched on its leading terms and the cut is disclosed.
+        long = self.run_r(args=self.brief_args(query=" ".join(f"word{i}" for i in range(40))))
+        self.assertEqual(self.receipt(long)["diagnostics"]["query_terms_truncated"], 32)
+        self.assertNotIn("query_terms_truncated", self.receipt(self.run_r())["diagnostics"])
 
     def test_hidden_conflict_endpoint_is_generic_incomplete(self):
         left = self.propose(self.body(text="alpha visible guidance"))
@@ -372,6 +420,82 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(selected["conflict_resolution"], "incomplete")
         self.assertNotIn(right["revision"], json.dumps(result))
         self.assertNotIn("private disagreement", json.dumps(result))
+
+    def observe(self, key, text, observed_at_ms=1):
+        return self.store.capture(
+            self.owner,
+            self.ns,
+            key,
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": key,
+                "text": text,
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": observed_at_ms,
+            },
+        )
+
+    def test_multi_word_query_matches_any_term_on_every_backend(self):
+        captured = self.observe("deadline", "retry backoff exceeded the total deadline")
+        self.observe("unrelated", "astronomy lecture notes")
+        result = self.run_r(args=self.brief_args(query="deadline nonsenseterm"))
+        references = [i["reference"] for i in result["guidance"]]
+        self.assertIn(captured["observation"], references)
+        self.assertEqual(len(references), 1)
+        result = self.run_r(args=self.brief_args(query="nonsenseterm deadline retry"))
+        self.assertIn(captured["observation"], [i["reference"] for i in result["guidance"]])
+
+    def test_text_format_renders_cited_markdown_with_the_same_receipt_semantics(self):
+        self.constraint()
+        captured = self.observe("deadline", "retry backoff exceeded the total deadline")
+        result = self.run_r(args=self.brief_args(query="deadline", format="text"))
+        self.assertEqual(result["format"], "text")
+        self.assertEqual(result["status"], "partial")
+        text = result["text"]
+        self.assertTrue(text.startswith("# Briefing: deadline"))
+        self.assertIn("## Must follow", text)
+        self.assertIn("Never disclose credentials", text)
+        self.assertIn("## Guidance", text)
+        self.assertIn("[g1]", text)
+        self.assertIn("retry backoff exceeded the total deadline", text)
+        self.assertIn("## Sources", text)
+        self.assertIn(captured["observation"], text)
+        self.assertIn("## Caveats", text)
+        refs = {s["id"] for s in result["sources"]}
+        self.assertIn(captured["observation"], refs)
+        self.assertNotIn("guidance", result)
+        self.assertGreater(result["usage"]["output_tokens"], 0)
+        # Replay returns the exact envelope bytes; the receipt records the text format.
+        raw = self.run_r(args=self.brief_args(query="deadline", format="text"), raw=True)
+        replayed = self.run_r("replay", {"project": "p", "receipt": result["receipt"]}, raw=True)
+        self.assertEqual(json.loads(replayed)["receipt"], result["receipt"])
+        self.assertEqual(json.loads(replayed)["text"], result["text"])
+        self.assertEqual(self.receipt(result)["diagnostics"]["format"], "text")
+        self.assertEqual(
+            self.receipt(result)["diagnostics"]["usage"]["output_tokens"],
+            result["usage"]["output_tokens"],
+        )
+        self.assertIsInstance(raw, bytes)
+
+    def test_truncated_query_keeps_its_leading_terms(self):
+        captured = self.observe("lead", "leadterm appears early")
+        trailing = " ".join(f"filler{i}" for i in range(40))
+        result = self.run_r(args=self.brief_args(query="leadterm " + trailing))
+        self.assertIn(captured["observation"], [i["reference"] for i in result["guidance"]])
+        result = self.run_r(args=self.brief_args(query=trailing + " leadterm"))
+        self.assertNotIn(captured["observation"], [i["reference"] for i in result["guidance"]])
+
+    def test_newest_matches_are_candidates_even_past_the_window(self):
+        for number in range(1, 262):
+            self.observe(f"t{number}", f"timeout finding number {number}", observed_at_ms=number)
+        newest = self.observe("newest", "timeout finding zebra", observed_at_ms=300)
+        result = self.run_r(args=self.brief_args(query="timeout zebra"))
+        references = [i["reference"] for i in result["guidance"]]
+        self.assertIn(newest["observation"], references)
+        self.assertEqual(references[0], newest["observation"])
 
     def test_optional_excerpt_finds_late_relevance_and_preserves_bounds(self):
         text = "x " * 3000 + "lateuniqueterm café 🔒"
@@ -398,14 +522,26 @@ class RetrievalTests(unittest.TestCase):
             text.encode()[item["excerpt_start_byte"] : item["excerpt_end_byte"]],
         )
 
-    def test_expiry_gc_erases_content_and_capacity_never_evicts_early(self):
+    def test_capacity_evicts_the_callers_oldest_artifact_and_expiry_erases_content(self):
         clock = self.clock()
-        result = self.run_r()
+        oldest = self.run_r()
         self.store.db.execute("UPDATE rendered_artifacts SET body=zeroblob(134217728)")
-        self.fails("retention_capacity", self.run_r)
+        # At capacity the caller's own oldest artifact is evicted; nobody is locked out.
+        result = self.run_r()
+        self.assertNotEqual(result["receipt"], oldest["receipt"])
+        self.fails("replay_expired", lambda: self.receipt(oldest))
         self.assertEqual(
-            self.store.db.execute("SELECT count(*) FROM rendered_artifacts").fetchone()[0], 1
+            dict(
+                self.store.db.execute(
+                    "SELECT state,count(*) FROM rendered_artifacts GROUP BY state"
+                )
+            ),
+            {"evicted": 1, "retained": 1},
         )
+        capacity = self.store.status(self.owner, "p")["capacity"]
+        self.assertEqual(capacity["rendered_artifacts"]["used"], 1)
+        self.assertEqual(capacity["rendered_artifacts"]["limit"], 1024)
+        self.assertFalse(capacity["rendered_artifacts"]["warning"])
         clock.advance(RETRY_MS)
         self.store.expire_results()
         self.assertIsNone(

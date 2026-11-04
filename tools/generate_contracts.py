@@ -90,8 +90,11 @@ def generate() -> dict[Path, bytes]:
     experience = generate_experience(
         processing[ROOT / "src/memoryking/adapters/local_wire.schema.json"]
     )
+    inspection = generate_inspection(
+        experience[ROOT / "src/memoryking/adapters/local_wire.schema.json"]
+    )
+    viewer = generate_viewer(inspection[ROOT / "src/memoryking/adapters/local_wire.schema.json"])
     return {
-        **generate_inspection(),
         **generate_retrieval(),
         **working,
         **handoff,
@@ -100,7 +103,8 @@ def generate() -> dict[Path, bytes]:
         **embedding,
         **processing,
         **experience,
-        **generate_viewer(experience[ROOT / "src/memoryking/adapters/local_wire.schema.json"]),
+        **inspection,
+        **viewer,
         **generate_stdio(),
         ROOT / "src/memoryking/contracts/generated.py": ("\n".join(py).rstrip() + "\n").encode(),
         ROOT / "packages/contracts/src/generated.ts": ("\n".join(ts).rstrip() + "\n").encode(),
@@ -113,7 +117,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    for path, data in generate().items():
+    # Some generators read artifacts that earlier generators write, so a change can take
+    # two passes to settle; keep generating until the outputs stop changing.
+    outputs = generate()
+    for _ in range(4):
+        if args.check:
+            break
+        for path, data in outputs.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        again = generate()
+        if again == outputs:
+            break
+        outputs = again
+    for path, data in outputs.items():
         if args.check:
             if not path.exists() or path.read_bytes() != data:
                 raise SystemExit(f"Generated artifact drift: {path.relative_to(ROOT)}")

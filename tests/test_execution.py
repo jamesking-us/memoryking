@@ -13,6 +13,7 @@ from memoryking.contracts.canonical import canonical_bytes
 
 
 class ExecutionTests(unittest.TestCase):
+    clock = working_helpers.WorkingTests.clock
     setUp = knowledge_helpers.KnowledgeTests.setUp
     tearDown = knowledge_helpers.KnowledgeTests.tearDown
     scope = working_helpers.WorkingTests.scope
@@ -124,6 +125,17 @@ class ExecutionTests(unittest.TestCase):
         self.store.purge(self.owner, self.obs["observation"])
         self.assertEqual(self.view()["tasks"], [])
 
+    def test_snapshot_carries_the_latest_summary_visible_to_the_reader(self):
+        saved = self.save()
+        self.assertIsNone(self.view()["tasks"][0]["summary"])
+        self.store.summary_idle_ms = 1
+        clock = self.clock()
+        clock.utc += 10
+        self.assertEqual(self.store.idle_summaries(clock.utc), 1)
+        summary = self.view()["tasks"][0]["summary"]
+        self.assertEqual(summary["revision"], saved["revision"])
+        self.assertIn("Working on", summary["text"])
+
     def test_heartbeat_uses_recorded_time_and_current_checkpoint_without_progress(self):
         saved = self.save()
         self.event("reference-heartbeat-v1", "beat", saved, observed_ms=9999999999999)
@@ -193,10 +205,9 @@ class ExecutionTests(unittest.TestCase):
 
     def test_http_execution_is_session_authenticated_and_readonly(self):
         import http.client
-        from pathlib import Path
 
         self.save()
-        web = Dashboard(self.store, Path(__file__).resolve().parents[1])
+        web = Dashboard(self.store)
         web.start()
         try:
 

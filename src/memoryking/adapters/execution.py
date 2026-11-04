@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.working import Working
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import (
     ContractError,
     canonical_bytes,
@@ -50,7 +50,7 @@ def scope_hash(criteria: list[dict[str, Any]]) -> str:
 
 
 class Execution:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
         self.w = Working(store)
 
@@ -288,6 +288,7 @@ class Execution:
                 "source_position": row["position"],
                 "created_ms": row["created"],
                 "objective": body["objective"][:360],
+                "summary": self.w.latest_summary(who, row["id"], at),
                 "current_state": body["current_state"][:600],
                 "display_may_be_clipped": True,
                 "criteria": criteria,

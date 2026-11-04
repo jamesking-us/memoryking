@@ -17,7 +17,6 @@ from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.viewer_auth import (
     CALLBACK,
     LOGIN_COOKIE,
@@ -27,6 +26,7 @@ from memoryking.adapters.viewer_auth import (
 )
 from memoryking.adapters.viewer_config import validate_config
 from memoryking.adapters.viewer_reads import ViewerReads, ViewerSession
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.contracts.viewer import validate_viewer
 from memoryking.domain.local import LocalError, Released
@@ -510,7 +510,7 @@ class ViewerServer(HTTPServer):
     def __init__(
         self,
         config: dict[str, Any],
-        store: Callable[[ViewerSession, float], AbstractContextManager[LocalStore]],
+        store: Callable[[ViewerSession, float], AbstractContextManager[StoreCore]],
         *,
         resolve: Callable[[str], ViewerSession] = deny_session,
         auth: ViewerAuth | None = None,
@@ -587,7 +587,7 @@ class ViewerListener:
     def __init__(
         self,
         config: dict[str, Any],
-        store: Callable[[ViewerSession, float], AbstractContextManager[LocalStore]],
+        store: Callable[[ViewerSession, float], AbstractContextManager[StoreCore]],
         auth_store: StoreFactory,
     ):
         self.config, self.store, self.auth_store = validate_config(config), store, auth_store

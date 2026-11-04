@@ -211,6 +211,36 @@
             "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
           },
           "action": {
+            "const": "summarize"
+          },
+          "args": {
+            "$ref": "#/$defs/Summarize"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^hist_[a-f0-9]{32}(?![\\s\\S])"
+          },
+          "action": {
             "const": "plan_save"
           },
           "args": {
@@ -834,19 +864,35 @@
             ]
           },
           "expected_revision": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The revision last seen; null accepts the current revision without a compare-and-set check."
           },
           "readers": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
-            },
-            "maxItems": 32,
-            "minItems": 1,
-            "uniqueItems": true
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "maxItems": 32,
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who may read the checkpoint; null keeps the stream's current readers (the writer alone on a first save)."
           },
           "checkpoint": {
             "$ref": "#/$defs/Checkpoint"
@@ -910,6 +956,13 @@
           "tokenizer": {
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "format": {
+            "enum": [
+              "json",
+              "text"
+            ],
+            "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
           }
         },
         "required": [
@@ -1245,6 +1298,97 @@
           "model_session",
           "context_epoch"
         ]
+      },
+      "Summarize": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkpoint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "enum": [
+              "extractive",
+              "provider"
+            ]
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^permit_[a-f0-9]{32}(?![\\s\\S])"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "readers": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                },
+                "minItems": 1,
+                "maxItems": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "project",
+          "task",
+          "run",
+          "checkpoint",
+          "source",
+          "text",
+          "permit",
+          "readers"
+        ],
+        "additionalProperties": false
       },
       "PlanPhase": {
         "type": "object",

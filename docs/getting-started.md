@@ -7,15 +7,13 @@ This guide takes you from a new checkout to a local service and dashboard. No mo
 Use Python 3.12; the reference patch is recorded in [`.python-version`](../.python-version). The local service is exercised on macOS. Linux containers are exercised separately; Windows is not a supported local target yet.
 
 ```sh
-git clone https://github.com/jamesking-us/memoryking.git
-cd memoryking
 python3.12 -m venv .venv
-.venv/bin/python -I -m pip install --require-hashes -r requirements-build.lock -r requirements-core.lock
-.venv/bin/python -I -m pip install --no-build-isolation --no-deps .
+.venv/bin/python -I -m pip install --pre memoryking
 .venv/bin/python -I -m pip check
+git clone https://github.com/jamesking-us/memoryking.git && cd memoryking
 ```
 
-These commands install locked dependencies and build the package from this checkout. There is no public registry release to install by name. Keep the checkout to run the examples; the installed service itself does not need it.
+This installs the released package from PyPI; `--pre` is needed while the current release is a preview (`0.1.0a3`). The checkout is for the examples and tools in this guide; the installed service itself does not need it. To pin the wheel by hash, use the `install` line from the release's `RELEASE.json` on the [release page](https://github.com/jamesking-us/memoryking/releases). To build from source instead, install the locks and the checkout as the [contributing guide](../CONTRIBUTING.md) describes, or use the [release wheel or container image](deployment.md#release-build).
 
 ## 2. Try the complete example
 
@@ -39,20 +37,44 @@ Choose **new** directories. MemoryKing refuses to initialize over an existing st
 
 The output gives the path to an owner credential file. Keep it private. The data directory holds content; the separate control directory holds identity and recovery information. Neither directory may be inside the other. For disk-loss protection, retain control information independently of the content disk as well.
 
-Start the service:
+Name the store once so later commands need no paths:
 
 ```sh
-.venv/bin/python -m memoryking serve \
+.venv/bin/python -m memoryking profile add home \
   --store "$HOME/.memoryking-data" \
   --control "$HOME/.memoryking-control" \
   --dashboard-port 8771
 ```
 
-Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes.
+Start the service:
 
-## 4. Open the dashboard
+```sh
+.venv/bin/python -m memoryking --profile home serve
+```
+
+Without a profile, pass `--store`, `--control` and `--dashboard-port 8771` explicitly; explicit flags always override the profile.
+
+Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes. The service completes its own bookkeeping jobs between requests and prunes expired records once an hour, so no separate worker or scheduled cleanup is needed. Add `--log-level info` to see redacted operational events on stderr, or `--trace` to log how long each request took, including time spent waiting for the store.
+
+## 4. Check the service
 
 In a second terminal, from the same checkout:
+
+```sh
+.venv/bin/python -m memoryking --profile home status
+```
+
+This prints the store's history id, position, frontier, job states and a capacity bar for every bounded resource. `--version` prints the installed package version. If anything looks wrong, `memoryking --profile home doctor` checks the installation and names the fix for each failed check.
+
+## 5. Open the dashboard
+
+From the same terminal, the quickest route signs you in directly:
+
+```sh
+.venv/bin/python -m memoryking --profile home dashboard open
+```
+
+When no browser can be opened from the terminal, request a code file instead:
 
 ```sh
 .venv/bin/python -m memoryking dashboard-login \
@@ -63,7 +85,7 @@ In a second terminal, from the same checkout:
 
 Open the URL printed by the command. Read the private output file locally and enter its `code` in the page. Use the **one-use code**, never the owner credential. The code expires after 60 seconds; request a new file name for another attempt.
 
-The dashboard starts empty. Enter your project in **Task activity** and select **Load tasks** after your agent has saved something to it. **Memory** and **Retrieval history** show the project's stored records and briefings. Each view checks your current permissions. They do not discover conversations in other applications automatically.
+The dashboard starts empty. The overview shows capacity use for the tenant's bounded resources and warns at 80 percent. **Task activity** and **Retrieval history** list the projects your account can read, with their record counts; pick one and select **Load**. Each task card opens with "Where this left off", a three-sentence summary the service derives once a task has been idle for half an hour (or when an agent hands it off), followed by the saved state. The browser remembers your last choice. **Memory** shows the project's stored records; its **Ask for a briefing** view runs the same briefing an agent would receive, with its receipt, and can verify the replay, and its **Timeline** view lists every recorded event for the project, newest first. Its **Memory graph** colours each record by how much authority it has (an observation, an accepted claim, a proposal awaiting review, a quarantined claim) and draws the records your briefings used larger; select one and **Show receipts** lists those briefings and opens any of them in Retrieval history. On a phone the views sit in a bar across the top, the cards stack and the graph is shown as a list until you ask for the drawing. **Retrieval history** lists recorded briefings; open one and **Compare with previous briefing** shows which references were added, dropped or kept, and how status and token cost changed. **Team** shows, for one project, who did what in the last thirty days (captures, claims, checkpoints, hand-offs, summaries, provider dispatches), the grants that allow it, a **Revoke** button per principal, and **Export audit**, which downloads a JSON record of the project's events, dispatches, receipts, summaries and grants without any content. The overview lists your readable projects as cards; opening one follows it in every view, and the page address (`#project=NAME`) can be shared. Each view checks your current permissions. They do not discover conversations in other applications automatically.
 
 To explore a populated synthetic dashboard, install the [contributor environment](../CONTRIBUTING.md#setup) and run:
 
@@ -73,9 +95,32 @@ To explore a populated synthetic dashboard, install the [contributor environment
 
 The demo prints its loopback URL and a path to its private bootstrap file. Enter that file's one-use code and select project `demo`. Ctrl-C stops the demo and removes its temporary data. Its sample results are illustrative, not real agent work.
 
-## 5. Connect an agent
+## 6. Optional: semantic search
+
+Lexical search works out of the box. For meaning-based recall, install the embeddings lock and the pinned model once, then tell the service where the model is:
+
+```sh
+.venv/bin/python -I -m pip install --require-hashes -r requirements-embeddings.lock
+.venv/bin/python -m memoryking.model_install --destination "$HOME/.memoryking-model"
+.venv/bin/python -m memoryking profile add home --store "$HOME/.memoryking-data" --control "$HOME/.memoryking-control" --dashboard-port 8771 --embedding-model "$HOME/.memoryking-model"
+.venv/bin/python -m memoryking --profile home embeddings enable --project demo
+```
+
+Restart `serve` after adding the model to the profile. The same profile can schedule backups: add `--backup-dir "$HOME/.memoryking-backups" --backup-every 1d --backup-keep 14` to `profile add`, and `doctor` will tell you when the newest backup is stale. The service then indexes the project in the background and every briefing searches by meaning as well as by words; `doctor` reports both the runtime and the model. The model runs on your CPU and nothing leaves the machine.
+
+## 7. Connect an agent
 
 The [agent guide](agent-guide.md) covers the Python client and MCP stdio bridge. A typical integration saves observations during work, checkpoints before interruption, and requests a briefing and resume packet when work continues.
+
+Agents should not use the owner credential. Issue each one a scoped credential:
+
+```sh
+.venv/bin/python -m memoryking --profile home credential issue agent-1 --project demo --capabilities capture,read --expires 30d --output "$HOME/.memoryking-control/agent-1.credential"
+```
+
+`credential list` shows what is issued and `credential revoke` withdraws one.
+
+To follow a multi-step piece of work rather than one agent's checkpoint, have the agents keep a structured plan with the `memory_plan` tool described in the [agent guide](agent-guide.md#structured-plans); `.venv/bin/python tools/plans_demo.py` runs a disposable example. In the dashboard, choose the project under **Task activity** and open **Plans**: a phase shows its steps, evidence and progress.
 
 For multiple machines or tenants, use the [shared deployment](deployment.md#shared-postgresql). Do not expose the local loopback dashboard through a network proxy.
 

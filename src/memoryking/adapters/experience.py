@@ -9,8 +9,9 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.repository_store import Repository
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain import selectors
 from memoryking.domain.local import LocalError, Released, temporal_valid
@@ -23,7 +24,7 @@ LIMIT = 256
 
 
 class Experience:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db, self.k = store, store.db, Knowledge(store)
 
     def revision(self, who: dict[str, Any], args: dict[str, Any], at: int) -> Any:
@@ -333,7 +334,7 @@ class Experience:
             elif any(m != "true" for m in matches):
                 reason = "applicability_or_validation_unavailable"
             if reason is None:
-                for other, obody, ostate, oq, oa, _, om in values:
+                for other, _obody, ostate, _oq, oa, _, om in values:
                     if other["id"] == row["id"] or other["family"] != row["family"]:
                         continue
                     # Hidden/quarantined disagreement never becomes a clean active procedure.

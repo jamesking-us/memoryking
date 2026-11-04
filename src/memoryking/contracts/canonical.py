@@ -10,6 +10,8 @@ from typing import Any
 MAX_BYTES = 1_048_576
 MAX_DEPTH = 64
 MAX_INTEGER = 9_007_199_254_740_991
+# A C-level search keeps the MK-C14N-1 rejection without a Python call per character.
+_SURROGATE = re.compile(r"[\ud800-\udfff]")
 
 # C-level search preserves MK-C14N-1 rejection without a Python call per scalar.
 _SURROGATE = re.compile(r"[\ud800-\udfff]")

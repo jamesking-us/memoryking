@@ -1,0 +1,571 @@
+{
+  "operation": "inspection",
+  "command_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://memoryking.local/contracts/inspection-v1",
+    "title": "Browser inspection command v1",
+    "$defs": {
+      "History": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "recorded_position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "Project": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "Retention": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "observation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "observation"
+        ]
+      },
+      "Purge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "observation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "preview": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "confirm": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "observation",
+          "preview",
+          "confirm"
+        ]
+      },
+      "Influence": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "observation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "observation"
+        ]
+      },
+      "TrustRule": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_-]{1,96}|\\*)(?![\\s\\S])"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[A-Za-z0-9_.:*?-]{1,96}(?![\\s\\S])"
+          },
+          "level": {
+            "enum": [
+              "trusted",
+              "untrusted"
+            ]
+          },
+          "explicit": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project",
+          "source",
+          "level"
+        ]
+      },
+      "Release": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "observation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "project",
+          "observation"
+        ]
+      },
+      "Catalog": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "kind": {
+            "enum": [
+              "observations",
+              "claims"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "after": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 512
+          },
+          "text": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "Health": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365
+          }
+        },
+        "required": [
+          "project"
+        ]
+      }
+    },
+    "oneOf": [
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "history"
+          },
+          "args": {
+            "$ref": "#/$defs/History"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "operations"
+          },
+          "args": {
+            "$ref": "#/$defs/Project"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "cost"
+          },
+          "args": {
+            "$ref": "#/$defs/Project"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "handoffs"
+          },
+          "args": {
+            "$ref": "#/$defs/Project"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "retention_preview"
+          },
+          "args": {
+            "$ref": "#/$defs/Retention"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "purge"
+          },
+          "args": {
+            "$ref": "#/$defs/Purge"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "influence"
+          },
+          "args": {
+            "$ref": "#/$defs/Influence"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "trust"
+          },
+          "args": {
+            "$ref": "#/$defs/TrustRule"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "release"
+          },
+          "args": {
+            "$ref": "#/$defs/Release"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args",
+          "key"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "trust_list"
+          },
+          "args": {
+            "$ref": "#/$defs/Project"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "held"
+          },
+          "args": {
+            "$ref": "#/$defs/Project"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "catalog"
+          },
+          "args": {
+            "$ref": "#/$defs/Catalog"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "health"
+          },
+          "args": {
+            "$ref": "#/$defs/Health"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      }
+    ]
+  }
+}

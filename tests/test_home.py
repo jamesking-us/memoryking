@@ -154,7 +154,7 @@ class HomeLocalTests(unittest.TestCase):
             credential = LocalStore.initialize(data, control).read_text()
             viewer = base / "viewer.json"
             atomic(viewer, json.dumps(config()).encode())
-            for iteration in range(2):
+            for _iteration in range(2):
                 child = HomeProcess(data, control, "--viewer-config", viewer)
                 self.addCleanup(child.close)
                 ready = child.ready()
@@ -202,7 +202,7 @@ class HomePostgresTests(NativeFixture):
         atomic(dsn, self.cluster.dsn("mk_runtime").encode())
         viewer = self.root / "viewer.json"
         atomic(viewer, json.dumps({**config(), "tenant": self.tenant}).encode())
-        for iteration in range(2):
+        for _iteration in range(2):
             child = HomeProcess(
                 self.data,
                 self.control,

@@ -41,6 +41,25 @@ class RepositoryTests(unittest.TestCase):
         self.claim = self.propose()
         self.review(self.claim)
 
+    def test_git_runs_outside_the_store_transaction(self):
+        from unittest.mock import patch
+
+        from memoryking.adapters import repository_git
+
+        locked = []
+        original = repository_git.GitSnapshot.capture
+
+        def observed(snapshot, repository, environment):
+            locked.append(self.store.lock._is_owned())
+            return original(snapshot, repository, environment)
+
+        (self.repo / "a.py").write_text("def value():\n    return 3\n")
+        with patch.object(repository_git.GitSnapshot, "capture", observed):
+            result = self.capture()
+        self.assertEqual(locked, [False])
+        self.assertEqual(result["status"], "captured")
+        self.assertTrue(result["dirty"])
+
     def git(self, *args):
         return (
             subprocess.check_output(["git", "-C", str(self.repo), *args], stderr=subprocess.DEVNULL)
@@ -512,7 +531,7 @@ class RepositoryTests(unittest.TestCase):
             historical_inventory(db, 5)
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(self.query()["items"][0]["revision"], self.claim["revision"])
         self.assertEqual(
             self.store.db.execute("SELECT count(*) FROM repositories").fetchone()[0], 0

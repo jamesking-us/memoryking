@@ -221,6 +221,8 @@ class PostgresStoreTests(unittest.TestCase):
             pool.close()
 
     def test_pool_exhaustion_is_bounded_pressure_without_mutation(self):
+        import time
+
         for role in ("mk_runtime", "mk_worker"):
             with self.subTest(role=role):
                 pool = create_pool(self.cluster.dsn(role), size=1, timeout=1)
@@ -230,6 +232,22 @@ class PostgresStoreTests(unittest.TestCase):
                     with self.assertRaises(LocalError) as caught:
                         PostgresStore(pool, self.root, self.control, self.tenant, self.credential)
                     self.assertEqual("service_busy", caught.exception.code)
+                    # A request deadline shorter than the pool's own wait fails at the
+                    # deadline; one already past fails before any wait at all.
+                    # A generous deadline never waits past the pool's own one-second limit.
+                    for deadline, limit in ((0.3, 0.9), (-1.0, 0.1), (30.0, 1.9)):
+                        started = time.monotonic()
+                        with self.assertRaises(LocalError) as caught:
+                            PostgresStore(
+                                pool,
+                                self.root,
+                                self.control,
+                                self.tenant,
+                                self.credential,
+                                request_deadline=time.monotonic() + deadline,
+                            )
+                        self.assertEqual("service_busy", caught.exception.code)
+                        self.assertLess(time.monotonic() - started, limit)
                     self.assertEqual(before, (self.control / self.tenant / "anchor").read_bytes())
                     pool.putconn(held)
                     held = None
@@ -249,6 +267,60 @@ class PostgresStoreTests(unittest.TestCase):
         with self.assertRaises(LocalError) as caught:
             PostgresStore(pool, self.root, self.control, self.tenant, self.credential)
         self.assertEqual("service_unavailable", caught.exception.code)
+
+    def test_drain_completes_audit_jobs_without_a_worker(self):
+        self.capture()
+        with self.store() as store:
+            self.assertEqual(store.drain(), 1)
+            self.assertEqual(store.drain(), 0)
+            status = store.status(self.credential, "demo")
+        self.assertEqual(status["jobs"], {"complete": 1})
+        self.assertEqual(status["projection"]["frontier"], status["position"])
+
+    def test_end_maintenance_clears_only_the_matching_fence_for_a_current_admin(self):
+        from memoryking.adapters.postgres_recovery import end_maintenance
+        from memoryking.adapters.shared_control import SharedControl
+
+        self.capture()
+        with self.store() as store:
+            reader = store.grant(self.credential, "reader", "demo", ["read"])
+        operation = "ab" * 16
+        controller = SharedControl(self.control / self.tenant)
+        with controller.locked():
+            anchor = controller.read_anchor()
+            anchor.update(state="maintenance", maintenance_operation=operation)
+            controller.anchor(anchor)
+        with self.assertRaises(LocalError) as caught:
+            with self.store() as store:
+                store.read(self.credential, "demo")
+        self.assertEqual("recovery_required", caught.exception.code)
+        with psycopg.connect(self.cluster.dsn("mk_runtime"), autocommit=True) as connection:
+            for wrong_operation, credential, code in (
+                ("cd" * 16, self.credential, "maintenance_operation_mismatch"),
+                (operation, reader, "denied"),
+                (operation, "not-a-token", "invalid_token"),
+            ):
+                with self.assertRaises(LocalError) as caught:
+                    end_maintenance(
+                        connection, self.control, self.tenant, wrong_operation, credential
+                    )
+                self.assertEqual(code, caught.exception.code)
+            self.assertEqual(controller.read_anchor()["state"], "maintenance")
+            result = end_maintenance(
+                connection, self.control, self.tenant, operation, self.credential
+            )
+        self.assertEqual(
+            {"status": "active", "tenant": self.tenant, "operation": operation}, result
+        )
+        self.assertNotIn("maintenance_operation", controller.read_anchor())
+        with self.store() as store:
+            self.assertEqual(
+                "durable memory", delivered(store.read(self.credential, "demo"))["items"][0]["text"]
+            )
+        with psycopg.connect(self.cluster.dsn("mk_runtime"), autocommit=True) as connection:
+            with self.assertRaises(LocalError) as caught:
+                end_maintenance(connection, self.control, self.tenant, operation, self.credential)
+            self.assertEqual("maintenance_operation_mismatch", caught.exception.code)
 
     def test_native_backup_restore_retires_history_and_replays_revocation(self):
         from memoryking.adapters.postgres_recovery import backup, restore

@@ -19,17 +19,19 @@ from memoryking.adapters.local_files import private_dir, private_file, sync_dir
 from memoryking.adapters.local_store import (
     CAPABILITIES,
     MAX_COUNTER,
-    LocalStore,
     identifier,
     paths,
     uid,
 )
+from memoryking.adapters.mobile_core import MobileStoreCore
 from memoryking.adapters.postgres_sql import PostgresSQL
 from memoryking.adapters.shared_control import SharedControl
+from memoryking.application.storage import PostgresDialect
 from memoryking.domain.local import Clock, Decision, LocalError, SystemClock
+from memoryking.observability_metrics import Metrics
 
 
-class PostgresStore(LocalStore):
+class PostgresStore(MobileStoreCore):
     control: SharedControl
 
     def dense_exact(
@@ -80,6 +82,10 @@ class PostgresStore(LocalStore):
         audience: str = "memoryking-shared",
         request_deadline: float | None = None,
     ):
+        """`request_deadline` is a monotonic instant: checkout, the checkout checks and
+        every statement in this store's transactions stop at it, so a saturated pool or
+        a slow query fails as `service_busy` or `service_unavailable` within the caller's
+        own budget instead of past it."""
         identifier(tenant)
         paths(root, control)
         private_dir(root)
@@ -99,8 +105,14 @@ class PostgresStore(LocalStore):
         self.clock = clock or SystemClock()
         self.fault = fault or (lambda _: None)
         self.lock = threading.RLock()
+        self.dialect = PostgresDialect()
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
+        self._last_housekeeping = 0
+        self.counters = Metrics()
+        self.timings = threading.local()
+        self.embedder: Any | None = None
+        self.reranker: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
         self.active = False
@@ -141,7 +153,7 @@ class PostgresStore(LocalStore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "5":
+            if version is None or version[0] != "9":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException as exc:
@@ -177,7 +189,7 @@ class PostgresStore(LocalStore):
             ):
                 raise LocalError("denied")
             parent = self._token("credential", tenant=self.tenant, principal=delegation["by"])
-            LocalStore._auth(self, parent, capability, project, at)
+            MobileStoreCore._auth(self, parent, capability, project, at)
         return super()._auth(token, capability, project, at)
 
     def _token(self, kind: str, **fields: Any) -> str:
@@ -197,7 +209,7 @@ class PostgresStore(LocalStore):
             raise LocalError("denied")
         if identity.get("principal") == self.principal:
             return self._auth(self.credential, capability, project, at)
-        return LocalStore._auth(self, token, capability, project, at)
+        return MobileStoreCore._auth(self, token, capability, project, at)
 
     def _context_details(
         self, who: dict[str, Any], capabilities: set[str], project: str, at: int
@@ -229,7 +241,7 @@ class PostgresStore(LocalStore):
             subject = self._token("credential", tenant=self.tenant, principal=principal)
             for capability in capabilities:
                 self._auth(self.credential, capability, project, decision.evaluated_ms)
-                LocalStore._auth(self, subject, capability, project, decision.evaluated_ms)
+                MobileStoreCore._auth(self, subject, capability, project, decision.evaluated_ms)
             delegation = {
                 "id": uid("delegation"),
                 "by": self.principal,
@@ -327,11 +339,9 @@ class PostgresStore(LocalStore):
                     decision.check(self.clock)
                     clock_started = time.monotonic()
                     serial = self.connection.execute(
-                        "UPDATE memoryking.tenant_meta SET value=(value::bigint+1)::text "
-                        "WHERE tenant=%s AND key='commit_serial' AND value::bigint<%s RETURNING value",
-                        (self.tenant, MAX_COUNTER),
+                        "SELECT memoryking.next_commit_serial(%s,%s)", (self.tenant, MAX_COUNTER)
                     ).fetchone()
-                    if serial is None:
+                    if serial is None or serial[0] is None:
                         raise LocalError("counter_exhausted")
                     clock_locked = time.monotonic()
                     position = self.db.execute(
@@ -358,6 +368,14 @@ class PostgresStore(LocalStore):
                 if clock_started is not None and clock_locked is not None:
                     metric["clock_wait_ms"] = (clock_locked - clock_started) * 1000
                 self.metrics.append(metric)
+                spans = getattr(self.timings, "items", None)
+                if spans is not None:
+                    spans.append(
+                        {
+                            "lock_wait_ms": metric.get("gate_wait_ms", 0.0),
+                            "transaction_ms": metric["transaction_ms"],
+                        }
+                    )
 
     def _event(self, tenant: str, kind: str, subject: str, at: int, actor: str = "system") -> int:
         if self.release_only or tenant != self.tenant:

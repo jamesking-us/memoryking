@@ -1,5 +1,165 @@
 import { Observatory } from "./observatory.js";
 import { installEmblem } from "./brand.js";
+import { Team } from "./team.js";
+const CAPACITY_LABELS = {
+    jobs: ["Pending jobs", "Drained by the service between requests"],
+    rendered_artifacts: ["Retained briefings", "Oldest evicted first at the cap"],
+    rendered_bytes: ["Retained bytes", "Artifact bodies held for replay"],
+    operation_intents: ["Open operations", "Released when an operation resolves"],
+    processing_usage: ["Usage attempts", "Pruned after 30 days"],
+};
+function renderComparison(before, after, beforeId, afterId) {
+    // What changed between two briefings: references added, dropped or kept,
+    // status, and token cost. Diagnostics carry references, not content.
+    const box = el("div", "", "comparison");
+    box.append(el("h4", "Compared with the previous briefing"));
+    box.append(el("p", `${beforeId} → ${afterId}`, "caption"));
+    const refs = (d) => new Map((d.selected ?? []).map((s) => [s.reference, s]));
+    const was = refs(before), now = refs(after);
+    const added = [...now.keys()].filter((r) => !was.has(r));
+    const dropped = [...was.keys()].filter((r) => !now.has(r));
+    const kept = [...now.keys()].filter((r) => was.has(r));
+    const facts = el("ul");
+    facts.append(el("li", `Status ${label(before.status)} → ${label(after.status)}`), el("li", `Tokens ${String(before.usage?.output_tokens ?? "?")} → ${String(after.usage?.output_tokens ?? "?")} (budget ${String(after.usage?.max_output_tokens ?? "?")})`), el("li", `${kept.length} references kept · ${added.length} added · ${dropped.length} dropped`));
+    box.append(facts);
+    for (const [title, list, source] of [
+        ["Added", added, now],
+        ["Dropped", dropped, was],
+    ]) {
+        if (!list.length)
+            continue;
+        box.append(el("h5", title));
+        const ul = el("ul");
+        for (const reference of list) {
+            const entry = source.get(reference);
+            ul.append(el("li", `${reference} · ${label(entry?.authority ?? "")} · ${label(entry?.reason ?? "")}`));
+        }
+        box.append(ul);
+    }
+    const beforeOmissions = (before.omissions ?? []).join(", ") || "none";
+    const afterOmissions = (after.omissions ?? []).join(", ") || "none";
+    if (beforeOmissions !== afterOmissions)
+        box.append(el("p", `Omissions ${beforeOmissions} → ${afterOmissions}`, "caption"));
+    return box;
+}
+const PROJECT_KEY = "memoryking.project";
+let projectsLoadedFor = -1;
+function rememberedProject() {
+    const linked = /^#project=([A-Za-z0-9_%\-]{1,96})$/.exec(location.hash);
+    if (linked)
+        return decodeURIComponent(linked[1]);
+    try {
+        return localStorage.getItem(PROJECT_KEY) ?? "";
+    }
+    catch {
+        return "";
+    }
+}
+function rememberProject(project) {
+    try {
+        localStorage.setItem(PROJECT_KEY, project);
+    }
+    catch {
+        /* per-viewer convenience only */
+    }
+}
+async function loadProjects() {
+    if (!snapshot || projectsLoadedFor === generation)
+        return;
+    projectsLoadedFor = generation;
+    const context = generation;
+    let items = [];
+    try {
+        items = (await api("/api/projects")).items;
+    }
+    catch {
+        projectsLoadedFor = -1;
+        return;
+    }
+    if (!snapshot || context !== generation)
+        return;
+    const remembered = rememberedProject();
+    renderProjects(items, remembered);
+    for (const id of ["execution-project", "receipt-project", "team-project"]) {
+        const select = get(id);
+        const current = select.value || remembered;
+        select.replaceChildren();
+        if (!items.length) {
+            const empty = el("option", "No readable projects yet");
+            empty.value = "";
+            empty.disabled = true;
+            empty.selected = true;
+            select.append(empty);
+            continue;
+        }
+        for (const item of items) {
+            const option = el("option", `${item.project} · ${item.observations} memories · ${item.tasks} tasks · ${item.receipts} receipts`);
+            option.value = item.project;
+            select.append(option);
+        }
+        select.value = items.some((i) => i.project === current)
+            ? current
+            : items[0].project;
+    }
+}
+/** One card per readable project; opening one selects it in every view. */
+function renderProjects(items, current) {
+    const grid = get("project-grid");
+    grid.replaceChildren();
+    get("projects-state").textContent = items.length
+        ? `${items.length} readable`
+        : "None readable";
+    for (const item of items) {
+        const card = el("button", "", "project-card" + (item.project === current ? " selected" : ""));
+        card.type = "button";
+        card.append(el("strong", item.project), el("small", `${item.observations} memories · ${item.claims} claims · ${item.tasks} tasks · ${item.receipts} receipts`), el("small", item.last_activity_ms
+            ? "last activity " + new Date(item.last_activity_ms).toLocaleString()
+            : "no recorded activity"));
+        card.onclick = () => openProject(item.project);
+        grid.append(card);
+    }
+}
+/** Follow a project in every view, from a card or a #project= link. */
+function openProject(project) {
+    rememberProject(project);
+    for (const id of ["execution-project", "receipt-project", "team-project"]) {
+        const select = get(id);
+        if (Array.from(select.options).some((o) => o.value === project))
+            select.value = project;
+    }
+    for (const card of get("project-grid").querySelectorAll(".project-card"))
+        card.classList.toggle("selected", (card.querySelector("strong")?.textContent ?? "") === project);
+    history.replaceState(null, "", "#project=" + encodeURIComponent(project));
+    get("execution-form").requestSubmit();
+    get("execution-panel").scrollIntoView();
+}
+function renderCapacity(capacity) {
+    const list = get("capacity-list");
+    list.replaceChildren();
+    const entries = Object.entries(capacity ?? {});
+    const warnings = entries.filter(([, v]) => v.warning).length;
+    get("capacity-state").textContent = entries.length
+        ? warnings
+            ? `${warnings} near limit`
+            : "Within limits"
+        : "Not reported";
+    for (const [name, value] of entries) {
+        const [title, note] = CAPACITY_LABELS[name] ?? [name, ""];
+        const item = el("div", "", value.warning ? "capacity-item warning" : "capacity-item");
+        item.append(el("p", title, "eyebrow"));
+        const shown = name === "rendered_bytes"
+            ? `${(value.used / 1048576).toFixed(1)} / ${Math.round(value.limit / 1048576)} MiB`
+            : `${value.used.toLocaleString()} / ${value.limit.toLocaleString()}`;
+        item.append(el("strong", shown));
+        const meter = el("div", "", "capacity-meter");
+        const fill = el("span");
+        fill.style.width = `${Math.min(100, (100 * value.used) / Math.max(1, value.limit))}%`;
+        meter.append(fill);
+        item.append(meter);
+        item.append(el("p", note));
+        list.append(item);
+    }
+}
 const get = (id) => document.getElementById(id);
 function el(tag, text = "", cls = "") {
     const node = document.createElement(tag);
@@ -11,6 +171,21 @@ function label(value) {
     return value.replaceAll("_", " ");
 }
 let snapshot = null;
+let pendingReceipt = null;
+/** Jump from a graph node to one of the receipts that used it, in Retrieval history. */
+function openReceipt(project, receipt) {
+    const select = get("receipt-project");
+    if (!Array.from(select.options).some((o) => o.value === project)) {
+        get("receipt-notice").textContent =
+            "That project is not in your readable list; reload the project picker.";
+        return;
+    }
+    select.value = project;
+    rememberProject(project);
+    pendingReceipt = receipt;
+    get("retrieval-lab").scrollIntoView();
+    get("receipt-form").requestSubmit();
+}
 const observatory = new Observatory(get("observatory"), api, () => snapshot
     ? {
         csrf: snapshot.csrf,
@@ -19,10 +194,27 @@ const observatory = new Observatory(get("observatory"), api, () => snapshot
         incarnation: snapshot.incarnation,
         authorization_epoch: snapshot.authorization_epoch,
     }
-    : null);
+    : null, openReceipt);
+const team = new Team(get("team-output"), {
+    api,
+    csrf: () => snapshot?.csrf ?? null,
+    signedOut: (message) => {
+        clear(message);
+    },
+});
+get("team-nav").onclick = () => get("team").scrollIntoView();
+get("team-project").addEventListener("change", () => {
+    rememberProject(get("team-project").value);
+    team.clear();
+});
+get("team-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!snapshot)
+        return;
+    void team.load(get("team-project").value);
+});
 installEmblem(get("emblem-reveal"));
 get("atlas-nav").onclick = () => get("observatory").scrollIntoView();
-let selected = "P05";
 let paused = false;
 let busy = false;
 let loggedOut = false;
@@ -64,7 +256,6 @@ function startStream() {
             try {
                 const value = JSON.parse(event.data);
                 if (value.schema_version !== 1 ||
-                    ![0, 12].includes(value.phases.length) ||
                     value.tenant !== snapshot.tenant ||
                     value.principal !== snapshot.principal ||
                     value.incarnation !== snapshot.incarnation ||
@@ -113,19 +304,17 @@ function clearReceipts() {
 }
 function clear(message) {
     observatory.clear();
+    team.clear();
+    get("team-project").selectedIndex = -1;
+    get("project-grid").replaceChildren();
     stopStream();
     clearExecution();
-    get("execution-project").value = "";
+    get("execution-project").selectedIndex = -1;
     clearReceipts();
-    get("receipt-project").value = "";
+    get("receipt-project").selectedIndex = -1;
     get("receipt-notice").textContent = "Sign in to inspect retained receipts.";
     snapshot = null;
     get("content").hidden = true;
-    get("phases").replaceChildren();
-    get("detail").replaceChildren();
-    get("metrics").replaceChildren();
-    get("phase-map").replaceChildren();
-    get("adrs").replaceChildren();
     get("provenance").textContent = "";
     get("notice").textContent = message;
     get("login").hidden = false;
@@ -148,78 +337,9 @@ async function api(path, data) {
         throw new Error(typeof value.error === "string" ? value.error : "Request failed");
     return value;
 }
-function showDetail() {
-    if (!snapshot)
-        return;
-    const p = snapshot.phases.find((p) => p.id === selected) ?? snapshot.phases[0];
-    const box = get("detail");
-    box.replaceChildren(el("div", p.id + " / PHASE INSPECTOR", "eyebrow"), el("h2", p.title), el("p", p.outcome));
-    const statuses = el("div", "", "status-grid");
-    for (const [title, value] of [
-        ["Execution", label(p.execution)],
-        ["Verification", label(p.evidence.verification)],
-        ["Human review", p.approval],
-        ["Report QA", label(p.evidence.report)],
-        ["Email submission", label(p.evidence.smtp)],
-        ["Kindle device", p.evidence.device],
-    ]) {
-        const cell = el("div", "", "status-cell");
-        cell.append(el("small", title.toUpperCase()), el("strong", value));
-        statuses.append(cell);
-    }
-    box.append(statuses);
-    if (p.evidence.checks?.length) {
-        const checks = el("details");
-        checks.append(el("summary", "Verification jobs at the recorded code revision"));
-        for (const check of p.evidence.checks)
-            checks.append(el("p", `${label(check.name)} · ${check.exit_code === 0 ? "passed" : "failed"} · ${check.duration_ms}ms`));
-        checks.append(el("p", "A passing job does not establish every acceptance scenario or real-task efficacy. Read the acceptance matrix for the actual qualification scope.", "caption"));
-        box.append(checks);
-    }
-    const source = el("p", p.approval_basis, "integrity");
-    box.append(source, el("h3", "Acceptance scope"));
-    const list = el("ul");
-    for (const item of p.criteria)
-        list.append(el("li", item));
-    box.append(list, el("p", "Criterion-level execution is not instrumented in this adapter. Completed reports provide the frozen verification record; phase state alone does not mark these criteria passed.", "caption"));
-    const actions = el("div", "", "actions");
-    for (const url of p.evidence.links) {
-        const a = el("a", url.endsWith("-pdf")
-            ? "Read phase PDF"
-            : url.endsWith("-epub")
-                ? "Kindle edition"
-                : label(url.split("-").slice(1).join("-")));
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener";
-        actions.append(a);
-    }
-    const roadmap = el("a", "Full roadmap");
-    roadmap.href = "/api/artifact/roadmap";
-    roadmap.target = "_blank";
-    roadmap.rel = "noopener";
-    actions.append(roadmap);
-    box.append(actions);
-    if (p.evidence.code_revision)
-        box.append(el("p", "Verified code: " +
-            p.evidence.code_revision +
-            " · " +
-            p.evidence.platform, "caption"));
-    if (p.evidence.report === "invalid_or_missing")
-        box.append(el("p", "Completion evidence is missing or changed. This phase is excluded from verified closeout totals.", "integrity"));
-    for (const node of document.querySelectorAll("[data-phase]")) {
-        const active = node.dataset.phase === p.id;
-        node.classList.toggle("active", active);
-        node.setAttribute("aria-pressed", String(active));
-    }
-}
 function render() {
     if (!snapshot)
         return;
-    const focused = document.activeElement;
-    const focusParent = focused?.parentElement?.id;
-    const focusPhase = focused?.dataset.phase;
-    const focusHref = focused instanceof HTMLAnchorElement ? focused.href : null;
     get("login").hidden = true;
     get("content").hidden = false;
     get("notice").textContent = "";
@@ -234,112 +354,10 @@ function render() {
         : snapshot.streaming && !streamFallback
             ? "Current snapshot · live updates and 5s polling"
             : "Current snapshot · polled every 5s";
-    get("development-record").hidden = snapshot.phases.length === 0;
-    if (!snapshot.phases.length) {
-        for (const id of ["phases", "detail", "metrics", "phase-map", "adrs"])
-            get(id).replaceChildren();
-        get("provenance").textContent =
-            `${snapshot.tenant} / ${snapshot.principal} · history ${snapshot.incarnation} · observed ${new Date(snapshot.observed_ms).toLocaleString()}`;
-        return;
-    }
-    get("baseline").textContent = "Plan " + snapshot.plan_revision;
-    const metrics = get("metrics");
-    metrics.replaceChildren();
-    const pending = snapshot.phases.filter((p) => ["complete", "partial", "blocked"].includes(p.execution) &&
-        p.evidence.report === "qa_passed" &&
-        p.approval !== "Report approved").length;
-    for (const [title, value, note] of [
-        [
-            "TECHNICALLY COMPLETE",
-            `${snapshot.counts.closed} / ${snapshot.counts.total}`,
-            "Complete phases with intact reports; equal phase counts",
-        ],
-        [
-            "REPORT CLOSEOUTS",
-            `${snapshot.counts.report_closeouts} / ${snapshot.counts.total}`,
-            "QA and Gmail accepted, including partial or blocked outcomes",
-        ],
-        [
-            "LOCAL VERIFICATION",
-            String(snapshot.counts.historical_jobs_passed),
-            "Passing jobs at recorded code revisions",
-        ],
-        [
-            "REVIEW QUEUE",
-            String(pending),
-            "Submitted phase reports awaiting review",
-        ],
-        [
-            "TASK TELEMETRY",
-            "Project view",
-            "Connect a project in Task activity below",
-        ],
-    ]) {
-        const card = el("article", "", "card metric");
-        card.append(el("div", title, "eyebrow"), el("strong", value), el("p", note));
-        metrics.append(card);
-    }
-    get("phases").replaceChildren();
-    get("phase-map").replaceChildren();
-    for (const p of snapshot.phases) {
-        const button = el("button", "", "phase-row " + p.execution);
-        button.dataset.phase = p.id;
-        const text = el("div");
-        text.append(el("h3", p.title), el("small", label(p.execution)));
-        button.append(el("span", p.id, "phase-number"), text);
-        button.addEventListener("click", () => {
-            selected = p.id;
-            showDetail();
-        });
-        get("phases").append(button);
-        const node = el("button", "", "phase-node " + p.execution);
-        node.dataset.phase = p.id;
-        node.append(el("strong", p.id), el("span", p.execution === "complete"
-            ? "Closed"
-            : p.execution === "in_progress"
-                ? "Active"
-                : p.execution === "partial"
-                    ? "Partial"
-                    : p.execution === "blocked"
-                        ? "Blocked"
-                        : p.execution === "closeout_pending"
-                            ? "Reporting"
-                            : "—"));
-        node.title = p.title;
-        node.setAttribute("aria-label", p.id + " " + p.title + " " + label(p.execution));
-        node.addEventListener("click", () => {
-            selected = p.id;
-            showDetail();
-        });
-        get("phase-map").append(node);
-    }
-    get("adrs").replaceChildren();
-    for (const adr of snapshot.adrs) {
-        const a = el("a", "ADR " + adr.id.slice(0, 3));
-        a.href = adr.url;
-        a.title = adr.id;
-        a.target = "_blank";
-        a.rel = "noopener";
-        get("adrs").append(a);
-    }
+    renderCapacity(snapshot.capacity);
+    void loadProjects();
     get("provenance").textContent =
-        `${snapshot.adapter} · ${snapshot.tenant} / ${snapshot.principal} · ${snapshot.incarnation} · observed ${new Date(snapshot.observed_ms).toLocaleString()} · plan SHA-256 ${snapshot.source_hash}`;
-    showDetail();
-    // Polling replaces nodes, so restore the user's existing keyboard position.
-    if (focusPhase && (focusParent === "phases" || focusParent === "phase-map")) {
-        for (const node of get(focusParent).querySelectorAll("[data-phase]")) {
-            if (node.dataset.phase === focusPhase)
-                node.focus({ preventScroll: true });
-        }
-    }
-    else if (focusHref) {
-        for (const node of get("content").querySelectorAll("a")) {
-            if (node.href === focusHref) {
-                node.focus({ preventScroll: true });
-                break;
-            }
-        }
-    }
+        `${snapshot.tenant} / ${snapshot.principal} · history ${snapshot.incarnation} · observed ${new Date(snapshot.observed_ms).toLocaleString()}`;
 }
 async function refresh() {
     if (busy || loggedOut)
@@ -350,7 +368,7 @@ async function refresh() {
         const value = (await api("/api/snapshot"));
         if (ticket !== generation)
             return;
-        if (value.schema_version !== 1 || ![0, 12].includes(value.phases.length))
+        if (value.schema_version !== 1)
             throw new Error("Snapshot unavailable");
         if (snapshot &&
             (snapshot.incarnation !== value.incarnation ||
@@ -402,9 +420,20 @@ get("logout").addEventListener("click", async () => {
     }
 });
 get("refresh").addEventListener("click", () => void refresh());
+// `memoryking dashboard open` hands the one-use code over in the URL fragment, which
+// never reaches the server; it is consumed and removed from the address bar at once.
+const fragmentCode = /^#code=([A-Za-z0-9_\\-]{16,128})$/.exec(location.hash);
+if (fragmentCode) {
+    history.replaceState(null, "", location.pathname);
+    get("code").value = fragmentCode[1];
+    get("login-form").requestSubmit();
+}
 get("overview").addEventListener("click", () => window.scrollTo({ top: 0 }));
 get("retrieval-nav").addEventListener("click", () => get("retrieval-lab").scrollIntoView());
-get("receipt-project").addEventListener("input", clearReceipts);
+get("receipt-project").addEventListener("change", () => {
+    rememberProject(get("receipt-project").value);
+    clearReceipts();
+});
 get("receipt-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     clearReceipts();
@@ -425,6 +454,7 @@ get("receipt-form").addEventListener("submit", async (event) => {
             : "No currently available receipts for this owner and project.";
         for (const item of items) {
             const button = el("button", "", "receipt-row");
+            button.dataset.receipt = item.receipt;
             button.append(el("strong", label(item.status)), el("small", `${item.usage.output_tokens ?? "Unknown"} tokens · ${item.usage.counting ?? "not counted"} · cache ${item.cache}`), el("small", new Date(item.created_ms).toLocaleString()));
             button.addEventListener("click", async () => {
                 try {
@@ -470,6 +500,34 @@ get("receipt-form").addEventListener("submit", async (event) => {
                     for (const selected of diag.selected ?? [])
                         list.append(el("li", `${label(selected.authority)} · ${label(selected.reason)} · ${selected.reference}`));
                     panel.append(list, el("p", `Omissions: ${(diag.omissions ?? []).join(", ") || "none recorded"}`, "caption"), el("code", "SHA-256 " + String(detail.rendered_hash)), el("p", "Inspecting this receipt does not execute anything. Exact replay rechecks permission on retained bytes; rerun compiles a new artifact from explicit inputs. Neither calls a model.", "caption"));
+                    const compare = el("button", "Compare with previous briefing");
+                    compare.type = "button";
+                    compare.addEventListener("click", async () => {
+                        // The list is newest first, so the previous briefing is the next entry.
+                        const previous = items[items.indexOf(item) + 1];
+                        if (!previous) {
+                            compare.replaceWith(el("p", "No earlier receipt to compare with.", "caption"));
+                            return;
+                        }
+                        try {
+                            const before = await api("/api/receipt/" +
+                                encodeURIComponent(project) +
+                                "/" +
+                                encodeURIComponent(previous.receipt));
+                            if (!snapshot ||
+                                ticket !== receiptGeneration ||
+                                context !== generation)
+                                return;
+                            compare.replaceWith(renderComparison(before.diagnostics, diag, previous.receipt, item.receipt));
+                        }
+                        catch (error) {
+                            compare.replaceWith(el("p", "Comparison unavailable: " +
+                                (error instanceof Error
+                                    ? label(error.message)
+                                    : "request failed"), "caption"));
+                        }
+                    });
+                    panel.append(compare);
                     const replay = el("button", "Exact retained replay"), rerun = el("button", "Rerun retrieval with these inputs"), inputs = el("textarea"), output = el("pre");
                     inputs.setAttribute("aria-label", "New briefing inputs JSON");
                     inputs.rows = 8;
@@ -537,6 +595,16 @@ get("receipt-form").addEventListener("submit", async (event) => {
                 }
             });
             get("receipt-list").append(button);
+        }
+        if (pendingReceipt) {
+            const wanted = pendingReceipt;
+            pendingReceipt = null;
+            const row = get("receipt-list").querySelector(`[data-receipt="${CSS.escape(wanted)}"]`);
+            if (row)
+                row.click();
+            else
+                get("receipt-notice").textContent +=
+                    " · the cited receipt is no longer retained for this account";
         }
     }
     catch {
@@ -699,7 +767,11 @@ function renderExecution(value) {
         if (task.plan_id)
             continue;
         const card = el("article", "", "task-card");
-        card.append(el("div", `Saved by ${task.writer} · Task ${task.task}${task.run ? ` · Run ${task.run}` : ""}`, "eyebrow"), el("h3", task.objective), el("p", task.current_state));
+        card.append(el("div", `Saved by ${task.writer} · Task ${task.task}${task.run ? ` · Run ${task.run}` : ""}`, "eyebrow"), el("h3", task.objective));
+        if (task.summary) {
+            card.append(el("p", "Where this left off", "eyebrow"), el("p", task.summary.text, "task-summary"), el("p", `Summary ${label(task.summary.method)} by ${task.summary.author} · ${new Date(task.summary.created_ms).toLocaleString()} · the checkpoint is the record`, "caption"));
+        }
+        card.append(el("p", task.current_state));
         const p = task.progress;
         const summary = `${p.passed} passed · ${p.pending} pending · ${p.failed} failed · ${p.unknown} unknown · ${p.waived} waived / ${p.total} criteria`;
         const bar = el("div", "", "criteria-bar");
@@ -819,7 +891,10 @@ async function refreshExecution() {
     }
 }
 get("execution-nav").addEventListener("click", () => get("execution-panel").scrollIntoView());
-get("execution-project").addEventListener("input", () => clearExecution());
+get("execution-project").addEventListener("change", () => {
+    rememberProject(get("execution-project").value);
+    clearExecution();
+});
 get("execution-form").addEventListener("submit", (event) => {
     event.preventDefault();
     clearExecution();

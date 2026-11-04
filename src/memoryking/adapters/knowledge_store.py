@@ -11,7 +11,9 @@ from typing import Any, cast
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, uid
+from memoryking.application.storage import insert_ignore
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain import selectors
 from memoryking.domain.local import LocalError, Released, temporal_valid
@@ -23,7 +25,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Knowledge:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s = store
         self.db = store.db
 
@@ -36,6 +38,7 @@ class Knowledge:
         action, args = command["action"], command["args"]
         cap = {
             "propose": "capture",
+            "draft": "capture",
             "review": "review",
             "attest": "attest",
             "promote": "review",
@@ -58,7 +61,7 @@ class Knowledge:
                 source = self._revision(who["tenant"], args["revision"])
                 self.s._auth(credential, "review", source["project"], at)
                 self.s._auth(credential, "export", source["project"], at)
-            mutation = action in {"propose", "review", "attest", "promote"}
+            mutation = action in {"propose", "draft", "review", "attest", "promote"}
             key = command.get("key")
             if mutation and not key:
                 raise LocalError("request_key_required")
@@ -91,6 +94,10 @@ class Knowledge:
                     )
             elif action == "propose":
                 result = self.propose(credential, who, args, at)
+            elif action == "draft":
+                from memoryking.adapters.proposals import Proposals
+
+                result = Proposals(self).draft(credential, who, args, at)
             elif action == "promote":
                 result = self.promote(credential, who, args, at)
             elif action == "review":
@@ -475,7 +482,7 @@ class Knowledge:
             ).fetchall():
                 if self._state(tenant, other["id"], position)[0] == "accepted":
                     self.db.execute(
-                        "INSERT OR IGNORE INTO conflicts VALUES (?,?,?,?)",
+                        insert_ignore("conflicts", 4),
                         (tenant, other["id"], row["id"], position),
                     )
         self.db.execute(
@@ -747,7 +754,7 @@ class Knowledge:
 
             item["code_validation"] = [
                 proof
-                for b, match in zip(points, matches)
+                for b, match in zip(points, matches, strict=True)
                 if match == "true"
                 and (proof := Repository(self.s).proof(who, row, b, at)) is not None
             ]

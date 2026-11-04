@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import anyio
@@ -14,6 +15,7 @@ from starlette.requests import Request
 
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes
+from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.sdk import BINDING_FIELDS, CATALOG, TOOL_VALIDATORS, LocalClient
 
@@ -25,6 +27,7 @@ class RequestClient(LocalClient):
 
     def __init__(self, service: SharedService, tenant: str, credential: str, project: str):
         self.service, self.tenant, self.token, self.project = service, tenant, credential, project
+        self.namespace = "sdk"
         self.released: Released | None = None
         self.last_context = self._request(credential, "context", {"project": project})
         self.binding = tuple(self.last_context[key] for key in BINDING_FIELDS)
@@ -34,7 +37,10 @@ class RequestClient(LocalClient):
 
     def _request(self, credential: str, operation: str, args: dict[str, Any]) -> dict[str, Any]:
         result = self.service.execute(
-            self.tenant, credential, {"version": 1, "operation": operation, "args": args}
+            self.tenant,
+            credential,
+            {"version": 1, "operation": operation, "args": args},
+            time.monotonic() + 5.0,
         )
         if isinstance(result, Released):
             output: list[bytes] = []
@@ -104,7 +110,8 @@ class SharedMCP:
             return types.CallToolResult(
                 content=[
                     types.TextContent(
-                        type="text", text=canonical_bytes({"error": exc.code}).decode()
+                        type="text",
+                        text=canonical_bytes({"error": exc.code, "hint": hint(exc.code)}).decode(),
                     )
                 ],
                 is_error=True,
@@ -129,6 +136,7 @@ class SharedMCP:
                     "operation": "context",
                     "args": {"project": request.path_params["project"]},
                 },
+                time.monotonic() + 5.0,
             )
             scope["memoryking_release"] = released
         except LocalError as exc:

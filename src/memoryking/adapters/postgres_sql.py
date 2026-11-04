@@ -1,7 +1,9 @@
-"""Native PostgreSQL statement adapter for the reviewed relational service queries.
+"""Native PostgreSQL statement facade for the store's portable SQL.
 
-Only the small, enumerated SQLite expression differences are supported. Transactions,
-RLS, FTS and row locks are PostgreSQL operations; no SQLite database is involved.
+The store and its adapters write engine-neutral SQL and ask the dialect for the few
+expressions that differ, so this facade only binds placeholders. Anything SQLite-only
+that slips through is refused here, which makes a new divergence a test failure.
+Transactions, RLS, FTS and row locks are PostgreSQL operations; no SQLite is involved.
 """
 
 from __future__ import annotations
@@ -11,54 +13,6 @@ from collections.abc import Iterator, Sequence
 from typing import Any, Callable
 
 from memoryking.domain.local import LocalError
-
-UPSERTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    "grants": (
-        ("tenant", "principal", "project", "capabilities", "starts", "expires"),
-        ("tenant", "principal", "project"),
-    ),
-    "projection_items": (
-        (
-            "tenant",
-            "observation",
-            "incarnation",
-            "generation",
-            "source_revision",
-            "blob_hash",
-            "byte_count",
-        ),
-        ("tenant", "observation"),
-    ),
-    "code_policies": (
-        (
-            "tenant",
-            "revision",
-            "repository",
-            "origin",
-            "version",
-            "impact",
-            "dependencies",
-            "evidence",
-            "actor",
-        ),
-        ("tenant", "revision"),
-    ),
-    "code_validations": (
-        (
-            "tenant",
-            "incarnation",
-            "revision",
-            "snapshot",
-            "policy",
-            "state",
-            "evidence",
-            "expires",
-            "reason",
-            "generation",
-        ),
-        ("tenant", "incarnation", "revision", "snapshot", "policy"),
-    ),
-}
 
 
 def parameters(statement: str) -> str:
@@ -88,30 +42,11 @@ def parameters(statement: str) -> str:
 
 
 def native_statement(statement: str) -> str:
-    if re.search(r"\b(PRAGMA|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK)\b", statement, re.I):
-        raise LocalError("unsupported_database_statement")
-    statement = statement.replace(
-        "lexical MATCH ?", "to_tsvector('simple',text) @@ phraseto_tsquery('simple',?)"
-    ).replace("length(CAST(body AS BLOB))", "octet_length(body)")
-    # Two fixed scalar expressions used by the viewer's conservative display lease.
-    for field in ("starts", "expires"):
-        statement = statement.replace(
-            f"json_extract(body,'$.{field}')", f"(body::jsonb->>'{field}')"
-        )
-    if statement.startswith("INSERT OR REPLACE INTO "):
-        match = re.fullmatch(r"INSERT OR REPLACE INTO (\w+) VALUES (\([^;]+\))", statement)
-        if match is None or match[1] not in UPSERTS:
-            raise LocalError("unsupported_database_statement")
-        columns, keys = UPSERTS[match[1]]
-        assignments = ",".join(f"{c}=EXCLUDED.{c}" for c in columns if c not in keys)
-        statement = (
-            f"INSERT INTO {match[1]} ({','.join(columns)}) VALUES {match[2]} "
-            f"ON CONFLICT ({','.join(keys)}) DO UPDATE SET {assignments}"
-        )
-    elif statement.startswith("INSERT OR IGNORE INTO "):
-        statement = statement.replace("INSERT OR IGNORE INTO ", "INSERT INTO ", 1)
-        statement += " ON CONFLICT DO NOTHING"
-    if " BLOB" in statement or " OR REPLACE " in statement or " OR IGNORE " in statement:
+    """Portable SQL with PostgreSQL placeholders; engine-specific syntax is refused, not translated."""
+    # Keywords are written in upper case; lower-case column names such as `blob` pass.
+    if re.search(
+        r"\b(PRAGMA|ATTACH|DETACH|BEGIN|COMMIT|ROLLBACK|MATCH|BLOB|GLOB)\b|INSERT OR ", statement
+    ):
         raise LocalError("unsupported_database_statement")
     return parameters(statement)
 

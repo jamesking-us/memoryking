@@ -437,7 +437,7 @@ def render_epub(source_path: Path, output: Path, title: str | None = None) -> st
                     '<div class="record">'
                     + "".join(
                         f"<p><strong>{inline(h)}:</strong> {inline(v)}</p>"
-                        for h, v in zip(headers, row)
+                        for h, v in zip(headers, row, strict=False)
                     )
                     + "</div>"
                 )

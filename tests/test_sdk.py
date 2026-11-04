@@ -18,6 +18,7 @@ from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_ipc import Server
 from memoryking.adapters.stdio import INPUT_LIMIT, StdioBridge
 from memoryking.contracts.canonical import canonical_bytes
+from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 
 
@@ -170,6 +171,237 @@ class SDKTests(unittest.TestCase):
             },
         )
 
+    def test_tool_calls_fill_session_defaults(self):
+        status = self.client.tool("memory_status", {})
+        self.assertEqual(status["project"], "p")
+        captured = self.client.tool(
+            "memory_capture",
+            {
+                "key": "minimal",
+                "request": {
+                    "source": "sdk",
+                    "source_event": "minimal",
+                    "text": "durable note saved with defaults",
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            },
+        )
+        self.assertIn("observation", captured)
+        brief = self.client.tool("memory_brief", {"action": "brief", "args": {"query": "durable"}})
+        self.assertIn("receipt", brief)
+        self.assertEqual(brief["usage"]["max_output_tokens"], 6000)
+        self.assertIn(captured["observation"], [i["reference"] for i in brief["guidance"]])
+        receipt = self.client.tool(
+            "memory_fetch", {"action": "receipt", "args": {"receipt": brief["receipt"]}}
+        )
+        self.assertEqual(receipt["receipt"], brief["receipt"])
+        # Explicit values still win over defaults.
+        explicit = self.client.tool(
+            "memory_brief",
+            {"action": "brief", "args": {"query": "durable", "max_output_tokens": 2000}},
+        )
+        self.assertEqual(explicit["usage"]["max_output_tokens"], 2000)
+
+    def test_minimal_checkpoint_saves_in_one_call_and_resume_names_the_gaps(self):
+        saved = self.client.tool(
+            "memory_checkpoint",
+            {
+                "action": "save",
+                "args": {
+                    "task": "quick",
+                    "checkpoint": {
+                        "objective": "Finish the retry fix",
+                        "current_state": "Patch drafted; tests not run",
+                        "next_actions": ["Run the regression"],
+                    },
+                },
+            },
+        )
+        self.assertEqual(saved["revision"], 1)
+        # A second minimal save without expected_revision accepts the current revision.
+        again = self.client.tool(
+            "memory_checkpoint",
+            {
+                "action": "save",
+                "args": {
+                    "task": "quick",
+                    "checkpoint": {
+                        "objective": "Finish the retry fix",
+                        "current_state": "Regression passed",
+                    },
+                },
+            },
+        )
+        self.assertEqual(again["revision"], 2)
+        resumed = self.client.tool(
+            "memory_resume",
+            {"action": "resume", "args": {"task": "quick", "checkpoint": again["checkpoint"]}},
+        )
+        state = resumed["checkpoint"]["state"]
+        gaps = resumed.get("recovery_gaps") or state["capture"]["gaps"]
+        self.assertIn("defaulted:findings", gaps)
+        self.assertIn("defaulted:repository", gaps)
+        self.assertIn("defaulted:next_actions", gaps)
+        self.assertEqual(state["objective"], "Finish the retry fix")
+        self.assertEqual(state["current_state"], "Regression passed")
+        with self.assertRaises(LocalError) as caught:
+            self.client.tool(
+                "memory_checkpoint",
+                {"action": "save", "args": {"task": "quick", "checkpoint": {"objective": "x"}}},
+            )
+        self.assertEqual("invalid_tool_arguments", caught.exception.code)
+
+    def test_lean_profile_round_trip_through_five_flat_tools(self):
+        from memoryking import lean
+        from memoryking.adapters.stdio import LEAN_VALIDATORS
+
+        self.assertEqual(
+            [t["name"] for t in lean.TOOLS],
+            ["remember", "recall", "save_progress", "resume", "hand_off"],
+        )
+        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 8192)
+        for tool in lean.TOOLS:
+            self.assertNotIn("oneOf", json.dumps(tool["inputSchema"]))
+        first = lean.call(
+            self.client,
+            "remember",
+            {"text": "retry backoff exceeded the deadline", "source": "pytest"},
+        )
+        again = lean.call(
+            self.client,
+            "remember",
+            {"text": "retry backoff exceeded the deadline", "source": "pytest"},
+        )
+        self.assertEqual(first, again)
+        brief = lean.call(self.client, "recall", {"query": "deadline"})
+        self.assertEqual(brief["format"], "text")
+        self.assertIn("retry backoff exceeded the deadline", brief["text"])
+        saved = lean.call(
+            self.client,
+            "save_progress",
+            {
+                "task": "lean-task",
+                "objective": "Fix the retry deadline",
+                "current_state": "Investigating",
+                "next_actions": ["Run the regression"],
+                "failed_attempts": [{"action": "Raise every timeout", "outcome": "Still failed"}],
+                "blockers": ["Need a full regression result"],
+                "share_with": ["reviewer"],
+            },
+        )
+        self.assertEqual(saved["revision"], 1)
+        resumed = lean.call(self.client, "resume", {"task": "lean-task"})
+        self.assertEqual(resumed["format"], "text")
+        self.assertIn("# Resume: Fix the retry deadline", resumed["text"])
+        self.assertIn("## Do not repeat", resumed["text"])
+        self.assertIn("Need a full regression result", resumed["text"])
+        self.assertIn("defaulted:references", resumed["text"])
+        self.store.grant(self.owner, "reviewer", "p", ["read"])
+        handed = lean.call(self.client, "hand_off", {"task": "lean-task", "to": "reviewer"})
+        self.assertEqual(handed["status"], "prepared")
+        self.assertTrue(LEAN_VALIDATORS["recall"].is_valid({"query": "x"}))
+        self.assertFalse(LEAN_VALIDATORS["recall"].is_valid({"query": "x", "extra": 1}))
+
+    def test_lean_bridge_lists_five_tools_over_stdio(self):
+        frames = [
+            initialize(),
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            rpc(2, "tools/list"),
+            rpc(
+                3, "tools/call", {"name": "remember", "arguments": {"text": "from the lean bridge"}}
+            ),
+            rpc(4, "tools/call", {"name": "recall", "arguments": {"query": "lean bridge"}}),
+        ]
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(self.credential),
+                "--project",
+                "p",
+                "--profile",
+                "lean",
+            ],
+            input=b"".join(canonical_bytes(frame) + b"\n" for frame in frames),
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        replies = [json.loads(line) for line in run.stdout.splitlines()]
+        listed = next(r for r in replies if r.get("id") == 2)["result"]["tools"]
+        self.assertEqual(len(listed), 5)
+        recalled = next(r for r in replies if r.get("id") == 4)["result"]
+        self.assertFalse(recalled["isError"])
+        self.assertIn("from the lean bridge", json.loads(recalled["content"][0]["text"])["text"])
+
+    def test_bridge_binds_incarnation_when_a_tool_call_omits_it(self):
+        result = self.client.tool(
+            "memory_brief",
+            {
+                "version": 1,
+                "action": "brief",
+                "args": {
+                    "project": "p",
+                    "query": "durable",
+                    "bindings": [{}],
+                    "max_output_tokens": 6000,
+                    "tokenizer": "cl100k_base",
+                },
+            },
+        )
+        self.assertEqual(result["incarnation"], self.store.incarnation)
+        with self.assertRaises(LocalError) as caught:
+            self.client.tool(
+                "memory_brief",
+                {
+                    "version": 1,
+                    "incarnation": "hist_" + "0" * 32,
+                    "action": "brief",
+                    "args": {
+                        "project": "p",
+                        "query": "durable",
+                        "bindings": [{}],
+                        "max_output_tokens": 6000,
+                        "tokenizer": "cl100k_base",
+                    },
+                },
+            )
+        self.assertEqual("history_changed", caught.exception.code)
+
+    def test_capture_key_is_idempotent_across_client_instances(self):
+        def observation(event, text):
+            return {
+                "version": 1,
+                "project": "p",
+                "source": "sdk",
+                "source_event": event,
+                "text": text,
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            }
+
+        first = self.client.capture("same-key", observation("e1", "first bytes"))
+        again = LocalClient(self.server.path, self.credential, "p").capture(
+            "same-key", observation("e1", "first bytes")
+        )
+        self.assertEqual(first, again)
+        with self.assertRaises(LocalError) as caught:
+            LocalClient(self.server.path, self.credential, "p").capture(
+                "same-key", observation("e1", "different bytes")
+            )
+        self.assertEqual("idempotency_conflict", caught.exception.code)
+        other = LocalClient(self.server.path, self.credential, "p", namespace="other").capture(
+            "same-key", observation("e2", "other bytes")
+        )
+        self.assertNotEqual(first["observation"], other["observation"])
+
     def test_bound_sdk_save_resume_and_no_automatic_retry(self):
         context = self.client.context()
         self.assertEqual(context["principal"], "owner")
@@ -275,9 +507,9 @@ class SDKTests(unittest.TestCase):
                 "memory_fetch",
                 "memory_checkpoint",
                 "memory_resume",
+                "memory_plan",
                 "memory_handoff",
                 "memory_feedback",
-                "memory_plan",
             },
         )
         raw = responses[5]["result"]["content"][0]["text"].encode()

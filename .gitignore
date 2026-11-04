@@ -5,7 +5,7 @@ __pycache__/
 tmp/
 .DS_Store
 .venv/
-node_modules/
+node_modules
 dist/
 build/
 *.egg-info/

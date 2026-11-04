@@ -45,9 +45,6 @@ class SharedHTTPTests(unittest.TestCase):
             hosts=[f"127.0.0.1:{self.port}"],
             origins=[self.url],
             loopback_http=True,
-            plan_root=Path(__file__).resolve().parents[1]
-            if getattr(self, "dashboard", False)
-            else None,
             dashboard_tenant=self.tenant if getattr(self, "dashboard", False) else None,
         )
         self.server = uvicorn.Server(
@@ -250,7 +247,9 @@ class SharedHTTPTests(unittest.TestCase):
         )
 
     def test_provider_grant_expiry_blocks_without_notification_and_rebuilds(self):
-        expires = int(time.time() * 1000) + 5000
+        # Two dispatches must complete well inside the window on a slow machine, and the
+        # wait afterwards must land clearly past expiry.
+        expires = int(time.time() * 1000) + 8000
         reader = self.command(
             "grant",
             {
@@ -269,7 +268,7 @@ class SharedHTTPTests(unittest.TestCase):
         first = context.dispatch()
         second = context.dispatch()
         self.assertIn(first["handle"], provider.path(second["handle"]).read_text())
-        time.sleep(max(0, (expires + 1 - int(time.time() * 1000)) / 1000))
+        time.sleep(max(0, (expires + 250 - int(time.time() * 1000)) / 1000))
         with self.assertRaises(LocalError) as caught:
             context.dispatch()
         self.assertEqual("denied", caught.exception.code)

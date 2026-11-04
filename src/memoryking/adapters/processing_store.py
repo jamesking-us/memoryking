@@ -13,9 +13,10 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, USAGE_LIMIT, uid
 from memoryking.adapters.token_count import counter
 from memoryking.adapters.working import Working
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.briefing import counted
 from memoryking.domain.compression import validate
@@ -28,7 +29,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Processing:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
         self.k, self.w = Knowledge(store), Working(store)
         self.r = self.w.r
@@ -106,9 +107,20 @@ class Processing:
             self.db.execute(
                 "SELECT count(*) FROM processing_usage WHERE tenant=?", (who["tenant"],)
             ).fetchone()[0]
-            >= 100000
+            >= USAGE_LIMIT
         ):
-            raise LocalError("usage_retention_limit")
+            # Only rows past their retention are released; recent attempts are never
+            # silently discarded to make room.
+            self.db.execute(
+                "DELETE FROM processing_usage WHERE tenant=? AND expires<=?", (who["tenant"], at)
+            )
+            if (
+                self.db.execute(
+                    "SELECT count(*) FROM processing_usage WHERE tenant=?", (who["tenant"],)
+                ).fetchone()[0]
+                >= USAGE_LIMIT
+            ):
+                raise LocalError("usage_retention_limit")
         self.db.execute(
             "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (

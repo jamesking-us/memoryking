@@ -113,7 +113,7 @@ class LocalOptionalMigrations(OptionalRecoveryCases, unittest.TestCase):
         with sqlite3.connect(self.data / "store.sqlite") as db:
             historical_inventory(db, 6)
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(
             self.store.db.execute(
                 "SELECT blob FROM observations WHERE id=?", (self.obs["observation"],)
@@ -133,7 +133,7 @@ class LocalOptionalMigrations(OptionalRecoveryCases, unittest.TestCase):
         atomic(archive / "manifest", self.store.control.sign(manifest).encode())
         self.store.purge(self.owner, self.obs["observation"])
         restore_fixture(self, archive)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(
             self.store.db.execute(
                 "SELECT deleted FROM observations WHERE id=?", (self.obs["observation"],)

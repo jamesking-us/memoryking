@@ -35,13 +35,14 @@ class Roles:
             identifier(value)
 
 
-def provision_roles(admin: Any, roles: Roles = Roles()) -> None:
+def provision_roles(admin: Any, roles: Roles | None = None) -> None:
     """Create fresh least-privileged roles, with no password or membership inheritance.
 
     Deployment must separately configure SCRAM secrets or certificate authentication.
     Private Unix-socket test fixtures authenticate these names only inside their fixture.
     Existing roles are rejected rather than silently trusting their privileges.
     """
+    roles = roles or Roles()
     with admin.transaction():
         for role in (roles.migration, roles.runtime, roles.worker, roles.backup):
             admin.execute(
@@ -59,8 +60,9 @@ def provision_roles(admin: Any, roles: Roles = Roles()) -> None:
         admin.execute("REVOKE ALL ON SCHEMA memoryking FROM PUBLIC")
 
 
-def enable_vector(admin: Any, roles: Roles = Roles()) -> None:
+def enable_vector(admin: Any, roles: Roles | None = None) -> None:
     """Explicit operator action after installing pgvector 0.8.7; never automatic."""
+    roles = roles or Roles()
     with admin.transaction():
         if not admin.execute("SELECT rolsuper FROM pg_roles WHERE rolname=current_user").fetchone()[
             0
@@ -95,8 +97,9 @@ def enable_vector(admin: Any, roles: Roles = Roles()) -> None:
             )
 
 
-def migrate(connection: Any, roles: Roles = Roles()) -> None:
+def migrate(connection: Any, roles: Roles | None = None) -> None:
     """Apply supported migrations transactionally as the separate owner, offline."""
+    roles = roles or Roles()
     with connection.transaction():
         role = connection.execute("SELECT current_user").fetchone()[0]
         if role != roles.migration:
@@ -107,7 +110,7 @@ def migrate(connection: Any, roles: Roles = Roles()) -> None:
             connection.execute(Path(__file__).with_name("postgres_schema.sql").read_text())
             connection.execute("INSERT INTO shared_meta VALUES ('schema','1')")
         version = connection.execute("SELECT value FROM shared_meta WHERE key='schema'").fetchone()
-        if version is None or version[0] not in {"1", "2", "3", "4", "5"}:
+        if version is None or version[0] not in {"1", "2", "3", "4", "5", "6", "7", "8", "9"}:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
             connection.execute(Path(__file__).with_name("postgres_optional_schema.sql").read_text())
@@ -117,12 +120,9 @@ def migrate(connection: Any, roles: Roles = Roles()) -> None:
                 Path(__file__).with_name("postgres_experience_schema.sql").read_text()
             )
             connection.execute("UPDATE shared_meta SET value='3' WHERE key='schema'")
-        if version[0] in {"1", "2", "3"}:
-            connection.execute(Path(__file__).with_name("postgres_viewer_schema.sql").read_text())
-            connection.execute("UPDATE shared_meta SET value='4' WHERE key='schema'")
-        if version[0] in {"1", "2", "3", "4"}:
-            connection.execute(Path(__file__).with_name("postgres_report_schema.sql").read_text())
-            connection.execute("UPDATE shared_meta SET value='5' WHERE key='schema'")
+        from memoryking.adapters.postgres_mobile_migrations import ensure_mobile_schema
+
+        ensure_mobile_schema(connection)
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [
@@ -153,7 +153,8 @@ def migrate(connection: Any, roles: Roles = Roles()) -> None:
                 )
             )
         # Workers can materialize projections and record their bounded release receipts;
-        # they cannot create policy, content, checkpoint or handoff records.
+        # they cannot create policy, content, checkpoint or handoff records, rewrite or
+        # delete receipts, or touch tenant counters except through the owner-run function.
         for table in (
             "jobs",
             "projections",
@@ -163,8 +164,6 @@ def migrate(connection: Any, roles: Roles = Roles()) -> None:
             "embedding_items",
             "processing_usage",
             "code_validations",
-            "receipts",
-            "tenant_meta",
             "meta",
         ):
             connection.execute(
@@ -172,6 +171,20 @@ def migrate(connection: Any, roles: Roles = Roles()) -> None:
                     sql.Identifier(table), sql.Identifier(roles.worker)
                 )
             )
+        for table in ("receipts", "tenant_meta"):
+            connection.execute(
+                sql.SQL("REVOKE INSERT,UPDATE,DELETE ON {} FROM {}").format(
+                    sql.Identifier(table), sql.Identifier(roles.worker)
+                )
+            )
+        connection.execute(
+            sql.SQL("GRANT INSERT ON receipts TO {}").format(sql.Identifier(roles.worker))
+        )
+        connection.execute(
+            sql.SQL("REVOKE EXECUTE ON FUNCTION next_commit_serial(text,bigint) FROM {}").format(
+                sql.Identifier(roles.backup)
+            )
+        )
         # SELECT FOR UPDATE/SHARE requires UPDATE permission even on the lock-only row.
         connection.execute(
             sql.SQL("GRANT UPDATE ON tenant_gates TO {}").format(sql.Identifier(roles.worker))

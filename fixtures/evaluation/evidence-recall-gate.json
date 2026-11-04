@@ -1,0 +1,10 @@
+{
+  "minimum": {
+    "session_recall_at_k": 1.0,
+    "answer_turn_recall_at_k": 1.0,
+    "session_mrr": 1.0
+  },
+  "maximum": {
+    "latency_ms_p95": 2000
+  }
+}

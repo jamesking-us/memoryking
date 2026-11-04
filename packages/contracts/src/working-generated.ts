@@ -87,8 +87,8 @@ export interface Save {
   project: string;
   task: string;
   run: string | null;
-  expected_revision: number;
-  readers: Array<string>;
+  expected_revision: number | null;
+  readers: Array<string> | null;
   checkpoint: Checkpoint;
 }
 
@@ -100,6 +100,7 @@ export interface Resume {
   bindings: Array<Record<string, unknown>>;
   max_output_tokens: number;
   tokenizer: string;
+  format?: "json" | "text";
 }
 
 export interface AssignWriter {
@@ -160,6 +161,17 @@ export interface AdapterBase {
 export interface AdapterContext {
   model_session: string;
   context_epoch: number;
+}
+
+export interface Summarize {
+  project: string;
+  task: string;
+  run: string | null;
+  checkpoint: string | null;
+  source: "extractive" | "provider";
+  text: string | null;
+  permit: string | null;
+  readers: Array<string> | null;
 }
 
 export interface PlanPhase {
@@ -276,12 +288,20 @@ export interface Command6 {
 export interface Command7 {
   version: 1;
   incarnation: string;
+  action: "summarize";
+  args: Summarize;
+  key: string;
+}
+
+export interface Command8 {
+  version: 1;
+  incarnation: string;
   action: "plan_save";
   args: PlanSave;
   key: string;
 }
 
-export interface Command8 {
+export interface Command9 {
   version: 1;
   incarnation: string;
   action: "plan_step";
@@ -289,18 +309,18 @@ export interface Command8 {
   key: string;
 }
 
-export interface Command9 {
+export interface Command10 {
   version: 1;
   incarnation: string;
   action: "plan_get";
   args: PlanGet;
 }
 
-export interface Command10 {
+export interface Command11 {
   version: 1;
   incarnation: string;
   action: "plan_list";
   args: PlanList;
 }
 
-export type WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7 | Command8 | Command9 | Command10;
+export type WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7 | Command8 | Command9 | Command10 | Command11;

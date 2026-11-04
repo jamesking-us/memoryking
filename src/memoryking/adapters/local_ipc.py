@@ -6,6 +6,8 @@ import os
 import socket
 import socketserver
 import stat
+import threading
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,25 +15,78 @@ from memoryking.adapters.embedding_store import Embeddings
 from memoryking.adapters.experience import Experience
 from memoryking.adapters.handoff import Handoff
 from memoryking.adapters.inference import Inference
+from memoryking.adapters.inspection import Inspection
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_contract import VALIDATOR
-from memoryking.adapters.local_store import LocalStore
+from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure, summarize, timings, trace, tracing
 
 WIRE_LIMIT = 262144
 
 
 class StoreOperations:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.store = store
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
+        """Dispatch and record the operation's latency and outcome for `/metrics`.
+
+        With `serve --trace`, one redacted line per request also goes to the log:
+        operation, command action, outcome, elapsed time, lock wait, time inside
+        transactions and response size. Never the body, the project or the principal.
+        """
+        operation = request.get("operation") if isinstance(request, dict) else None
+        # Only a known operation name labels metrics and trace lines; caller text never does.
+        name = operation if isinstance(operation, str) and operation in OPERATIONS else "invalid"
+        started = time.monotonic()
+        error: str | None = None
+        spans = timings(self.store) if tracing() else None
+        response: dict[str, Any] | Released | None = None
+        try:
+            response = self._execute(request)
+            return response
+        except LocalError as exc:
+            error = exc.code
+            raise
+        except Exception:
+            error = "internal_error"
+            raise
+        finally:
+            elapsed = (time.monotonic() - started) * 1000
+            self.store.counters.observe(name, elapsed, error)
+            if spans is not None:
+                self.store.timings.items = None
+                trace(
+                    "operations",
+                    operation=name,
+                    action=self._action(request),
+                    outcome=error or "ok",
+                    response_bytes=len(response.body)
+                    if isinstance(response, Released)
+                    else len(canonical_bytes(response))
+                    if response is not None
+                    else 0,
+                    **summarize(elapsed, spans),
+                )
+
+    @staticmethod
+    def _action(request: Any) -> str:
+        """The command action (a fixed vocabulary such as brief), never free text."""
+        try:
+            action = request["args"]["command"]["action"]
+        except (KeyError, TypeError):
+            return "-"
+        return action if isinstance(action, str) and action.isidentifier() else "-"
+
+    def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
         if not VALIDATOR.is_valid(request):
             raise LocalError("invalid_request")
         op, args, credential = request["operation"], request["args"], request["credential"]
@@ -64,6 +119,8 @@ class StoreOperations:
             return Retrieval(store).execute(credential, args["command"])
         if op == "knowledge":
             return Knowledge(store).execute(credential, args["command"])
+        if op == "inspection":
+            return Inspection(store).execute(credential, args["command"])
         if op == "dashboard_bootstrap":
             dashboard = getattr(store, "dashboard", None)
             if dashboard is None:
@@ -77,6 +134,8 @@ class StoreOperations:
             return store.read(credential, **args, export=op == "export")
         if op == "status":
             return store.status(credential, **args)
+        if op == "grants":
+            return {"items": store.grants(credential)}
         if op == "claim":
             return {"job": store.claim(credential, **args)}
         if op == "finish":
@@ -110,20 +169,28 @@ class Handler(socketserver.StreamRequestHandler):
                 self.request.sendall(canonical_bytes(response) + b"\n")
         except (LocalError, ContractError) as exc:
             code = exc.code if isinstance(exc, LocalError) else "invalid_request"
-            self.request.sendall(canonical_bytes({"error": code}) + b"\n")
+            self.request.sendall(canonical_bytes({"error": code, "hint": hint(code)}) + b"\n")
         except (TimeoutError, BrokenPipeError, ConnectionResetError):
             return
-        except Exception:
-            # Never serialize SQL, filenames, caller content or exception strings.
-            self.request.sendall(b'{"error":"internal_error"}\n')
+        except Exception as exc:
+            # Never serialize SQL, filenames, caller content or exception strings. The
+            # request id links the generic reply to the redacted operator log line.
+            request_id = failure("local_ipc", exc)
+            self.request.sendall(
+                canonical_bytes({"error": "internal_error", "request_id": request_id}) + b"\n"
+            )
 
 
-class Server(socketserver.UnixStreamServer):
-    """Sequential bounded requests prevent unbounded thread/connection allocation."""
+class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """Bounded concurrent requests: a slow client never blocks everyone else."""
 
     request_queue_size = 16
+    daemon_threads = True
+    block_on_close = True
+    max_concurrent = 8
 
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
+        self.slots = threading.BoundedSemaphore(self.max_concurrent)
         self.path = store.root / "service.sock"
         if len(os.fsencode(self.path)) > 100:
             raise LocalError("socket_path_too_long")
@@ -133,8 +200,44 @@ class Server(socketserver.UnixStreamServer):
                 raise LocalError("unsafe_socket")
             self.path.unlink()
         self.operations: LocalOperations = StoreOperations(store)
+        self.store = store
         super().__init__(str(self.path), Handler)
         os.chmod(self.path, 0o600)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self.slots.acquire(timeout=5):
+            try:
+                request.sendall(b'{"error":"service_busy"}\n')
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+    def service_actions(self) -> None:
+        """Between requests, complete trivial audit jobs so the queue never fills.
+
+        Draining and housekeeping are independent: a failure in one never skips the
+        other or escapes serve_forever. A fenced or unhealthy store reports its state
+        on the next request; anything else is logged.
+        """
+        for action in (self.store.drain, self.store.housekeeping):
+            try:
+                action()
+            except LocalError:
+                pass
+            except Exception as exc:
+                failure("local_ipc", exc, action=action.__name__)
 
     def server_close(self) -> None:
         super().server_close()
@@ -159,5 +262,5 @@ def request(
         if not isinstance(value, dict):
             raise LocalError("invalid_response")
         if "error" in value:
-            raise LocalError(value["error"])
+            raise LocalError(value["error"], value.get("hint"))
         return value

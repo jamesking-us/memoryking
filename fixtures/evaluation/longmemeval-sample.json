@@ -1,0 +1,134 @@
+[
+  {
+    "question_id": "sample-1",
+    "question_type": "single-session-user",
+    "question": "What did I change about the payments retry deadline?",
+    "answer": "It is scoped per request.",
+    "question_date": "2026/03/07 (Sat) 09:00",
+    "haystack_dates": [
+      "2026/03/01 (Sun) 09:00",
+      "2026/03/02 (Mon) 10:00"
+    ],
+    "haystack_session_ids": [
+      "sess-a1",
+      "sess-a2"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "I switched the payments retry deadline to per request yesterday.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "Noted: the retry deadline is now scoped per request.",
+          "has_answer": true
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Weather was nice, went cycling along the river.",
+          "has_answer": false
+        },
+        {
+          "role": "assistant",
+          "content": "Sounds like a good ride.",
+          "has_answer": false
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "sess-a1"
+    ]
+  },
+  {
+    "question_id": "sample-2",
+    "question_type": "single-session-user",
+    "question": "When does Zebra need her vaccination booster?",
+    "answer": "Next week.",
+    "question_date": "2026/03/07 (Sat) 09:00",
+    "haystack_dates": [
+      "2026/03/03 (Tue) 11:00",
+      "2026/03/04 (Wed) 12:00"
+    ],
+    "haystack_session_ids": [
+      "sess-b1",
+      "sess-b2"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "My cat Zebra needs her vaccination booster next week.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "I will remind you about Zebra's booster.",
+          "has_answer": true
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Finished reading a long novel about lighthouses.",
+          "has_answer": false
+        },
+        {
+          "role": "assistant",
+          "content": "What did you think of it?",
+          "has_answer": false
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "sess-b1"
+    ]
+  },
+  {
+    "question_id": "sample-3",
+    "question_type": "knowledge-update",
+    "question": "Which host is the staging database on now?",
+    "answer": "quartz",
+    "question_date": "2026/03/07 (Sat) 09:00",
+    "haystack_dates": [
+      "2026/03/05 (Thu) 13:00",
+      "2026/03/06 (Fri) 14:00"
+    ],
+    "haystack_session_ids": [
+      "sess-c1",
+      "sess-c2"
+    ],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "We moved the staging database to the new host called quartz.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "Staging now lives on quartz; I have noted the move.",
+          "has_answer": true
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "Planning a hike on Saturday if it stays dry.",
+          "has_answer": false
+        },
+        {
+          "role": "assistant",
+          "content": "Enjoy the hike.",
+          "has_answer": false
+        }
+      ]
+    ],
+    "answer_session_ids": [
+      "sess-c1"
+    ]
+  }
+]

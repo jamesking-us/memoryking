@@ -14,6 +14,10 @@ export interface Brief {
   consistency?: Record<string, unknown>;
   freshness?: "any" | "attested";
   dense?: DenseQuery;
+  format?: "json" | "text";
+  as_of_ms?: number;
+  salience?: "on" | "off";
+  rerank?: "on" | "off";
 }
 
 export interface Fetch {
@@ -49,7 +53,7 @@ export interface Atlas {
   valid_ms?: number;
   recorded_position?: number;
   query?: string;
-  types?: Array<"observation" | "claim" | "attestation" | "procedure" | "checkpoint" | "task" | "run">;
+  types?: Array<"observation" | "claim" | "attestation" | "procedure" | "checkpoint" | "plan" | "step" | "task" | "run">;
   focus?: Array<string>;
   max_nodes?: number;
   max_edges?: number;

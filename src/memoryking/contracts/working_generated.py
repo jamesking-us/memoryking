@@ -81,8 +81,8 @@ class Save(TypedDict):
     project: str
     task: str
     run: str | None
-    expected_revision: int
-    readers: list[str]
+    expected_revision: int | None
+    readers: list[str] | None
     checkpoint: Checkpoint
 
 class Resume(TypedDict):
@@ -93,6 +93,7 @@ class Resume(TypedDict):
     bindings: list[dict[str, Any]]
     max_output_tokens: int
     tokenizer: str
+    format: NotRequired[Literal["json", "text"]]
 
 class AssignWriter(TypedDict):
     project: str
@@ -146,6 +147,16 @@ class AdapterBase(TypedDict):
 class AdapterContext(TypedDict):
     model_session: str
     context_epoch: int
+
+class Summarize(TypedDict):
+    project: str
+    task: str
+    run: str | None
+    checkpoint: str | None
+    source: Literal["extractive", "provider"]
+    text: str | None
+    permit: str | None
+    readers: list[str] | None
 
 class PlanPhase(TypedDict):
     id: str
@@ -247,27 +258,34 @@ class Command6(TypedDict):
 class Command7(TypedDict):
     version: Literal[1]
     incarnation: str
+    action: Literal["summarize"]
+    args: Summarize
+    key: str
+
+class Command8(TypedDict):
+    version: Literal[1]
+    incarnation: str
     action: Literal["plan_save"]
     args: PlanSave
     key: str
 
-class Command8(TypedDict):
+class Command9(TypedDict):
     version: Literal[1]
     incarnation: str
     action: Literal["plan_step"]
     args: PlanStepUpdate
     key: str
 
-class Command9(TypedDict):
+class Command10(TypedDict):
     version: Literal[1]
     incarnation: str
     action: Literal["plan_get"]
     args: PlanGet
 
-class Command10(TypedDict):
+class Command11(TypedDict):
     version: Literal[1]
     incarnation: str
     action: Literal["plan_list"]
     args: PlanList
 
-WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7 | Command8 | Command9 | Command10
+WorkingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7 | Command8 | Command9 | Command10 | Command11

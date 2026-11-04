@@ -76,8 +76,10 @@ class MeasuredService(SharedService):
         self.local = threading.local()
 
     @contextmanager
-    def store(self, tenant, credential, *, release_only=False):
-        with super().store(tenant, credential, release_only=release_only) as store:
+    def store(self, tenant, credential, *, release_only=False, request_deadline=None):
+        with super().store(
+            tenant, credential, release_only=release_only, request_deadline=request_deadline
+        ) as store:
             try:
                 yield store
             finally:
@@ -216,7 +218,6 @@ def run_arm(cluster, base, fanout, repetitions):
         hosts=[f"127.0.0.1:{port}"],
         origins=[url],
         loopback_http=True,
-        plan_root=ROOT,
         dashboard_tenant=hot,
     )
     server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))
@@ -520,7 +521,7 @@ def run_arm(cluster, base, fanout, repetitions):
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             futures = [executor.submit(perform, job) for job in jobs]
             while any(not f.done() for f in futures):
-                for tenant, conversation in conversations.items():
+                for _tenant, conversation in conversations.items():
                     try:
                         conversation._sync()
                     except LocalError:

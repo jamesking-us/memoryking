@@ -168,7 +168,7 @@ def main():
                 list(vectors)[:eligible],
                 key=lambda reference: (-cosine_ppm(vector, vectors[reference]), reference),
             )[:32]
-            for sample in range(5):
+            for _sample in range(5):
                 if args.backend == "shared":
                     actor = PostgresStore(pool, data, control, tenant, reader)
                 else:

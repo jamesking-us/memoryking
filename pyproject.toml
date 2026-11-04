@@ -4,11 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memoryking"
-version = "0.1.0a1"
+version = "0.1.0a3"
 description = "MemoryKing local memory, checkpoint and recovery service"
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "James King" }]
 dependencies = ["jsonschema==4.26.0"]
-classifiers = ["Private :: Do Not Upload"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Repository = "https://github.com/jamesking-us/memoryking"
 
 [project.scripts]
 memoryking = "memoryking.__main__:main"
@@ -38,7 +53,7 @@ line-length = 100
 extend-exclude = ["tmp", "docs/reports", "output"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+select = ["E4", "E7", "E9", "F", "I", "B"]
 
 [tool.ruff.format]
 exclude = ["src/memoryking/contracts/generated.py", "src/memoryking/contracts/retrieval_generated.py", "src/memoryking/contracts/working_generated.py", "src/memoryking/contracts/handoff_generated.py", "src/memoryking/contracts/inference_generated.py", "src/memoryking/contracts/repository_generated.py", "src/memoryking/contracts/embedding_generated.py", "src/memoryking/contracts/processing_generated.py", "src/memoryking/contracts/experience_generated.py", "src/memoryking/contracts/viewer_generated.py", "src/memoryking/contracts/reporting_generated.py"]

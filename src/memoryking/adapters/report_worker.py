@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.report_build import build_one
 from memoryking.adapters.report_delivery import Deliveries, MailConfiguration
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import load_strict
 from memoryking.contracts.viewer import validate_viewer
 from memoryking.domain.local import LocalError
@@ -74,7 +74,7 @@ class Configuration:
             value["poll_seconds"],
         )
 
-    def attach(self, store: LocalStore) -> None:
+    def attach(self, store: StoreCore) -> None:
         # Only the explicitly configured tenant receives this destination.
         if not self.enabled:
             return
@@ -89,7 +89,7 @@ class ReportWorker:
     def __init__(
         self,
         configuration: Configuration,
-        open_store: Callable[[], AbstractContextManager[LocalStore]],
+        open_store: Callable[[], AbstractContextManager[StoreCore]],
     ):
         self.configuration, self.open_store = configuration, open_store
         self.stopping = threading.Event()

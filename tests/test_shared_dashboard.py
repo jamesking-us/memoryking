@@ -103,7 +103,9 @@ class SharedDashboardTests(unittest.TestCase):
             status, body = fixture.SharedHTTPTests.raw(
                 self, {"version": 1, "operation": "context", "args": {"project": "demo"}}
             )
-            self.assertEqual((503, {"error": "service_busy"}), (status, body))
+            self.assertEqual(503, status)
+            self.assertEqual("service_busy", body["error"])
+            self.assertIn("hint", body)
             request = urllib.request.Request(
                 self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp",
                 json.dumps(
@@ -119,10 +121,10 @@ class SharedDashboardTests(unittest.TestCase):
                 urllib.request.urlopen(request, timeout=5)
             with caught.exception as response:
                 self.assertEqual(503, response.code)
-                self.assertEqual({"error": "service_busy"}, json.loads(response.read()))
+                self.assertEqual("service_busy", json.loads(response.read())["error"])
             with self.fetch("/api/snapshot") as response:
                 self.assertEqual(503, response.status)
-                self.assertEqual({"error": "service_busy"}, json.loads(response.read()))
+                self.assertEqual("service_busy", json.loads(response.read())["error"])
             pool.putconn(held)
             held = None
             with self.fetch("/api/snapshot") as response:
@@ -161,7 +163,7 @@ class SharedDashboardTests(unittest.TestCase):
             self.assertEqual(403, response.status)
         self.command("grant", {"principal": "new", "project": "demo", "capabilities": ["read"]})
         with self.fetch("/api/command", body) as response:
-            self.assertEqual(403, response.status)
+            self.assertEqual(409, response.status)
 
     def test_all_packaged_worker_brand_and_view_assets_are_served(self):
         from memoryking.adapters.dashboard import ASSETS
@@ -228,10 +230,10 @@ class SharedDashboardTests(unittest.TestCase):
         with self.fetch("/api/events", headers={"Last-Event-ID": old}) as response:
             frame = self.event(response)
             self.assertEqual("resync", frame["event"])
-            self.assertEqual([], json.loads(frame["data"])["phases"])
+            self.assertEqual(1, json.loads(frame["data"])["schema_version"])
         self.login()  # Replaces the current browser session; its old cursor is unusable.
         with self.fetch("/api/events", headers={"Last-Event-ID": old}) as response:
-            self.assertEqual(403, response.status)
+            self.assertEqual(409, response.status)
             self.assertEqual("cursor_context_changed", json.loads(response.read())["error"])
 
     def test_snapshot_duplicate_suppression_and_bounded_history(self):

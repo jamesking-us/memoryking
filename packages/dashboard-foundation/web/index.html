@@ -24,6 +24,7 @@
         <button class="nav" id="retrieval-nav">
           ⌁ &nbsp; Retrieval history
         </button>
+        <button class="nav" id="team-nav">☷ &nbsp; Team</button>
         <div class="side-note">
           Permissions
           <p>
@@ -49,7 +50,7 @@
           <div>
             <h1>Workspace overview</h1>
             <p class="subtitle">
-              Task status, stored memories and retrieval history.
+              Capacity, task status, stored memories and retrieval history.
             </p>
           </div>
           <div class="controls">
@@ -82,59 +83,36 @@
         </section>
         <p id="notice" role="alert"></p>
         <div id="content" hidden>
-          <div id="development-record" hidden>
-            <section
-              id="metrics"
-              class="metrics"
-              aria-label="Separate completion and verification indicators"
-            ></section>
-            <section class="card trajectory">
-              <div class="section-head">
-                <div>
-                  <h2>Phase dependencies</h2>
-                </div>
-                <span id="baseline" class="tag"></span>
-              </div>
-              <div
-                id="phase-map"
-                class="phase-map"
-                aria-label="Ordered phase dependencies"
-              ></div>
-              <p class="caption">
-                Ordered dependencies · equal visual spacing does not represent
-                duration or percentage complete.
-              </p>
-            </section>
-            <div class="workspace">
-              <section class="card phase-list">
-                <div class="section-head">
-                  <h2>Execution plan</h2>
-                  <span class="tag">12 phases</span>
-                </div>
-                <div id="phases"></div>
-              </section>
-              <section
-                id="detail"
-                class="card detail"
-                aria-live="polite"
-              ></section>
-            </div>
-            <section class="bottom-grid">
-              <article class="card">
-                <h2>Task evidence</h2>
-                <p>
-                  Connect a project below to inspect actual reference-harness
-                  checkpoints, criteria, blockers and activity. The roadmap and
-                  connected tasks retain separate completion records.
+          <section
+            id="capacity"
+            class="card capacity"
+            aria-label="Tenant capacity"
+          >
+            <div class="section-head">
+              <div>
+                <h2>Capacity</h2>
+                <p class="caption">
+                  Bounded resources for this tenant. Each has a release path; a
+                  warning appears from 80 percent.
                 </p>
-                <span class="tag">No inferred ETA or agent status</span>
-              </article>
-              <article class="card">
-                <h2>Architecture decisions</h2>
-                <div id="adrs" class="adr-list"></div>
-              </article>
-            </section>
-          </div>
+              </div>
+              <span id="capacity-state" class="tag"></span>
+            </div>
+            <div id="capacity-list" class="capacity-list"></div>
+          </section>
+          <section id="projects" class="card projects" aria-label="Projects">
+            <div class="section-head">
+              <div>
+                <h2>Projects</h2>
+                <p class="caption">
+                  Projects your account can read, with record counts and the
+                  latest recorded activity. Open one to follow it in every view.
+                </p>
+              </div>
+              <span id="projects-state" class="tag"></span>
+            </div>
+            <div id="project-grid" class="project-grid"></div>
+          </section>
           <section id="execution-panel" class="card execution-panel">
             <div class="section-head">
               <div>
@@ -148,14 +126,11 @@
             </p>
             <form id="execution-form" class="receipt-form">
               <label for="execution-project">Project</label
-              ><input
-                id="execution-project"
-                required
-                maxlength="96"
-                pattern="[A-Za-z0-9_-]+"
-                placeholder="demo"
-                autocomplete="off"
-              /><button type="submit">Load tasks</button>
+              ><select id="execution-project" required>
+                <option value="" disabled selected>
+                  Sign in to list projects
+                </option></select
+              ><button type="submit">Load tasks</button>
             </form>
             <p id="execution-notice" role="status">
               Enter a project to load its tasks.
@@ -167,6 +142,11 @@
                 <div id="execution-plans"></div>
               </section>
               <div id="execution-tasks"></div>
+              <section aria-label="Structured plans">
+                <h3>Plans</h3>
+                <p>Phases, completed work and remaining steps.</p>
+                <div id="execution-plans"></div>
+              </section>
               <section aria-label="Activity log">
                 <h3>Activity log</h3>
                 <ol id="execution-events" class="activity-trail"></ol>
@@ -187,14 +167,11 @@
             </p>
             <form id="receipt-form" class="receipt-form">
               <label for="receipt-project">Project</label
-              ><input
-                id="receipt-project"
-                required
-                maxlength="96"
-                pattern="[A-Za-z0-9_-]+"
-                placeholder="demo"
-                autocomplete="off"
-              /><button type="submit">Load recent receipts</button>
+              ><select id="receipt-project" required>
+                <option value="" disabled selected>
+                  Sign in to list projects
+                </option></select
+              ><button type="submit">Load recent receipts</button>
             </form>
             <p id="receipt-notice" role="status">
               Choose a project to inspect retained receipts. No model usage is
@@ -206,6 +183,28 @@
             </div>
           </section>
           <section id="observatory" class="card observatory"></section>
+          <section id="team" class="card team-panel">
+            <div class="section-head">
+              <div>
+                <h2>Team</h2>
+              </div>
+              <span class="tag">Shared profile</span>
+            </div>
+            <p>
+              Who did what in a project, the grants that allow it, and an audit
+              export. Counts are of recorded events; they describe activity, not
+              quality.
+            </p>
+            <form id="team-form" class="receipt-form">
+              <label for="team-project">Project</label
+              ><select id="team-project" required>
+                <option value="" disabled selected>
+                  Sign in to list projects
+                </option></select
+              ><button type="submit">Load team view</button>
+            </form>
+            <div id="team-output"></div>
+          </section>
           <footer id="provenance"></footer>
         </div>
       </main>

@@ -10,8 +10,10 @@ from typing import Any, cast
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.repository_git import GitSnapshot, canonical_remote
+from memoryking.application.storage import upsert
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError, Released
 from memoryking.domain.selectors import Truth, bindings, path_valid
@@ -22,7 +24,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Repository:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
 
     def execute(self, credential: str, command: dict[str, Any]) -> Released:
@@ -39,6 +41,9 @@ class Repository:
             "verify": "attest",
             "revalidate": "repository",
         }.get(action, "read")
+        # Git runs before the write transaction so the store lock never waits on the
+        # repository; the commit below rechecks authorization and clone identity.
+        snapshot = self.snapshot_outside(credential, args) if action == "capture" else None
         with self.s.transaction() as decision:
             at = decision.evaluated_ms
             who = self.s._auth(credential, cap, args["project"], at)
@@ -80,7 +85,8 @@ class Repository:
             elif action == "register":
                 result = self.register(who, args, at)
             elif action == "capture":
-                result = self.capture(who, args, at)
+                assert snapshot is not None
+                result = self.capture(who, args, at, snapshot)
             elif action == "bind":
                 result = self.bind(who, args, at)
             elif action == "verify":
@@ -214,7 +220,7 @@ class Repository:
             "position": position,
         }
 
-    def capture(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+    def _clone_root(self, who: dict[str, Any], args: dict[str, Any]) -> Path:
         clone = self.db.execute(
             "SELECT * FROM repository_clones WHERE tenant=? AND repository=? AND alias=?",
             (who["tenant"], args["repository"], args["clone"]),
@@ -228,7 +234,22 @@ class Repository:
             clone["inode"],
         ):
             raise LocalError("repository_clone_changed")
-        body = GitSnapshot(root).capture(args["repository"], args["environment"])
+        return root
+
+    def snapshot_outside(self, credential: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Authorize and locate the clone in a short transaction, then run Git unlocked."""
+        with self.s.transaction() as decision:
+            at = decision.evaluated_ms
+            who = self.s._auth(credential, "repository", args["project"], at)
+            self.s._auth(credential, "read", args["project"], at)
+            self.visible(who, args["repository"], args["project"])
+            root = self._clone_root(who, args)
+        return GitSnapshot(root).capture(args["repository"], args["environment"])
+
+    def capture(
+        self, who: dict[str, Any], args: dict[str, Any], at: int, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        self._clone_root(who, args)  # The clone must still be the registered one at commit.
         raw = canonical_bytes(body)
         if len(raw) > 4 * 1024 * 1024:
             raise LocalError("repository_projection_limit")
@@ -399,7 +420,7 @@ class Repository:
         if old and old["impact"] == "high" and impact != "high":
             raise LocalError("impact_downgrade_requires_new_revision")
         self.db.execute(
-            "INSERT OR REPLACE INTO code_policies VALUES (?,?,?,?,?,?,?,?,?)",
+            upsert("code_policies"),
             (
                 who["tenant"],
                 row["id"],
@@ -446,7 +467,7 @@ class Repository:
             raise LocalError("dependency_policy_stale")
         state = "valid" if args["passed"] else "invalid"
         self.db.execute(
-            "INSERT OR REPLACE INTO code_validations VALUES (?,?,?,?,?,?,?,?,?,?)",
+            upsert("code_validations"),
             (
                 who["tenant"],
                 self.s.incarnation,
@@ -560,7 +581,7 @@ class Repository:
             evidence = prior["evidence"] if prior is not None else policy["evidence"]
             expires = prior["expires"] if prior is not None else at
             self.db.execute(
-                "INSERT OR REPLACE INTO code_validations VALUES (?,?,?,?,?,?,?,?,?,?)",
+                upsert("code_validations"),
                 (
                     who["tenant"],
                     self.s.incarnation,
@@ -680,7 +701,7 @@ class Repository:
                 return None
             self._evidence(who, prior["evidence"], at)
             self.db.execute(
-                "INSERT OR REPLACE INTO code_validations VALUES (?,?,?,?,?,?,?,?,?,?)",
+                upsert("code_validations"),
                 (
                     who["tenant"],
                     self.s.incarnation,

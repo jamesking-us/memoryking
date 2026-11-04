@@ -6,7 +6,6 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import anyio
@@ -17,7 +16,10 @@ from starlette.routing import Route
 
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.hints import hint
+from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import failure
 
 
 class ReleaseResponse(Response):
@@ -51,9 +53,12 @@ class ReleaseResponse(Response):
         await super().__call__(scope, receive, guarded)
 
 
-def error(code: str, status: int = 400) -> Response:
+def error(code: str, status: int = 400, request_id: str | None = None) -> Response:
+    body: dict[str, str] = {"error": code, "hint": hint(code)}
+    if request_id is not None:
+        body["request_id"] = request_id
     return Response(
-        canonical_bytes({"error": code}),
+        canonical_bytes(body),
         status_code=503 if code in {"service_busy", "service_unavailable"} else status,
         media_type="application/json",
         headers={"Cache-Control": "no-store"},
@@ -143,10 +148,10 @@ def create_app(
     hosts: list[str],
     origins: list[str],
     loopback_http: bool = False,
-    plan_root: Path | None = None,
     dashboard_tenant: str | None = None,
 ) -> Any:
     async def operations(request: Request) -> Response:
+        request_started = time.monotonic()
         try:
             credential = bearer(request.headers)
             if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
@@ -160,30 +165,34 @@ def create_app(
             body = load_strict(bytes(data))
             if not isinstance(body, dict):
                 raise LocalError("invalid_request")
+            # The whole request, body included, shares one five-second budget.
             result = await anyio.to_thread.run_sync(
-                service.execute, request.path_params["tenant"], credential, body
+                service.execute,
+                request.path_params["tenant"],
+                credential,
+                body,
+                request_started + 5.0,
             )
             return ReleaseResponse(result)
         except (LocalError, ContractError) as exc:
             code = exc.code if isinstance(exc, LocalError) else "invalid_request"
-            return error(code, 403 if code in {"denied", "credential_required"} else 400)
+            default = 403 if code in {"denied", "credential_required"} else 400
+            return error(code, http_status(code, default))
         except TimeoutError:
             return error("request_timeout", 408)
-        except Exception:
+        except Exception as exc:
             # No SQL, supplied content, filesystem paths or credentials in responses.
-            return error("service_unavailable", 503)
+            return error("service_unavailable", 503, failure("shared_http", exc))
 
     from memoryking.adapters.shared_mcp import SharedMCP
 
     mcp = SharedMCP(service, hosts=hosts, origins=origins)
     dashboard_routes = []
-    if plan_root is not None or dashboard_tenant is not None:
-        if plan_root is None or dashboard_tenant is None:
-            raise LocalError("dashboard_configuration_incomplete")
+    if dashboard_tenant is not None:
         from memoryking.adapters.shared_dashboard import SharedDashboard
 
         service.dashboard = SharedDashboard(
-            service, plan_root, dashboard_tenant, origins, secure=not loopback_http
+            service, dashboard_tenant, origins, secure=not loopback_http
         )
         dashboard_routes = service.dashboard.routes()
 

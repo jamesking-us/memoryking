@@ -97,15 +97,15 @@ def generate(wire_bytes: bytes) -> dict[Path, bytes]:
         embedded.pop("$id")
         embedded.pop("$schema")
 
-        def refs(node: Any) -> None:
+        def refs(node: Any, group: str = group) -> None:
             if isinstance(node, dict):
                 if "$ref" in node:
                     node["$ref"] = node["$ref"].replace("#/$defs/", f"#/$defs/{group}/$defs/")
                 for child in node.values():
-                    refs(child)
+                    refs(child, group)
             elif isinstance(node, list):
                 for child in node:
-                    refs(child)
+                    refs(child, group)
 
         refs(embedded)
         wire["$defs"][group] = embedded

@@ -10,9 +10,10 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
-from memoryking.adapters.local_store import RETRY_MS, LocalStore, uid
+from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.token_count import counter
 from memoryking.adapters.working import Working
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.briefing import counted
 from memoryking.domain.checkpoint import stream_name
@@ -25,7 +26,7 @@ VALIDATOR = Draft202012Validator(
 
 
 class Handoff:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
         self.w = Working(store)
         self.r = self.w.r
@@ -354,7 +355,36 @@ class Handoff:
             ),
         )
         self._event(who, "handoff_prepared", identifier, at)
-        return {"handle": identifier, "status": "prepared", "expires_ms": at + args["ttl_ms"]}
+        # A hand-off carries the sender's "where this left off" so the recipient reads
+        # three sentences before the full packet; the checkpoint remains the record.
+        from memoryking.adapters.working import Working
+
+        summary_receipt = uid("rcpt")
+        summary = Working(self.s)._summarize(
+            who,
+            {
+                "project": args["project"],
+                "task": args["task"],
+                "run": args["run"],
+                "checkpoint": args["checkpoint"],
+                "source": "extractive",
+                "text": None,
+                "permit": None,
+                "readers": None,
+            },
+            at,
+            summary_receipt,
+        )
+        return {
+            "handle": identifier,
+            "status": "prepared",
+            "expires_ms": at + args["ttl_ms"],
+            "summary": {
+                "receipt": summary_receipt,
+                "text": summary["summary"],
+                "method": summary["method"],
+            },
+        }
 
     def _render(
         self,

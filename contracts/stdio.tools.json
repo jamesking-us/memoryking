@@ -4,7 +4,7 @@
   "tools": [
     {
       "name": "memory_status",
-      "description": "Read current authenticated project identity, history and authorization epoch. This does not authorize an inference.",
+      "description": "Check what this session is bound to: store, tenant, principal, project and the current history id. Call it first in a session, or when a call fails with history_changed, before retrying anything. Read-only; it never authorizes a model request.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "MemoryKing current authorized project context",
@@ -15,9 +15,7 @@
             "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
           }
         },
-        "required": [
-          "project"
-        ],
+        "required": [],
         "additionalProperties": false
       },
       "annotations": {
@@ -27,7 +25,7 @@
     },
     {
       "name": "memory_capture",
-      "description": "Capture an authorized observation with a stable retry key; no external tool is executed.",
+      "description": "Remember something you observed: an error, a test result, a decision, a fact with its source. Give a stable `key` and `request.source_event` for the same event so a retry replays instead of duplicating; the same key with different text is a conflict. Text is stored as untrusted evidence, not as an instruction.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -98,8 +96,6 @@
               }
             },
             "required": [
-              "version",
-              "project",
               "source",
               "source_event",
               "text",
@@ -138,7 +134,7 @@
     },
     {
       "name": "memory_handoff",
-      "description": "Authorized MemoryKing handoff. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Pass a task to another principal with their current permissions: `prepare` a handoff from a checkpoint, `preview` what the recipient would receive, `materialize` it as the recipient, `ack` or `cancel`. A handoff never widens access; what the recipient cannot see is left out and reported.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -164,10 +160,7 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "key",
               "args"
             ],
             "additionalProperties": false
@@ -194,10 +187,7 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "key",
               "args"
             ],
             "additionalProperties": false
@@ -224,10 +214,7 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "key",
               "args"
             ],
             "additionalProperties": false
@@ -254,10 +241,7 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "key",
               "args"
             ],
             "additionalProperties": false
@@ -284,10 +268,7 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "key",
               "args"
             ],
             "additionalProperties": false
@@ -347,14 +328,12 @@
               }
             },
             "required": [
-              "project",
               "task",
               "run",
               "checkpoint",
               "recipient",
               "role",
               "stage",
-              "bindings",
               "ttl_ms"
             ],
             "additionalProperties": false
@@ -381,10 +360,7 @@
               }
             },
             "required": [
-              "project",
-              "handle",
-              "max_output_tokens",
-              "tokenizer"
+              "handle"
             ],
             "additionalProperties": false
           },
@@ -409,7 +385,6 @@
               }
             },
             "required": [
-              "project",
               "handle",
               "materialization",
               "rendered_hash"
@@ -429,7 +404,6 @@
               }
             },
             "required": [
-              "project",
               "handle"
             ],
             "additionalProperties": false
@@ -445,7 +419,7 @@
     },
     {
       "name": "memory_brief",
-      "description": "Authorized MemoryKing brief. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Ask for a briefing before starting work: `brief` with a short query returns mandatory constraints, ranked guidance with sources and a receipt. Read `status` and `reason` first: `blocked` or `budget_insufficient` means decide, not truncate. `rerun` repeats an earlier receipt with a new query. Project, bindings, budget and tokenizer default to the session's.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -469,8 +443,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ]
@@ -495,8 +467,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ]
@@ -600,14 +570,34 @@
               },
               "dense": {
                 "$ref": "#/$defs/DenseQuery"
+              },
+              "format": {
+                "enum": [
+                  "json",
+                  "text"
+                ],
+                "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
+              },
+              "as_of_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "salience": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
+              },
+              "rerank": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
               }
             },
             "required": [
-              "project",
-              "query",
-              "bindings",
-              "max_output_tokens",
-              "tokenizer"
+              "query"
             ]
           },
           "Fetch": {
@@ -707,7 +697,6 @@
               }
             },
             "required": [
-              "project",
               "predecessor",
               "brief"
             ]
@@ -754,7 +743,7 @@
                 "type": "array",
                 "uniqueItems": true,
                 "minItems": 1,
-                "maxItems": 7,
+                "maxItems": 9,
                 "items": {
                   "type": "string",
                   "enum": [
@@ -763,6 +752,8 @@
                     "attestation",
                     "procedure",
                     "checkpoint",
+                    "plan",
+                    "step",
                     "task",
                     "run"
                   ]
@@ -850,7 +841,7 @@
     },
     {
       "name": "memory_fetch",
-      "description": "Authorized MemoryKing fetch. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Follow up on a briefing you already have: `fetch` more of a source, `receipt` the diagnostics behind a receipt, `replay` the exact bytes that were delivered, `receipts` to list recent ones. Replays can report expired or purged; that is an answer, not an error to retry.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -874,8 +865,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ]
@@ -900,8 +889,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ]
@@ -926,8 +913,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ]
@@ -952,8 +937,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ]
@@ -1057,6 +1040,30 @@
               },
               "dense": {
                 "$ref": "#/$defs/DenseQuery"
+              },
+              "format": {
+                "enum": [
+                  "json",
+                  "text"
+                ],
+                "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
+              },
+              "as_of_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "salience": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
+              },
+              "rerank": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
               }
             },
             "required": [
@@ -1107,13 +1114,10 @@
               }
             },
             "required": [
-              "project",
               "reference",
               "kind",
               "start_byte",
-              "end_byte",
-              "max_output_tokens",
-              "tokenizer"
+              "end_byte"
             ]
           },
           "Receipt": {
@@ -1130,7 +1134,6 @@
               }
             },
             "required": [
-              "project",
               "receipt"
             ]
           },
@@ -1143,9 +1146,7 @@
                 "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
               }
             },
-            "required": [
-              "project"
-            ]
+            "required": []
           },
           "Rerun": {
             "type": "object",
@@ -1211,7 +1212,7 @@
                 "type": "array",
                 "uniqueItems": true,
                 "minItems": 1,
-                "maxItems": 7,
+                "maxItems": 9,
                 "items": {
                   "type": "string",
                   "enum": [
@@ -1220,6 +1221,8 @@
                     "attestation",
                     "procedure",
                     "checkpoint",
+                    "plan",
+                    "step",
                     "task",
                     "run"
                   ]
@@ -1307,7 +1310,7 @@
     },
     {
       "name": "memory_checkpoint",
-      "description": "Authorized MemoryKing checkpoint. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Save progress before you stop or hand over: objective, current state, next actions, failed attempts, blockers and verification gaps, under a project, task and expected revision. Use the exact revision you last saw; a conflict means someone else saved first, so resume and merge rather than overwrite.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -1333,11 +1336,8 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "args",
-              "key"
+              "args"
             ],
             "additionalProperties": false
           }
@@ -1827,18 +1827,7 @@
             },
             "required": [
               "objective",
-              "acceptance",
-              "hard_constraints",
-              "current_state",
-              "repository",
-              "findings",
-              "failed_attempts",
-              "verification",
-              "blockers",
-              "next_actions",
-              "references",
-              "operation_ids",
-              "capture"
+              "current_state"
             ],
             "additionalProperties": false
           },
@@ -1865,30 +1854,42 @@
                 ]
               },
               "expected_revision": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The revision last seen; null accepts the current revision without a compare-and-set check."
               },
               "readers": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
-                },
-                "maxItems": 32,
-                "minItems": 1,
-                "uniqueItems": true
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who may read the checkpoint; null keeps the stream's current readers (the writer alone on a first save)."
               },
               "checkpoint": {
                 "$ref": "#/$defs/Checkpoint"
               }
             },
             "required": [
-              "project",
               "task",
-              "run",
-              "expected_revision",
-              "readers",
               "checkpoint"
             ],
             "additionalProperties": false
@@ -1941,6 +1942,13 @@
               "tokenizer": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "format": {
+                "enum": [
+                  "json",
+                  "text"
+                ],
+                "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
               }
             },
             "required": [
@@ -2276,6 +2284,97 @@
               "model_session",
               "context_epoch"
             ]
+          },
+          "Summarize": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkpoint": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "enum": [
+                  "extractive",
+                  "provider"
+                ]
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "permit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^permit_[a-f0-9]{32}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "readers": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "minItems": 1,
+                    "maxItems": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "checkpoint",
+              "source",
+              "text",
+              "permit",
+              "readers"
+            ],
+            "additionalProperties": false
           },
           "PlanPhase": {
             "type": "object",
@@ -2613,7 +2712,7 @@
     },
     {
       "name": "memory_resume",
-      "description": "Authorized MemoryKing resume. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Pick up a saved task: returns the checkpoint, open operations and the context you are still authorized to see, within a token budget. Read `status`; a `blocked` or `partial` packet lists what is missing. Budget and tokenizer default to the session's.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -2635,8 +2734,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ],
@@ -3166,19 +3263,35 @@
                 ]
               },
               "expected_revision": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The revision last seen; null accepts the current revision without a compare-and-set check."
               },
               "readers": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
-                },
-                "maxItems": 32,
-                "minItems": 1,
-                "uniqueItems": true
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who may read the checkpoint; null keeps the stream's current readers (the writer alone on a first save)."
               },
               "checkpoint": {
                 "$ref": "#/$defs/Checkpoint"
@@ -3242,16 +3355,18 @@
               "tokenizer": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "format": {
+                "enum": [
+                  "json",
+                  "text"
+                ],
+                "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
               }
             },
             "required": [
-              "project",
               "task",
-              "run",
-              "checkpoint",
-              "bindings",
-              "max_output_tokens",
-              "tokenizer"
+              "checkpoint"
             ],
             "additionalProperties": false
           },
@@ -3577,6 +3692,97 @@
               "model_session",
               "context_epoch"
             ]
+          },
+          "Summarize": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkpoint": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "enum": [
+                  "extractive",
+                  "provider"
+                ]
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "permit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^permit_[a-f0-9]{32}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "readers": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "minItems": 1,
+                    "maxItems": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "checkpoint",
+              "source",
+              "text",
+              "permit",
+              "readers"
+            ],
+            "additionalProperties": false
           },
           "PlanPhase": {
             "type": "object",
@@ -3914,7 +4120,7 @@
     },
     {
       "name": "memory_plan",
-      "description": "Authorized MemoryKing plan. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Track a multi-step plan on a task: `plan_save` creates or revises the whole plan (phases, steps with stable ids, prerequisites), `plan_step` updates one step's status, notes and evidence, `plan_get` reads the current or an earlier revision with computed progress, `plan_list` pages the project's plans. A step counts as done only with evidence; a changed definition needs fresh evidence. Progress is recorded work, not independent certification.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -3940,11 +4146,8 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "args",
-              "key"
+              "args"
             ],
             "additionalProperties": false
           },
@@ -3970,11 +4173,8 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "args",
-              "key"
+              "args"
             ],
             "additionalProperties": false
           },
@@ -3996,8 +4196,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ],
@@ -4021,8 +4219,6 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
               "args"
             ],
@@ -4552,19 +4748,35 @@
                 ]
               },
               "expected_revision": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 9007199254740991
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The revision last seen; null accepts the current revision without a compare-and-set check."
               },
               "readers": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
-                },
-                "maxItems": 32,
-                "minItems": 1,
-                "uniqueItems": true
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Who may read the checkpoint; null keeps the stream's current readers (the writer alone on a first save)."
               },
               "checkpoint": {
                 "$ref": "#/$defs/Checkpoint"
@@ -4628,6 +4840,13 @@
               "tokenizer": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "format": {
+                "enum": [
+                  "json",
+                  "text"
+                ],
+                "description": "json (default) returns the structured packet; text returns a cited Markdown rendering in a compact envelope with the same receipt."
               }
             },
             "required": [
@@ -4964,6 +5183,97 @@
               "context_epoch"
             ]
           },
+          "Summarize": {
+            "type": "object",
+            "properties": {
+              "project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "task": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "checkpoint": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "source": {
+                "enum": [
+                  "extractive",
+                  "provider"
+                ]
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "permit": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^permit_[a-f0-9]{32}(?![\\s\\S])"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "readers": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                    },
+                    "minItems": 1,
+                    "maxItems": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "project",
+              "task",
+              "run",
+              "checkpoint",
+              "source",
+              "text",
+              "permit",
+              "readers"
+            ],
+            "additionalProperties": false
+          },
           "PlanPhase": {
             "type": "object",
             "properties": {
@@ -5151,7 +5461,6 @@
               }
             },
             "required": [
-              "project",
               "task",
               "expected_revision",
               "readers",
@@ -5215,7 +5524,6 @@
               }
             },
             "required": [
-              "project",
               "task",
               "expected_revision",
               "step",
@@ -5251,7 +5559,6 @@
               }
             },
             "required": [
-              "project",
               "task",
               "revision"
             ],
@@ -5283,7 +5590,6 @@
               }
             },
             "required": [
-              "project",
               "cursor",
               "limit"
             ],
@@ -5300,7 +5606,7 @@
     },
     {
       "name": "memory_feedback",
-      "description": "Authorized MemoryKing feedback. JSON text is the counted representation; protocol and host wrappers cost additional tokens.",
+      "description": "Report what happened after using memory: `outcome` records the result of a run with its evidence, `feedback` rates whether a specific memory helped. This informs ranking; it cannot activate a procedure or change policy.",
       "inputSchema": {
         "type": "object",
         "oneOf": [
@@ -5327,11 +5633,8 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "args",
-              "key"
+              "args"
             ]
           },
           {
@@ -5357,11 +5660,8 @@
               }
             },
             "required": [
-              "version",
-              "incarnation",
               "action",
-              "args",
-              "key"
+              "args"
             ]
           }
         ],
@@ -6064,7 +6364,6 @@
               }
             },
             "required": [
-              "project",
               "logical_key",
               "expected_revision",
               "body"
@@ -6146,7 +6445,6 @@
               }
             },
             "required": [
-              "project",
               "receipt",
               "reference",
               "task",

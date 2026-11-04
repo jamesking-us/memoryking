@@ -9,18 +9,40 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, BinaryIO
 
+from jsonschema import Draft202012Validator
+
+from memoryking import lean
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError
+from memoryking.observability import failure
 from memoryking.sdk import CATALOG, LocalClient
 
 INPUT_LIMIT = 262144
+LEAN_VALIDATORS = {item["name"]: Draft202012Validator(item["inputSchema"]) for item in lean.TOOLS}
 
 
 class StdioBridge:
-    def __init__(self, client: LocalClient):
+    def __init__(self, client: LocalClient, profile: str = "full"):
+        if profile not in {"full", "lean"}:
+            raise LocalError("invalid_request")
         self.client = client
+        self.profile = profile
         self.initialized = False
         self.ready = False
+
+    def tools(self) -> list[dict[str, Any]]:
+        return lean.TOOLS if self.profile == "lean" else CATALOG["tools"]
+
+    def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.profile == "lean":
+            validator = LEAN_VALIDATORS.get(name)
+            if validator is None:
+                raise LocalError("unknown_tool")
+            if not validator.is_valid(arguments):
+                raise LocalError("invalid_tool_arguments")
+            return lean.call(self.client, name, arguments)
+        return self.client.tool(name, arguments)
 
     @staticmethod
     def error(identifier: Any, code: int, message: str) -> dict[str, Any]:
@@ -78,14 +100,14 @@ class StdioBridge:
         if method == "tools/list":
             if params.get("cursor") is not None:
                 return self.error(identifier, -32602, "invalid_cursor")
-            return self.result(identifier, {"tools": CATALOG["tools"]})
+            return self.result(identifier, {"tools": self.tools()})
         if method != "tools/call":
             return self.error(identifier, -32601, "method_not_found")
         name, arguments = params.get("name"), params.get("arguments", {})
         if not isinstance(name, str) or not isinstance(arguments, dict):
             return self.error(identifier, -32602, "invalid_params")
         try:
-            result = self.client.tool(name, arguments)
+            result = self.call(name, arguments)
             content = canonical_bytes(result).decode()
             return self.result(
                 identifier, {"content": [{"type": "text", "text": content}], "isError": False}
@@ -96,7 +118,12 @@ class StdioBridge:
             return self.result(
                 identifier,
                 {
-                    "content": [{"type": "text", "text": json.dumps({"error": exc.code})}],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps({"error": exc.code, "hint": hint(exc.code)}),
+                        }
+                    ],
                     "isError": True,
                 },
             )
@@ -118,7 +145,8 @@ class StdioBridge:
                     response = self.handle(value)
                 except ContractError:
                     response = self.error(None, -32700, "parse_error")
-                except Exception:
+                except Exception as exc:
+                    failure("stdio", exc)
                     response = self.error(None, -32603, "internal_error")
             if response is not None:
                 if (
@@ -142,10 +170,16 @@ def main() -> int:
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--credential", type=Path, required=True)
     parser.add_argument("--project", required=True)
+    parser.add_argument(
+        "--profile",
+        choices=("full", "lean"),
+        default="full",
+        help="lean: five flat tools (remember, recall, save_progress, resume, hand_off)",
+    )
     args = parser.parse_args()
     try:
         client = LocalClient(args.socket, args.credential, args.project)
-        StdioBridge(client).serve(sys.stdin.buffer, sys.stdout.buffer)
+        StdioBridge(client, args.profile).serve(sys.stdin.buffer, sys.stdout.buffer)
     except (LocalError, OSError, ContractError) as exc:
         print(
             exc.code if isinstance(exc, LocalError) else "local_transport_unavailable",

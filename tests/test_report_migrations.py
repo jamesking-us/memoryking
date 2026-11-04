@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import psycopg
 import test_knowledge as knowledge
-from migration_helpers import historical_inventory
+from migration_helpers import historical_private_inventory
 from test_postgres_parity import BIN
 
 from memoryking.adapters import postgres_admin
@@ -24,13 +24,13 @@ class LocalReportMigrations(unittest.TestCase):
     def test_schema_nine_upgrade_rolls_back_then_retries(self):
         self.store.close()
         with sqlite3.connect(self.data / "store.sqlite") as db:
-            historical_inventory(db, 9)
+            historical_private_inventory(db, 9)
         original = Path.read_text
 
         def invalid(path, *args, **kwargs):
             text = original(path, *args, **kwargs)
             return (
-                text.replace("COMMIT;", "SELECT missing_m02_function(); COMMIT;")
+                text.replace("COMMIT;", "SELECT missing_m02_function();\nCOMMIT;")
                 if path.name == "report_schema.sql"
                 else text
             )
@@ -43,7 +43,7 @@ class LocalReportMigrations(unittest.TestCase):
                 db.execute("SELECT name FROM sqlite_master WHERE name='report_sources'").fetchone()
             )
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(
             self.store.db.execute("SELECT blob FROM observations").fetchone()[0],
             self.span["content_hash"],
@@ -100,7 +100,7 @@ class NativeReportUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "5",
+                        "9",
                     )
         finally:
             cluster.close()

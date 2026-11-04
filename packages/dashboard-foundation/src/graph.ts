@@ -20,6 +20,82 @@ export interface GraphData {
   next_cursor?: string | null;
   [key: string]: unknown;
 }
+export interface Citation {
+  receipt: string;
+  status: string;
+  created_ms: number;
+  dependency_kind: string;
+  format?: string;
+  usage?: { output_tokens?: number; counting?: string };
+}
+/** Receipt trail for a node: load the caller's receipts that used it, open one. */
+export interface ReceiptTrail {
+  load: (id: string) => Promise<Citation[]>;
+  open: (receipt: string) => void;
+}
+export type Authority =
+  | "observation"
+  | "accepted"
+  | "proposed"
+  | "quarantined"
+  | "retired"
+  | "constraint"
+  | "attestation"
+  | "procedure"
+  | "plan"
+  | "working";
+/** Legend order and wording; colours live in app.css under [data-authority]. */
+export const AUTHORITY_LEGEND: ReadonlyArray<[Authority, string]> = [
+  ["observation", "Observation: recorded, not reviewed"],
+  ["accepted", "Accepted claim"],
+  ["proposed", "Proposed claim: awaiting review"],
+  ["quarantined", "Quarantined claim"],
+  ["retired", "Rejected or deprecated claim"],
+  ["constraint", "Mandatory constraint"],
+  ["attestation", "Attestation by an actor"],
+  ["procedure", "Procedure"],
+  ["plan", "Plan or plan step"],
+  ["working", "Checkpoint, task or run"],
+];
+/** Authority is what the store recorded about the node; layout never changes it. */
+export function authorityOf(node: {
+  type: string;
+  authority?: string;
+  state?: unknown;
+  quarantined?: unknown;
+}): Authority {
+  switch (node.type) {
+    case "observation":
+      return "observation";
+    case "attestation":
+      return "attestation";
+    case "procedure":
+      return "procedure";
+    case "plan":
+    case "step":
+      return "plan";
+    case "checkpoint":
+    case "task":
+    case "run":
+      return "working";
+    case "claim":
+      if (node.quarantined === true) return "quarantined";
+      if (node.authority === "mandatory_constraint") return "constraint";
+      if (node.state === "accepted") return "accepted";
+      if (node.state === "proposed") return "proposed";
+      return "retired";
+    default:
+      return "working";
+  }
+}
+/** Radius grows with the square root of citations and is capped; selection adds a ring. */
+export function nodeRadius(citations: unknown, selected = false): number {
+  const count =
+    typeof citations === "number" && Number.isFinite(citations) && citations > 0
+      ? citations
+      : 0;
+  return Math.min(16, 8 + 2 * Math.sqrt(count)) + (selected ? 3 : 0);
+}
 const ns = "http://www.w3.org/2000/svg";
 function svg<K extends keyof SVGElementTagNameMap>(
   tag: K,
@@ -55,6 +131,7 @@ export class AtlasView {
   constructor(
     private root: HTMLElement,
     private expand: (id: string) => void,
+    private receipts: ReceiptTrail | null = null,
   ) {
     this.root.classList.add("atlas-workspace");
     const controls = html("div");
@@ -70,6 +147,8 @@ export class AtlasView {
       "attestation",
       "procedure",
       "checkpoint",
+      "plan",
+      "step",
       "task",
       "run",
       "file",
@@ -86,12 +165,9 @@ export class AtlasView {
     for (const [name, action] of [
       ["Re-layout", () => this.settle()],
       ["Freeze layout", () => this.freeze()],
-      [
-        "Fit all",
-        () => {
-          this.graph.setAttribute("viewBox", "0 0 900 480");
-        },
-      ],
+      ["Fit all", () => this.fit()],
+      ["Zoom in", () => this.zoom(1 / 1.3)],
+      ["Zoom out", () => this.zoom(1.3)],
       [
         "Fit selection",
         () => {
@@ -122,7 +198,25 @@ export class AtlasView {
       b.onclick = action;
       controls.append(b);
     }
+    const drawing = html("button", "Show drawing");
+    drawing.className = "graph-drawing-toggle";
+    drawing.setAttribute("aria-pressed", "false");
+    drawing.onclick = () => {
+      const shown = this.root.classList.toggle("graph-shown");
+      drawing.textContent = shown ? "List only" : "Show drawing";
+      drawing.setAttribute("aria-pressed", String(shown));
+    };
+    controls.append(drawing);
+    const legend = html("ul");
+    legend.className = "graph-legend";
+    legend.setAttribute("aria-label", "Node colours by authority");
+    for (const [authority, text] of AUTHORITY_LEGEND) {
+      const item = html("li", text);
+      item.dataset.authority = authority;
+      legend.append(item);
+    }
     this.status.setAttribute("role", "status");
+    this.installNavigation();
     const pane = html("div");
     pane.className = "graph-panes";
     const details = html("div");
@@ -134,11 +228,12 @@ export class AtlasView {
     pane.append(this.graph, details);
     root.append(
       controls,
+      legend,
       this.status,
       pane,
       html(
         "p",
-        "Layout distance is not confidence. Lines describe recorded relations within the loaded, authorized window. Dragging changes presentation only.",
+        "Colour is the recorded authority and size is how many of your receipts cited the record. Layout distance is not confidence. Lines describe recorded relations within the loaded, authorized window. Dragging a node, panning the canvas, the wheel and pinching change presentation only. On a narrow screen the list stands in for the drawing.",
       ),
     );
   }
@@ -177,15 +272,129 @@ export class AtlasView {
       !this.data.edges.some((edge) => edge.id === this.selected)
     )
       this.selected = null;
-    this.inspector.replaceChildren();
+    // A refreshed view keeps the selection and its inspector when it still exists.
     if (this.selected) this.inspect(this.selected);
+    else this.inspector.replaceChildren();
     this.draw();
     this.settle();
+  }
+  /** The current viewBox as numbers; the frame falls back to the default. */
+  private frame(): [number, number, number, number] {
+    const parts = (this.graph.getAttribute("viewBox") ?? "0 0 900 480")
+      .split(/\s+/)
+      .map(Number);
+    return parts.length === 4 && parts.every(Number.isFinite)
+      ? (parts as [number, number, number, number])
+      : [0, 0, 900, 480];
+  }
+  /** Scale the frame around a point (default: its centre). Presentation only. */
+  private zoom(factor: number, around?: { x: number; y: number }): void {
+    const [x, y, w, h] = this.frame();
+    const width = Math.min(8000, Math.max(120, w * factor)),
+      height = Math.min(8000, Math.max(64, h * factor));
+    const cx = around?.x ?? x + w / 2,
+      cy = around?.y ?? y + h / 2;
+    const nx = cx - ((cx - x) * width) / w,
+      ny = cy - ((cy - y) * height) / h;
+    this.graph.setAttribute(
+      "viewBox",
+      `${Math.round(nx)} ${Math.round(ny)} ${Math.round(width)} ${Math.round(height)}`,
+    );
+  }
+  /** Pointer position in graph units, or null without a rendered frame. */
+  private graphPoint(ev: {
+    clientX: number;
+    clientY: number;
+  }): DOMPoint | null {
+    const matrix = this.graph.getScreenCTM();
+    return matrix
+      ? new DOMPoint(ev.clientX, ev.clientY).matrixTransform(matrix.inverse())
+      : null;
+  }
+  /** Wheel zooms around the pointer; dragging empty canvas pans; pinch zooms. */
+  private installNavigation(): void {
+    this.graph.addEventListener(
+      "wheel",
+      (ev) => {
+        ev.preventDefault();
+        const point = this.graphPoint(ev);
+        this.zoom(ev.deltaY > 0 ? 1.15 : 1 / 1.15, point ?? undefined);
+      },
+      { passive: false },
+    );
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch: number | null = null;
+    this.graph.addEventListener("pointerdown", (ev) => {
+      if (ev.target !== this.graph) return;
+      touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      this.graph.setPointerCapture(ev.pointerId);
+      if (touches.size === 2) {
+        const [a, b] = [...touches.values()];
+        pinch = Math.hypot(a.x - b.x, a.y - b.y);
+      }
+    });
+    this.graph.addEventListener("pointermove", (ev) => {
+      const previous = touches.get(ev.pointerId);
+      if (!previous) return;
+      if (touches.size === 2 && pinch) {
+        touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+        const [a, b] = [...touches.values()];
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        if (distance > 0) {
+          const centre = this.graphPoint({
+            clientX: (a.x + b.x) / 2,
+            clientY: (a.y + b.y) / 2,
+          });
+          this.zoom(pinch / distance, centre ?? undefined);
+          pinch = distance;
+        }
+        return;
+      }
+      const from = this.graphPoint({
+          clientX: previous.x,
+          clientY: previous.y,
+        }),
+        to = this.graphPoint(ev);
+      touches.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (!from || !to) return;
+      const [x, y, w, h] = this.frame();
+      this.graph.setAttribute(
+        "viewBox",
+        `${Math.round(x - (to.x - from.x))} ${Math.round(y - (to.y - from.y))} ${w} ${h}`,
+      );
+    });
+    for (const type of ["pointerup", "pointercancel"])
+      this.graph.addEventListener(type, (ev) => {
+        touches.delete((ev as PointerEvent).pointerId);
+        if (touches.size < 2) pinch = null;
+      });
   }
   freeze(): void {
     this.worker?.terminate();
     this.worker = null;
     this.ticket++;
+  }
+  /** Frame the drawn nodes with room for labels; an empty graph keeps the full frame. */
+  private fit(): void {
+    const shown = this.data.nodes
+      .map((n) => this.positions.get(n.id))
+      .filter((p): p is LayoutNode => p?.x !== undefined && p.y !== undefined);
+    if (!shown.length) {
+      this.graph.setAttribute("viewBox", "0 0 900 480");
+      return;
+    }
+    const xs = shown.map((p) => p.x as number),
+      ys = shown.map((p) => p.y as number);
+    const minX = Math.min(...xs) - 40,
+      maxX = Math.max(...xs) + 160,
+      minY = Math.min(...ys) - 40,
+      maxY = Math.max(...ys) + 40;
+    const width = Math.max(320, maxX - minX),
+      height = Math.max(200, maxY - minY);
+    this.graph.setAttribute(
+      "viewBox",
+      `${Math.round(minX)} ${Math.round(minY)} ${Math.round(width)} ${Math.round(height)}`,
+    );
   }
   private settle(): void {
     this.freeze();
@@ -216,6 +425,7 @@ export class AtlasView {
         if (e.data.ok) {
           for (const p of e.data.nodes) this.positions.set(p.id, p);
           this.draw();
+          this.fit();
           this.status.textContent += ` · layout ${e.data.elapsed_ms.toFixed(1)} ms / ${e.data.iterations} iterations`;
         }
       };
@@ -252,11 +462,67 @@ export class AtlasView {
       html(
         "p",
         node
-          ? `${node.type} · ${node.authority ?? "recorded relationship"} · ${this.positions.get(id)?.pinned ? "pinned" : "unpinned"}`
+          ? `${node.type} · ${authorityOf(node).replaceAll("-", " ")} (${node.authority ?? "recorded"}) · ${this.positions.get(id)?.pinned ? "pinned" : "unpinned"}`
           : "Typed directional edge; provenance below.",
       ),
-      pre,
     );
+    if (node) this.inspector.append(this.trail(node));
+    this.inspector.append(pre);
+  }
+  /** Receipts are the evidence that a record was actually used; they open in Retrieval history. */
+  private trail(node: GraphNode): HTMLElement {
+    const box = html("div");
+    box.className = "graph-trail";
+    const count =
+      typeof node.citations === "number" ? (node.citations as number) : 0;
+    box.append(
+      html(
+        "p",
+        count === 1
+          ? "Cited by 1 of your retained receipts."
+          : `Cited by ${count} of your retained receipts.`,
+      ),
+    );
+    if (!this.receipts || count === 0) return box;
+    const show = document.createElement("button");
+    show.textContent = "Show receipts";
+    show.className = "graph-trail-load";
+    show.onclick = () => {
+      show.disabled = true;
+      void this.receipts!.load(node.id).then(
+        (items) => {
+          show.remove();
+          const list = html("div");
+          list.className = "graph-trail-list";
+          for (const item of items) {
+            const open = html(
+              "button",
+              `${item.status.replaceAll("_", " ")} · ${item.usage?.output_tokens ?? "?"} tokens · ${new Date(item.created_ms).toLocaleString()} · via ${item.dependency_kind.replaceAll("_", " ")}`,
+            );
+            open.className = "graph-trail-item";
+            open.dataset.receipt = item.receipt;
+            open.onclick = () => this.receipts!.open(item.receipt);
+            list.append(open);
+          }
+          if (!items.length)
+            list.append(
+              html(
+                "p",
+                "No receipt is currently available: it expired, or its evidence is no longer readable.",
+              ),
+            );
+          box.append(list);
+        },
+        () => {
+          show.disabled = false;
+          box.append(
+            html("p", "Receipts unavailable under the current session."),
+          );
+        },
+      );
+    };
+    box.append(show);
+    return box;
   }
   private draw(): void {
     const drawStarted = performance.now();
@@ -326,14 +592,20 @@ export class AtlasView {
     }
     for (const n of nodes) {
       const p = this.positions.get(n.id)!;
+      const authority = authorityOf(n);
       const g = svg("g", {
         transform: `translate(${p.x},${p.y})`,
         class: "atlas-node " + n.type,
+        "data-authority": authority,
         tabindex: "0",
         role: "button",
-        "aria-label": `${n.type}: ${n.label}. ${p.pinned ? "Pinned." : ""}`,
+        "aria-label": `${n.type}, ${authority}: ${n.label}. Cited by ${String(n.citations ?? 0)} receipts. ${p.pinned ? "Pinned." : ""}`,
       });
-      g.append(svg("circle", { r: n.id === this.selected ? "12" : "9" }));
+      g.append(
+        svg("circle", {
+          r: String(nodeRadius(n.citations, n.id === this.selected)),
+        }),
+      );
       const title = svg("title");
       title.textContent = n.label;
       g.append(title);
@@ -402,7 +674,11 @@ export class AtlasView {
         }
       };
       this.graph.append(g);
-      const button = html("button", `${n.type} · ${n.label.slice(0, 100)}`);
+      const button = html(
+        "button",
+        `${n.type} · ${authority} · ${n.label.slice(0, 100)}`,
+      );
+      button.dataset.authority = authority;
       button.setAttribute("data-focus-key", "list:" + n.id);
       button.onclick = () => {
         this.inspect(n.id);

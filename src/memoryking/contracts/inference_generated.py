@@ -13,7 +13,7 @@ class Binding(TypedDict):
     authorization_epoch: int
     purge_epoch: int
     delegation_chain: list[str]
-    egress_policy_revision: Literal["local-recording-v1"]
+    egress_policy_revision: str
     model_session_id: str
     context_epoch: int
 
@@ -26,8 +26,8 @@ class Handle(TypedDict):
     id: str
 
 class Request(TypedDict):
-    provider: Literal["local-recording"]
-    model: Literal["echo-v1"]
+    provider: Literal["local-recording", "anthropic-messages", "openai-chat", "vertex-ai"]
+    model: str
     messages: list[Message]
     state_handles: list[Handle]
 
@@ -62,6 +62,22 @@ class Consume(TypedDict):
     manifest: Manifest
     permit: str
 
+class Usage(TypedDict):
+    input_tokens: int | None
+    output_tokens: int | None
+
+class Report(TypedDict):
+    binding: Binding
+    permit: str
+    status: Literal["delivered", "failed", "unknown"]
+    wire_hash: str | None
+    response_hash: str | None
+    usage: Usage | None
+
+class Audit(TypedDict):
+    project: str
+    before: int | None
+
 class Command0(TypedDict):
     version: Literal[1]
     action: Literal["authorize"]
@@ -77,4 +93,14 @@ class Command2(TypedDict):
     action: Literal["validate"]
     args: Authorize
 
-InferenceCommand = Command0 | Command1 | Command2
+class Command3(TypedDict):
+    version: Literal[1]
+    action: Literal["report"]
+    args: Report
+
+class Command4(TypedDict):
+    version: Literal[1]
+    action: Literal["audit"]
+    args: Audit
+
+InferenceCommand = Command0 | Command1 | Command2 | Command3 | Command4

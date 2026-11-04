@@ -194,6 +194,76 @@ class InspectionCases:
         with self.assertRaisesRegex(LocalError, "session_changed"):
             self.browser(session, "knowledge", "review", review, key="review")
 
+    def test_influence_lists_every_record_built_on_an_observation_and_who_got_it(self):
+        claim = self.review(self.propose())
+        target = self.obs["observation"]
+        state = working.checkpoint()
+        state["acceptance"][0].update(
+            state="passed", evidence=[{"kind": "observation", "id": target}]
+        )
+        saved = self.save(state, readers=["owner", "reviewer"])
+        session = self.session()
+        brief = self.browser(
+            session,
+            "retrieval",
+            "brief",
+            {
+                "query": "timeout",
+                "bindings": [{}],
+                "max_output_tokens": 4000,
+                "tokenizer": "utf8-byte-estimate-v1",
+            },
+        )
+        report = self.browser(session, "inspection", "influence", {"observation": target})
+        self.assertEqual(report["observation"], target)
+        self.assertEqual(report["captured_by"], "owner")
+        self.assertEqual([c["revision"] for c in report["claims"]], [claim["revision"]])
+        self.assertTrue(report["claims"][0]["readable_now"])
+        self.assertEqual(report["checkpoints"][0]["checkpoint"], saved["checkpoint"])
+        self.assertEqual(report["checkpoints"][0]["readers"], ["owner", "reviewer"])
+        self.assertIn(brief["receipt"], [d["receipt"] for d in report["deliveries"]])
+        delivery = next(d for d in report["deliveries"] if d["receipt"] == brief["receipt"])
+        self.assertEqual((delivery["principal"], delivery["kind"]), ("owner", "brief"))
+        self.assertEqual(report["principals"], ["owner", "reviewer"])
+        self.assertEqual(report["counts"]["claims"], 1)
+        self.assertEqual(report["truncation"], [])
+        self.assertEqual(report["handoffs"], [])
+        # A second observation nothing was built from reports nothing, not an error.
+        other = self.store.capture(
+            self.owner,
+            self.ns,
+            "lonely",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "test",
+                "source_event": "lonely",
+                "text": "An observation no record depends on.",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        empty = self.browser(
+            session, "inspection", "influence", {"observation": other["observation"]}
+        )
+        self.assertEqual(empty["counts"]["principals"], 0)
+        self.assertEqual(empty["principals"], [])
+        with self.assertRaisesRegex(LocalError, "unavailable"):
+            self.browser(session, "inspection", "influence", {"observation": "obs_missing"})
+        # A reader without admin capability cannot see who received what.
+        reader = self.store.grant(self.owner, "reader", "p", ["read"])
+        with self.assertRaisesRegex(LocalError, "denied"):
+            Inspection(self.store).execute(
+                reader,
+                {
+                    "version": 1,
+                    "incarnation": self.store.incarnation,
+                    "action": "influence",
+                    "args": {"project": "p", "observation": target},
+                },
+            )
+
     def test_retention_requires_exact_current_preview_and_explicit_confirmation(self):
         claim = self.review(self.propose())
         session = self.session()

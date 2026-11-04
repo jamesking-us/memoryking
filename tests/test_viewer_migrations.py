@@ -33,7 +33,7 @@ class LocalViewerMigrations(unittest.TestCase):
         def invalid(path, *args, **kwargs):
             text = original(path, *args, **kwargs)
             return (
-                text.replace("COMMIT;", "SELECT missing_m01_function(); COMMIT;")
+                text.replace("COMMIT;", "SELECT missing_m01_function();\nCOMMIT;")
                 if path.name == "viewer_schema.sql"
                 else text
             )
@@ -46,7 +46,7 @@ class LocalViewerMigrations(unittest.TestCase):
                 db.execute("SELECT name FROM sqlite_master WHERE name='viewer_bindings'").fetchone()
             )
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(
             self.store.db.execute("SELECT blob FROM observations").fetchone()[0],
             self.span["content_hash"],
@@ -153,7 +153,7 @@ class NativeViewerUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "5",
+                        "9",
                     )
         finally:
             cluster.close()

@@ -14,7 +14,8 @@ from typing import Any
 
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_store import LocalStore, uid
+from memoryking.application.storage import insert_ignore
+from memoryking.application.store_core import StoreCore, uid
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
 from memoryking.contracts.viewer import validate_viewer
 from memoryking.domain.local import LocalError, Released, temporal_valid
@@ -43,7 +44,7 @@ CAPABILITIES = {
 
 
 class Reports:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
 
     def execute(self, credential: str, command: dict[str, Any]) -> Released:
@@ -259,7 +260,7 @@ class Reports:
             (tenant, project, result["id"], result["version"], canonical_bytes(body).decode()),
         )
         self.db.execute(
-            "INSERT OR IGNORE INTO report_control_retries VALUES (?,?,?,?,?)",
+            insert_ignore("report_control_retries", 5),
             (
                 tenant,
                 action["actor"],

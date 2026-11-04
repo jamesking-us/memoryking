@@ -13,12 +13,12 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Self, cast
+from typing import Any, Callable, Self
 
-from memoryking.adapters.local_contract import validate_capture
 from memoryking.adapters.local_files import (
     Control,
     Ownership,
@@ -27,47 +27,52 @@ from memoryking.adapters.local_files import (
     private_file,
     sync_dir,
 )
-from memoryking.contracts.canonical import canonical_bytes, canonical_hash
+from memoryking.adapters.mobile_core import MobileStoreCore
+from memoryking.adapters.mobile_migrations import SCHEMA_VERSION, ensure_mobile_schema
+from memoryking.application.storage import SQLiteDialect
+from memoryking.application.store_core import (  # noqa: F401
+    ARTIFACT_BYTES_LIMIT,
+    ARTIFACT_LIMIT,
+    CAPACITY_LIMITS,
+    CONCURRENCY_LIMIT,
+    INTENT_LIMIT,
+    INTENT_SCOPE_LIMIT,
+    MAX_ATTEMPTS,
+    MAX_COUNTER,
+    OPEN_INTENT_STATES,
+    QUEUE_LIMIT,
+    RETRY_MS,
+    USAGE_LIMIT,
+    StoreCore,
+    identifier,
+    uid,
+)
+from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import (
     Clock,
     Decision,
     LocalError,
-    Released,
     SystemClock,
     temporal_valid,
 )
-from memoryking.domain.reporting import REPORT_CAPABILITIES
+from memoryking.observability_metrics import Metrics
 
-CAPABILITIES = {
-    "capture",
-    "read",
-    "export",
-    "jobs",
-    "admin",
-    "review",
-    "policy",
-    "attest",
-    "task_constraint",
-    "checkpoint",
-    "handoff",
-    "inference",
-    "repository",
-} | REPORT_CAPABILITIES
-RETRY_MS = 30 * 24 * 60 * 60 * 1000
-QUEUE_LIMIT = 1000
-CONCURRENCY_LIMIT = 4
-MAX_ATTEMPTS = 5
-MAX_COUNTER = 9_007_199_254_740_991
+# Per-tenant capacity bounds. Each has a release path: the daemon drains audit jobs,
+# retained artifacts evict oldest-first, only open intents count, and expired usage rows
+# are pruned. `status` reports utilisation for every entry of CAPACITY_LIMITS.
 
 
-def identifier(value: str) -> str:
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", value):
-        raise LocalError("invalid_identifier")
-    return value
-
-
-def uid(prefix: str) -> str:
-    return prefix + "_" + secrets.token_hex(16)
+def recovery_admin(db: Any, at: int) -> tuple[str, str] | None:
+    """The first tenant-wide grant that holds a currently valid admin capability."""
+    for row in db.execute(
+        "SELECT tenant,principal,capabilities,starts,expires FROM grants WHERE project='*' ORDER BY tenant,principal"
+    ).fetchall():
+        capabilities = row["capabilities"]
+        if isinstance(capabilities, str):
+            capabilities = json.loads(capabilities)
+        if "admin" in capabilities and temporal_valid(at, row["starts"], row["expires"]):
+            return str(row["tenant"]), str(row["principal"])
+    return None
 
 
 def paths(root: Path, control: Path) -> None:
@@ -93,9 +98,35 @@ def connect(root: Path) -> sqlite3.Connection:
     return db
 
 
-class LocalStore:
-    dashboard: Any = None
+__all__ = [
+    "ARTIFACT_BYTES_LIMIT",
+    "ARTIFACT_LIMIT",
+    "CAPABILITIES",
+    "CAPACITY_LIMITS",
+    "CONCURRENCY_LIMIT",
+    "INTENT_LIMIT",
+    "INTENT_SCOPE_LIMIT",
+    "MAX_ATTEMPTS",
+    "MAX_COUNTER",
+    "OPEN_INTENT_STATES",
+    "QUEUE_LIMIT",
+    "RETRY_MS",
+    "SCHEMA_VERSION",
+    "USAGE_LIMIT",
+    "LocalStore",
+    "StoreCore",
+    "connect",
+    "identifier",
+    "paths",
+    "recovery_admin",
+    "uid",
+]
 
+
+CAPABILITIES = MobileStoreCore.capabilities
+
+
+class LocalStore(MobileStoreCore):
     def __init__(
         self,
         root: Path,
@@ -117,8 +148,21 @@ class LocalStore:
         self.clock = clock or SystemClock()
         self.fault = fault or (lambda _: None)
         self.lock = threading.RLock()
+        self.dialect = SQLiteDialect()
+        # Per-thread transaction timings, collected only while a traced request runs.
+        self.timings = threading.local()
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
+        self._last_housekeeping = 0
+        self.counters = Metrics()
+        # A loaded local embedding model lets briefings embed their own queries.
+        self.embedder: Any | None = None
+        self.reranker: Any | None = None
+        # A scheduled backup policy the daemon checks between requests.
+        self.backup_policy: Any | None = None
+        # Idle threshold for owner-derived session summaries; 0 disables.
+        self.summary_idle_ms = 0
+        self._last_summary_scan = 0
         try:
             self.control = Control(control)
             self.anchor = self.control.read_anchor()
@@ -152,6 +196,7 @@ class LocalStore:
             raise
 
     def _load(self) -> None:
+        # Migrations run in order up to SCHEMA_VERSION.
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version == 1:
             self.db.executescript(Path(__file__).with_name("knowledge_schema.sql").read_text())
@@ -168,12 +213,7 @@ class LocalStore:
             self.db.executescript(Path(__file__).with_name("optional_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7}:
             self.db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
-        if version in {1, 2, 3, 4, 5, 6, 7, 8}:
-            self.db.executescript(Path(__file__).with_name("viewer_schema.sql").read_text())
-        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
-            self.db.executescript(Path(__file__).with_name("report_schema.sql").read_text())
-        elif version != 10:
-            raise LocalError("schema_unsupported")
+        ensure_mobile_schema(self.db)
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         self.store_id, self.incarnation = meta["store"], meta["incarnation"]
         if self.store_id != self.control.store:
@@ -228,8 +268,7 @@ class LocalStore:
             db.executescript(Path(__file__).with_name("repository_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("optional_schema.sql").read_text())
             db.executescript(Path(__file__).with_name("experience_schema.sql").read_text())
-            db.executescript(Path(__file__).with_name("viewer_schema.sql").read_text())
-            db.executescript(Path(__file__).with_name("report_schema.sql").read_text())
+            db.executescript(Path(__file__).with_name("index_schema.sql").read_text())
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             db.close()
@@ -271,91 +310,60 @@ class LocalStore:
     def __exit__(self, *args: Any) -> None:
         self.close()
 
-    def _now(self) -> Decision:
-        now = self.clock.utc_ms()
-        if now < self.last_utc:
-            raise LocalError("clock_untrusted")
-        self.last_utc = now
-        return Decision(now, self.clock.monotonic_ms(), now + 5000)
-
     @contextmanager
     def transaction(self) -> Iterator[Decision]:
+        spans = getattr(self.timings, "items", None)
+        waited = time.monotonic() if spans is not None else 0.0
         with self.lock:
-            self.owner.check()
-            if not self.healthy:
-                raise LocalError("recovery_required")
-            self.db.execute("BEGIN IMMEDIATE")
+            acquired = time.monotonic() if spans is not None else 0.0
             try:
-                decision = self._now()
-                yield decision
-                self.fault("before_commit")
-                decision.check(self.clock)
-                if (
-                    int(
-                        self.db.execute(
-                            "SELECT value FROM meta WHERE key='commit_serial'"
-                        ).fetchone()[0]
+                yield from self._transaction()
+            finally:
+                if spans is not None:
+                    spans.append(
+                        {
+                            "lock_wait_ms": (acquired - waited) * 1000,
+                            "transaction_ms": (time.monotonic() - acquired) * 1000,
+                        }
                     )
-                    >= MAX_COUNTER
-                ):
-                    raise LocalError("counter_exhausted")
-                self.db.execute(
-                    "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
+
+    def _transaction(self) -> Iterator[Decision]:
+        self.owner.check()
+        if not self.healthy:
+            raise LocalError("recovery_required")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            decision = self._now()
+            yield decision
+            self.fault("before_commit")
+            decision.check(self.clock)
+            if (
+                int(
+                    self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[
+                        0
+                    ]
                 )
-                self.db.commit()
-                self.fault("after_commit")
-                decision.check(self.clock)
-            except BaseException:
-                self.db.rollback()
-                if self.anchor["journal_sequence"] > int(
-                    self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
-                ):
-                    self.healthy = False
-                raise
-
-    def _token(self, kind: str, **fields: Any) -> str:
-        return self.control.sign(
-            {"kind": kind, "store": self.store_id, "incarnation": self.incarnation, **fields}
-        )
-
-    def _decode(self, token: str, kind: str) -> dict[str, Any]:
-        body = self.control.verify(token)
-        if body.get("store") != self.store_id or body.get("kind") != kind:
-            raise LocalError("invalid_token")
-        if body.get("incarnation") != self.incarnation:
-            raise LocalError("history_changed")
-        return body
-
-    def _auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
-        identity = self._decode(token, "credential")
-        from memoryking.adapters.viewer_identity import ViewerIdentity
-
-        ViewerIdentity(self).check_identity(identity, capability, project, at)
-        rows = self.db.execute(
-            "SELECT * FROM grants WHERE tenant=? AND principal=? AND project IN (?, '*')",
-            (identity["tenant"], identity["principal"], project),
-        ).fetchall()
-        if not any(
-            (
-                capability in json.loads(row["capabilities"])
-                or "admin" in json.loads(row["capabilities"])
+                >= MAX_COUNTER
+            ):
+                raise LocalError("counter_exhausted")
+            self.db.execute(
+                "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
             )
-            and temporal_valid(at, row["starts"], row["expires"])
-            for row in rows
-        ):
-            raise LocalError("denied")
-        return identity
-
-    def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
-        """Internal intersection check; never an alternate transport credential entry point."""
-        return self._auth(token, capability, project, at)
-
-    def _subject_token(self, who: dict[str, Any]) -> str:
-        """Preserve the verified viewer ceiling in nested current-ACL checks."""
-        fields = {key: who[key] for key in ("tenant", "principal")}
-        if "viewer" in who:
-            fields["viewer"] = who["viewer"]
-        return self._token("credential", **fields)
+            self.db.commit()
+            self.fault("after_commit")
+            decision.check(self.clock)
+        except BaseException:
+            try:
+                self.db.rollback()
+                applied = int(
+                    self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
+                )
+                if self.anchor["journal_sequence"] > applied:
+                    self.healthy = False
+            except Exception:
+                # Never let cleanup mask the original failure; fail closed instead.
+                self.healthy = False
+            raise
 
     def _expose(self) -> None:
         """Fsync outside-DB evidence before any acknowledgment/handle leaves the process."""
@@ -378,531 +386,6 @@ class LocalStore:
             self.healthy = False
             raise
 
-    def namespace(self, credential: str, project: str) -> str:
-        with self.transaction() as decision:
-            identity = self._auth(credential, "capture", project, decision.evaluated_ms)
-            token = self._token(
-                "namespace",
-                tenant=identity["tenant"],
-                principal=identity["principal"],
-                id=uid("ns"),
-            )
-        self._expose()
-        return token
-
-    def _event(self, tenant: str, kind: str, subject: str, at: int, actor: str = "system") -> int:
-        if (
-            self.db.execute("SELECT position FROM tenants WHERE tenant=?", (tenant,)).fetchone()[0]
-            >= MAX_COUNTER
-        ):
-            raise LocalError("counter_exhausted")
-        self.db.execute("UPDATE tenants SET position=position+1 WHERE tenant=?", (tenant,))
-        position: int = self.db.execute(
-            "SELECT position FROM tenants WHERE tenant=?", (tenant,)
-        ).fetchone()[0]
-        self.db.execute(
-            "INSERT INTO events VALUES (?,?,?,?,?,?,?,?)",
-            (tenant, position, uid("evt"), kind, subject, self.incarnation, at, actor),
-        )
-        return position
-
-    def _blob(self, tenant: str, content: bytes) -> str:
-        digest = hashlib.sha256(content).hexdigest()
-        directory = self.root / "blobs" / identifier(tenant)
-        private_dir(directory, create=True)
-        sync_dir(directory.parent)
-        path = directory / digest
-        if not path.exists():
-            atomic(path, content)
-        else:
-            private_file(path)
-            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-                raise LocalError("blob_corrupt")
-        self.fault("after_blob")
-        return digest
-
-    def capture(
-        self, credential: str, namespace: str, key: str, request: dict[str, Any]
-    ) -> dict[str, Any]:
-        identifier(key)
-        validate_capture(request)
-        readers = request["readers"]
-        digest = canonical_hash(request)
-        with self.transaction() as decision:
-            who = self._auth(credential, "capture", request["project"], decision.evaluated_ms)
-            ns = self._decode(namespace, "namespace")
-            if any(ns[x] != who[x] for x in ("tenant", "principal")):
-                raise LocalError("denied")
-            tenant = who["tenant"]
-            lookup = (tenant, self.incarnation, ns["id"], who["principal"], "capture", key)
-            retry = self.db.execute(
-                "SELECT * FROM retries WHERE tenant=? AND incarnation=? AND namespace=? AND principal=? AND operation=? AND key=?",
-                lookup,
-            ).fetchone()
-            if retry is not None:
-                if retry["hash"] != digest:
-                    raise LocalError("idempotency_conflict")
-                if retry["result"] is None or decision.evaluated_ms >= retry["expires"]:
-                    raise LocalError("idempotency_result_expired")
-                result = cast(dict[str, Any], json.loads(retry["result"]))
-            else:
-                if self.db.execute(
-                    "SELECT 1 FROM retired_sources WHERE tenant=? AND principal=? AND source=? AND source_event=?",
-                    (tenant, who["principal"], request["source"], request["source_event"]),
-                ).fetchone():
-                    raise LocalError("source_retired")
-                occurrence = self.db.execute(
-                    "SELECT * FROM observations WHERE tenant=? AND principal=? AND source=? AND source_event=?",
-                    (tenant, who["principal"], request["source"], request["source_event"]),
-                ).fetchone()
-                if occurrence is not None:
-                    if occurrence["deleted"]:
-                        raise LocalError("source_retired")
-                    if occurrence["payload_hash"] != digest:
-                        raise LocalError("source_conflict")
-                    result = self._capture_result(tenant, occurrence["id"], occurrence["position"])
-                else:
-                    count = self.db.execute(
-                        "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')",
-                        (tenant,),
-                    ).fetchone()[0]
-                    if count >= QUEUE_LIMIT:
-                        raise LocalError("queue_full")
-                    blob = self._blob(tenant, request["text"].encode())
-                    obs = uid("obs")
-                    position = self._event(
-                        tenant, "observation_captured", obs, decision.evaluated_ms, who["principal"]
-                    )
-                    self.db.execute(
-                        "INSERT INTO observations(tenant,id,project,principal,source,source_event,payload_hash,blob,readers,position,origin,classification,observed_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (
-                            tenant,
-                            obs,
-                            request["project"],
-                            who["principal"],
-                            request["source"],
-                            request["source_event"],
-                            digest,
-                            blob,
-                            json.dumps(readers),
-                            position,
-                            self.incarnation,
-                            request["classification"],
-                            request["observed_at_ms"],
-                        ),
-                    )
-                    self.db.execute(
-                        "INSERT INTO lexical VALUES (?,?,?)", (tenant, obs, request["text"])
-                    )
-                    self._enqueue(tenant, position, obs, who["principal"])
-                    result = self._capture_result(tenant, obs, position)
-                self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        *lookup,
-                        digest,
-                        json.dumps(result),
-                        result["observation"],
-                        decision.evaluated_ms + RETRY_MS,
-                    ),
-                )
-        with self.lock:
-            self._expose()
-        return result
-
-    def _capture_result(self, tenant: str, observation: str, position: int) -> dict[str, Any]:
-        return {
-            "observation": observation,
-            "position": position,
-            "incarnation": self.incarnation,
-            "watermark": self._token("watermark", tenant=tenant, position=position),
-            "handle": self._token("observation", tenant=tenant, id=observation),
-        }
-
-    def _enqueue(self, tenant: str, position: int, obs: str | None, principal: str) -> None:
-        epoch = self.db.execute(
-            "SELECT purge_epoch FROM tenants WHERE tenant=?", (tenant,)
-        ).fetchone()[0]
-        generation = self.db.execute(
-            "SELECT generation FROM projections WHERE tenant=?", (tenant,)
-        ).fetchone()[0]
-        self.db.execute(
-            "INSERT INTO jobs(tenant,id,position,observation,incarnation,generation,state,purge_epoch,revision,principal) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (
-                tenant,
-                uid("job"),
-                position,
-                obs,
-                self.incarnation,
-                generation,
-                "pending" if obs else "noop",
-                epoch,
-                1,
-                principal,
-            ),
-        )
-
-    def _visible(self, who: dict[str, Any], row: sqlite3.Row, at: int) -> bool:
-        if row["deleted"]:
-            return False
-        try:
-            self._subject_auth(
-                self._subject_token(who),
-                "read",
-                row["project"],
-                at,
-            )
-        except LocalError:
-            return False
-        readers = json.loads(row["readers"])
-        return readers is None or who["principal"] in readers
-
-    def read(
-        self,
-        credential: str,
-        project: str,
-        *,
-        observation: str | None = None,
-        query: str | None = None,
-        cursor: str | None = None,
-        export: bool = False,
-        temporal_requirements: list[tuple[int | None, int | None]] | None = None,
-    ) -> Released:
-        """Bounded capture inspection/export; ranked retrieval belongs to P04.
-
-        temporal_requirements is an internal seam for future constraint/verification
-        checks, not a caller-supplied policy API. All use the one persisted instant.
-        """
-        identifier(project)
-        with self.transaction() as decision:
-            who = self._auth(
-                credential, "export" if export else "read", project, decision.evaluated_ms
-            )
-            if temporal_requirements and not all(
-                temporal_valid(decision.evaluated_ms, a, b) for a, b in temporal_requirements
-            ):
-                raise LocalError("temporal_requirement_failed")
-            after = 0
-            if cursor:
-                resume = self._decode(cursor, "cursor")
-                if (
-                    any(resume[x] != who[x] for x in ("tenant", "principal"))
-                    or resume["project"] != project
-                    or resume["query"] != query
-                    or resume["export"] != export
-                ):
-                    raise LocalError("denied")
-                after = resume["position"]
-            args: list[Any] = [who["tenant"], project, after]
-            sql = "SELECT o.* FROM observations o WHERE tenant=? AND project=? AND position>? AND deleted=0"
-            if observation:
-                sql += " AND id=?"
-                handle = self._decode(observation, "observation")
-                if handle["tenant"] != who["tenant"]:
-                    raise LocalError("denied")
-                args.append(handle["id"])
-            if query:
-                if len(query) > 256:
-                    raise LocalError("invalid_query")
-                sql += " AND id IN (SELECT id FROM lexical WHERE tenant=? AND lexical MATCH ?)"
-                args.extend([who["tenant"], '"' + query.replace('"', '""') + '"'])
-            rows = self.db.execute(sql + " ORDER BY position LIMIT 32", args).fetchall()
-            items: list[dict[str, Any]] = []
-            last = after
-            for row in rows:
-                last = row["position"]
-                if self._visible(who, row, decision.evaluated_ms):
-                    path = self.root / "blobs" / who["tenant"] / row["blob"]
-                    private_file(path)
-                    raw = path.read_bytes()
-                    if hashlib.sha256(raw).hexdigest() != row["blob"]:
-                        raise LocalError("blob_corrupt")
-                    items.append(
-                        {
-                            "id": row["id"],
-                            "authority": "observed_episode",
-                            "assurance": "actor_reported",
-                            "handle": self._token(
-                                "observation", tenant=who["tenant"], id=row["id"]
-                            ),
-                            "source": row["source"],
-                            "source_event": row["source_event"],
-                            "principal": row["principal"],
-                            "project": row["project"],
-                            "text": raw.decode(),
-                            "position": row["position"],
-                            "origin": row["origin"],
-                            "classification": row["classification"],
-                            "observed_at_ms": row["observed_at_ms"],
-                        }
-                    )
-                    if sum(len(i["text"].encode()) for i in items) >= 131072:
-                        break
-            if observation and not items:
-                raise LocalError("unavailable")
-            receipt = uid("rcpt")
-            resume_token = (
-                self._token(
-                    "cursor",
-                    tenant=who["tenant"],
-                    principal=who["principal"],
-                    project=project,
-                    position=last,
-                    query=query,
-                    export=export,
-                )
-                if rows
-                else None
-            )
-            result = {
-                "items": items,
-                "cursor": resume_token,
-                "receipt": receipt,
-                "incarnation": self.incarnation,
-                "evaluated_ms": decision.evaluated_ms,
-                "deadline_ms": decision.deadline_ms,
-            }
-            epochs = self.db.execute(
-                "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
-            ).fetchone()
-            self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (
-                    who["tenant"],
-                    receipt,
-                    who["principal"],
-                    self.incarnation,
-                    decision.evaluated_ms,
-                    decision.deadline_ms,
-                    *epochs,
-                    canonical_hash(result),
-                    json.dumps([i["id"] for i in items]),
-                ),
-            )
-            self.fault("after_validation")
-        with self.lock:
-            self._expose()
-        return Released(canonical_bytes(result), decision, self.clock)
-
-    def grant(
-        self,
-        credential: str,
-        principal: str,
-        project: str,
-        capabilities: list[str],
-        *,
-        starts: int | None = None,
-        expires: int | None = None,
-    ) -> str:
-        identifier(principal)
-        identifier(project)
-        if not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
-            raise LocalError("invalid_capabilities")
-        if starts is not None and expires is not None and starts >= expires:
-            raise LocalError("invalid_interval")
-        with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
-            if self.db.execute(
-                "SELECT 1 FROM viewer_bindings WHERE tenant=? AND principal=?",
-                (who["tenant"], principal),
-            ).fetchone():
-                raise LocalError("viewer_policy_operation_required")
-            # Replacement can reduce authority, so every change goes to the current journal.
-            action = {
-                "kind": "grant",
-                "actor": who["principal"],
-                "tenant": who["tenant"],
-                "principal": principal,
-                "project": project,
-                "capabilities": capabilities,
-                "starts": starts,
-                "expires": expires,
-            }
-            record = self._journal(action)
-            self._apply(record, decision.evaluated_ms)
-        self._expose()
-        return self._token("credential", tenant=who["tenant"], principal=principal)
-
-    def revoke(self, credential: str, principal: str, project: str) -> None:
-        identifier(principal)
-        identifier(project)
-        self._policy(credential, {"kind": "revoke", "principal": principal, "project": project})
-
-    def purge(self, credential: str, observation: str) -> None:
-        self._policy(credential, {"kind": "purge", "observation": identifier(observation)})
-        self.gc()
-
-    def _policy(self, credential: str, action: dict[str, Any]) -> None:
-        with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
-            if (
-                action["kind"] == "revoke"
-                and self.db.execute(
-                    "SELECT 1 FROM viewer_bindings WHERE tenant=? AND principal=?",
-                    (who["tenant"], action["principal"]),
-                ).fetchone()
-            ):
-                raise LocalError("viewer_policy_operation_required")
-            action["tenant"] = who["tenant"]
-            action["actor"] = who["principal"]
-            record = self._journal(action)
-            self._apply(record, decision.evaluated_ms)
-        self._expose()
-
-    def _journal(self, action: dict[str, Any]) -> dict[str, Any]:
-        if action["kind"] == "purge":
-            row = self.db.execute(
-                "SELECT principal,source,source_event FROM observations WHERE tenant=? AND id=?",
-                (action["tenant"], action["observation"]),
-            ).fetchone()
-            if row is None:
-                raise LocalError("unavailable")
-            action["source_identity"] = list(row)
-        try:
-            record = self.control.append(self.anchor, action)
-            self.fault("after_journal")
-            return record
-        except BaseException:
-            self.healthy = False
-            raise
-
-    def _apply(self, record: dict[str, Any], at: int) -> None:
-        sequence = int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0])
-        if record["sequence"] <= sequence:
-            return
-        action = record["action"]
-        tenant = action["tenant"]
-        if self.db.execute("SELECT 1 FROM tenants WHERE tenant=?", (tenant,)).fetchone() is None:
-            raise LocalError("journal_tenant_missing")
-        kind = action["kind"]
-        if kind == "grant":
-            self.db.execute(
-                "INSERT OR REPLACE INTO grants VALUES (?,?,?,?,?,?)",
-                (
-                    tenant,
-                    action["principal"],
-                    action["project"],
-                    json.dumps(action["capabilities"]),
-                    action["starts"],
-                    action["expires"],
-                ),
-            )
-        elif kind == "revoke":
-            self.db.execute(
-                "DELETE FROM grants WHERE tenant=? AND principal=? AND project=?",
-                (tenant, action["principal"], action["project"]),
-            )
-        elif kind == "purge":
-            obs = action["observation"]
-            self.db.execute(
-                "INSERT OR IGNORE INTO retired_sources VALUES (?,?,?,?)",
-                (tenant, *action["source_identity"]),
-            )
-            self.db.execute(
-                "UPDATE observations SET deleted=1,blob=NULL,readers=NULL,revision=revision+1 WHERE tenant=? AND id=?",
-                (tenant, obs),
-            )
-            self.db.execute("DELETE FROM lexical WHERE tenant=? AND id=?", (tenant, obs))
-            self.db.execute(
-                "DELETE FROM projection_items WHERE tenant=? AND observation=?", (tenant, obs)
-            )
-            self.db.execute(
-                "DELETE FROM embedding_items WHERE tenant=? AND observation=?", (tenant, obs)
-            )
-            self.db.execute(
-                "UPDATE embedding_jobs SET state='noop',fence=fence+1 WHERE tenant=? AND observation=?",
-                (tenant, obs),
-            )
-            self.db.execute("DELETE FROM adapter_bases WHERE tenant=?", (tenant,))
-            self.db.execute(
-                "UPDATE retries SET result=NULL WHERE tenant=? AND observation=?", (tenant, obs)
-            )
-            self.db.execute(
-                "UPDATE jobs SET state='noop',fence=fence+1 WHERE tenant=? AND observation=?",
-                (tenant, obs),
-            )
-            self.db.execute("DELETE FROM receipts WHERE tenant=?", (tenant,))
-            self.db.execute(
-                "UPDATE tenants SET purge_epoch=purge_epoch+1 WHERE tenant=?", (tenant,)
-            )
-        elif kind == "ranking":
-            from memoryking.adapters.ranking import Ranking
-
-            Ranking(self).apply_policy(action, at)
-        elif kind == "procedure":
-            from memoryking.adapters.experience import Experience
-
-            Experience(self).apply_policy(action, at)
-        elif kind == "knowledge":
-            from memoryking.adapters.knowledge_store import Knowledge
-
-            Knowledge(self).apply_policy(action, at)
-        elif kind == "operation":
-            from memoryking.adapters.working import Working
-
-            Working(self).apply_operation(action)
-        elif kind == "viewer":
-            from memoryking.adapters.viewer_identity import ViewerIdentity
-
-            ViewerIdentity(self).apply_policy(action)
-        elif kind == "report_policy":
-            from memoryking.adapters.report_store import Reports
-
-            Reports(self).apply_control(action)
-        elif kind == "report_delivery":
-            from memoryking.adapters.report_delivery import Deliveries
-
-            Deliveries(self).apply(action)
-        else:
-            raise LocalError("journal_invalid")
-        if kind == "purge":
-            from memoryking.adapters.knowledge_store import Knowledge
-            from memoryking.adapters.report_store import Reports
-
-            Knowledge(self).purge_dependencies(tenant, action["observation"])
-            Reports(self).purge(tenant)
-            # Conservatively erase all tenant rendered copies, including dependent promotions.
-            self.db.execute(
-                "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE retries SET result=NULL WHERE tenant=? AND namespace IN ('working-v1','handoff-v1')",
-                (tenant,),
-            )
-            self.db.execute("UPDATE handoffs SET state='purged' WHERE tenant=?", (tenant,))
-            # Outcomes and frozen experiments may retain quotations or judgments about
-            # the purged material. Conservative tenant erasure avoids a derived copy.
-            self.db.execute(
-                "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE ranking_state SET configuration=NULL,version=version+1,reconciliation=0 WHERE tenant=?",
-                (tenant,),
-            )
-            self.db.execute(
-                "UPDATE retries SET result=NULL WHERE tenant=? AND namespace='experience-v1'",
-                (tenant,),
-            )
-        if kind not in {"operation", "report_delivery"}:
-            self.db.execute(
-                "UPDATE tenants SET policy_epoch=policy_epoch+1 WHERE tenant=?", (tenant,)
-            )
-        position = self._event(
-            tenant,
-            kind,
-            action.get("observation", action.get("operation", action.get("principal", "policy"))),
-            at,
-            action.get("actor", "system"),
-        )
-        self._enqueue(tenant, position, None, "system")
-        self.db.execute("UPDATE meta SET value=? WHERE key='journal'", (str(record["sequence"]),))
-
     def _replay_journal(self) -> None:
         records = self.control.journal(self.anchor)
         self.db.execute("BEGIN IMMEDIATE")
@@ -919,18 +402,6 @@ class LocalStore:
                 self.control.sign(records[-1]).encode()
             ).hexdigest()
             self.control.anchor(self.anchor)
-
-    def expire_results(self) -> int:
-        with self.transaction() as decision:
-            count = self.db.execute(
-                "UPDATE retries SET result=NULL WHERE result IS NOT NULL AND expires<=?",
-                (decision.evaluated_ms,),
-            ).rowcount
-            self.db.execute(
-                "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?",
-                (decision.evaluated_ms,),
-            )
-        return int(count)
 
     def gc(self) -> int:
         with self.lock:
@@ -951,253 +422,6 @@ class LocalStore:
                         removed += 1
                 sync_dir(directory)
             return removed
-
-    def claim(self, credential: str, project: str) -> dict[str, Any] | None:
-        with self.transaction() as decision:
-            who = self._auth(credential, "jobs", project, decision.evaluated_ms)
-            tenant, at = who["tenant"], decision.evaluated_ms
-            self.db.execute(
-                "UPDATE jobs SET state='dead',fence=fence+1 WHERE tenant=? AND state='leased' AND lease_until<=? AND attempts>=?",
-                (tenant, at, MAX_ATTEMPTS),
-            )
-            active = self.db.execute(
-                "SELECT count(*) FROM jobs WHERE tenant=? AND state='leased' AND lease_until>?",
-                (tenant, at),
-            ).fetchone()[0]
-            if active >= CONCURRENCY_LIMIT:
-                raise LocalError("concurrency_limit")
-            row = self.db.execute(
-                "SELECT j.* FROM jobs j JOIN observations o ON j.tenant=o.tenant AND j.observation=o.id WHERE j.tenant=? AND o.project=? AND o.deleted=0 AND j.attempts<? AND ((j.state='pending' AND j.available<=?) OR (j.state='leased' AND j.lease_until<=?)) ORDER BY j.position LIMIT 1",
-                (tenant, project, MAX_ATTEMPTS, at, at),
-            ).fetchone()
-            if row is None:
-                return None
-            fence = row["fence"] + 1
-            self.db.execute(
-                "UPDATE jobs SET state='leased',attempts=attempts+1,fence=?,lease_until=?,purge_epoch=(SELECT purge_epoch FROM tenants WHERE tenant=?) WHERE tenant=? AND id=?",
-                (fence, at + 30000, tenant, tenant, row["id"]),
-            )
-            result = {
-                "job": row["id"],
-                "lease": self._token(
-                    "lease",
-                    tenant=tenant,
-                    principal=who["principal"],
-                    job=row["id"],
-                    fence=fence,
-                    generation=row["generation"],
-                ),
-                "lease_until_ms": at + 30000,
-            }
-        self._expose()
-        return result
-
-    def finish(self, credential: str, project: str, lease: str, outcome: str) -> None:
-        if outcome not in {"complete", "retry", "cancel"}:
-            raise LocalError("invalid_request")
-        with self.transaction() as decision:
-            who = self._auth(credential, "jobs", project, decision.evaluated_ms)
-            token = self._decode(lease, "lease")
-            if any(token[k] != who[k] for k in ("tenant", "principal")):
-                raise LocalError("denied")
-            row = self.db.execute(
-                "SELECT * FROM jobs WHERE tenant=? AND id=?", (who["tenant"], token["job"])
-            ).fetchone()
-            if (
-                row is None
-                or row["state"] != "leased"
-                or row["fence"] != token["fence"]
-                or row["generation"] != token["generation"]
-                or row["lease_until"] <= decision.evaluated_ms
-            ):
-                raise LocalError("stale_lease")
-            obs = self.db.execute(
-                "SELECT * FROM observations WHERE tenant=? AND id=?",
-                (who["tenant"], row["observation"]),
-            ).fetchone()
-            epoch = self.db.execute(
-                "SELECT purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
-            ).fetchone()[0]
-            if (
-                obs is None
-                or obs["deleted"]
-                or obs["revision"] != row["revision"]
-                or obs["project"] != project
-            ):
-                raise LocalError("stale_source")
-            self._subject_auth(
-                self._token("credential", tenant=who["tenant"], principal=row["principal"]),
-                "capture",
-                project,
-                decision.evaluated_ms,
-            )
-            if row["purge_epoch"] != epoch:
-                # A different observation's purge forces a fresh lease with current metadata.
-                raise LocalError("stale_source")
-            if outcome == "complete":
-                path = self.root / "blobs" / who["tenant"] / obs["blob"]
-                private_file(path)
-                raw = path.read_bytes()
-                if hashlib.sha256(raw).hexdigest() != obs["blob"]:
-                    raise LocalError("blob_corrupt")
-                self.db.execute(
-                    "INSERT OR REPLACE INTO projection_items VALUES (?,?,?,?,?,?,?)",
-                    (
-                        who["tenant"],
-                        obs["id"],
-                        self.incarnation,
-                        row["generation"],
-                        obs["revision"],
-                        obs["blob"],
-                        len(raw),
-                    ),
-                )
-            state = (
-                "complete"
-                if outcome == "complete"
-                else "cancelled"
-                if outcome == "cancel"
-                else "dead"
-                if row["attempts"] >= MAX_ATTEMPTS
-                else "pending"
-            )
-            delay = min(60000, (2 ** row["attempts"]) * 1000) + secrets.randbelow(1000)
-            self.db.execute(
-                "UPDATE jobs SET state=?,fence=fence+1,available=? WHERE tenant=? AND id=?",
-                (state, decision.evaluated_ms + delay, who["tenant"], row["id"]),
-            )
-            self._advance(who["tenant"])
-        self._expose()
-
-    def _advance(self, tenant: str) -> None:
-        projection = self.db.execute(
-            "SELECT * FROM projections WHERE tenant=?", (tenant,)
-        ).fetchone()
-        frontier = projection["frontier"]
-        maximum = self.db.execute(
-            "SELECT position FROM tenants WHERE tenant=?", (tenant,)
-        ).fetchone()[0]
-        while frontier < maximum:
-            rows = self.db.execute(
-                "SELECT state FROM jobs WHERE tenant=? AND position=? AND incarnation=? AND generation=?",
-                (tenant, frontier + 1, self.incarnation, projection["generation"]),
-            ).fetchall()
-            if not rows or any(row[0] not in {"complete", "noop"} for row in rows):
-                break
-            frontier += 1
-        self.db.execute("UPDATE projections SET frontier=? WHERE tenant=?", (frontier, tenant))
-
-    def _context_details(
-        self, who: dict[str, Any], capabilities: set[str], project: str, at: int
-    ) -> dict[str, Any]:
-        return {"capabilities": sorted(capabilities), "delegation_chain": []}
-
-    def context(self, credential: str, project: str) -> Released:
-        """Read-scoped identity discovery; aggregate/admin status remains separate."""
-        identifier(project)
-        receipt = uid("rcpt")
-        with self.transaction() as decision:
-            at = decision.evaluated_ms
-            who = self._auth(credential, "read", project, at)
-            epochs = self.db.execute(
-                "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
-            ).fetchone()
-            capabilities: set[str] = set()
-            for row in self.db.execute(
-                "SELECT * FROM grants WHERE tenant=? AND principal=? AND project IN (?,?)",
-                (who["tenant"], who["principal"], project, "*"),
-            ):
-                if temporal_valid(at, row["starts"], row["expires"]):
-                    capabilities.update(json.loads(row["capabilities"]))
-            if "admin" in capabilities:
-                capabilities.update(CAPABILITIES)
-            raw = canonical_bytes(
-                {
-                    "store": self.store_id,
-                    "tenant": who["tenant"],
-                    "principal": who["principal"],
-                    "project": project,
-                    "incarnation": self.incarnation,
-                    "authorization_epoch": epochs[0],
-                    "purge_epoch": epochs[1],
-                    **self._context_details(who, capabilities, project, at),
-                    "evaluated_ms": at,
-                    "deadline_ms": decision.deadline_ms,
-                    "receipt": receipt,
-                }
-            )
-            self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (
-                    who["tenant"],
-                    receipt,
-                    who["principal"],
-                    self.incarnation,
-                    at,
-                    decision.deadline_ms,
-                    *epochs,
-                    hashlib.sha256(raw).hexdigest(),
-                    "[]",
-                ),
-            )
-            self.fault("after_validation")
-        self._expose()
-        return Released(raw, decision, self.clock, receipt)
-
-    def status(self, credential: str, project: str, watermark: str | None = None) -> dict[str, Any]:
-        with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
-            tenant = who["tenant"]
-            self._advance(tenant)
-            projection = dict(
-                self.db.execute("SELECT * FROM projections WHERE tenant=?", (tenant,)).fetchone()
-            )
-            position = self.db.execute(
-                "SELECT position FROM tenants WHERE tenant=?", (tenant,)
-            ).fetchone()[0]
-            satisfied = None
-            if watermark:
-                target = self._decode(watermark, "watermark")
-                if target["tenant"] != tenant:
-                    raise LocalError("denied")
-                satisfied = projection["frontier"] >= target["position"]
-            result = {
-                "store": self.store_id,
-                "incarnation": self.incarnation,
-                "position": position,
-                "projection": projection,
-                "satisfied": satisfied,
-                "jobs": dict(
-                    self.db.execute(
-                        "SELECT state,count(*) FROM jobs WHERE tenant=? GROUP BY state", (tenant,)
-                    )
-                ),
-            }
-        self._expose()
-        return result
-
-    def reindex(self, credential: str) -> None:
-        with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
-            self._reindex(who["tenant"])
-        self._expose()
-
-    def _reindex(self, tenant: str) -> None:
-        self.db.execute("DELETE FROM projection_items WHERE tenant=?", (tenant,))
-        self.db.execute(
-            "UPDATE projections SET incarnation=?,generation=generation+1,frontier=0 WHERE tenant=?",
-            (self.incarnation, tenant),
-        )
-        generation = self.db.execute(
-            "SELECT generation FROM projections WHERE tenant=?", (tenant,)
-        ).fetchone()[0]
-        epoch = self.db.execute(
-            "SELECT purge_epoch FROM tenants WHERE tenant=?", (tenant,)
-        ).fetchone()[0]
-        self.db.execute(
-            "UPDATE jobs SET incarnation=?,generation=?,fence=fence+1,attempts=0,lease_until=0,available=0,purge_epoch=?,state=CASE WHEN observation IS NULL OR observation IN (SELECT id FROM observations WHERE tenant=? AND deleted=1) THEN 'noop' ELSE 'pending' END WHERE tenant=?",
-            (self.incarnation, generation, epoch, tenant, tenant),
-        )
 
     def backup(self, destination: Path) -> dict[str, Any]:
         """Offline administrative method; intentionally absent from the agent socket."""
@@ -1235,7 +459,7 @@ class LocalStore:
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 10,
+                "schema": SCHEMA_VERSION,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
                 "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
@@ -1301,7 +525,7 @@ class LocalStore:
             controller.journal(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+                manifest.get("schema") not in set(range(1, SCHEMA_VERSION + 1))
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")
@@ -1373,10 +597,9 @@ class LocalStore:
                         ),
                     }
                 )
-                # Only the independent OS owner can recover administrative credentials.
-                admin = recovery.db.execute(
-                    "SELECT tenant,principal FROM grants WHERE project='*' ORDER BY tenant,principal LIMIT 1"
-                ).fetchone()
+                # Only the independent OS owner can recover administrative credentials,
+                # and only a grant that currently carries admin rights may receive one.
+                admin = recovery_admin(recovery.db, recovery.clock.utc_ms())
                 if admin is None:
                     raise LocalError("recovery_admin_missing")
                 token = recovery._token("credential", tenant=admin[0], principal=admin[1])

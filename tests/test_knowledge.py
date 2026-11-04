@@ -613,7 +613,7 @@ class KnowledgeTests(unittest.TestCase):
         db.close()
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],
@@ -738,7 +738,7 @@ class KnowledgeTests(unittest.TestCase):
         edge = db.execute("SELECT * FROM replacements").fetchone()
         columns = [d[1] for d in db.execute("PRAGMA table_info(replacements)")]
         self.assertIn("position", columns)
-        for n in range(300):
+        for _n in range(300):
             values = list(edge)
             values[columns.index("position")] = self.store._event(
                 edge["tenant"], "review", original["revision"], SystemClock().utc_ms(), "owner"

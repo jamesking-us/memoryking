@@ -1,4 +1,4 @@
-<p align="center"><img src="src/memoryking/adapters/web/elephant.png" width="180" alt="MemoryKing" /></p>
+<p align="center"><img src="https://raw.githubusercontent.com/jamesking-us/memoryking/main/src/memoryking/adapters/web/elephant.png" width="180" alt="MemoryKing" /></p>
 
 # Give your AI agents a memory they can pick up again
 
@@ -31,37 +31,47 @@ flowchart LR
     E --> B
 ```
 
+## What is new
+
+Everything since the last tagged pre-release is listed in the [changelog](https://github.com/jamesking-us/memoryking/blob/main/CHANGELOG.md), newest first, with a link into the guide for each feature: the memory-health report, Anthropic's memory tool and the Markdown vault, proposal drafts from repeated evidence, entity anchors and salience, as-of briefings, source trust, the influence report, host hooks and structured plans. The [release page](https://github.com/jamesking-us/memoryking/releases) carries the same notes for each published version.
+
 ## What it does for agents
 
 | Need | What MemoryKing provides |
 | --- | --- |
-| Remember useful findings | Searchable observations with source attribution; reviewed knowledge stays distinct from unverified notes. |
+| Remember useful findings | Searchable observations with source attribution; reviewed knowledge stays distinct from unverified notes. Exact names (paths, symbols, tickets, hosts, error codes) are anchored at capture and found exactly; memories strengthen with use and fade with disuse without ever being deleted. An optional local cross-encoder can reorder the shortlist on request, with no egress. |
 | Follow a plan | Named plans with phases, dependencies, completed steps and blockers; the same progress is available on desktop and phone. |
-| Resume unfinished work | Checkpoints containing the objective, constraints, failed attempts, verification gaps and next actions. |
+| Resume unfinished work | Checkpoints containing the objective, constraints, failed attempts, verification gaps and next actions, opened by a three-sentence "where this left off" summary. |
 | Work together | Handoffs bound to the recipient's current permissions. |
+| Follow a plan | Named plans with phases, prerequisites, completed steps and blockers; a step counts as done only with evidence, and the dashboard shows the same progress agents report. |
 | Keep context manageable | Focused briefings with explicit output budgets and links back to evidence. |
 | Avoid stale advice | Repository identity, applicability rules and freshness checks for guidance tied to code. |
 | Recover safely | Records of uncertain operations and history-aware backup/restore, so a restart does not silently authorize repeating an action. |
-| Understand what happened | A dashboard with task progress, evidence, history, a force-directed memory graph and retrieval receipts. |
+| Understand what happened | A dashboard with capacity, task progress, a per-project timeline, a memory graph, on-demand briefings with their receipts, and retrieval history. |
+| Fit any agent host | A lean five-tool MCP profile with defaults for Claude Code, Codex, Grok or any stdio host; cited Markdown briefings; capture from the CLI, pytest or git hooks; one command installs session hooks that load memory at the start of a session and save it before compaction and at the end. |
+| Use any Claude API agent | Anthropic's memory tool answered from a project: notes are versioned observations, claim files are proposals, every write has a receipt. The same files export as a Markdown vault for hand editing and import back as versions and proposals. |
+| Keep the review queue fed | Claims are drafted from repeated evidence with their sources attached, without a model, and wait for review like any proposal; nothing becomes knowledge by itself. |
+| Hold what you do not trust yet | Mark a source untrusted and its captures are recorded but invisible to every briefing and review until an admin releases them. |
+| Know where a memory went | For any observation, every claim, checkpoint, handoff, summary and briefing built from it and who received them, from the dashboard or `memoryking influence`. |
+| Know whether memory is paying for itself | A health report from the store's own receipts: helpful feedback, empty briefings, memory never read, claims that lost their evidence and the review backlog, with fixed thresholds and no model grading itself, from the dashboard or `memoryking health`. |
+| Know what to do when something is refused | Every error reply carries a one-line hint, and a [generated page](https://github.com/jamesking-us/memoryking/blob/main/docs/error-codes.md) lists them all. |
 
-The core runs locally **without a model account, GPU or paid API**. A shared PostgreSQL profile supports multiple agents and tenants. Optional local embeddings add semantic search.
+The core runs locally **without a model account, GPU or paid API**. A shared PostgreSQL profile supports multiple agents and tenants. Optional local embeddings add semantic search. If you do want MemoryKing itself to talk to a model (Anthropic, OpenAI, xAI, Google Vertex AI, or one running on your own machine), you write a short policy saying which, and every request it sends is checked against that policy and recorded.
 
 ## See it work
 
-You need Python **3.12** and Git. Repository access is currently private. From a terminal:
+You need Python **3.12**. From a terminal:
 
 ```sh
-git clone https://github.com/jamesking-us/memoryking.git
-cd memoryking
 python3.12 -m venv .venv
-.venv/bin/python -I -m pip install --require-hashes -r requirements-build.lock -r requirements-core.lock
-.venv/bin/python -I -m pip install --no-build-isolation --no-deps .
-.venv/bin/python examples/remember_and_resume.py
+.venv/bin/python -I -m pip install --pre memoryking
+git clone https://github.com/jamesking-us/memoryking.git
+.venv/bin/python memoryking/examples/remember_and_resume.py
 ```
 
-The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
+The first two lines install the released package (`--pre` because the current release is a preview); the checkout is only there for the example. The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
 
-For a lasting installation and the browser dashboard, follow the [getting started guide](docs/getting-started.md). If you are evaluating the idea rather than installing software, start with the [agent workflows](docs/agent-guide.md).
+For a lasting installation and the browser dashboard, follow the [getting started guide](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md): name your store once with `memoryking profile add`, then `status`, `doctor`, `dashboard open` and `credential issue` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md).
 
 ## See what your agents are doing
 
@@ -69,14 +79,20 @@ For a lasting installation and the browser dashboard, follow the [getting starte
 
 *Dashboard with a synthetic plan and task. Progress reflects saved agent reports and evidence.*
 
-The dashboard helps you inspect recorded work without reading a long chat transcript:
+The dashboard helps you inspect recorded work without reading a long chat transcript. Projects you can read are listed with their record counts; pick one and every view follows it.
 
-- **Plans:** see how much work is complete, which phase needs attention and what remains. Open a phase for steps, notes, dependencies and evidence. Skipped work is shown separately.
+- **Overview:** capacity use for each bounded resource, with a warning from 80 percent.
 - **Task activity:** saved goals, completed and pending criteria, blockers and observed heartbeats.
-- **Memory:** an interactive graph and list of accessible memories and evidence. The active view refreshes automatically while you read, preserving access checks and your graph selection.
+- **Plans:** how much of a piece of work is complete, which phase needs attention and what remains; open a phase for its steps, notes, prerequisites and evidence. Skipped work is shown separately and never counts as done.
+- **Memory:** ask for the briefing an agent would receive, now or as the project stood at any moment, and verify its replay, browse the project timeline, review proposed knowledge, preview a purge, and explore an interactive graph of memories, evidence, plans and their steps, coloured by how far each record has been reviewed, with zoom, pan and a tap through to the briefings that used it.
 - **History and review:** inspect changes, review proposals and preview affected content.
 - **Retrieval history:** see the exact briefing returned, its sources and recorded usage.
-- **Appearance:** textured dark and light themes, a crowned cybernetic elephant, and an optional depth-tilt animation that respects reduced motion.
+- **Team:** who did what in a project, the permissions that allow it, a revoke button, and an audit export; the overview lists your projects as cards you can open and link to.
+- **Appearance:** textured dark and light themes, a crowned cybernetic elephant, an optional depth-tilt animation that respects reduced motion, and a phone layout for checking on agents away from the desk.
+
+![MemoryKing Task activity view with a synthetic task beside a structured plan at 50 percent, its Design phase open to show a completed step and the observation it cites](https://raw.githubusercontent.com/jamesking-us/memoryking/main/docs/images/plans.jpg)
+
+*Task activity with a synthetic plan: progress counts only steps backed by evidence, and the remaining Verify phase stays visible for the next agent and for you.*
 
 Agents must publish their state through the supported interfaces. A displayed heartbeat is an observation, not proof that an agent is still working; missing cost data stays unknown.
 
@@ -143,17 +159,18 @@ report delivery disabled, so installation alone does not share your memory or se
 
 | Guide | What you will learn |
 | --- | --- |
-| [Getting started](docs/getting-started.md) | Install, run the demo, create a store and open the dashboard. |
-| [Using MemoryKing with agents](docs/agent-guide.md) | Capture → brief → checkpoint → resume → handoff, Python and MCP integration. |
-| [Deployment and configuration](docs/deployment.md) | Local/shared/Docker setups, credentials, configuration, upgrades and recovery. |
-| [How it is designed](docs/design.md) | Storage, knowledge review, retrieval, permissions and recovery guarantees. |
-| [Feature and API reference](docs/reference.md) | Interfaces, optional capabilities, limits, migration and troubleshooting. |
-| [Contributing](CONTRIBUTING.md) | Build, test and maintain the project locally. |
+| [Getting started](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md) | Install, run the demo, create a store and open the dashboard. |
+| [Using MemoryKing with agents](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md) | Capture → brief → checkpoint → resume → handoff; Python, lean and full MCP profiles for any host, and automatic capture from hooks. |
+| [Deployment and configuration](https://github.com/jamesking-us/memoryking/blob/main/docs/deployment.md) | Local/shared/Docker setups, credentials, configuration, upgrades and recovery. |
+| [How it is designed](https://github.com/jamesking-us/memoryking/blob/main/docs/design.md) | Storage, knowledge review, retrieval, permissions and recovery guarantees. |
+| [Feature and API reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md) | Interfaces, optional capabilities, limits and capacity, metrics, migration and troubleshooting. |
+| [Error codes](https://github.com/jamesking-us/memoryking/blob/main/docs/error-codes.md) | Every error code with the next move, generated from the service's own table. |
+| [Contributing](https://github.com/jamesking-us/memoryking/blob/main/CONTRIBUTING.md) | Build, test and maintain the project locally. |
 
 ## Current status
 
 **Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Improved real-task success or reduced token cost has not yet been demonstrated. Windows, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
 
-MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](SECURITY.md) and [current limits](docs/reference.md#current-limits).
+MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](https://github.com/jamesking-us/memoryking/blob/main/SECURITY.md) and [current limits](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#current-limits).
 
-No public package or container image is published. A project distribution license has not yet been selected; see [distribution status](CONTRIBUTING.md#distribution).
+MemoryKing is released under the [Apache License 2.0](https://github.com/jamesking-us/memoryking/blob/main/LICENSE). Each release is a Python package on [PyPI](https://pypi.org/project/memoryking/) and a container image for the local service at `ghcr.io/jamesking-us/memoryking`, both built reproducibly from this repository with checksums recorded on the [release page](https://github.com/jamesking-us/memoryking/releases), whose notes come from the [changelog](https://github.com/jamesking-us/memoryking/blob/main/CHANGELOG.md). See [distribution](https://github.com/jamesking-us/memoryking/blob/main/CONTRIBUTING.md#distribution).

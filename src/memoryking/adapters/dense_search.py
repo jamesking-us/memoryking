@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from memoryking.adapters.local_store import LocalStore
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_hash
 from memoryking.domain.embeddings import cosine_ppm, validate_vector
 from memoryking.domain.local import LocalError
@@ -14,7 +14,7 @@ SCAN_LIMIT = 10000
 
 
 def search(
-    store: LocalStore, who: dict[str, Any], args: dict[str, Any], recorded: int, target: int
+    store: StoreCore, who: dict[str, Any], args: dict[str, Any], recorded: int, target: int
 ) -> dict[str, Any]:
     request = args.get("dense")
     result: dict[str, Any] = {

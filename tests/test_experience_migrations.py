@@ -18,7 +18,7 @@ from memoryking.adapters import postgres_admin
 from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.postgres_admin import initialize_tenant, migrate, provision_roles
-from memoryking.adapters.postgres_recovery import TABLES_V2
+from memoryking.adapters.postgres_recovery import TABLES_V2, TABLES_V3
 from tools.postgres_dev_cluster import DevCluster
 
 
@@ -48,7 +48,7 @@ class LocalExperienceMigrations(unittest.TestCase):
                 db.execute("SELECT 1 FROM sqlite_master WHERE name='experience_records'").fetchone()
             )
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(
             self.store.db.execute("SELECT blob FROM observations").fetchone()[0],
             self.span["content_hash"],
@@ -66,7 +66,7 @@ class LocalExperienceMigrations(unittest.TestCase):
         atomic(archive / "manifest", self.store.control.sign(manifest).encode())
         self.store.purge(self.owner, self.obs["observation"])
         restore_fixture(self, archive)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 10)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 14)
         self.assertEqual(self.store.db.execute("SELECT deleted FROM observations").fetchone()[0], 1)
 
 
@@ -119,6 +119,19 @@ class NativeExperienceStorage(NativeFixture):
             self.store.db.execute("SELECT count(*) FROM experience_records").fetchone()[0], 0
         )
 
+    def test_schema_three_archive_without_audit_or_summaries_restores(self):
+        # Archives written before egress_audit and session_summaries existed.
+        archive = backup_fixture(self)
+        manifest = self.store.control.verify_document(archive / "manifest")
+        self.assertEqual(manifest["schema"], 7)
+        manifest["schema"] = 3
+        manifest["tables"] = {
+            name: meta for name, meta in manifest["tables"].items() if name in TABLES_V3
+        }
+        atomic(archive / "manifest", self.store.control.sign(manifest).encode())
+        restore_fixture(self, archive)
+        self.assertEqual(self.store.db.execute("SELECT deleted FROM observations").fetchone()[0], 0)
+
 
 @unittest.skipUnless((BIN / "pg_ctl").is_file(), "native PostgreSQL runtime not configured")
 class NativeExperienceUpgrade(unittest.TestCase):
@@ -167,7 +180,7 @@ class NativeExperienceUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "5",
+                        "9",
                     )
         finally:
             cluster.close()

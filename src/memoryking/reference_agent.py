@@ -62,8 +62,13 @@ def main() -> None:
     snapshot.add_argument("--path", action="append", required=True)
     for command in (update, constraint, create, artifact, snapshot):
         command.add_argument("--approve", action="store_true", help="Explicit host authorization")
-    model = commands.add_parser("model-turn", help="Only the local recorder/echo; no LLM")
-    model.add_argument("--provider-root", required=True, type=Path)
+    model = commands.add_parser(
+        "model-turn", help="The local recorder by default; a policy adapter with --provider"
+    )
+    model.add_argument("--provider-root", type=Path, help="Local recorder directory")
+    model.add_argument("--egress-policy", type=Path, help="The daemon's egress policy file")
+    model.add_argument("--provider", help="An adapter named in the policy, e.g. openai-chat")
+    model.add_argument("--model", help="A model the policy allows for that provider")
     handoff = commands.add_parser("prepare-handoff", help="Prepare only; does not send a message")
     handoff.add_argument("--recipient", required=True)
     handoff.add_argument("--stage", required=True)
@@ -114,7 +119,18 @@ def main() -> None:
                 args.repository, args.clone, args.environment, args.path, approved=True
             )
         elif args.action == "model-turn":
-            result = harness.model_turn(LocalRecordingProvider(args.provider_root))
+            if args.provider:
+                from memoryking.adapters.egress_policy import EgressPolicy
+                from memoryking.providers import adapter
+
+                if not args.egress_policy or not args.model:
+                    raise LocalError("egress_policy_invalid")
+                policy = EgressPolicy.load(args.egress_policy)
+                result = harness.model_turn(adapter(policy, args.provider, args.model))
+            else:
+                if args.provider_root is None:
+                    raise LocalError("provider_handle_invalid")
+                result = harness.model_turn(LocalRecordingProvider(args.provider_root))
         elif args.action == "prepare-handoff":
             result = harness.prepare_handoff(args.recipient, args.role, args.stage)
         else:

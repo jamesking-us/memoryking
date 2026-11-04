@@ -6,14 +6,15 @@ import json
 from typing import Any
 
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_store import LocalStore, uid
+from memoryking.adapters.local_store import uid
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError
 
 
 class ExperienceRecords:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
 
     def available(self, who: dict[str, Any], row: Any, at: int) -> bool:

@@ -47,8 +47,30 @@ def query(
             "content_hash": row["blob"],
             "source": row["source"],
             "position": row["position"],
+            "anchors": [],
         }
         dependencies[row["id"]] = [{"kind": "observation", "id": row["id"]}]
+    # Exact names the loaded observations share (paths, symbols, tickets, hosts, errors)
+    # link them, A-MEM style, without any model: an anchor held by two to eight of the
+    # loaded records is rare enough to mean something; a commoner one is just a word.
+    by_anchor: dict[str, list[str]] = {}
+    if nodes:
+        loaded = list(nodes)
+        for start in range(0, len(loaded), 500):
+            chunk = loaded[start : start + 500]
+            for item in db.execute(
+                "SELECT id,anchor,kind FROM anchors WHERE tenant=? AND id IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY id,anchor",
+                (tenant, *chunk),
+            ).fetchall():
+                if len(nodes[item["id"]]["anchors"]) < 16:
+                    nodes[item["id"]]["anchors"].append(
+                        {"kind": item["kind"], "anchor": item["anchor"]}
+                    )
+                by_anchor.setdefault(item["anchor"], []).append(item["id"])
+
+    anchor_links = 0
 
     def edge(source: str, target: str, kind: str, provenance: dict[str, Any]) -> None:
         if source in nodes and target in nodes:
@@ -58,13 +80,47 @@ def query(
             item = {"source": source, "target": target, "type": kind, "provenance": provenance}
             edges.append({"id": canonical_hash(item), **item})
 
+    for anchor, holders in sorted(by_anchor.items()):
+        holders = sorted(set(holders))
+        if not 2 <= len(holders) <= 8:
+            continue
+        for left, right in zip(holders, holders[1:], strict=False):
+            if anchor_links >= 512:
+                limits.add("anchor_links")
+                break
+            edge(left, right, "shares_anchor", {"kind": "shared_anchor", "anchor": anchor})
+            anchor_links += 1
+
     attestation_count = 0
+    # A reviewer also sees proposed, rejected, deprecated and quarantined claims, in the
+    # same diagnostic mode the review queue uses; a plain reader sees accepted ones only.
+    try:
+        s._subject_auth(
+            s._token("credential", tenant=tenant, principal=who["principal"]),
+            "review",
+            args["project"],
+            at,
+        )
+        reviewer = True
+    except LocalError:
+        reviewer = False
     for constraints in (False, True):
-        result = k.query(who, scope, at, constraints=constraints, attestation_limit=33)
+        result = k.query(
+            who,
+            {**scope, "diagnostic": True} if reviewer and not constraints else scope,
+            at,
+            constraints=constraints,
+            attestation_limit=33,
+        )
         if result["status"] != "complete":
             limits.add("claim_resolution_incomplete")
         for item in result["items"]:
             ident, body = item["revision"], item["body"]
+            if "created_position" not in item:
+                # A claim whose selector the store cannot evaluate has no recorded
+                # position in this result; it is listed in the review queue instead.
+                limits.add("unsupported_selector_claims_omitted")
+                continue
             nodes[ident] = {
                 "id": ident,
                 "type": "claim",
@@ -73,6 +129,7 @@ def query(
                 "content_hash": item["body_hash"],
                 "family": item["family"],
                 "state": item["state"],
+                "quarantined": bool(item.get("quarantined", False)),
                 "applicability": item["applicability"],
                 "position": item["created_position"],
             }
@@ -162,16 +219,61 @@ def query(
         ):
             continue
         ident = task["checkpoint"]
+        row = db.execute(
+            "SELECT body,dependencies FROM checkpoints WHERE tenant=? AND id=?", (tenant, ident)
+        ).fetchone()
+        body = json.loads(row["body"]) if row is not None and row["body"] else {}
+        plan = body.get("plan")
         nodes[ident] = {
             "id": ident,
-            "type": "checkpoint",
-            "label": task["objective"][:256],
-            "authority": "producer_checkpoint",
+            "type": "plan" if plan else "checkpoint",
+            "label": (plan["title"] if plan else task["objective"])[:256],
+            "authority": "recorded_plan" if plan else "producer_checkpoint",
             "position": task["source_position"],
             "revision": task["revision"],
             "content_hash": task["body_hash"],
+            **({"status": plan["status"]} if plan else {}),
         }
         dependencies[ident] = [{"kind": "checkpoint", "id": ident}]
+        if plan:
+            # Steps are the plan's own structure: declared by the plan, ordered by their
+            # prerequisites, and tied to the observations they cite as proof. A step
+            # shares the plan's receipt dependency; it never becomes evidence itself.
+            for step in plan["steps"]:
+                sid = "step:" + ident + ":" + step["id"]
+                nodes[sid] = {
+                    "id": sid,
+                    "type": "step",
+                    "label": step["description"][:256],
+                    "authority": "recorded_plan_step",
+                    "position": task["source_position"],
+                    "status": step["status"],
+                    "phase": step["phase"],
+                }
+                dependencies[sid] = dependencies[ident]
+            for step in plan["steps"]:
+                sid = "step:" + ident + ":" + step["id"]
+                edge(ident, sid, "declares", {"kind": "plan_step", "checkpoint": ident})
+                for prerequisite in step["depends_on"]:
+                    edge(
+                        sid,
+                        "step:" + ident + ":" + prerequisite,
+                        "depends_on",
+                        {"kind": "plan_step_prerequisite", "checkpoint": ident},
+                    )
+                for proof in step["evidence"]:
+                    edge(
+                        sid,
+                        proof["id"],
+                        "cites",
+                        {
+                            "kind": "plan_step_evidence",
+                            "checkpoint": ident,
+                            "status": step["status"],
+                        },
+                    )
+            for lesson in plan["lessons"]:
+                edge(ident, lesson["id"], "cites", {"kind": "plan_lesson", "checkpoint": ident})
         tid = "task:" + args["project"] + ":" + task["task"]
         nodes[tid] = {
             "id": tid,
@@ -194,10 +296,7 @@ def query(
             dependencies[rid] = dependencies[ident]
             edge(rid, tid, "documented_in", {"kind": "checkpoint_scope", "checkpoint": ident})
             edge(ident, rid, "documented_in", {"kind": "checkpoint_scope", "checkpoint": ident})
-        row = db.execute(
-            "SELECT dependencies FROM checkpoints WHERE tenant=? AND id=?", (tenant, ident)
-        ).fetchone()
-        for dep in json.loads(row["dependencies"]):
+        for dep in json.loads(row["dependencies"]) if row is not None else []:
             edge(
                 ident,
                 dep["id"],
@@ -209,10 +308,25 @@ def query(
                 },
             )
     limits.add("checkpoint_window")
+    # Size by citation: how many of the caller's own retained briefings, fetches and
+    # reruns depended on the record. Atlas pages are excluded, so looking never cites.
+    cited = retrieval.citations(who, args["project"], at)
+    for ident, node in nodes.items():
+        node["citations"] = cited.get(ident, 0)
     wanted_types = set(
         args.get(
             "types",
-            ["observation", "claim", "attestation", "procedure", "checkpoint", "task", "run"],
+            [
+                "observation",
+                "claim",
+                "attestation",
+                "procedure",
+                "checkpoint",
+                "plan",
+                "step",
+                "task",
+                "run",
+            ],
         )
     )
     visible = {i for i, node in nodes.items() if node["type"] in wanted_types}

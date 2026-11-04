@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { layout } from "../../packages/dashboard-foundation/dist/graph-layout.js";
 import { installEmblem } from "../../packages/dashboard-foundation/dist/brand.js";
+import {
+  AUTHORITY_LEGEND,
+  authorityOf,
+  nodeRadius,
+} from "../../packages/dashboard-foundation/dist/graph.js";
 
 test("bounded force graph terminates with finite positions and preserves pinned nodes", () => {
   for (const count of [0, 1, 200, 500]) {
@@ -42,7 +47,7 @@ test("force graph ceiling rejects oversize input; dangling references cannot mov
   );
   assert.deepEqual(a.nodes, [{ id: "a", x: 40, y: 40, pinned: true }]);
 });
-test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or reduced", () => {
+test("emblem motion is on request only, bounded and cancelled when hidden, offscreen or reduced", () => {
   const names = ["document", "matchMedia", "IntersectionObserver"];
   const old = Object.fromEntries(
     names.map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]),
@@ -135,4 +140,61 @@ test("emblem motion is opt-in, bounded and cancelled when hidden, offscreen or r
       else delete globalThis[name];
     }
   }
+});
+
+test("node colour follows recorded authority and size follows citations, bounded", () => {
+  assert.equal(authorityOf({ type: "observation" }), "observation");
+  assert.equal(
+    authorityOf({
+      type: "claim",
+      state: "accepted",
+      authority: "accepted_knowledge",
+    }),
+    "accepted",
+  );
+  assert.equal(
+    authorityOf({
+      type: "claim",
+      state: "proposed",
+      authority: "proposed_interpretation",
+    }),
+    "proposed",
+  );
+  assert.equal(
+    authorityOf({ type: "claim", state: "accepted", quarantined: true }),
+    "quarantined",
+  );
+  assert.equal(authorityOf({ type: "claim", state: "rejected" }), "retired");
+  assert.equal(
+    authorityOf({
+      type: "claim",
+      state: "accepted",
+      authority: "mandatory_constraint",
+    }),
+    "constraint",
+  );
+  assert.equal(authorityOf({ type: "attestation" }), "attestation");
+  assert.equal(authorityOf({ type: "procedure" }), "procedure");
+  for (const type of ["checkpoint", "task", "run", "unknown"])
+    assert.equal(authorityOf({ type }), "working");
+  for (const type of ["plan", "step"])
+    assert.equal(authorityOf({ type }), "plan");
+  const legend = new Set(AUTHORITY_LEGEND.map(([k]) => k));
+  for (const type of [
+    "observation",
+    "claim",
+    "attestation",
+    "procedure",
+    "plan",
+    "step",
+    "task",
+  ])
+    assert.ok(legend.has(authorityOf({ type, state: "proposed" })));
+  assert.equal(nodeRadius(0), 8);
+  assert.equal(nodeRadius(undefined), 8);
+  assert.equal(nodeRadius(-5), 8);
+  assert.equal(nodeRadius(4), 12);
+  assert.equal(nodeRadius(10000), 16);
+  assert.equal(nodeRadius(4, true), 15);
+  assert.ok(Number.isFinite(nodeRadius(Number.NaN)));
 });

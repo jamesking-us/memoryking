@@ -241,5 +241,23 @@
     ],
     "exit_code": 0,
     "contains": "Plan progress: 1 of 2 steps completed (50%)"
+  },
+  {
+    "id": "host-hooks",
+    "command": [
+      "{python}",
+      "tools/hooks_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "Hooks replayed"
+  },
+  {
+    "id": "memory-tool-demo",
+    "command": [
+      "{python}",
+      "tools/memory_tool_demo.py"
+    ],
+    "exit_code": 0,
+    "contains": "Memory tool demo passed."
   }
 ]

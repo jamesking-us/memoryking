@@ -156,7 +156,7 @@ class ProviderAdapterTests(unittest.TestCase):
             b"x" * 257,
         ):
 
-            def launch(args, **kwargs):
+            def launch(args, output=output, **kwargs):
                 return real_popen(
                     [
                         sys.executable,

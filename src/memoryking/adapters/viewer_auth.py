@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
-from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.viewer_budget import request_budget
 from memoryking.adapters.viewer_identity import ViewerIdentity
 from memoryking.adapters.viewer_reads import ViewerSession
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import Clock, LocalError, Released, SystemClock, temporal_valid
 from memoryking.domain.viewer import GITHUB_ISSUER, VerifiedViewer
@@ -31,7 +31,7 @@ LOGIN_COOKIE = "__Host-memoryking-login"
 CALLBACK = "/viewer/auth/github/callback"
 GITHUB_AUTHORIZATION_ISSUER = "https://github.com/login/oauth"
 AUTHORIZE = "https://github.com/login/oauth/authorize"
-StoreFactory = Callable[[float], AbstractContextManager[LocalStore]]
+StoreFactory = Callable[[float], AbstractContextManager[StoreCore]]
 
 
 def digest(value: str) -> str:
@@ -117,9 +117,9 @@ class ViewerAuth:
         self.sessions = {k: v for k, v in self.sessions.items() if self._expiry(v, utc, mono) > utc}
         return utc, mono
 
-    def _fence(self, store: LocalStore) -> tuple[str, str, str, int]:
+    def _fence(self, store: StoreCore) -> tuple[str, str, str, int]:
         tenant = self.config["tenant"]
-        if hasattr(store, "tenant") and getattr(store, "tenant") != tenant:
+        if hasattr(store, "tenant") and store.tenant != tenant:
             raise LocalError("context_changed")
         row = store.db.execute(
             "SELECT policy_epoch FROM tenants WHERE tenant=?", (tenant,)

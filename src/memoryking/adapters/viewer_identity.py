@@ -9,14 +9,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from memoryking.adapters.local_store import MAX_COUNTER, LocalStore
+from memoryking.application.store_core import MAX_COUNTER, StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError, temporal_valid
 from memoryking.domain.viewer import GITHUB_ISSUER, VIEWER_CAPABILITIES, VerifiedViewer
 
 
 class ViewerIdentity:
-    def __init__(self, store: LocalStore):
+    def __init__(self, store: StoreCore):
         self.s, self.db = store, store.db
 
     def execute(self, credential: str, command: dict[str, Any]) -> dict[str, Any]:

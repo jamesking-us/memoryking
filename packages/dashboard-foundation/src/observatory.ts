@@ -1,4 +1,4 @@
-import { AtlasView, type GraphData } from "./graph.js";
+import { AtlasView, type Citation, type GraphData } from "./graph.js";
 
 type Doc = Record<string, unknown>;
 export interface AuthContext {
@@ -34,6 +34,39 @@ const readable = (v: unknown): string =>
     : typeof v === "object"
       ? JSON.stringify(v)
       : String(v);
+function markdown(text: string): HTMLElement[] {
+  // A small, safe renderer for the briefing's own Markdown: headings, list items,
+  // emphasis markers stripped, every node built from text content only.
+  const nodes: HTMLElement[] = [];
+  let list: HTMLElement | null = null;
+  const plain = (line: string) =>
+    line.replace(/\*\*|__|(^|\s)_(.+?)_(?=\s|$)/g, "$1$2");
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line) {
+      list = null;
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (heading) {
+      list = null;
+      nodes.push(e(heading[1].length === 1 ? "h3" : "h4", plain(heading[2])));
+      continue;
+    }
+    const item = /^(?:[-*]|\d+\.)\s+(.*)$/.exec(line);
+    if (item) {
+      if (!list) {
+        list = e(/^\d/.test(line) ? "ol" : "ul");
+        nodes.push(list);
+      }
+      list.append(e("li", plain(item[1])));
+      continue;
+    }
+    list = null;
+    nodes.push(e("p", plain(line), line.startsWith("_") ? "caption" : ""));
+  }
+  return nodes;
+}
 function detail(title: string, value: unknown): HTMLDetailsElement {
   const d = e("details");
   d.append(e("summary", title), e("pre", JSON.stringify(value, null, 2)));
@@ -104,6 +137,7 @@ export class Observatory {
     root: HTMLElement,
     private api: Request,
     private current: () => AuthContext | null,
+    private openReceipt: (project: string, receipt: string) => void = () => {},
   ) {
     this.root = root;
     root.append(
@@ -116,11 +150,13 @@ export class Observatory {
     const form = e("form", "", "observatory-form");
     this.project = field(form, "Project", "", "text");
     this.project.required = true;
-    this.project.pattern = "[A-Za-z0-9_-]{1,96}";
+    this.project.pattern = "[A-Za-z0-9_\\-]{1,96}";
     const label = e("label", "View");
     this.view = e("select");
     this.view.setAttribute("aria-label", "View");
     for (const [id, name] of [
+      ["brief", "Ask for a briefing"],
+      ["timeline", "Timeline"],
       ["atlas", "Memory graph"],
       ["history", "Checkpoint history"],
       ["review", "Review & conflicts"],
@@ -128,6 +164,7 @@ export class Observatory {
       ["operations", "Jobs & health"],
       ["handoffs", "Handoffs & checkpoints"],
       ["impact", "Change impact"],
+      ["influence", "Where did this go"],
       ["retention", "Retention & purge"],
     ]) {
       const o = e("option", name);
@@ -271,6 +308,7 @@ export class Observatory {
     action: string,
     args: Doc = {},
     key?: string,
+    bare = false,
   ): Promise<Doc> {
     const ctx = this.current();
     if (!ctx || document.hidden || !this.clockValid())
@@ -281,12 +319,15 @@ export class Observatory {
       started = Date.now(),
       startedMono = performance.now(),
       cycle = this.cycle;
-    const command: Doc = {
-      version: 1,
-      incarnation: ctx.incarnation,
-      action,
-      args: { ...args, project },
-    };
+    // The inference contract binds history inside its arguments, not on the command.
+    const command: Doc = bare
+      ? { version: 1, action, args: { ...args, project } }
+      : {
+          version: 1,
+          incarnation: ctx.incarnation,
+          action,
+          args: { ...args, project },
+        };
     if (key) command.key = key;
     const result = await this.api("/api/command", {
       csrf: ctx.csrf,
@@ -377,6 +418,12 @@ export class Observatory {
     this.clearResult("Checking current permission…");
     await this.run(async () => {
       switch (this.view.value) {
+        case "brief":
+          this.brief();
+          break;
+        case "timeline":
+          await this.timeline();
+          break;
         case "atlas":
           await this.atlas();
           break;
@@ -397,6 +444,9 @@ export class Observatory {
           break;
         case "impact":
           this.impact();
+          break;
+        case "influence":
+          this.influence();
           break;
         case "retention":
           this.retention();
@@ -463,6 +513,19 @@ export class Observatory {
       this.graph = new AtlasView(
         host,
         (id) => void this.run(() => this.atlas(id), true),
+        {
+          load: async (id) => {
+            const project = this.project.value;
+            const data = await this.api(
+              "/api/citations/" +
+                encodeURIComponent(project) +
+                "/" +
+                encodeURIComponent(id),
+            );
+            return (Array.isArray(data.items) ? data.items : []) as Citation[];
+          },
+          open: (receipt) => this.openReceipt(this.project.value, receipt),
+        },
       );
     }
     this.graph.set(data as unknown as GraphData);
@@ -665,7 +728,12 @@ export class Observatory {
       diagnostic: true,
     });
     const ranking = await this.command("experience", "ranking_inspect");
-    if (this.unchanged(knowledge, constraints, procedures, ranking)) return;
+    const held = await this.command("inspection", "held");
+    const rules = await this.command("inspection", "trust_list");
+    if (
+      this.unchanged(knowledge, constraints, procedures, ranking, held, rules)
+    )
+      return;
     this.output.replaceChildren(
       e("h3", "Review queue & evidence quality"),
       e(
@@ -738,6 +806,22 @@ export class Observatory {
     this.output.append(
       detail("Active ranking and evaluation evidence", ranking),
     );
+    this.output.append(this.heldSection(held, rules));
+    const drafting = e("section");
+    drafting.append(
+      e("h3", "Draft proposals from repeated evidence"),
+      e(
+        "p",
+        "Files a proposal for every name that several independent observations share, with one evidence span per source. Drafts wait here for review like any proposal; nothing becomes knowledge by itself.",
+        "integrity",
+      ),
+      button("Draft proposals", () => {
+        void this.run(async () => {
+          await this.mutate("knowledge", "draft", { limit: 16 });
+        });
+      }),
+    );
+    this.output.append(drafting);
     this.composer();
   }
   private reviewAction(
@@ -763,7 +847,7 @@ export class Observatory {
       "reviewed_in_dashboard",
     );
     reason.required = true;
-    reason.pattern = "[A-Za-z0-9_-]{1,96}";
+    reason.pattern = "[A-Za-z0-9_\\-]{1,96}";
     const breadth = field(
       form,
       "I reviewed the applicability breadth",
@@ -790,6 +874,77 @@ export class Observatory {
     this.output.querySelector(".review-confirm")?.remove();
     this.output.append(form);
     reason.focus();
+  }
+  /** Held captures from untrusted sources, with release buttons and the trust rules. */
+  private heldSection(held: Doc, rules: Doc): HTMLElement {
+    const section = e("section");
+    const items = rows(held.held);
+    section.append(
+      e("h3", "Held captures"),
+      e(
+        "p",
+        "Captures from a source marked untrusted are recorded but invisible to every read, briefing, graph and review until released here. Releasing is a journaled policy decision.",
+        "integrity",
+      ),
+    );
+    if (!items.length)
+      section.append(e("p", "No held captures in this project."));
+    for (const item of items) {
+      const card = e("article", "", "review-card");
+      card.append(
+        e("h4", String(item.preview)),
+        e(
+          "p",
+          `${String(item.observation)} · ${String(item.source)} by ${String(item.captured_by)} · ${readable(item.reason)} · held ${new Date(Number(item.held_ms)).toLocaleString()}`,
+        ),
+      );
+      const release = button("Release", () => {
+        void this.run(async () => {
+          await this.mutate("inspection", "release", {
+            observation: String(item.observation),
+          });
+        });
+      });
+      card.append(release);
+      section.append(card);
+    }
+    const ruleList = rows(rules.rules);
+    section.append(
+      e("h4", "Trust rules"),
+      e(
+        "p",
+        ruleList.length
+          ? ruleList
+              .map(
+                (r) =>
+                  `${String(r.project)} · ${String(r.source)} · ${String(r.level)} (by ${String(r.decided_by)})`,
+              )
+              .join(" · ")
+          : "No rules; every source is trusted.",
+      ),
+    );
+    const f = e("form", "", "observatory-form"),
+      source = field(f, "Source name or glob"),
+      level = e("select");
+    for (const value of ["untrusted", "trusted"]) {
+      const option = e("option", value);
+      option.value = value;
+      level.append(option);
+    }
+    level.setAttribute("aria-label", "Trust level");
+    source.required = true;
+    f.append(level, e("button", "Set rule"));
+    f.onsubmit = (ev) => {
+      ev.preventDefault();
+      void this.run(async () => {
+        await this.mutate("inspection", "trust", {
+          source: source.value,
+          level: level.value,
+        });
+      });
+    };
+    section.append(f);
+    return section;
   }
   private async mutate(
     operation: string,
@@ -981,6 +1136,7 @@ export class Observatory {
       data = await load();
     if (this.unchanged(data)) return;
     this.output.replaceChildren(
+      await this.memoryHealth(),
       e("h3", "Jobs & primary health"),
       e("p", readable(data.health)),
       table(rows(data.jobs), [
@@ -1000,7 +1156,170 @@ export class Observatory {
         "integrity",
       ),
     );
+    await this.egress();
     this.exportCurrent(load);
+  }
+  /** Whether memory is paying for itself: counts the store already keeps, never content. */
+  private async memoryHealth(): Promise<HTMLElement> {
+    const section = e("section", "", "memory-health");
+    section.append(e("h3", "Memory health"));
+    let data: Doc;
+    try {
+      data = await this.command("inspection", "health");
+    } catch (error) {
+      section.append(
+        e(
+          "p",
+          "Memory health unavailable under this session: " +
+            (error instanceof Error
+              ? readable(error.message)
+              : "request failed"),
+          "caption",
+        ),
+      );
+      return section;
+    }
+    const window = doc(data.window),
+      observations = doc(data.observations),
+      briefings = doc(data.briefings),
+      feedback = doc(data.feedback),
+      claims = doc(data.claims),
+      backlog = doc(data.backlog),
+      percent = (ppm: unknown) =>
+        typeof ppm === "number" ? `${Math.round(ppm / 10000)}%` : "n/a",
+      days = (ms: unknown) =>
+        typeof ms === "number" ? `${Math.floor(ms / 86400000)} day(s)` : "n/a";
+    section.append(
+      e(
+        "p",
+        `Last ${readable(window.days)} day(s) of this project.`,
+        "caption",
+      ),
+    );
+    const signals = e("ul", "", "health-signals");
+    for (const signal of rows(data.signals)) {
+      const item = e("li");
+      item.dataset.level = String(signal.level);
+      item.append(
+        e("strong", `${readable(signal.level)} · ${readable(signal.name)}`),
+        document.createTextNode(` ${readable(signal.text)}`),
+      );
+      signals.append(item);
+    }
+    section.append(signals);
+    section.append(
+      table(
+        [
+          {
+            measure: "Helpful share of rated feedback",
+            value: `${readable(feedback.helpful)} of ${readable(feedback.rated)} (${percent(feedback.helpful_ppm)})`,
+          },
+          {
+            measure: "Briefings with no relevant memory",
+            value: `${readable(briefings.no_relevant_memory)} of ${readable(briefings.total)} (${percent(briefings.no_relevant_memory_ppm)})`,
+          },
+          {
+            measure: "Observations never delivered",
+            value: `${readable(observations.never_delivered)} of ${readable(observations.total)} (${percent(observations.never_delivered_ppm)})`,
+          },
+          {
+            measure: "Claims that lost their evidence / were replaced",
+            value: `${readable(claims.evidence_purged)} / ${readable(claims.superseded)} of ${readable(claims.families)} families`,
+          },
+          {
+            measure: "Proposals waiting for review",
+            value: `${readable(backlog.proposed)}; oldest ${days(backlog.oldest_age_ms)}`,
+          },
+          {
+            measure: "Held and purged observations",
+            value: `${readable(observations.held)} held, ${readable(observations.purged)} purged`,
+          },
+        ],
+        ["measure", "value"],
+      ),
+    );
+    const waiting = rows(backlog.items).map((item) => ({
+      ...item,
+      waiting: days(item.age_ms),
+    }));
+    if (waiting.length)
+      section.append(
+        e("h4", "Oldest proposals waiting"),
+        table(waiting, [
+          "revision",
+          "logical_key",
+          "kind",
+          "issuer",
+          "waiting",
+        ]),
+      );
+    section.append(detail("Health counts and coverage", data));
+    return section;
+  }
+  /** What left this store for a model provider, under which policy, and whether it arrived. */
+  private async egress(): Promise<void> {
+    const section = e("section");
+    section.append(e("h3", "Egress audit"));
+    let data: Doc;
+    try {
+      data = await this.command(
+        "inference",
+        "audit",
+        { before: null },
+        undefined,
+        true,
+      );
+    } catch (error) {
+      section.append(
+        e(
+          "p",
+          "Egress audit unavailable under this session: " +
+            (error instanceof Error
+              ? readable(error.message)
+              : "request failed"),
+          "caption",
+        ),
+      );
+      this.output.append(section);
+      return;
+    }
+    const items = rows(data.items).map((item) => ({
+      when: new Date(Number(item.evaluated_ms)).toLocaleString(),
+      status: item.status,
+      provider: item.provider,
+      model: item.model,
+      host: item.host,
+      classification: item.classification,
+      bytes: item.request_bytes,
+      receipts: Array.isArray(item.receipts) ? item.receipts.length : 0,
+      tokens: `${String(item.input_tokens ?? "?")} in / ${String(item.output_tokens ?? "?")} out`,
+      permit: item.permit,
+    }));
+    section.append(
+      e(
+        "p",
+        `Policy ${readable(data.policy_revision)}. Each record is one request the daemon authorized for a remote provider: hashes and receipt ids only, never content. A record left pending means the host never reported the outcome.`,
+        "integrity",
+      ),
+      items.length
+        ? table(items, [
+            "when",
+            "status",
+            "provider",
+            "model",
+            "host",
+            "classification",
+            "bytes",
+            "receipts",
+            "tokens",
+            "permit",
+          ])
+        : e(
+            "p",
+            "Nothing has left this store for a provider in the retention window.",
+          ),
+    );
+    this.output.append(section);
   }
   private async handoffs(): Promise<void> {
     this.reader = () => this.handoffs();
@@ -1152,6 +1471,172 @@ export class Observatory {
     };
     this.output.append(f, result);
   }
+  private async timeline(before?: number): Promise<void> {
+    const project = this.project.value;
+    const data = await this.api(
+      "/api/timeline/" +
+        encodeURIComponent(project) +
+        (before === undefined ? "" : "/" + String(before)),
+    );
+    const items = (data.items ?? []) as Doc[];
+    const rows = items.map((item) => ({
+      position: item.position,
+      when: new Date(Number(item.at_ms)).toLocaleString(),
+      event: item.kind,
+      subject: `${String(item.subject_kind)} ${String(item.subject)}`,
+      actor: item.actor,
+    }));
+    const body = [
+      e("h3", "Timeline"),
+      e(
+        "p",
+        "Every recorded event whose subject belongs to this project, newest first: captures, claims, reviews, checkpoints, handoffs and purges, with the principal that caused each.",
+        "integrity",
+      ),
+      rows.length
+        ? table(rows, ["position", "when", "event", "subject", "actor"])
+        : e("p", "No events recorded for this project yet."),
+    ];
+    if (before === undefined) this.output.replaceChildren(...body);
+    else {
+      this.output.querySelector("[data-earlier]")?.remove();
+      this.output.append(...body.slice(2));
+    }
+    if (data.next_before !== null && data.next_before !== undefined) {
+      const more = e("button", "Load earlier");
+      more.type = "button";
+      more.dataset.earlier = "1";
+      more.onclick = () =>
+        void this.run(() => this.timeline(Number(data.next_before)));
+      this.output.append(more);
+    }
+  }
+  private brief(): void {
+    this.status.textContent =
+      "Run the same briefing an agent would receive, with its receipt.";
+    this.output.replaceChildren(
+      e("h3", "Ask for a briefing"),
+      e(
+        "p",
+        "The query is answered under your current permissions and recorded with a receipt exactly as for an agent. Constraints come first, then cited guidance; sources are evidence, not instructions.",
+        "integrity",
+      ),
+    );
+    const f = e("form", "", "observatory-form");
+    const query = field(f, "Query");
+    query.required = true;
+    query.maxLength = 2048;
+    const budget = field(f, "Token budget", "6000", "number");
+    budget.min = "256";
+    budget.max = "100000";
+    const asOf = field(f, "As of (optional)", "", "datetime-local");
+    asOf.title =
+      "Brief as the project stood at this moment: only what was recorded by then, with claim validity judged then.";
+    f.append(e("button", "Brief me"));
+    const result = e("div", "", "briefing");
+    f.onsubmit = (event) => {
+      event.preventDefault();
+      void this.run(async () => {
+        result.replaceChildren(e("p", "Checking current permission…"));
+        const instant = asOf.value ? new Date(asOf.value).getTime() : NaN;
+        const packet = await this.command("retrieval", "brief", {
+          query: query.value,
+          bindings: [{}],
+          max_output_tokens: Number(budget.value) || 6000,
+          tokenizer: "utf8-byte-estimate-v1",
+          format: "text",
+          ...(Number.isFinite(instant) ? { as_of_ms: instant } : {}),
+        });
+        result.replaceChildren(...markdown(String(packet.text ?? "")));
+        const usage = (packet.usage ?? {}) as Doc;
+        result.append(
+          e(
+            "p",
+            `Receipt ${String(packet.receipt)} · status ${String(packet.status)} · ${String(usage.output_tokens ?? "?")} tokens (${String(usage.counting ?? "estimate")})`,
+            "caption",
+          ),
+        );
+        const sources = (packet.sources ?? []) as Doc[];
+        if (sources.length) {
+          result.append(
+            detail(
+              "Citations",
+              sources.map(
+                (s) => `[${String(s.ref)}] ${String(s.kind)} ${String(s.id)}`,
+              ),
+            ),
+          );
+        }
+        const replay = e("button", "Verify replay");
+        replay.type = "button";
+        replay.onclick = () =>
+          void this.run(async () => {
+            const again = await this.command("retrieval", "replay", {
+              receipt: packet.receipt,
+            });
+            replay.textContent =
+              again.text === packet.text
+                ? "Replay matched byte for byte"
+                : "Replay differed";
+          });
+        result.append(replay);
+      });
+    };
+    this.output.append(f, result);
+  }
+  private influence(): void {
+    this.status.textContent =
+      "Enter an observation to list every record built from it and who received them.";
+    this.output.replaceChildren(
+      e("h3", "Where did this memory go"),
+      e(
+        "p",
+        "The claims that cite the observation, the checkpoints, handoffs, summaries and experience records built on it or on anything derived from it, and the retained briefings, fetches, reruns and graph pages that included it, with the principals they reached. The same recorded dependencies a purge would follow, read without changing anything. Prior exports, provider deliveries and backups leave no record here.",
+      ),
+    );
+    const f = e("form", "", "observatory-form"),
+      observation = field(f, "Observation ID");
+    observation.required = true;
+    f.append(e("button", "Trace"));
+    const result = e("div");
+    observation.oninput = () => result.replaceChildren();
+    f.onsubmit = (ev) => {
+      ev.preventDefault();
+      const id = observation.value;
+      const read = async () => {
+        const value = await this.command("inspection", "influence", {
+          observation: id,
+        });
+        if (this.unchanged(value)) return;
+        const counts = doc(value.counts);
+        result.replaceChildren(
+          e(
+            "p",
+            `Captured by ${String(value.captured_by)} from ${String(value.source)} · reached ${String(counts.principals)} principal(s): ${(value.principals as string[]).join(", ") || "none"}`,
+            "eyebrow",
+          ),
+        );
+        for (const [title, key] of [
+          ["Claims citing it", "claims"],
+          ["Checkpoints built on it", "checkpoints"],
+          ["Handoffs that carried it", "handoffs"],
+          ["Summaries derived from it", "summaries"],
+          ["Deliveries that included it", "deliveries"],
+          ["Experience records", "experience"],
+        ] as const) {
+          const items = rows(value[key]);
+          const truncated = (value.truncation as string[]).includes(key)
+            ? " (truncated)"
+            : "";
+          result.append(detail(`${title}: ${items.length}${truncated}`, items));
+        }
+        result.append(e("p", readable(value.coverage), "caption"));
+      };
+      this.reader = read;
+      void this.run(read, true);
+    };
+    this.output.append(f, result);
+  }
   private retention(): void {
     this.status.textContent =
       "Enter an observation to authorize and preview its consequences.";
@@ -1159,7 +1644,7 @@ export class Observatory {
       e("h3", "Retention preview"),
       e(
         "p",
-        "Permanent purge also invalidates dependent context, retry results, tenant experience bodies and ranking state. It cannot erase prior exports, provider deliveries or backups. Review the server preview before confirming.",
+        "Permanent purge erases the source and the claims, briefings, checkpoints and handoffs that recorded a dependency on it, deletes receipts that list it, retires replay results tenant-wide, and disables ranking when a dependent experience record is retired. It cannot erase prior exports, provider deliveries or backups. Review the server preview before confirming.",
         "integrity",
       ),
     );

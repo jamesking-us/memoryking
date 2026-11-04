@@ -6,7 +6,7 @@ import secrets
 from collections.abc import Callable
 from typing import Any, Protocol, cast
 
-from memoryking.adapters.local_store import LocalStore
+from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError, Released
 
@@ -23,9 +23,7 @@ class BrowserStore:
     instant. Subject/intersection checks keep the real store's identity semantics.
     """
 
-    def __init__(
-        self, store: LocalStore, session: dict[str, Any], check_session: Callable[[], Any]
-    ):
+    def __init__(self, store: StoreCore, session: dict[str, Any], check_session: Callable[[], Any]):
         self.store, self.session = store, dict(session)
         self.check_session = check_session
 
@@ -52,13 +50,14 @@ class BrowserStore:
 
 
 def execute(
-    store: LocalStore,
+    store: StoreCore,
     session: dict[str, Any],
     body: dict[str, Any],
     check_session: Callable[[], Any],
 ) -> Released:
     from memoryking.adapters.experience import Experience
     from memoryking.adapters.handoff import Handoff
+    from memoryking.adapters.inference import Inference
     from memoryking.adapters.inspection import Inspection
     from memoryking.adapters.knowledge_store import Knowledge
     from memoryking.adapters.repository_store import Repository
@@ -76,7 +75,7 @@ def execute(
     operation, command = body["operation"], body["command"]
     allowed = {
         "retrieval": {"atlas", "fetch", "replay", "brief", "rerun"},
-        "knowledge": {"query", "constraints", "propose", "review", "attest"},
+        "knowledge": {"query", "constraints", "propose", "draft", "review", "attest"},
         "experience": {
             "query",
             "records",
@@ -89,7 +88,21 @@ def execute(
         "repository": {"impact", "history", "coverage"},
         "working": {"resume", "operations"},
         "handoff": {"prepare", "preview", "materialize", "cancel"},
-        "inspection": {"history", "operations", "cost", "handoffs", "retention_preview", "purge"},
+        "inspection": {
+            "history",
+            "operations",
+            "cost",
+            "handoffs",
+            "retention_preview",
+            "purge",
+            "influence",
+            "trust",
+            "trust_list",
+            "held",
+            "release",
+            "health",
+        },
+        "inference": {"audit"},
     }
     if (
         not isinstance(operation, str)
@@ -98,7 +111,7 @@ def execute(
         or command["action"] not in allowed[operation]
     ):
         raise LocalError("dashboard_action_unsupported")
-    services: dict[str, Callable[[LocalStore], CommandService]] = {
+    services: dict[str, Callable[[StoreCore], CommandService]] = {
         "retrieval": Retrieval,
         "knowledge": Knowledge,
         "experience": Experience,
@@ -106,6 +119,7 @@ def execute(
         "working": Working,
         "handoff": Handoff,
         "inspection": Inspection,
+        "inference": Inference,
     }
-    guarded = cast(LocalStore, BrowserStore(store, session, check_session))
+    guarded = cast(StoreCore, BrowserStore(store, session, check_session))
     return services[operation](guarded).execute(session["credential"], command)
