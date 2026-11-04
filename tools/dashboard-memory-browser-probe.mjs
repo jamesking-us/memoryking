@@ -220,6 +220,7 @@ try {
   );
   const form = page.locator("#observatory > form");
   await form.locator("input").fill("demo");
+  await form.locator("select").selectOption("atlas");
   await form.getByRole("button", { name: "Load current view" }).click();
   const node = page.locator("#observatory .graph-list button").first();
   await node.waitFor();
