@@ -45,7 +45,7 @@ try {
       rejectAction = "",
       number = 0;
     const api = async (_path, body) => {
-      calls.push(body.command.action);
+      calls.push({ path: _path, action: body.command.action });
       const value = {
         incarnation: "h",
         tenant: "t",
@@ -143,8 +143,17 @@ try {
     view.tick();
     if (root.querySelector(".observatory-output").textContent)
       throw Error("clock_rollback_retained");
-    const onlyReads = calls.every((action) =>
-      ["history", "query", "constraints", "ranking_inspect"].includes(action),
+    const readCalls = new Set([
+      "/api/working:history",
+      "/api/knowledge:query",
+      "/api/knowledge:constraints",
+      "/api/experience:query",
+      "/api/experience:ranking_inspect",
+      "/api/inspection:held",
+      "/api/inspection:trust_list",
+    ]);
+    const onlyReads = calls.every(({ path, action }) =>
+      readCalls.has(`${path}:${action}`),
     );
     Date.now = originalWall;
     Object.defineProperty(performance, "now", {
