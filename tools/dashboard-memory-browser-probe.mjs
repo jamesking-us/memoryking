@@ -181,7 +181,7 @@ try {
     await page.getByRole("button", { name: /^Motion (on|off)$/ }).count(),
     0,
   );
-  await page.locator("#execution-project").fill("demo");
+  await page.locator("#execution-project").selectOption("demo");
   await page.locator("#execution-form button").click();
   await page.locator(".task-card").first().waitFor();
   await page.screenshot({
