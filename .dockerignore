@@ -10,6 +10,8 @@
 !requirements-shared.lock
 !requirements-reports.lock
 !README.md
+!LICENSE
+!NOTICE
 !src/
 !src/**
 !deploy/local/
