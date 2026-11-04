@@ -45,7 +45,11 @@ try {
       rejectAction = "",
       number = 0;
     const api = async (_path, body) => {
-      calls.push({ path: _path, action: body.command.action });
+      calls.push({
+        path: _path,
+        operation: body.operation,
+        action: body.command.action,
+      });
       const value = {
         incarnation: "h",
         tenant: "t",
@@ -144,16 +148,17 @@ try {
     if (root.querySelector(".observatory-output").textContent)
       throw Error("clock_rollback_retained");
     const readCalls = new Set([
-      "/api/working:history",
-      "/api/knowledge:query",
-      "/api/knowledge:constraints",
-      "/api/experience:query",
-      "/api/experience:ranking_inspect",
-      "/api/inspection:held",
-      "/api/inspection:trust_list",
+      "inspection:history",
+      "knowledge:query",
+      "knowledge:constraints",
+      "experience:query",
+      "experience:ranking_inspect",
+      "inspection:held",
+      "inspection:trust_list",
     ]);
-    const onlyReads = calls.every(({ path, action }) =>
-      readCalls.has(`${path}:${action}`),
+    const onlyReads = calls.every(
+      ({ path, operation, action }) =>
+        path === "/api/command" && readCalls.has(`${operation}:${action}`),
     );
     Date.now = originalWall;
     Object.defineProperty(performance, "now", {
@@ -161,9 +166,9 @@ try {
       value: originalMono,
     });
     root.remove();
-    return { renewed, onlyReads, calls: calls.length };
+    return { renewed, onlyReads, calls };
   });
-  assert.ok(result.renewed && result.onlyReads);
+  assert.ok(result.renewed && result.onlyReads, JSON.stringify(result));
   checks.push(
     "compiled component: unchanged view/details retained beyond 36 seconds; failed renewal, paused expiry, scope/authority races and clock rollback clear; automatic calls are reads only",
   );
