@@ -63,12 +63,12 @@ You need Python **3.12**. From a terminal:
 
 ```sh
 python3.12 -m venv .venv
-.venv/bin/python -I -m pip install --pre memoryking
+.venv/bin/python -I -m pip install memoryking
 git clone https://github.com/jamesking-us/memoryking.git
 .venv/bin/python memoryking/examples/remember_and_resume.py
 ```
 
-The first two lines install the released package (`--pre` because the current release is a preview); the checkout is only there for the example. The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
+The first two lines install the released package; the checkout is only there for the example. The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
 
 For a lasting installation and the browser dashboard, follow the [getting started guide](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md): name your store once with `memoryking profile add`, then `status`, `doctor`, `dashboard open` and `credential issue` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md).
 

@@ -6,6 +6,14 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 Nothing yet.
 
+## 0.1.0 (2026-11-09)
+
+The first stable release: the content of the `0.1.0a3` pre-release, published under a final version so that `pip install memoryking` finds it without `--pre`. Install with `pip install memoryking==0.1.0`; the local-daemon image is `ghcr.io/jamesking-us/memoryking:0.1.0`.
+
+### Fixes
+
+- The shared contention pilot (`tools/shared_contention_pilot.py`) accepts the request deadline the shared service now passes, so the local CI job's shared-pilot step takes its measurement instead of crashing.
+
 ## 0.1.0a3 (2026-11-03)
 
 The ten items of the November 2026 gap analysis, in one pre-release. Install with `pip install --pre memoryking==0.1.0a3`; the local-daemon image is `ghcr.io/jamesking-us/memoryking:0.1.0a3`.
