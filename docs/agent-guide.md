@@ -99,6 +99,10 @@ The shared profile also exposes authenticated Streamable HTTP MCP at `/v1/tenant
 
 Add `--profile lean` to the bridge command and the host sees five flat tools instead of nine schema-heavy ones: `remember`, `recall`, `save_progress`, `resume` and `hand_off`. Their catalog is under 8 KB with no `oneOf`, every call has defaults, briefings and resumes come back as cited Markdown, and each tool maps onto the full profile through the same client, so authorization, receipts and idempotency are unchanged. The catalog is in [`contracts/stdio.tools.lean.json`](../contracts/stdio.tools.lean.json). Use the full profile when a program, not a model, drives the tools.
 
+Lean `save_progress` merges: a section you leave out (`next_actions`, `hard_constraints`, `findings`, `failed_attempts`, `blockers`) keeps what the task stream's latest save recorded, a section you send replaces it, and an empty list clears it. If the stream exists but cannot be read back, the save is refused rather than replacing it blind. Each save passes the revision it merged from, so two racing writers conflict instead of overwriting. Findings are saved as `hypothesis` findings with no evidence; attach evidence through the full profile. The full profile's `memory_checkpoint` keeps explicit replace semantics.
+
+A resume is `incomplete` with `reason: recovery_reconciliation_required` only for real recovery gaps: an operation whose outcome is unknown or that needs reconciliation, a required or stored artifact that is unavailable, dirty repository state without its artifacts, or any non-`defaulted:` gap the writer recorded in `capture.gaps`. Sections nobody wrote (`defaulted:<section>`) do not block; the packet lists them as `unrecorded_sections` and the Markdown shows them under "Never written down".
+
 The bridge is a plain stdio MCP server, so any host that launches one works the same way. Where the configuration lives differs by host:
 
 | Host | Where to configure | Shape |

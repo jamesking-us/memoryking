@@ -745,7 +745,13 @@ class Working:
                 summary=self.latest_summary(who, row["id"], at),
             )
             deps.extend(self.r._dependencies(base["constraints"]))
-            gaps = list(body["capture"]["gaps"])
+            # A section nobody wrote is a note on the packet; every other gap is a
+            # recovery gap that blocks trust until reconciled.
+            declared = list(body["capture"]["gaps"])
+            gaps = [g for g in declared if not g.startswith("defaulted:")]
+            unrecorded = sorted(g[len("defaulted:") :] for g in declared if g not in gaps)
+            if unrecorded:
+                base["unrecorded_sections"] = unrecorded
             if repository_snapshot is not None:
                 artifacts = {a["path"]: a for a in repository["artifacts"]}
                 for path in repository_snapshot["dirty_paths"]:
@@ -806,6 +812,7 @@ class Working:
                 minimum_required_tokens=minimum,
             )
             base.pop("recovery_gaps", None)
+            base.pop("unrecorded_sections", None)
             base["usage"]["budget_compliant"] = False
             raw, used = counted(base, count)
             deps = []

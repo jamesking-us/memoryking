@@ -113,7 +113,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Save where a task stands before you stop or hand over. Objective and current "
             "state are enough; add next actions, findings, failed attempts and blockers as "
-            "you have them. Sections you leave out are recorded as gaps, not as empty facts."
+            "you have them. A section you leave out keeps what the task's latest save "
+            "recorded (or is noted as never written when there is none); a section you "
+            "send replaces it, and an empty list clears it. Findings are saved as "
+            "hypotheses until evidence is attached by other means."
         ),
         "inputSchema": {
             "type": "object",
@@ -215,6 +218,36 @@ CATALOG: dict[str, Any] = {"protocol_version": "2025-11-25", "transport": "stdio
 
 
 DAY_MS = 86_400_000
+CARRIED = ("next_actions", "hard_constraints", "findings", "failed_attempts", "blockers")
+
+
+def _latest(client: LocalClient, task: str, run: str | None) -> dict[str, Any] | None:
+    """The stream's latest checkpoint, or None when it has never been saved.
+
+    A stream that exists but cannot be read back refuses the save: replacing it blind
+    would erase what the caller did not repeat."""
+    try:
+        packet = client.tool(
+            "memory_resume",
+            {
+                "action": "resume",
+                "args": {
+                    "task": task,
+                    "run": run,
+                    "checkpoint": None,
+                    "max_output_tokens": 65536,
+                    "format": "json",
+                },
+            },
+        )
+    except LocalError as exc:
+        if exc.code == "checkpoint_unavailable":
+            return None
+        raise
+    checkpoint = packet.get("checkpoint")
+    if not checkpoint:
+        raise LocalError(str(packet.get("reason") or "checkpoint_unavailable"))
+    return {"revision": checkpoint["revision"], "state": checkpoint["state"]}
 
 
 def _event(source: str, text: str, observed_ms: int, project: str) -> str:
@@ -280,7 +313,8 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
             checkpoint["hard_constraints"] = arguments["hard_constraints"]
         if "findings" in arguments:
             checkpoint["findings"] = [
-                {"text": text, "kind": "note", "evidence": []} for text in arguments["findings"]
+                {"text": text, "kind": "hypothesis", "evidence": []}
+                for text in arguments["findings"]
             ]
         if "failed_attempts" in arguments:
             checkpoint["failed_attempts"] = [
@@ -302,6 +336,14 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
             "run": arguments.get("run"),
             "checkpoint": checkpoint,
         }
+        previous = _latest(client, arguments["task"], arguments.get("run"))
+        if previous is not None:
+            # Sections the caller left out carry over; sections it sent replace them.
+            # Only recorded content carries, so a never-written section stays a gap.
+            for section in CARRIED:
+                if section not in checkpoint and previous["state"].get(section):
+                    checkpoint[section] = previous["state"][section]
+            save_args["expected_revision"] = previous["revision"]
         if arguments.get("share_with"):
             save_args["readers"] = sorted({principal, *arguments["share_with"]})
         return client.tool("memory_checkpoint", {"action": "save", "args": save_args})

@@ -304,6 +304,85 @@ class SDKTests(unittest.TestCase):
         self.assertTrue(LEAN_VALIDATORS["recall"].is_valid({"query": "x"}))
         self.assertFalse(LEAN_VALIDATORS["recall"].is_valid({"query": "x", "extra": 1}))
 
+    def test_lean_save_progress_over_stdio_takes_findings_merges_and_resumes_ready(self):
+        calls = [
+            (
+                "save_progress",
+                {
+                    "task": "merge-task",
+                    "objective": "Fix the retry deadline",
+                    "current_state": "Investigating",
+                    "next_actions": ["Run the regression"],
+                    "findings": ["Backoff exceeds the deadline"],
+                    "failed_attempts": [
+                        {"action": "Raise every timeout", "outcome": "Still failed"}
+                    ],
+                    "blockers": ["Need a full regression result"],
+                    "hard_constraints": ["Never touch the billing path"],
+                },
+            ),
+            (
+                "save_progress",
+                {
+                    "task": "merge-task",
+                    "objective": "Fix the retry deadline",
+                    "current_state": "Patch drafted",
+                    "blockers": [],
+                },
+            ),
+            ("resume", {"task": "merge-task"}),
+        ]
+        frames = [initialize(), {"jsonrpc": "2.0", "method": "notifications/initialized"}]
+        frames += [
+            rpc(10 + n, "tools/call", {"name": name, "arguments": arguments})
+            for n, (name, arguments) in enumerate(calls)
+        ]
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(self.credential),
+                "--project",
+                "p",
+                "--profile",
+                "lean",
+            ],
+            input=b"".join(canonical_bytes(frame) + b"\n" for frame in frames),
+            capture_output=True,
+            timeout=60,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        replies = {
+            r["id"]: r["result"] for r in map(json.loads, run.stdout.splitlines()) if "id" in r
+        }
+        for number in (10, 11, 12):
+            self.assertFalse(replies[number]["isError"], replies[number])
+        payload = {n: json.loads(replies[n]["content"][0]["text"]) for n in (10, 11, 12)}
+        self.assertEqual(payload[11]["revision"], 2)
+        text = payload[12]["text"]
+        state = self.client.tool(
+            "memory_resume",
+            {"action": "resume", "args": {"task": "merge-task", "checkpoint": None}},
+        )
+        self.assertEqual(state["status"], "ready")
+        self.assertNotIn("Blocked", text)
+        self.assertNotIn("_Status incomplete", text)
+        self.assertIn("Patch drafted", text)
+        # Omitted sections carried over; the supplied empty list cleared blockers.
+        self.assertIn("Run the regression", text)
+        self.assertIn("## Do not repeat", text)
+        self.assertIn("Never touch the billing path", text)
+        self.assertIn("Backoff exceeds the deadline", text)
+        self.assertNotIn("Need a full regression result", text)
+        self.assertIn("Never written down", text)
+        self.assertIn("defaulted:repository", text)
+        found = state["checkpoint"]["state"]["findings"]
+        self.assertEqual([f["kind"] for f in found], ["hypothesis"])
+
     def test_lean_bridge_lists_five_tools_over_stdio(self):
         frames = [
             initialize(),

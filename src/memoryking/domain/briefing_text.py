@@ -193,12 +193,16 @@ def render_resume(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
             )
     gaps = list(packet.get("recovery_gaps") or [])
     capture = state.get("capture") or {}
+    unrecorded = [f"defaulted:{s}" for s in packet.get("unrecorded_sections") or []]
     for gap in capture.get("gaps", []):
-        if gap not in gaps:
+        if gap not in gaps and gap not in unrecorded:
             gaps.append(gap)
     if gaps:
         lines.extend(["", "## Gaps"])
         lines.extend(f"- {g}" for g in gaps)
+    if unrecorded:
+        lines.extend(["", "## Never written down (not a recovery gap)"])
+        lines.extend(f"- {g}" for g in unrecorded)
     caveats = [WARNING_NOTES.get(w, w) for w in packet.get("warnings", [])]
     if caveats:
         lines.extend(["", "## Caveats"])
