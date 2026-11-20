@@ -116,6 +116,7 @@ See [deployment and configuration](https://github.com/jamesking-us/memoryking/bl
 | [Feature and API reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md) | Interfaces, optional capabilities, limits and capacity, metrics, migration and troubleshooting. |
 | [Error codes](https://github.com/jamesking-us/memoryking/blob/main/docs/error-codes.md) | Every error code with the next move, generated from the service's own table. |
 | [Contributing](https://github.com/jamesking-us/memoryking/blob/main/CONTRIBUTING.md) | Build, test and maintain the project locally. |
+| [Roadmap](https://github.com/jamesking-us/memoryking/blob/main/docs/roadmap.md) | What is planned next and what is already done. |
 
 ## Current status
 

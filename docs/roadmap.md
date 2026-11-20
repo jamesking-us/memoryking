@@ -1,0 +1,87 @@
+# Roadmap
+
+This page lists the planned improvements to MemoryKing and where each one stands. It is a plan, not a development log: an item states the problem, the change and how to tell it is done, and nothing else.
+
+Status: `[ ]` planned · `[~]` in progress · `[x]` done. A done item names the release that carries it. Items inside a phase are in priority order, and phases are worked top to bottom unless an item says otherwise.
+
+Every change keeps the existing invariants: observations stay verbatim evidence, nothing becomes accepted knowledge without an authorized decision, every delivery has a receipt, purge follows dependencies, and a restore creates a new history. A change that needs one of these relaxed is out of scope until this page says so.
+
+| Phase | Goal | State |
+| --- | --- | --- |
+| 0 | Remove the defects that stop normal use at modest size | in progress |
+| 1 | Harden credentials, delegation and the control journal | planned |
+| 2 | Find the right memory: ranking, word forms, passages, semantic search | planned |
+| 3 | Turn evidence into knowledge without a reviewer always present | planned |
+| 4 | Make it easy for agents and developers to adopt | planned |
+| 5 | Scale and operate it for a team | planned |
+| 6 | Prove it on recall and on real task outcomes | planned |
+
+## Phase 0: remove the cliffs
+
+- [ ] **P0-1 Backups work at any store size.** The signed backup manifest lists every blob, so it exceeds the 1 MiB canonical limit at roughly 13,000 observations and the backup fails after copying everything; the scheduled backup then leaves a partial directory each minute (`adapters/local_store.py` `backup`, `adapters/postgres_recovery.py`, `backups.py` `Policy.run`, `contracts/canonical.py`). *Change:* sign a small manifest that carries the hash of a separate blob-index file; verify the index on restore; remove the partial directory and record the failure on any exception; correct the manifest bound in the deployment guide. Existing backups must still restore. *Done when:* a backup and restore round-trips at 20,000 observations in a test, and a failed scheduled backup leaves no directory behind.
+- [ ] **P0-2 Captures do not slow down or stall as the store grows.** Advancing the job frontier looks jobs up by position with no index that can serve it (`application/store_core.py` `_advance`), so a drain of 200 jobs takes about 0.1 s at 2,000 observations, 1.1 s at 12,000 and passes the five-second deadline near 29,000, after which captures are refused with `queue_full`. A `reindex` or restore re-queues every job and has the same effect at once. *Change:* add `jobs(tenant,position)` on both backends through the normal migration chain; give the idle probe a tenant predicate; make drain work in batches that each fit the deadline; do not let a reindex backlog refuse captures. *Done when:* a test captures and drains 30,000 observations with drain time per job flat, and a capture straight after `reindex` on 2,000 observations succeeds.
+- [ ] **P0-3 Accepted knowledge stays in briefings however many proposals exist.** The registry query takes the first 257 revisions of any state and blocks above 256 (`adapters/knowledge_store.py` `query`), so 17 daily `draft-proposals` runs remove all accepted knowledge from briefings, and the same count of constraint revisions blocks every briefing. *Change:* bound the registry by live accepted revisions (and reviewer-visible diagnostics separately), selected in SQL; rejected, superseded and unreviewed revisions never count toward the bound. *Done when:* a test with 300 unreviewed drafts and 3 accepted claims still returns the 3 claims, and 300 retired constraint revisions do not block.
+- [ ] **P0-4 A long task can always be resumed.** Operation listing raises `operation_limit` above 32 operations of any state (`adapters/working.py` `_operations`), so a task's 33rd recorded tool effect makes `resume`, `summarize`, hand-off and the execution snapshot fail. *Change:* return every open operation plus the newest resolved ones up to the bound, with a truncation flag; never raise for resolved history. *Done when:* a test records 40 succeeded operations and resume, summary and hand-off all work and report truncation.
+- [ ] **P0-5 `draft-proposals` works through the daemon.** The CLI command returns `invalid_request` because the socket contract does not admit the `draft` action; the tests call the store directly. *Change:* admit the action in the authoritative schema and regenerate; add a socket-level test for every CLI command that lacks one. *Done when:* `memoryking draft-proposals --project P` files drafts against a running daemon in a test.
+- [ ] **P0-6 The lean `save_progress` and `resume` tools behave as described.** A save with `findings` always fails (`lean.py` sends a kind the schema refuses); a second save erases next actions, failed attempts, blockers and constraints the caller did not repeat; every resume of a lean checkpoint reads "Blocked: recovery_reconciliation_required" because defaulted sections count as a recovery gap (`adapters/working.py`). *Change:* send a valid kind; merge omitted sections from the previous revision and say so in the tool description; report defaulted sections as a note, keeping the blocked status for real reconciliation gaps. *Done when:* tests cover all three, including `findings`, through the stdio bridge.
+- [ ] **P0-7 Session hooks save what matters and nothing secret.** The hooks keep assistant text only, including file bodies passed to write tools, with no redaction; they drop user turns and tool errors; the checkpoint they write replaces the agent's own with the oldest part of the transcript tail; pre-compact followed by session-end fails with `idempotency_conflict` (`host_hooks.py`). *Change:* capture user turns and tool errors, exclude tool inputs, scrub common secret shapes before capture, keep the newest part of the tail, write hook state to its own stream instead of the agent's, key the checkpoint by hook kind. *Done when:* tests show a planted key is not stored, a user instruction is recalled, and an agent-authored checkpoint survives a hook run.
+- [ ] **P0-8 Every per-tenant bound has a release path.** Checkpoints, hand-offs and hand-off views (4,096 each) and experience records (10,000) count rows of every state for the life of the tenant, and nothing deletes them; none appears under `status` capacity. *Change:* count live rows; add retention that keeps what history verification needs and removes the rest; report all four under capacity; correct the hints and the reference table. *Done when:* a test saves 5,000 checkpoints across tasks without refusal and plan history still verifies.
+- [ ] **P0-9 A scoped constraint does not lock out simple readers.** The lean tools, CLI and hooks always send empty bindings, so one accepted constraint scoped to an environment blocks every recall and resume with `applicability_unknown`, without saying which field is missing. *Change:* let the bridge, CLI and hooks carry session bindings; name the unbound field in the reply; do not let briefing-policy uncertainty block reading a checkpoint the caller wrote. *Done when:* tests cover recall and resume with and without the binding.
+
+## Phase 1: credentials, delegation and the journal
+
+- [ ] **P1-1 Credentials can be rotated.** A credential is derived only from the store, tenant and principal, so re-issuing after a revoke yields the same token. *Change:* a per-grant generation stored with the grant, checked at authorization, advanced by `credential issue --rotate` and by revoke; optional expiry enforced server-side. *Done when:* a revoked-then-reissued credential differs and the old one is refused.
+- [ ] **P1-2 A delegated token acts for its issuer.** Delegation returns a token whose acting principal is the named subject. *Change:* decide and document the intended model, then keep the delegator as the actor with "on behalf of" recorded, so reader lists, writer ownership and the event actor are evaluated against who really acted. *Done when:* a test shows a delegated token cannot read what only the subject may read.
+- [ ] **P1-3 The journal and the database cannot disagree silently.** *Change:* at open, fail closed when the database's journal position is ahead of the journal; use full-fsync semantics for control files where the platform has them; an instance lease in the database.
+- [ ] **P1-4 Journal cost stays flat.** The shared profile verifies the whole control journal on every transaction, and every operation intent appends to it. *Change:* cache verified state per tenant; signed journal checkpoints so only the tail is verified; move operation intents to their own compactable log.
+- [ ] **P1-5 A failing journal record can be repaired.** *Change:* apply journal records outside the request deadline; an operator command to inspect and resolve a record that cannot apply.
+- [ ] **P1-6 Smaller hardening.** Restore checks role attributes, not only the role name; a missing tenant and a bad token answer alike; lock and statement timeouts map to `service_busy`; every statement that relies on row-level security also carries a tenant predicate.
+
+## Phase 2: find the right memory
+
+- [ ] **P2-1 Rank by how informative a match is.** Scoring is the share of query terms present, and each term contributes only its 256 newest matches, so a rare word counts like a common one and an older record matching every term can be crowded out. *Change:* BM25-style scoring with term rarity and length normalisation, driven from the full-text index on both backends; candidate windows chosen by score, not recency. *Done when:* the benchmark includes the crowded-out case and the rare-versus-common case and both pass.
+- [ ] **P2-2 Match word forms.** "retry" does not find "retries". *Change:* stemming applied identically at index and query time on both backends and in the pure scorer; a real stop list.
+- [ ] **P2-3 Index and quote passages.** A long observation is embedded by its first 256 tokens and excerpted from its first matching word. *Change:* split captures into passages for both the lexical and semantic indexes; return the best passage; keep the observation as the unit of evidence and authorization.
+- [ ] **P2-4 One answer per fact.** *Change:* collapse exact and near duplicates and superseded versions at render time; break ties by authority, then recency; show accepted knowledge and unreviewed observations as separate sections with the recorded time.
+- [ ] **P2-5 Semantic search on by default and at any size.** The scan is pure Python, takes over a second at 10,000 vectors and is refused above that. *Change:* vectorised exact scan; approximate index on PostgreSQL; a current small local embedder chosen by measurement; enable with one command.
+- [ ] **P2-6 Reranking chosen by measurement.** *Change:* a wider window and a current small cross-encoder if the recall harness shows a gain within the deadline.
+- [ ] **P2-7 Budgets count what the model receives.** *Change:* budget the rendered text; a characters-per-token estimate when no tokenizer is installed; say how many items were left out and the minimum budget.
+- [ ] **P2-8 Understand time in a question.** *Change:* resolve relative dates in a query to a range and prefer records in it.
+
+## Phase 3: evidence into knowledge
+
+- [ ] **P3-1 Review from the terminal and from chat.** *Change:* `memoryking review list|accept|reject`; a lean tool that lets an agent present a proposal for the user to confirm.
+- [ ] **P3-2 A labelled tier between raw notes and accepted knowledge.** *Change:* agent-extracted facts that briefings may include, always marked unreviewed, never as constraints, on by policy per project.
+- [ ] **P3-3 Background consolidation that drafts, never accepts.** *Change:* an opt-in pass, under the egress policy, in which a model drafts claims from recent evidence; every claim must cite spans that exist verbatim; drafts enter the existing proposal lifecycle; contradictions with accepted claims are filed as conflicts.
+- [ ] **P3-4 Corrections.** *Change:* `supersedes` on capture; lean `correct` and `forget` that file a retirement with the usual authority; a superseded record stops appearing beside its replacement.
+- [ ] **P3-5 A session start that needs no query.** *Change:* constraints, pinned items, the latest checkpoint and recent decisions, within a budget.
+- [ ] **P3-6 Procedures learned from outcomes.** *Change:* draft procedures from repeated successful and failed attempts recorded in checkpoints, into the same review lifecycle.
+
+## Phase 4: adoption
+
+- [ ] **P4-1 One command to connect a host.** *Change:* `memoryking setup <host> --project P` creates the store if needed, starts the daemon, issues a credential with the capabilities the tools need, registers the lean MCP profile and installs hooks under the same principal; the bridge starts the daemon when it is not running.
+- [ ] **P4-2 A small, standard MCP surface.** *Change:* lean is the default profile; unused schema definitions are pruned from the full catalog; replies return Markdown as content with the envelope as structured content; lean is served over HTTP; current protocol revisions are accepted; server instructions say when to recall and remember.
+- [ ] **P4-3 Lean tools to follow up.** *Change:* `fetch` a cited source, give `feedback`, list recent memory.
+- [ ] **P4-4 Errors a model can recover from.** *Change:* validation failures name the failing field and the allowed values as tool results; denials name the missing capability.
+- [ ] **P4-5 Client libraries.** *Change:* `client.remember()` and `client.recall()`; an async Python client; a TypeScript client published with the contracts.
+- [ ] **P4-6 Memory about the user, across projects.** *Change:* a user scope readable from every project the user's agents work in, with the same review and receipt rules.
+- [ ] **P4-7 Framework adapters.** *Change:* thin adapters for the common agent frameworks, each with a runnable example.
+- [ ] **P4-8 Wider runtime support.** *Change:* newer Python versions; Windows after a qualification pass.
+
+## Phase 5: scale and operations
+
+- [ ] **P5-1 Briefings do not serialise a tenant.** *Change:* retrieval under the shared gate; embedding and reranking outside the lock with a short re-validation; batched visibility checks.
+- [ ] **P5-2 Reads are not durable writes.** *Change:* group commit; persist the anchor on position change and on a timer; connection checks once per pooled connection.
+- [ ] **P5-3 Retention for tables that only grow, and the indexes their scans need.**
+- [ ] **P5-4 Backups without stopping the service.** *Change:* incremental, content-addressed backups taken without the store lock; a sharded blob directory; reindex in batches outside the deadline.
+- [ ] **P5-5 A storage port a third backend could implement.** *Change:* blob-store and control-log ports; a record-type registry for dependencies, retirement, retention and capacity; named-column inserts.
+- [ ] **P5-6 Operable shared service.** *Change:* metrics, health and readiness endpoints; gauges for journal size, backup age and every cap; configurable concurrency; rolling upgrades.
+
+## Phase 6: proof
+
+- [ ] **P6-1 A recall gate that means something.** *Change:* the standard per-question LongMemEval setting alongside the pooled one, with corpus construction, K and the metric stated; a committed sample large enough to detect a regression.
+- [ ] **P6-2 Task outcomes with memory on and off.** *Change:* an executable coding-task benchmark run with and without MemoryKing, reporting success, tokens and time.
+- [ ] **P6-3 Scale regression tests.** *Change:* capture, drain, brief, backup and restore at 20,000 and 100,000 observations in the clean-checkout job.
+- [ ] **P6-4 Updated facts.** *Change:* a benchmark of stale-versus-current answers after corrections.
+
+[Back to README](../README.md) · [Design](design.md) · [Reference](reference.md)
