@@ -5,8 +5,8 @@ session starts or resumes (including right after compaction), before the transcr
 compacted, and when the session ends. Each hook receives one JSON object on stdin and
 MemoryKing turns it into an ordinary authorized call:
 
-- `session-start` prints a cited Markdown briefing (and the task's resume packet when
-  a task is named). Claude Code and Codex add a session-start hook's stdout to the
+- `session-start` prints a cited Markdown briefing (and, when a task is named, the
+  agent's own latest checkpoint for it plus the hooks' checkpoint). Claude Code and Codex add a session-start hook's stdout to the
   model's context; Grok ignores hook stdout, so there the briefing goes nowhere unless
   the host's own instructions read it from a file.
 - `pre-compact` captures the tail of the transcript as an observation before the host
@@ -14,14 +14,21 @@ MemoryKing turns it into an ordinary authorized call:
 - `session-end` captures the transcript tail (or the host's last assistant message)
   so the final state survives the session.
 
+The tail holds user turns, assistant text and tool errors; tool-call inputs and
+successful tool results are never read. Secret-shaped values are replaced before
+anything is stored (a best-effort safety net, see `scrub`). Hook checkpoints go to their
+own stream, `<task>--mkhook`, so they never replace a checkpoint the agent wrote.
+
 A hook never fails the host: every error is reported on stderr and the exit code stays
 zero. Captures use deterministic event ids, so a hook that fires twice replays.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -37,6 +44,41 @@ KINDS = ("session-start", "pre-compact", "session-end")
 TAIL_BYTES = 262_144
 TAIL_CHARS = 16_384
 STATE_CHARS = 2_000
+HOOK_SUFFIX = "--mkhook"
+REDACTED = "[REDACTED]"
+# Tool-call shapes whose payload is an input (a file body, a command), never read.
+TOOL_CALLS = {
+    "tool_use",
+    "server_tool_use",
+    "function_call",
+    "tool_call",
+    "custom_tool_call",
+    "local_shell_call",
+    "mcp_tool_call",
+}
+TOOL_RESULTS = {"tool_result", "function_call_output", "custom_tool_call_output"}
+SKIPPED = {"thinking", "redacted_thinking", "reasoning"}
+SECRET_PATTERNS = (
+    re.compile(
+        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY"
+        r"(?: BLOCK)?-----|\Z)",
+        re.S,
+    ),
+    re.compile(r"\b(?:sk|rk)-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
+    re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA)[A-Z0-9]{16}\b"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+)
+# name = value / name: value / "name": "value"; the name stays, the value goes.
+SECRET_ASSIGNMENT = re.compile(
+    r"(?i)(\b[\w.-]*(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key"
+    r"|(?:auth|access|refresh|api|session)[_-]?token)[\w.-]*[\"']?\s*[:=]\s*[\"']?)"
+    r"([^\s\"'`,;&]{4,})"
+)
 EVENT_KINDS = {
     "SessionStart": "session-start",
     "PreCompact": "pre-compact",
@@ -97,29 +139,73 @@ def read_event(raw: str | bytes, environ: dict[str, str] | None = None) -> dict[
     }
 
 
-def _texts(value: Any, out: list[str], assistant: bool) -> None:
-    """Collect assistant text from any transcript line shape, bounded by the caller."""
+def scrub(text: str) -> tuple[str, int]:
+    """Replace common secret shapes with a fixed marker; returns (text, replacements).
+
+    Covers private-key blocks, `sk-`/`rk-` and Stripe-style keys, AWS access key ids,
+    GitHub, Slack and Google API tokens, JWTs, bearer tokens, and the value in
+    `password=`, `secret:`, `api_key=`, `access_key=`, `*_token=` style assignments.
+    It is a safety net for what a transcript might carry, not a guarantee: a secret in
+    an unrecognized shape, split across lines, encoded, or written in prose passes
+    through, so keep secrets out of transcripts in the first place."""
+    count = 0
+    for pattern in SECRET_PATTERNS:
+        text, n = pattern.subn(REDACTED, text)
+        count += n
+    # A value that is already the marker (replaced above) is not a new find.
+    text, n = SECRET_ASSIGNMENT.subn(
+        lambda m: m.group(1) + (m.group(2) if m.group(2).startswith(REDACTED) else REDACTED), text
+    )
+    return text, count + n
+
+
+def _flat(value: Any) -> str:
+    """The plain text inside a content value, never descending into tool inputs."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(p for p in (_flat(v) for v in value) if p.strip())
+    if isinstance(value, dict) and isinstance(value.get("text"), str):
+        return str(value["text"])
+    return ""
+
+
+def _texts(value: Any, out: list[str], role: str | None = None) -> None:
+    """Collect user turns, assistant text and tool errors from any transcript line shape.
+
+    Tool-call inputs (file bodies, commands) and successful tool results are skipped."""
     if isinstance(value, dict):
-        role = value.get("role") or value.get("type")
-        mine = assistant or role == "assistant"
+        kind = value.get("type")
+        if kind in TOOL_CALLS or kind in SKIPPED:
+            return
+        if kind in TOOL_RESULTS:
+            if value.get("is_error") is True:
+                message = _flat(value.get("content", value.get("output")))
+                if message.strip():
+                    out.append(f"Tool error: {message}")
+            return
+        named = value.get("role") or kind
+        if named in ("user", "assistant"):
+            role = named
+        elif named in ("tool", "system", "developer"):
+            role = None
         for key, item in value.items():
-            if key in ("text", "content") and isinstance(item, str) and mine:
-                if item.strip():
-                    out.append(item)
+            if key in ("input", "arguments", "parameters"):
+                continue
+            if key in ("text", "content") and isinstance(item, str):
+                if role and item.strip():
+                    out.append(f"{role.capitalize()}: {item}")
             else:
-                _texts(item, out, mine)
+                _texts(item, out, role)
     elif isinstance(value, list):
         for item in value:
-            _texts(item, out, assistant)
+            _texts(item, out, role)
 
 
-def transcript_tail(path: str | Path | None, limit: int = TAIL_CHARS) -> str:
-    """The last assistant text in a JSONL transcript, or the raw tail of any text file.
-
-    Reads at most the last 256 KiB and returns at most `limit` characters; a missing
-    or unreadable transcript is an empty string, never an error."""
+def _tail(path: str | Path | None, limit: int = TAIL_CHARS) -> tuple[str, int]:
+    """(scrubbed tail, number of secret-shaped values replaced); see `transcript_tail`."""
     if not path:
-        return ""
+        return "", 0
     try:
         file = Path(path)
         size = file.stat().st_size
@@ -129,7 +215,7 @@ def transcript_tail(path: str | Path | None, limit: int = TAIL_CHARS) -> str:
                 handle.readline()  # drop the torn first line
             raw = handle.read(TAIL_BYTES).decode("utf-8", "replace")
     except OSError:
-        return ""
+        return "", 0
     pieces: list[str] = []
     parsed = False
     for line in raw.splitlines():
@@ -141,9 +227,26 @@ def transcript_tail(path: str | Path | None, limit: int = TAIL_CHARS) -> str:
         except ValueError:
             continue
         parsed = True
-        _texts(value, pieces, False)
-    text = "\n\n".join(pieces) if parsed else raw
-    return text[-limit:].strip()
+        _texts(value, pieces)
+    # Scrub before slicing so a cut cannot leave half a secret at the start.
+    text, count = scrub("\n\n".join(pieces) if parsed else raw)
+    return text[-limit:].strip(), count
+
+
+def transcript_tail(path: str | Path | None, limit: int = TAIL_CHARS) -> str:
+    """The newest user turns, assistant text and tool errors of a JSONL transcript, or the
+    raw tail of any text file, with secret-shaped values replaced (see `scrub`).
+
+    Reads at most the last 256 KiB and returns at most `limit` characters; a missing
+    or unreadable transcript is an empty string, never an error."""
+    return _tail(path, limit)[0]
+
+
+def hook_task(task: str) -> str:
+    """The stream hooks write to, kept apart from the agent's own checkpoints on `task`."""
+    if len(task) + len(HOOK_SUFFIX) <= 96:
+        return task + HOOK_SUFFIX
+    return task[:75] + "-" + hashlib.sha256(task.encode()).hexdigest()[:12] + HOOK_SUFFIX
 
 
 def session_start(
@@ -159,33 +262,35 @@ def session_start(
     parts: list[str] = []
     if task:
         context = request(socket, token, "context", {"project": project})
-        try:
-            packet = request(
-                socket,
-                token,
-                "working",
-                {
-                    "command": {
-                        "version": 1,
-                        "incarnation": context["incarnation"],
-                        "action": "resume",
-                        "args": {
-                            "project": project,
-                            "task": task,
-                            "run": None,
-                            "checkpoint": None,
-                            "bindings": [{}],
-                            "max_output_tokens": budget,
-                            "tokenizer": "utf8-byte-estimate-v1",
-                            "format": "text",
-                        },
-                    }
-                },
-            )
-            parts.append(str(packet.get("text", "")).rstrip())
-        except LocalError as exc:
-            if exc.code != "checkpoint_unavailable":
-                raise
+        # The agent's own latest checkpoint first, then the hooks' (a separate stream).
+        for stream, share in ((task, budget), (hook_task(task), budget // 2)):
+            try:
+                packet = request(
+                    socket,
+                    token,
+                    "working",
+                    {
+                        "command": {
+                            "version": 1,
+                            "incarnation": context["incarnation"],
+                            "action": "resume",
+                            "args": {
+                                "project": project,
+                                "task": stream,
+                                "run": None,
+                                "checkpoint": None,
+                                "bindings": [{}],
+                                "max_output_tokens": share,
+                                "tokenizer": "utf8-byte-estimate-v1",
+                                "format": "text",
+                            },
+                        }
+                    },
+                )
+                parts.append(str(packet.get("text", "")).rstrip())
+            except LocalError as exc:
+                if exc.code != "checkpoint_unavailable":
+                    raise
     packet = hooks.recall(
         query or task or project,
         budget=budget,
@@ -207,6 +312,7 @@ def _save_state(
     project: str,
     task: str,
     session: str,
+    kind: str,
     text: str,
     observation: str | None,
 ) -> dict[str, Any]:
@@ -214,10 +320,15 @@ def _save_state(
     # Day-granular like hook captures: a hook that fires twice sends identical bytes
     # under its stable retry key and replays instead of conflicting.
     observed = int(time.time() * 1000) // hooks.DAY_MS * hooks.DAY_MS
+    # The newest part of the tail is the live state; the key names the hook so a
+    # pre-compact and a session-end over the same tail are two saves, not a conflict.
+    state = text[-STATE_CHARS:].strip()
+    if len(text) > STATE_CHARS:
+        state = "[earlier text omitted] " + state
     body = complete(
         {
-            "objective": f"Session {session[:12] or 'unknown'} on {project}",
-            "current_state": text[:STATE_CHARS],
+            "objective": f"Session {session[:12] or 'unknown'} on {project} (hook capture)",
+            "current_state": state,
             "references": [{"kind": "observation", "id": observation}] if observation else [],
         },
         observed,
@@ -231,10 +342,12 @@ def _save_state(
                 "version": 1,
                 "incarnation": context["incarnation"],
                 "action": "save",
-                "key": hooks.event_id("hook-checkpoint", text, f"{project}\n{task}\n{session}"),
+                "key": hooks.event_id(
+                    f"hook-checkpoint-{kind}", text, f"{project}\n{task}\n{session}"
+                ),
                 "args": {
                     "project": project,
-                    "task": task,
+                    "task": hook_task(task),
                     "run": None,
                     "readers": None,
                     "expected_revision": None,
@@ -261,15 +374,19 @@ def save(
     the same moment replays and a later compaction is a new observation."""
     socket, token, project = hooks.connection(**where)
     name = host or event.get("host") or "host"
-    text = ""
+    redacted = 0
     if kind == "session-end" and event.get("last_message"):
-        text = str(event["last_message"])
+        text, redacted = scrub(str(event["last_message"]))
     else:
-        text = transcript_tail(event.get("transcript"))
+        text, redacted = _tail(event.get("transcript"))
         if kind == "pre-compact" and event.get("instructions"):
-            text = f"Compaction instructions: {event['instructions']}\n\n{text}".strip()
+            note, more = scrub(str(event["instructions"]))
+            text = f"Compaction instructions: {note}\n\n{text}".strip()
+            redacted += more
     if not text.strip():
         return {"captured": False, "reason": "nothing_to_capture"}
+    if redacted:
+        text += f"\n\n[memoryking: {redacted} secret-shaped value(s) redacted before capture]"
     source = f"{name}-{'compact' if kind == 'pre-compact' else 'session'}"
     salt = f"{event.get('session', '')}\n{event.get('trigger') or event.get('source') or ''}"
     result = hooks.capture(
@@ -286,6 +403,7 @@ def save(
         "captured": True,
         "observation": result.get("observation"),
         "source": source,
+        "redacted": redacted,
     }
     if task:
         saved = _save_state(
@@ -294,6 +412,7 @@ def save(
             project,
             task,
             str(event.get("session", "")),
+            kind,
             text,
             result.get("observation"),
         )

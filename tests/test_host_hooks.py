@@ -12,6 +12,7 @@ from pathlib import Path
 from memoryking import host_hooks
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import LocalStore
+from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError
 
 CLAUDE_LINES = [
@@ -99,11 +100,11 @@ class HostHookTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalError, "hook_event_invalid"):
             host_hooks.read_event("not json", {})
 
-    def test_transcript_tail_prefers_assistant_text_and_is_bounded(self):
+    def test_transcript_tail_keeps_turns_and_is_bounded(self):
         tail = host_hooks.transcript_tail(self.transcript)
         self.assertIn("scoped per request", tail)
         self.assertIn("Tests pass now.", tail)
-        self.assertNotIn("Fix the retry bug", tail)
+        self.assertIn("User: Fix the retry bug", tail)
         plain = self.root / "plain.txt"
         plain.write_text("x" * 50000 + "END")
         self.assertTrue(host_hooks.transcript_tail(plain, limit=100).endswith("END"))
@@ -135,10 +136,191 @@ class HostHookTests(unittest.TestCase):
         text = host_hooks.session_start(
             event, query="retry deadline", task="retry-fix", **self.where
         )
-        self.assertIn("# Resume: Session sess on demo", text)
+        self.assertIn("# Resume: Session sess on demo (hook capture)", text)
         self.assertIn("scoped per request", text)
         self.assertIn("# Briefing: retry deadline", text)
         self.assertIn("claude-compact", text)
+
+    def _event(self, name, session="sess", **extra):
+        return host_hooks.read_event(
+            json.dumps(
+                {
+                    "session_id": session,
+                    "transcript_path": str(self.transcript),
+                    "hook_event_name": name,
+                    "prompt_id": "p",
+                    **extra,
+                }
+            ),
+            {},
+        )
+
+    def _agent_checkpoint(self, task):
+        context = request(self.server.path, self.token(), "context", {"project": "demo"})
+        return request(
+            self.server.path,
+            self.token(),
+            "working",
+            {
+                "command": {
+                    "version": 1,
+                    "incarnation": context["incarnation"],
+                    "action": "save",
+                    "key": "agent-own-checkpoint",
+                    "args": {
+                        "project": "demo",
+                        "task": task,
+                        "run": None,
+                        "readers": None,
+                        "expected_revision": None,
+                        "checkpoint": complete(
+                            {
+                                "objective": "Agent objective",
+                                "current_state": "AGENT-AUTHORED-STATE",
+                            },
+                            0,
+                        ),
+                    },
+                }
+            },
+        )
+
+    def token(self):
+        return self.credential_file.read_text().strip()
+
+    def test_transcript_tail_never_reads_tool_inputs_and_scrubs_secrets(self):
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": "Deploy with care"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Writing the config. Authorization: Bearer abcdefghijklmnopqrstuvwx",
+                        },
+                        {
+                            "type": "tool_use",
+                            "name": "Write",
+                            "input": {
+                                "file_path": "/w/.env",
+                                "content": "API_KEY=sk-live-PLANTEDSECRET1234567890\n",
+                                "text": "FILEBODYMARKER",
+                            },
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "content": "SUCCESSFUL-RESULT-BODY"},
+                        {
+                            "type": "tool_result",
+                            "is_error": True,
+                            "content": [
+                                {"type": "text", "text": "ENOENT while password=hunter2hunter2"}
+                            ],
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": "key AKIAIOSFODNN7EXAMPLE ghp_"
+                    + "a" * 36
+                    + " sk-ant-api03-"
+                    + "b" * 30,
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": "-----BEGIN RSA PRIVATE KEY-----\nMIIBOg\n-----END RSA PRIVATE KEY-----",
+                },
+            },
+        ]
+        path = self.root / "secrets.jsonl"
+        path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+        tail = host_hooks.transcript_tail(path)
+        self.assertIn("User: Deploy with care", tail)
+        self.assertIn("Tool error: ENOENT", tail)
+        for leaked in (
+            "PLANTEDSECRET",
+            "FILEBODYMARKER",
+            "SUCCESSFUL-RESULT-BODY",
+            "hunter2",
+            "abcdefghijklmnopqrstuvwx",
+            "AKIAIOSFODNN7EXAMPLE",
+            "ghp_",
+            "sk-ant",
+            "MIIBOg",
+        ):
+            self.assertNotIn(leaked, tail)
+        self.assertIn(host_hooks.REDACTED, tail)
+        event = host_hooks.read_event(
+            json.dumps(
+                {
+                    "session_id": "s",
+                    "transcript_path": str(path),
+                    "hook_event_name": "SessionEnd",
+                    "prompt_id": "p",
+                }
+            ),
+            {},
+        )
+        result = host_hooks.save(event, "session-end", task="t", **self.where)
+        self.assertGreaterEqual(result["redacted"], 5)
+        text = host_hooks.session_start(event, query="Deploy with care", task="t", **self.where)
+        self.assertIn("Deploy with care", text)
+        self.assertIn("secret-shaped value(s) redacted", text)
+        for leaked in ("PLANTEDSECRET", "hunter2", "AKIAIOSFODNN7EXAMPLE"):
+            self.assertNotIn(leaked, text)
+        plain = host_hooks.scrub('token_count=5 and password: s3cretpass api_key="abcd1234"')
+        self.assertEqual(plain[1], 2)
+        self.assertIn("token_count=5", plain[0])
+
+    def test_user_instruction_is_recalled_at_session_start(self):
+        lines = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Always use pgbouncer transaction pooling"},
+            },
+            {"type": "assistant", "message": {"role": "assistant", "content": "Noted."}},
+        ]
+        self.transcript.write_text("".join(json.dumps(line) + "\n" for line in lines))
+        host_hooks.save(self._event("SessionEnd"), "session-end", **self.where)
+        text = host_hooks.session_start(
+            self._event("SessionStart"), query="pgbouncer pooling", **self.where
+        )
+        self.assertIn("pgbouncer transaction pooling", text)
+
+    def test_agent_checkpoint_survives_hooks_and_both_hooks_succeed(self):
+        self._agent_checkpoint("retry-fix")
+        compact = self._event("PreCompact", trigger="auto")
+        first = host_hooks.save(compact, "pre-compact", task="retry-fix", **self.where)
+        ended = host_hooks.save(
+            self._event("SessionEnd"), "session-end", task="retry-fix", **self.where
+        )
+        again = host_hooks.save(compact, "pre-compact", task="retry-fix", **self.where)
+        self.assertEqual((first["revision"], ended["revision"]), (1, 2))
+        self.assertEqual(again["checkpoint"], first["checkpoint"])
+        text = host_hooks.session_start(
+            self._event("SessionStart"), query="retry", task="retry-fix", **self.where
+        )
+        # The agent's own checkpoint (revision 1 of its stream) is still the first resume.
+        self.assertIn("# Resume: Agent objective", text)
+        self.assertIn("AGENT-AUTHORED-STATE", text)
+        self.assertIn("(hook capture)", text)
+        self.assertLess(text.index("AGENT-AUTHORED-STATE"), text.index("(hook capture)"))
+        self.assertEqual(host_hooks.hook_task("t"), "t--mkhook")
+        self.assertLessEqual(len(host_hooks.hook_task("x" * 96)), 96)
 
     def test_session_end_uses_the_last_message_and_start_without_a_task_still_briefs(self):
         event = host_hooks.read_event(
@@ -318,7 +500,7 @@ class HostHookTests(unittest.TestCase):
                     "action": "resume",
                     "args": {
                         "project": "demo",
-                        "task": "retry-fix",
+                        "task": "retry-fix--mkhook",
                         "run": None,
                         "checkpoint": None,
                         "bindings": [{}],
@@ -329,7 +511,7 @@ class HostHookTests(unittest.TestCase):
             },
         )
         state = packet["checkpoint"]["state"]
-        self.assertEqual(state["objective"], "Session sess on demo")
+        self.assertEqual(state["objective"], "Session sess on demo (hook capture)")
         self.assertIn("scoped per request", state["current_state"])
         self.assertEqual(state["references"][0]["kind"], "observation")
         self.assertIn("defaulted:next_actions", state["capture"]["gaps"])
