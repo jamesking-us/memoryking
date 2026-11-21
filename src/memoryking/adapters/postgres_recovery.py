@@ -20,6 +20,7 @@ from psycopg import sql
 from memoryking.adapters.local_files import (
     Ownership,
     atomic,
+    durable_sync,
     private_dir,
     private_file,
     read_blob_index,
@@ -192,9 +193,7 @@ def backup(
                             out.write(line)
                             count += 1
                     out.flush()
-                    import os
-
-                    os.fsync(out.fileno())
+                    durable_sync(out.fileno())
                 manifest["tables"][table] = {
                     "columns": names,
                     "rows": count,

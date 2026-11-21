@@ -355,7 +355,7 @@ HINTS: dict[str, str] = {
     # Storage, journal and recovery
     "recovery_required": "The store is fenced or inconsistent; stop and follow the recovery guide.",
     "journal_invalid": "The policy journal's chain is broken; restore using independent control evidence.",
-    "journal_rollback": "The journal is shorter than the anchor records; the control state was rolled back.",
+    "journal_rollback": "The journal is shorter than the anchor or the database records; the control state was rolled back or does not belong to this database.",
     "journal_replay_required": "Unapplied journal records exist; reopen the store to replay them.",
     "journal_tenant_missing": "A journal record names a tenant the database lacks; restore the matching database.",
     "backup_invalid": "The backup manifest or files failed verification.",

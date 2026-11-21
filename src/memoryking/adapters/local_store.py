@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import secrets
 import sqlite3
@@ -23,6 +22,7 @@ from memoryking.adapters.local_files import (
     Control,
     Ownership,
     atomic,
+    durable_sync,
     private_dir,
     private_file,
     read_blob_index,
@@ -401,6 +401,14 @@ class LocalStore(StoreCore):
 
     def _replay_journal(self) -> None:
         records = self.control.journal(self.anchor)
+        # Journal first, database second, anchor third: the database can never have applied
+        # more records than the verified journal holds. A larger position means the journal
+        # tail was lost or this database was paired with another control tree; replay would
+        # skip those records silently, so the store stays closed.
+        if int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]) > len(
+            records
+        ):
+            raise LocalError("journal_rollback")
         self.db.execute("BEGIN IMMEDIATE")
         try:
             for record in records:
@@ -456,7 +464,7 @@ class LocalStore(StoreCore):
             finally:
                 target.close()
             with (destination / "store.sqlite").open("rb") as stream:
-                os.fsync(stream.fileno())
+                durable_sync(stream.fileno())
             private_dir(destination / "blobs", create=True)
             blobs: list[str] = []
             for tenant, digest in self.db.execute(

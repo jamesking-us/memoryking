@@ -245,6 +245,8 @@ Restore verifies the archive, replays current revocations/deletions and creates 
 
 If the anchor alone is missing, `restore --lost-anchor-journal-head CURRENT_INDEPENDENT_64_HEX_HEAD` requires a genuinely independently retained current checkpoint, intact identity and matching journal. Missing or rolled-back evidence fails closed. Do not derive that argument from a potentially rolled-back local journal.
 
+The store also refuses to open (`journal_rollback`) when the database has applied more journal records than the control journal holds, for example after a power loss that kept the database commit but lost the journal's tail, or when a copied control tree from an earlier moment is paired with a newer database. Control files and backup files are flushed with `F_FULLFSYNC` on platforms that provide it (macOS), the same strength as SQLite's `fullfsync` setting, and with `fsync` elsewhere; the macOS path has not been exercised on real hardware in this repository's tests.
+
 Shared backup uses the runtime and separate backup DSNs plus current tenant owner credential. Restore uses the migration DSN:
 
 ```sh

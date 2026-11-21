@@ -273,6 +273,10 @@ class PostgresStore(StoreCore):
             or position[0] < self.anchor["frontiers"].get(self.tenant, 0)
         ):
             raise LocalError("recovery_required")
+        if int(meta["journal"]) > len(records):
+            # The database applied more journal records than the control journal holds: the
+            # journal tail was lost or another control tree is in use. Never skip silently.
+            raise LocalError("journal_rollback")
         self.last_utc = max(self.last_utc, self.anchor["last_utc"])
         return [record for record in records if record["sequence"] > int(meta["journal"])]
 

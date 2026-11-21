@@ -496,7 +496,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `journal_invalid` | The policy journal's chain is broken; restore using independent control evidence. |
 | `journal_record_limit` | The policy action exceeds 256 KiB and was refused before writing; reduce its payload. |
 | `journal_replay_required` | Unapplied journal records exist; reopen the store to replay them. |
-| `journal_rollback` | The journal is shorter than the anchor records; the control state was rolled back. |
+| `journal_rollback` | The journal is shorter than the anchor or the database records; the control state was rolled back or does not belong to this database. |
 | `journal_tenant_missing` | A journal record names a tenant the database lacks; restore the matching database. |
 
 ## knowledge

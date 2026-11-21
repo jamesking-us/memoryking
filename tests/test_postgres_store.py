@@ -493,6 +493,20 @@ class PostgresStoreTests(unittest.TestCase):
         with self.store() as store:
             self.assertEqual(1, len(delivered(store.read(self.credential, "demo"))["items"]))
 
+    def test_database_ahead_of_the_control_journal_fails_closed(self):
+        control = self.control / self.tenant
+        stale = {name: (control / name).read_bytes() for name in ("journal", "anchor")}
+        with self.store() as store:
+            store.grant(self.credential, "reader", "demo", ["read"])
+        # A journal tail lost after the database commit, or a control tree copied from
+        # before it: the database has applied a record the journal does not hold.
+        for name, data in stale.items():
+            (control / name).write_bytes(data)
+        with self.assertRaises(LocalError) as caught:
+            with self.store() as store:
+                store.status(self.credential, "demo")
+        self.assertEqual("journal_rollback", caught.exception.code)
+
     def test_lost_anchor_requires_independently_retained_current_journal_head(self):
         from memoryking.adapters.postgres_recovery import backup, restore
 
