@@ -46,7 +46,7 @@ from memoryking.domain.lexicon import (
     stem,
 )
 from memoryking.domain.lexicon import score as bm25
-from memoryking.domain.local import Decision, LocalError, Released
+from memoryking.domain.local import Decision, LocalError, Released, is_user_project
 from memoryking.domain.selectors import bindings
 
 # Salience: a bounded, documented nudge from use, never a rewrite of the record.
@@ -717,6 +717,7 @@ class Retrieval:
             if body["kind"] == "constraint"
             else "literal_overlap",
             "conflicts": [],
+            **({"scope": "user"} if is_user_project(item.get("project", "")) else {}),
             **(
                 {
                     "procedure": body["procedure"],
@@ -889,6 +890,9 @@ class Retrieval:
             root = stem(token)
             return token in wanted_words or (root is not None and STEM_MARK + root in wanted_keys)
 
+        # The principal's own scope, when it acts for a user: matching observations from it
+        # join the project's, labelled, and the cached selection depends on which scope it is.
+        user = self.s.user_scope(who, "read", at)
         key = canonical_hash(
             {
                 "tenant": who["tenant"],
@@ -899,6 +903,7 @@ class Retrieval:
                 "configuration": CONFIGURATION if lexical_current else LEGACY_CONFIGURATION,
                 "compiler": COMPILER,
                 "request": args,
+                "user_scope": user,
                 "eligible": [[i["revision"], i.get("body_hash")] for i in candidates],
             }
         )
@@ -916,6 +921,14 @@ class Retrieval:
                     ids, selection = self._select(who, args, recorded, qterms, corpus, anchors)
                 else:
                     ids = self._legacy_select(who, args, recorded, query, anchors)
+                if user is not None and user != args["project"]:
+                    mine = {**args, "project": user}
+                    extra = (
+                        self._select(who, mine, recorded, qterms, corpus, anchors)[0]
+                        if lexical_current
+                        else self._legacy_select(who, mine, recorded, query, anchors)
+                    )
+                    ids = list(dict.fromkeys([*ids, *extra]))
             if len(cache) >= 64:
                 cache.pop(next(iter(cache)))
             cache[key] = {"expires": at + 60000, "ids": ids, "selection": selection}
@@ -1093,6 +1106,7 @@ class Retrieval:
                                 "excerpt_end_byte": offset + len(excerpt.encode()),
                                 "source_bytes": len(raw),
                                 "content_hash": row["blob"],
+                                **({"scope": "user"} if is_user_project(row["project"]) else {}),
                             }
                         ],
                     )

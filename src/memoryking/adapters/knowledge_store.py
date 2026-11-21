@@ -16,7 +16,7 @@ from memoryking.application.storage import insert_ignore
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain import selectors
-from memoryking.domain.local import LocalError, Released, temporal_valid
+from memoryking.domain.local import LocalError, Released, is_user_project, temporal_valid
 
 REGISTRY_LIMIT = 256
 VALIDATOR = Draft202012Validator(
@@ -205,6 +205,24 @@ class Knowledge:
             except UnicodeDecodeError as exc:
                 raise LocalError("invalid_evidence_span") from exc
 
+    def _user_evidence(self, tenant: str, project: str, evidence: list[dict[str, Any]]) -> None:
+        """A user scope's claims rest on that scope's own observations, and only on them.
+
+        Project evidence never flows into memory that follows the user to other projects, and
+        the user's memory is never cited by a project's claim (which the project's readers
+        would then lack the evidence for): promotion across the boundary is refused."""
+        for span in evidence:
+            found = self.db.execute(
+                "SELECT project FROM observations WHERE tenant=? AND id=?",
+                (tenant, span["observation"]),
+            ).fetchone()
+            if (
+                found is not None
+                and found[0] != project
+                and (is_user_project(found[0]) or is_user_project(project))
+            ):
+                raise LocalError("user_evidence_scope")
+
     def _excerpts(self, who: dict[str, Any], body: dict[str, Any]) -> list[dict[str, Any]]:
         """The cited sentences, read from observations this reader may see (bounded)."""
         from memoryking.adapters.retrieval import Retrieval
@@ -307,6 +325,7 @@ class Knowledge:
                 raise
             executable = False
         self._support(who, body["evidence"], at)
+        self._user_evidence(tenant, args["project"], body["evidence"])
         row = self.db.execute(
             "SELECT * FROM families WHERE tenant=? AND project=? AND logical_key=?",
             (tenant, args["project"], args["logical_key"]),
@@ -726,8 +745,12 @@ class Knowledge:
             else (args.get("kind", "knowledge") if listing else "knowledge")
         )
         only = args.get("revision") if listing else None
+        # The user's own scope joins the project's, `_tenant` and `_workspace` for a principal
+        # that acts for that user (never in a reviewer's listing of one project). Its constraints
+        # resolve with the others, so a disagreement is the same unresolved conflict.
+        user = None if listing else self.s.user_scope(who, "read", at)
         rows = self.db.execute(
-            "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project IN (?,?,?) AND r.created<=? AND r.kind=?"
+            "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project IN (?,?,?,?) AND r.created<=? AND r.kind=?"
             + (
                 " AND EXISTS (SELECT 1 FROM lifecycle l WHERE l.tenant=r.tenant AND l.revision=r.id AND l.action='accept' AND l.position<=? AND NOT EXISTS (SELECT 1 FROM lifecycle m WHERE m.tenant=l.tenant AND m.revision=l.revision AND m.action IN ('reject','deprecate') AND m.position>l.position AND m.position<=?))"
                 if accepted_only
@@ -742,6 +765,7 @@ class Knowledge:
                 args["project"],
                 "_tenant" if constraints else args["project"],
                 "_workspace" if constraints else args["project"],
+                user or args["project"],
                 recorded,
                 wanted,
                 *((recorded, recorded) if accepted_only else ()),
@@ -857,6 +881,7 @@ class Knowledge:
                 "revision": row["id"],
                 "family": row["family"],
                 "family_version": row["family_version"],
+                "project": row["project"],
                 "body_hash": row["body_hash"],
                 "created_position": row["created"],
                 "origin": row["origin"],

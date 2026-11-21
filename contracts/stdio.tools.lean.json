@@ -57,6 +57,13 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,96}$",
             "description": "Id of an earlier memory you can read that this replaces."
+          },
+          "scope": {
+            "enum": [
+              "project",
+              "user"
+            ],
+            "description": "Where to keep it. `project` (default): this project's own facts. `user`: a durable fact or preference about the person you work for that applies in every project, such as the tools they want used, how they like changes split, or the language to reply in. Never project facts, code or secrets. Their other agents will read it, and it counts as a standing instruction only once they review it."
           }
         },
         "required": [

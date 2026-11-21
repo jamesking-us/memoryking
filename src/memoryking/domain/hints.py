@@ -56,6 +56,8 @@ HINTS: dict[str, str] = {
     "invalid_query": "The query must be a non-empty string within 2,048 characters.",
     "invalid_range": "The requested range is outside the allowed bounds; check the limits table.",
     "invalid_interval": "The interval's start must precede its end.",
+    "user_link_conflict": "An agent acts for one user. End its link to the other user first (`credential revoke <agent> --project _user_<name>`).",
+    "user_evidence_scope": "A user-scope claim may cite only that scope's own observations, and a project claim may not cite them; capture the fact in the claim's own scope.",
     "invalid_scope": "Project, task and run must be consistent identifiers for this stream.",
     "invalid_recorded_position": "The recorded position is not one this store can recognize; take it from a recent receipt.",
     "invalid_content_type": "Send `Content-Type: application/json`.",

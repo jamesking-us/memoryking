@@ -23,6 +23,7 @@ START_HEADINGS = {
     "last_checkpoint": "Where the last session left off",
     "recent_decision": "Recent decisions",
     "user_decision": "Recent decisions",
+    "user_memory": "From your own user memory",
 }
 ENVELOPE_FIELDS = (
     "version",
@@ -80,6 +81,8 @@ def _missing_fields(packet: dict[str, Any]) -> str:
 
 def _qualifier(item: dict[str, Any]) -> str:
     parts = [str(item[k]) for k in ("authority", "assurance", "selection_reason") if item.get(k)]
+    if item.get("scope") == "user":
+        parts.append("from your own user memory")
     if item.get("retirement_requested"):
         parts.append("retirement requested")
     return f" _({'; '.join(parts)})_" if parts else ""

@@ -4,6 +4,11 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Memory about the user
+
+- A user scope (`_user_<principal>`) holds a person's standing preferences and instructions, readable from every project their agents work in. Briefings and the session start add the user's accepted constraints (resolved with the project's; a disagreement is an unresolved conflict, never a silent override), accepted claims and matching observations, labelled "from your own user memory", with the same budget and receipts. Only the user and the agents recorded as acting for them can read it: `*` grants and project grants never reach it, and an administrator can link or purge a scope but not read it.
+- `memoryking capture --scope user`, the lean `remember` tool's `scope: "user"`, `credential issue --for-user/--no-user`, `memoryking user show|export|purge` and `vault export --scope user`; the dashboard lists the scope for its owner and `status` counts it.
+
 ### Evaluation
 
 - The task-outcome benchmark has four arms: `off`, `notes` (a plain `NOTES.md` baseline), `on` (the CLI plus `MEMORY.md`) and `mcp` (the lean stdio bridge as tools, configured the way an MCP host does it). `report` handles any number of arms with mean and median tokens, cost and wall time, an exact paired test for every pair of arms with a plain-words reading, how many memory runs actually wrote and read, and how many baseline runs left notes. `run` drives a real agent CLI end to end with placeholders, a wall-clock limit, captured output and automatic token and cost figures; `benchmarks/outcomes/RUNNING.md` has a worked example. No real run has been made.
