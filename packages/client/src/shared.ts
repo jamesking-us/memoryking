@@ -102,7 +102,10 @@ export class MemoryKing {
     requireOneCredential(options);
     this.project = options.project;
     this.#options = options;
-    this.#endpoint = `${parsed.origin}/v1/tenants/${options.tenant}/projects/${options.project}/mcp`;
+    // The client needs the full catalog (its tool names, canonical-JSON replies and
+    // raw envelopes), so it asks for it by name rather than relying on the endpoint's
+    // default profile, which is the lean one.
+    this.#endpoint = `${parsed.origin}/v1/tenants/${options.tenant}/projects/${options.project}/mcp?profile=full`;
   }
 
   /**

@@ -28,7 +28,7 @@ await memory.handOff("retry-fix", "reviewer");
 
 ## What it talks to
 
-- `MemoryKing` talks to a shared MemoryKing service over HTTPS (plain `http` only to a loopback address with `loopbackHttp: true`, for development). Calls go to the service's MCP endpoint, so the credential's grant, receipts and budgets are exactly those of the MCP tools. Redirects are refused and mutations are never retried automatically. To trust a private certificate authority, set Node's `NODE_EXTRA_CA_CERTS`.
+- `MemoryKing` talks to a shared MemoryKing service over HTTPS (plain `http` only to a loopback address with `loopbackHttp: true`, for development). Calls go to the service's MCP endpoint (it asks for the full tool profile by name), so the credential's grant, receipts and budgets are exactly those of the MCP tools. Redirects are refused and mutations are never retried automatically. To trust a private certificate authority, set Node's `NODE_EXTRA_CA_CERTS`.
 - `MemoryKingLocal` recalls from a local daemon through its loopback agent endpoint. That endpoint serves retrieval only, so a local program that must write uses the Python client, the stdio MCP bridge, or the shared service.
 
 ## Credentials
