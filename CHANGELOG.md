@@ -4,6 +4,12 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Budgets
+
+- A token budget counts what the model receives. For `format: "text"` (the default of `recall`, the hooks and the lean tools) the budget now governs the rendered Markdown, not the JSON envelope that is never read; before, a 6,000-token text briefing delivered about 1,200 real tokens. The receipt records what was counted (`budget_count_scope: rendered_text`, `usage.counted`), and replay is byte-exact as before. A text briefing that left matches out says so ("Showing 3 of 8 matches; 5 omitted for budget. A budget of about 1,150 tokens would include them."), tells "nothing matched" from "matched but did not fit", and a `budget_insufficient` text names the minimum. The text shows each item's authority label, source and time and no longer the assurance, selection reason and byte span (still in the structured form). The smallest advertised budget, 256 tokens, now works for an empty and a small briefing.
+- Without the exact tokenizer the default counter is `chars-estimate-v1`, one token per three ASCII characters plus one per other character, instead of one per byte. Three characters per token is conservative for English (about four) and code (three to three and a half). `utf8-byte-estimate-v1` is still accepted.
+- `tools/evidence_recall.py --text` measures through the text path.
+
 ### Evaluation
 
 - The task-outcome benchmark has four arms: `off`, `notes` (a plain `NOTES.md` baseline), `on` (the CLI plus `MEMORY.md`) and `mcp` (the lean stdio bridge as tools, configured the way an MCP host does it). `report` handles any number of arms with mean and median tokens, cost and wall time, an exact paired test for every pair of arms with a plain-words reading, how many memory runs actually wrote and read, and how many baseline runs left notes. `run` drives a real agent CLI end to end with placeholders, a wall-clock limit, captured output and automatic token and cost figures; `benchmarks/outcomes/RUNNING.md` has a worked example. No real run has been made.

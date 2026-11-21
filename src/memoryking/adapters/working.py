@@ -27,7 +27,8 @@ from memoryking.application.retention import (
 from memoryking.application.storage import insert_ignore
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, canonical_hash
-from memoryking.domain.briefing import counted
+from memoryking.domain.briefing import budget_scope, counted
+from memoryking.domain.briefing_text import render_resume
 from memoryking.domain.checkpoint import dependencies, operation_transition, stream_name
 from memoryking.domain.local import Decision, LocalError, Released
 
@@ -855,8 +856,19 @@ class Working:
                 )
         if extras:
             base.update(extras)
+        text_mode = args.get("format") == "text"
+
+        def measured(packet: dict[str, Any]) -> tuple[bytes, int]:
+            """The envelope and its token count; for text, the budget counts the rendered text."""
+            if not text_mode:
+                return counted(packet, count)
+            shown = json.loads(canonical_bytes(packet))
+            packet["usage"]["output_tokens"] = count(render_resume(shown)[0])
+            packet["usage"]["counted"] = "rendered_text"
+            return canonical_bytes(packet), packet["usage"]["output_tokens"]
+
         try:
-            raw, used = counted(base, count)
+            raw, used = measured(base)
             minimum: int | None = used
         except ContractError:
             raw, used, minimum = b"", 0, None
@@ -874,7 +886,7 @@ class Working:
             base.pop("recovery_gaps", None)
             base.pop("unrecorded_sections", None)
             base["usage"]["budget_compliant"] = False
-            raw, used = counted(base, count)
+            raw, used = measured(base)
             deps = []
         result = json.loads(raw)
         diag = {
@@ -884,9 +896,7 @@ class Working:
             "checkpoint_hash": row["body_hash"],
             "usage": {**result["usage"], "output_tokens": used, "serialized_bytes": len(raw)},
             "minimum_required_tokens": result.get("minimum_required_tokens"),
-            "budget_count_scope": "failure_envelope"
-            if result["status"] == "budget_insufficient"
-            else "context",
+            "budget_count_scope": budget_scope(result),
             "trace": [],
             "context_binding": base["context_binding"],
         }

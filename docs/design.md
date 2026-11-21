@@ -51,7 +51,7 @@ An independent control tree records signing identity, recovery anchors and polic
 5. Fit the complete response into the requested budget, preserving essential fields.
 6. Persist the authorization decision and response identity before releasing bytes.
 
-The result includes a status, guidance/evidence references and usage information. An unresolved essential constraint blocks rather than disappearing from a top-k list. Unknown token usage is not counted as zero; a byte estimate is labeled as an estimate.
+The result includes a status, guidance/evidence references and usage information. An unresolved essential constraint blocks rather than disappearing from a top-k list. Unknown token usage is not counted as zero; an estimate is labeled as an estimate (`chars-estimate-v1`, about three characters per token, unless the exact tokenizer is installed). The budget counts what the model receives: with `format: "text"` it is the rendered Markdown, with JSON the canonical envelope, and the receipt records which (`budget_count_scope`, `usage.counted`). A text briefing that leaves matches out says so in its own text (how many of how many, and the budget that would include them), tells "nothing matched" from "matched but did not fit", and a `budget_insufficient` text names the minimum. Each item in the text carries only what a model needs to cite and follow up (reference, authority label, time, source); the rest stays in the structured envelope.
 
 Receipts preserve how a response was assembled. **Replay** returns retained exact response bytes if current authorization still permits it. **Rerun** performs a new retrieval and creates a new receipt. Neither operation implies a model response will be identical.
 

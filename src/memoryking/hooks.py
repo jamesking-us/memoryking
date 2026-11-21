@@ -161,7 +161,7 @@ def start(
         "project": project,
         "bindings": points,
         "max_output_tokens": budget,
-        "tokenizer": "utf8-byte-estimate-v1",
+        "tokenizer": "chars-estimate-v1",
     }
     if text:
         args["format"] = "text"
@@ -204,7 +204,7 @@ def recall(
         "query": query,
         "bindings": points,
         "max_output_tokens": budget,
-        "tokenizer": "utf8-byte-estimate-v1",
+        "tokenizer": "chars-estimate-v1",
     }
     if text:
         args["format"] = "text"

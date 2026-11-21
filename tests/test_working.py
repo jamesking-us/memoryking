@@ -18,7 +18,7 @@ from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.retrieval import Retrieval
-from memoryking.adapters.token_count import encoding
+from memoryking.adapters.token_count import encoding, estimate
 from memoryking.adapters.working import MUTATIONS, Working
 from memoryking.contracts.canonical import ContractError
 from memoryking.contracts.validation import validate_working
@@ -377,6 +377,24 @@ class WorkingTests(unittest.TestCase):
         self.assertLessEqual(packet["usage"]["output_tokens"], 6000)
         self.restart()
         self.assertEqual(self.resume()["checkpoint"]["state"], body)
+
+    def test_a_text_resume_budget_counts_the_rendered_text_and_names_the_minimum(self):
+        self.save(checkpoint())
+        full = self.resume(format="text", tokenizer="chars-estimate-v1")
+        self.assertEqual(full["format"], "text")
+        self.assertEqual(full["usage"]["counted"], "rendered_text")
+        needed = full["usage"]["output_tokens"]
+        self.assertEqual(
+            needed, estimate(full["text"]), "the usage is the count of the text the model reads"
+        )
+        fits = self.resume(format="text", tokenizer="chars-estimate-v1", max_output_tokens=needed)
+        self.assertNotEqual(fits["status"], "budget_insufficient")
+        short = self.resume(
+            format="text", tokenizer="chars-estimate-v1", max_output_tokens=needed - 1
+        )
+        self.assertEqual(short["status"], "budget_insufficient")
+        self.assertEqual(short["minimum_required_tokens"], needed)
+        self.assertIn(f"at least {needed} tokens", short["text"])
 
     def test_essential_set_never_truncated_and_capture_gaps_explicit(self):
         body = checkpoint()

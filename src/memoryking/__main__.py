@@ -210,7 +210,7 @@ def summarize(args: Any) -> dict[str, Any]:
                     "checkpoint": None,
                     "bindings": client.bindings,
                     "max_output_tokens": 6000,
-                    "tokenizer": "utf8-byte-estimate-v1",
+                    "tokenizer": "chars-estimate-v1",
                     "format": "text",
                 },
             }
@@ -522,7 +522,11 @@ def doctor(
         encoding()
         record("ok", "tokenizer", "exact cl100k_base available")
     except LocalError:
-        record("warn", "tokenizer", "exact tokenizer missing; byte estimate is used and disclosed")
+        record(
+            "warn",
+            "tokenizer",
+            "exact tokenizer missing; a characters-per-token estimate is used and disclosed",
+        )
     from importlib.util import find_spec
 
     if find_spec("onnxruntime") is not None:

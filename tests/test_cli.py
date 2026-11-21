@@ -190,6 +190,35 @@ class OperatorCommandTests(unittest.TestCase):
         self.assertNotIn("Timeout finding", then)
         self.assertIn("as of 2000-01-01", then)
 
+    def test_the_smallest_advertised_budget_gives_a_usable_briefing(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        empty = self.cli(
+            "recall", "--project", "demo", "--query", "timeout", "--budget", "256", *common
+        )
+        self.assertIn("No relevant memory", empty)
+        self.assertNotIn("budget_insufficient", empty)
+        namespace = self.store.namespace(self.credential.read_text(), "demo")
+        self.store.capture(
+            self.credential.read_text(),
+            namespace,
+            "small",
+            {
+                "version": 1,
+                "project": "demo",
+                "source": "cli-test",
+                "source_event": "small",
+                "text": "Timeout finding for the smallest budget.",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        small = self.cli(
+            "recall", "--project", "demo", "--query", "timeout", "--budget", "256", *common
+        )
+        self.assertIn("Timeout finding for the smallest budget", small)
+        self.assertNotIn("budget_insufficient", small)
+
     def test_summarize_prints_the_summary_and_its_receipt(self):
         from test_working import checkpoint
 

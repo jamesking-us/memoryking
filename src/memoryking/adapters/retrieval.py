@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from jsonschema import Draft202012Validator
 
@@ -30,13 +30,14 @@ from memoryking.domain.briefing import (
     COMPILER,
     CONFIGURATION,
     LEGACY_CONFIGURATION,
+    budget_scope,
     counted,
     pack,
     relevance,
     term_window,
     terms,
 )
-from memoryking.domain.briefing_text import textualize
+from memoryking.domain.briefing_text import render_brief, textualize
 from memoryking.domain.lexicon import (
     QUERY_TERM_LIMIT,
     STEM_MARK,
@@ -193,6 +194,13 @@ class Retrieval:
                 "vector": batch.vectors[0],
             },
         }
+
+    @staticmethod
+    def renderer(args: dict[str, Any]) -> Callable[[dict[str, Any]], str] | None:
+        """What the budget counts: the text the model reads when the caller asked for text."""
+        if args.get("format") != "text":
+            return None
+        return lambda packet: render_brief(packet)[0]
 
     def textual(
         self, args: dict[str, Any], kind: str, raw: bytes, diag: dict[str, Any]
@@ -661,7 +669,9 @@ class Retrieval:
                 base["warnings"].append("optional_conflict_possible")
             if any(t.get("candidate_limit_reached", False) for t in trace):
                 base["warnings"].append("optional_candidate_limit")
-        raw, used, selected, omitted = pack(base, groups, count, args["max_output_tokens"])
+        raw, used, selected, omitted = pack(
+            base, groups, count, args["max_output_tokens"], self.renderer(args)
+        )
         output = json.loads(raw)
         rendered_items = output["constraints"] + selected
         deps = self._dependencies(rendered_items)
@@ -673,9 +683,7 @@ class Retrieval:
         diag.update(
             status=output["status"],
             minimum_required_tokens=output.get("minimum_required_tokens"),
-            budget_count_scope="failure_envelope"
-            if output["status"] == "budget_insufficient"
-            else "context",
+            budget_count_scope=budget_scope(output),
             usage={**output["usage"], "output_tokens": used, "serialized_bytes": len(raw)},
             coverage=output["coverage"],
             selected=[
