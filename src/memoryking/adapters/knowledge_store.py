@@ -634,8 +634,20 @@ class Knowledge:
             recorded, valid = frontier, at
         else:
             valid = args.get("valid_ms", at)
+        # Only revisions accepted as of `recorded` can ever be returned or block (the loop below
+        # skips every other lifecycle state), so the bound counts exactly those: unreviewed,
+        # rejected and deprecated revisions never crowd out mandatory resolution. This mirrors
+        # `_state`: the latest accept/reject/deprecate at or before `recorded` must be an accept.
+        # The reviewer diagnostic lists every state of knowledge, so it keeps the unfiltered scan.
+        accepted_only = constraints or not args.get("diagnostic", False)
         rows = self.db.execute(
-            "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project IN (?,?,?) AND r.created<=? AND r.kind=? ORDER BY r.created LIMIT ?",
+            "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project IN (?,?,?) AND r.created<=? AND r.kind=?"
+            + (
+                " AND EXISTS (SELECT 1 FROM lifecycle l WHERE l.tenant=r.tenant AND l.revision=r.id AND l.action='accept' AND l.position<=? AND NOT EXISTS (SELECT 1 FROM lifecycle m WHERE m.tenant=l.tenant AND m.revision=l.revision AND m.action IN ('reject','deprecate') AND m.position>l.position AND m.position<=?))"
+                if accepted_only
+                else ""
+            )
+            + " ORDER BY r.created LIMIT ?",
             (
                 tenant,
                 args["project"],
@@ -643,6 +655,7 @@ class Knowledge:
                 "_workspace" if constraints else args["project"],
                 recorded,
                 "constraint" if constraints else "knowledge",
+                *((recorded, recorded) if accepted_only else ()),
                 REGISTRY_LIMIT + 1,
             ),
         ).fetchall()
