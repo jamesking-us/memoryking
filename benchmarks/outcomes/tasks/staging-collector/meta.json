@@ -1,0 +1,18 @@
+{
+  "id": "staging-collector",
+  "title": "Send metrics to the staging collector",
+  "kind": "environment",
+  "carries": [
+    "Staging collector: http://collector.staging.internal:9411/v4/ingest, enabled by ENABLE_COLLECTOR_V2=1, auth header X-Collector-Key from COLLECTOR_KEY, body {\"schema_version\": 4, \"points\": [...]}."
+  ],
+  "why_not_in_repo": "The endpoint, port, flag name, header and schema version were told to the agent in session 1 for later use and appear nowhere in the repository or in session 1's code (session 1 only writes a generic chunking helper).",
+  "between": false,
+  "stub": {
+    "learn": [
+      "Fact: the staging collector listens on collector.staging.internal port 9411, ingest path /v4/ingest over plain http.",
+      "Fact: the collector is switched on by environment variable ENABLE_COLLECTOR_V2=1. Requests carry header X-Collector-Key with the value of environment variable COLLECTOR_KEY, and the JSON body is {\"schema_version\": 4, \"points\": [...]}."
+    ],
+    "recall_query": "staging collector host port path flag header schema_version",
+    "must_recall": ["9411", "ENABLE_COLLECTOR_V2", "X-Collector-Key"]
+  }
+}

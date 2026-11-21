@@ -88,6 +88,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `budget_insufficient` | The required content does not fit the token budget; raise max_output_tokens or narrow scope. |
 
+## chat
+
+| Code | What to do |
+| --- | --- |
+| `chat_review_disabled` | Confirming in chat is off for this bridge; ask the user to run `memoryking review accept` or start the bridge with --allow-chat-review. |
+
 ## checkpoint
 
 | Code | What to do |
@@ -194,6 +200,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `delegation_depth_exceeded` | Delegated credentials cannot delegate again; request a grant from an administrator. |
+| `delegation_superseded` | This delegated credential predates the rule that a delegation acts for its issuer; ask the issuer to delegate again. |
 
 ## delta
 

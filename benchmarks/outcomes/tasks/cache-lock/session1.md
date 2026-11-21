@@ -1,0 +1,3 @@
+The lookup service's cache misbehaves under load: occasional exceptions and counters that don't add up. `tools/stress_cache.py` reproduces it by hammering the service cache (the one `kvcache.metrics.build_cache` builds) from several threads; `--help` explains it, and a full pass takes a couple of minutes because it runs until something breaks or the time limit passes.
+
+Please work out why it fails and what a correct fix has to look like. Try whatever fixes you think of against the stress tool, but leave `kvcache/` as you found it when you're done (experiment in a scratch copy or revert), and tell me what works and what doesn't, with the reasons.

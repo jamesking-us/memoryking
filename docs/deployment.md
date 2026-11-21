@@ -209,7 +209,9 @@ Distribute the new credential to the agent before or right after rotating; the o
 
 **Other entry points.** The same generation rule applies to `end-maintenance` (a rotated-away credential is refused with `credential_replaced`, and only after the grant check, so a principal without a current admin grant still gets `denied`) and to dashboard sign-in and sessions in both profiles: a rotated credential cannot issue a bootstrap code, exchange an existing one or keep a session.
 
-**Delegation.** A delegated credential (shared profile) acts as its subject and records the issuer's generation when it is issued. Rotating or revoking either the issuer or the subject retires it.
+**Delegation.** `delegate` (shared profile) lets a principal hand out a narrower copy of its own access, for example to a sub-agent, for at most an hour. The holder of the token acts as the issuer, never as the principal named in the request: reader lists, checkpoint ownership, hand-off recipients, receipts and the event actor all see the issuer. The token is limited to the one project and the capabilities named, without `admin`, and cannot delegate again. The named principal is the party the work is done for: it must hold every delegated capability when the token is issued, and it is the only identity the token never becomes. The issuer's grant is checked on every use, so narrowing or revoking it narrows or retires the token at once. The token also records the generations of the issuer and the named principal when it is issued, so rotating or revoking either retires it. The named principal is carried in the signed token, not in event or receipt rows, which have no field for it; the delegation id in the token's chain is what a receipt binding records.
+
+**Delegated tokens issued before this release are refused.** They acted as the named principal, which let any holder of `read` on a project read, and write checkpoints as, an agent it was never granted. They now fail with `delegation_superseded`; the issuer delegates again. Nothing else needs re-issuing. The local profile has no delegation.
 
 **Expiry.** `--expires` sets the grant's expiry. It is enforced by the store against its own clock on every authorization, not by the credential file, so a credential cannot outlive its grant and extending the grant revives the same credential; rotate to retire it instead.
 
@@ -302,7 +304,7 @@ The shared profile has the same rule per tenant (`doctor` covers the local profi
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 14 and PostgreSQL 9 (archive schema 7). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 17 and PostgreSQL 12 (archive schema 10). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 

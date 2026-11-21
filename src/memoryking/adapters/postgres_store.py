@@ -158,7 +158,7 @@ class PostgresStore(StoreCore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "11":
+            if version is None or version[0] != "12":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException as exc:
@@ -181,21 +181,27 @@ class PostgresStore(StoreCore):
             raise LocalError("denied")
         delegation = identity.get("delegation")
         if delegation:
+            # A delegated token is its issuer acting with a narrower scope, never the named
+            # subject. A token minted when delegation acted as the subject has no `on_behalf_of`
+            # and is refused outright instead of being reinterpreted.
+            if "on_behalf_of" not in delegation:
+                raise LocalError("delegation_superseded")
             if (
-                project != delegation["project"]
+                identity.get("principal") != delegation["by"]
+                or project != delegation["project"]
                 or capability not in delegation["capabilities"]
                 or at >= delegation["expires"]
             ):
                 raise LocalError("denied")
-            # The issuer's generation at delegation time: rotating the issuer retires the
-            # delegated token (an issuer without a recorded generation is generation 0).
-            parent = self._token(
+            # The named recipient must still hold the capability, on the generation it held at
+            # delegation time; the issuer's own grant and generation are checked below.
+            recipient = self._token(
                 "credential",
                 tenant=self.tenant,
-                principal=delegation["by"],
-                generation=delegation.get("by_generation", 0),
+                principal=delegation["on_behalf_of"],
+                generation=delegation["on_behalf_of_generation"],
             )
-            StoreCore._auth(self, parent, capability, project, at)
+            StoreCore._auth(self, recipient, capability, project, at)
         return super()._auth(token, capability, project, at)
 
     def _token(self, kind: str, **fields: Any) -> str:
@@ -251,7 +257,8 @@ class PostgresStore(StoreCore):
             delegation = {
                 "id": uid("delegation"),
                 "by": self.principal,
-                "by_generation": self._generation(self.tenant, self.principal),
+                "on_behalf_of": principal,
+                "on_behalf_of_generation": self._generation(self.tenant, principal),
                 "project": project,
                 "capabilities": sorted(set(capabilities)),
                 "expires": decision.evaluated_ms + ttl_ms,
@@ -259,7 +266,8 @@ class PostgresStore(StoreCore):
             token = self._token(
                 "credential",
                 tenant=self.tenant,
-                principal=principal,
+                principal=self.principal,
+                generation=self._generation(self.tenant, self.principal),
                 delegation=delegation,
                 delegation_chain=[delegation["id"]],
             )

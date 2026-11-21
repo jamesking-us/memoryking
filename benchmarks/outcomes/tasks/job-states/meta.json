@@ -1,0 +1,18 @@
+{
+  "id": "job-states",
+  "title": "Queue failure handling to a settled retry policy",
+  "kind": "decision",
+  "carries": [
+    "Retry policy: at most 5 attempts in total (the lease counts), backoff 30 * 2**(attempts - 1) seconds capped at 600, then state `dead` with dead_reason `nacked` or `expired`, never retried automatically."
+  ],
+  "why_not_in_repo": "Session 1 implements only the happy path (lease and ack), which uses none of the policy, and the repository's state list stops at pending, running and done with no dead_reason field. The numbers and names were decided in session 1 and are arbitrary choices that cannot be derived from the code.",
+  "between": false,
+  "stub": {
+    "learn": [
+      "Decision: retry policy for jobq. At most 5 attempts in total and the lease counts as an attempt. After a failed or expired attempt wait 30 * 2**(attempts - 1) seconds, capped at 600, before it can be leased again.",
+      "Decision: when a job has used all attempts it moves to state dead (the dashboard filters on dead) with dead_reason set to nacked or expired. Dead jobs are never retried automatically."
+    ],
+    "recall_query": "retry policy attempts backoff dead state dead_reason jobq",
+    "must_recall": ["30 * 2**(attempts - 1)", "dead_reason"]
+  }
+}
