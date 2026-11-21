@@ -54,6 +54,9 @@ RERANK_TEXT_BYTES = 16384  # the reranker's per-text limit
 SALIENCE_WEIGHT = (
     45_000  # a tenth of a typical full match (about 1/(K1+1) of the scale), in millionths
 )
+LEGACY_SALIENCE_WEIGHT = (
+    100_000  # the same tenth, on the lexical-v1 scale where a full match is 1.0
+)
 SALIENCE_WINDOW_MS = 90 * 86_400_000  # deliveries older than this do not count
 SALIENCE_HALF_LIFE_MS = 30 * 86_400_000  # use fades by half every thirty days
 ARCHIVE_AFTER_MS = 180 * 86_400_000  # never-used records older than this rank last
@@ -1120,6 +1123,7 @@ class Retrieval:
             # earlier briefings delivered unless that is what the caller wants.
             salience_trace["state"] = "off_unless_requested"
         else:
+            salience_weight = SALIENCE_WEIGHT if lexical_current else LEGACY_SALIENCE_WEIGHT
             salience = self._salience(who, args["project"], positions, at)
             archival = 0
             rescored = []
@@ -1135,7 +1139,7 @@ class Retrieval:
                         "deliveries_90d": item["deliveries"],
                         "helpful_votes": item["helpful"],
                     }
-                score += SALIENCE_WEIGHT * item["strength_ppm"] // 1_000_000
+                score += salience_weight * item["strength_ppm"] // 1_000_000
                 if item["tier"] == "archival":
                     # Still searchable and cited when nothing else matches; ranked last.
                     score -= ARCHIVAL_PENALTY
@@ -1143,7 +1147,7 @@ class Retrieval:
                 rescored.append((score, reference, group))
             ranked = sorted(rescored, key=rank_key)
             salience_trace.update(
-                weight_ppm=SALIENCE_WEIGHT,
+                weight_ppm=salience_weight,
                 delivery_window_days=SALIENCE_WINDOW_MS // 86_400_000,
                 half_life_days=SALIENCE_HALF_LIFE_MS // 86_400_000,
                 archive_after_days=ARCHIVE_AFTER_MS // 86_400_000,
