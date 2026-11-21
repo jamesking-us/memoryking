@@ -50,6 +50,7 @@ class SharedControl(Control):
             try:
                 private_file(path)
                 deadline = time.monotonic() + timeout
+                pause = 0.0005  # the lock is held for one small write: poll fast, then back off
                 while True:
                     try:
                         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -57,7 +58,8 @@ class SharedControl(Control):
                     except BlockingIOError:
                         if time.monotonic() >= deadline:
                             raise LocalError("control_busy") from None
-                        time.sleep(0.01)
+                        time.sleep(pause)
+                        pause = min(pause * 2, 0.01)
                 yield
             finally:
                 os.close(fd)

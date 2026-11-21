@@ -76,10 +76,8 @@ class MeasuredService(SharedService):
         self.local = threading.local()
 
     @contextmanager
-    def store(self, tenant, credential, *, release_only=False, request_deadline=None):
-        with super().store(
-            tenant, credential, release_only=release_only, request_deadline=request_deadline
-        ) as store:
+    def store(self, tenant, credential, **options):
+        with super().store(tenant, credential, **options) as store:
             try:
                 yield store
             finally:
