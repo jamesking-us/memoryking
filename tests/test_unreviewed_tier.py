@@ -252,7 +252,11 @@ class TierCases:
 
 class LocalTierTests(TierCases, unittest.TestCase):
     setUp = knowledge.KnowledgeTests.setUp
-    tearDown = knowledge.KnowledgeTests.tearDown
+
+    def tearDown(self):
+        self.doCleanups()  # stop any daemon before its store closes
+        knowledge.KnowledgeTests.tearDown(self)
+
     propose = knowledge.KnowledgeTests.propose
     body = knowledge.KnowledgeTests.body
     review = knowledge.KnowledgeTests.review
