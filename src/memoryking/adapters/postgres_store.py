@@ -34,6 +34,7 @@ from memoryking.observability_metrics import Metrics
 
 class PostgresStore(StoreCore):
     control: SharedControl
+    tenant: str  # always bound; the local store leaves StoreCore.tenant None
 
     def dense_exact(
         self, statement: str, parameters: tuple[Any, ...], request: dict[str, Any], limit: int

@@ -107,7 +107,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `clock_untrusted` | The system clock moved backwards or disagrees with monotonic time; fix the clock and retry. |
+| `clock_untrusted` | The clock is behind the latest time this store recorded, or disagrees with monotonic time; `memoryking doctor` shows how far, and the deployment guide has Clock recovery. |
 
 ## clone
 

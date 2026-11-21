@@ -76,7 +76,7 @@ The model installer command is `python -m memoryking.model_install --destination
 
 | Area | Implemented bound / behavior |
 | --- | --- |
-| Local request | 256 KiB wire body; 64 KiB captured text; one request per socket connection; up to eight connections served concurrently, more wait up to five seconds and then receive `service_busy`. |
+| Local request | 256 KiB wire body; 64 KiB captured text; one request per socket connection; up to eight connections served concurrently, more wait up to five seconds (up to 16 waiting at once, each on its own thread, so they wait together) and then receive `service_busy`; connections beyond that bound receive it at once. |
 | Shared request | Every HTTP, MCP and dashboard request carries one five-second budget from its first byte: waiting for a pooled connection, the connection checks and every statement in the request's transactions stop at that deadline, so a saturated pool or a slow query returns `service_busy` or `service_unavailable` inside the budget rather than after it. A lock timeout, statement timeout or cancel, deadlock or serialization failure inside a transaction answers `service_busy` with 429 (a warning is logged with the SQLSTATE only); a saturated pool answers it with 503. A request for a tenant that does not exist answers exactly as a credential that does not verify does (400 `invalid_token`). |
 | Query | Up to 32 distinct searchable terms. Longer queries are searched on their leading terms and the receipt diagnostics record `query_terms_truncated`. |
 | Reranker window | The cross-encoder reorders at most the top 16 fused candidates per briefing, one call of at most 16 pairs, 256 tokens per pair with the text cut first, on up to four CPU threads; it runs only when the briefing asks and a model is loaded. |
@@ -223,7 +223,7 @@ Every error reply carries a `hint` beside its `error` code, and the complete lis
 | `journal_record_limit` | The policy action was refused before any byte was written; the store stays usable. Reduce the action's payload. |
 | `maintenance_operation_mismatch` | `end-maintenance` was given an operation id that is not the one recorded by the interrupted backup. Read the anchor's `maintenance_operation` and retry with it. |
 | `internal_error`, `dashboard_unavailable`, `service_unavailable` with a `request_id` | Find the matching `request_id=` line in the daemon's stderr log (`serve --log-level`); it names the component, error type and code location without content. |
-| `release_expired`, `clock_untrusted` | Restore trustworthy timing and request a fresh authorized response. |
+| `release_expired`, `clock_untrusted` | Restore trustworthy timing and request a fresh authorized response. `clock_untrusted` is also what a store answers when the wall clock is behind the latest time it recorded; `memoryking doctor` reports how far ahead that record is, and [Clock recovery](deployment.md#clock-recovery) says what to do. |
 | `recovery_required`, `journal_rollback`, `backup_invalid` | Stay offline and use verified independent recovery evidence. |
 | `session_changed` | Sign in again; permissions changed and retained views were cleared. |
 | `egress_provider_denied`, `egress_classification_denied` | The daemon's egress policy does not allow that provider or model, or a cited source is classified above the provider's ceiling; change the policy and restart, or rebuild the conversation without the source. |

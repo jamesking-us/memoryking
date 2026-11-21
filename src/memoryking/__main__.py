@@ -21,7 +21,7 @@ from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
-from memoryking.domain.local import LocalError
+from memoryking.domain.local import LocalError, SystemClock
 from memoryking.observability import LEVELS, configure, event
 
 
@@ -233,6 +233,17 @@ def read_credential(path: Path) -> str:
     return path.read_text().strip()
 
 
+def duration(ms: int) -> str:
+    """A whole-number span such as '2 d 3 h 4 min 5 s', for operator messages."""
+    seconds, parts = max(0, ms) // 1000, []
+    for unit, size in (("d", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= size:
+            parts.append(f"{seconds // size} {unit}")
+            seconds %= size
+    parts.append(f"{seconds} s")
+    return " ".join(parts)
+
+
 def doctor(
     store: Path,
     control: Path,
@@ -305,6 +316,18 @@ def doctor(
         records = controller.journal(anchor)
         detail = f"{len(records)} records, state {anchor['state']}"
         record("ok" if anchor["state"] == "active" else "warn", "journal", detail)
+        ahead_ms = anchor.get("last_utc", 0) - SystemClock().utc_ms()
+        if ahead_ms > 0:
+            record(
+                "fail",
+                "clock",
+                f"the latest time this store recorded is {duration(ahead_ms)} ahead of the system "
+                "clock, so every request fails with clock_untrusted until the clock reaches it "
+                "(a clock that jumped forward and was corrected leaves this); see the deployment "
+                "guide, Clock recovery",
+            )
+        else:
+            record("ok", "clock", "system clock is at or after the latest recorded time")
     except LocalError as exc:
         record("fail", "journal", f"{exc.code}; stay offline and use the recovery guide")
     except OSError as exc:

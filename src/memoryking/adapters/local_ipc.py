@@ -180,9 +180,12 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
     block_on_close = True
     max_concurrent = 8
+    max_waiting = 16
+    wait_seconds = 5
 
     def __init__(self, store: StoreCore):
         self.slots = threading.BoundedSemaphore(self.max_concurrent)
+        self.waiting = threading.BoundedSemaphore(self.max_waiting)
         self.path = store.root / "service.sock"
         if len(os.fsencode(self.path)) > 100:
             raise LocalError("socket_path_too_long")
@@ -197,18 +200,47 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         os.chmod(self.path, 0o600)
 
     def process_request(self, request: Any, client_address: Any) -> None:
-        if not self.slots.acquire(timeout=5):
+        # This runs on the accept thread, which must never wait: a connection that finds all
+        # workers busy waits on its own thread, up to `max_waiting` at once, and any beyond
+        # that bound is refused immediately so the daemon never holds unbounded sockets.
+        if self.slots.acquire(blocking=False):
+            self._serve(request, client_address)
+        elif self.waiting.acquire(blocking=False):
             try:
-                request.sendall(b'{"error":"service_busy"}\n')
-            except OSError:
-                pass
-            self.shutdown_request(request)
-            return
+                threading.Thread(
+                    target=self._wait_then_serve, args=(request, client_address), daemon=True
+                ).start()
+            except BaseException:
+                self.waiting.release()
+                self._refuse(request)
+                raise
+        else:
+            self._refuse(request)
+
+    def _serve(self, request: Any, client_address: Any) -> None:
+        """Hand a connection that already holds a slot to a worker; the slot is released after."""
         try:
             super().process_request(request, client_address)
         except BaseException:
             self.slots.release()
             raise
+
+    def _wait_then_serve(self, request: Any, client_address: Any) -> None:
+        try:
+            got = self.slots.acquire(timeout=self.wait_seconds)
+        finally:
+            self.waiting.release()
+        if got:
+            self._serve(request, client_address)
+        else:
+            self._refuse(request)
+
+    def _refuse(self, request: Any) -> None:
+        try:
+            request.sendall(b'{"error":"service_busy"}\n')
+        except OSError:
+            pass
+        self.shutdown_request(request)
 
     def process_request_thread(self, request: Any, client_address: Any) -> None:
         try:

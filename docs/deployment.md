@@ -256,6 +256,18 @@ Shared backup uses the runtime and separate backup DSNs plus current tenant owne
 
 The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. It bounds rows at 1 MiB, the signed manifest at 1 MiB (the blob list lives in a hash-committed `blob-index` file, which is not bounded) and payload at 16 GiB. Backup briefly fences the tenant. Interrupted restore remains fenced until explicit recovery succeeds. Other tenants retain their own state.
 
+### Clock recovery
+
+The store never accepts a time earlier than the latest time it recorded: that record lives in the control anchor, outside the database, so a rolled-back clock cannot replay expired grants or reopen revoked access. The consequence is that a wall clock which jumped forward (a bad NTP source, a manual change, a virtual machine resumed with a wrong time) and was then corrected leaves the recorded time ahead of the real one. Until real time reaches it, every request answers `clock_untrusted`.
+
+Diagnose it with `memoryking doctor --store ... --control ...`. The `clock` check fails and says how far ahead the recorded time is (for example `3 h 5 min`); an `ok` result means the clock is not the cause. Then:
+
+1. Make sure the system clock is correct now (`timedatectl status`, `chronyc tracking`) and stays so. Do not move it forward to match the record.
+2. Wait. The store recovers by itself the moment real time passes the recorded time; no restart is needed. Grants and credentials are not extended or shortened by the wait. If the offset is small, this is the whole procedure.
+3. If the offset is too large to wait out, there is no lighter override and none should be added, because one would also remove the rollback protection. The only existing path is a full restore under [Backup and recovery](#backup-and-recovery): restore creates a new history incarnation (old credentials, namespaces, watermarks and handles are retired) and sets the recorded time to the current clock. A local restore does this directly; a shared restore refuses while the clock is behind the record, so it needs the lost-anchor form (`--lost-anchor-journal-head`, which requires an independently retained current journal checkpoint and an absent anchor). Use it only when the clock is known to be right.
+
+The shared profile has the same rule per tenant (`doctor` covers the local profile only).
+
 ## Upgrades, retention and removal
 
 Current storage schemas are SQLite 14 and PostgreSQL 9 (archive schema 7). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.

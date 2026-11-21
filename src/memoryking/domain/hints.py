@@ -102,7 +102,7 @@ HINTS: dict[str, str] = {
     "service_busy": "The service is at its concurrency bound or a database lock or statement timed out; back off briefly and retry.",
     "service_unavailable": "The service failed internally; find the request id in the daemon log.",
     "release_expired": "More than five seconds passed between authorization and delivery; request again.",
-    "clock_untrusted": "The system clock moved backwards or disagrees with monotonic time; fix the clock and retry.",
+    "clock_untrusted": "The clock is behind the latest time this store recorded, or disagrees with monotonic time; `memoryking doctor` shows how far, and the deployment guide has Clock recovery.",
     "counter_exhausted": "The commit counter reached its maximum; restore into a fresh store.",
     "journal_record_limit": "The policy action exceeds 256 KiB and was refused before writing; reduce its payload.",
     "diagnostic_limit": "Retrieval diagnostics exceed 64 KiB; reduce the request's breadth.",
