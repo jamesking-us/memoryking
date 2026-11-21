@@ -139,7 +139,7 @@ class StoreOperations:
         elif op == "purge":
             store.purge(credential, **args)
         elif op == "reindex":
-            store.reindex(credential)
+            return {"ok": True, "lexical": store.reindex(credential)}
         return {"ok": True}
 
 

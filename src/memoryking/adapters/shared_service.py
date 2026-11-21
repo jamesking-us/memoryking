@@ -36,6 +36,7 @@ class SharedService:
         # Retention runs on a thread of its own (`start_housekeeping`), never inside a request.
         # `_housekeeping` is the wall time of each tenant's last successful pass.
         self._housekeeping: dict[str, float] = {}
+        self._rebuilt: dict[str, float] = {}  # monotonic time of each tenant's last rebuild slice
         self._housekeeping_lock = threading.Lock()
         self._layout_done: set[str] = set()
         self.housekeeping_failures = 0
@@ -299,6 +300,22 @@ class SharedService:
         thread.start()
         return thread
 
+    REBUILD_S = 5  # how often a request may advance an unfinished lexical rebuild
+
+    def _rebuild(self, tenant: str, store: PostgresStore) -> None:
+        """Advance an unfinished lexical rebuild in bounded batches, between requests."""
+        now = time.monotonic()
+        with self._housekeeping_lock:
+            if now - self._rebuilt.get(tenant, -self.REBUILD_S) < self.REBUILD_S:
+                return
+            self._rebuilt[tenant] = now
+        try:
+            store.rebuild_lexical(wall_ms=1000)
+        except LocalError:
+            pass
+        except Exception as exc:
+            failure("shared_service", exc, action="rebuild")
+
     def store(
         self,
         tenant: str,
@@ -396,6 +413,8 @@ class SharedService:
                 for span in store.metrics:
                     if "gate_wait_ms" in span:
                         self.metrics.observe("gate_wait", span["gate_wait_ms"], None)
+            if not release_only:
+                self._rebuild(tenant, store)
             if request["operation"] == "capture":
                 # A tenant that captures also drains its own audit jobs, so the shared
                 # profile never depends solely on the scheduled worker to stay under

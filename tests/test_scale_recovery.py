@@ -293,6 +293,10 @@ class QueueScaleTests(ScaleCase):
         self.capture(0)
         fabricate(self.store, 2_000)
         self.store.reindex(self.credential)
+        # The call itself resets nothing at this size; the batches of the rebuild reset the
+        # jobs as they pass, and the reset backlog never counts against the queue limit.
+        while not self.store.rebuild_lexical(wall_ms=1500):
+            pass
         pending = self.store.db.execute(
             "SELECT count(*) FROM jobs WHERE state='pending'"
         ).fetchone()[0]

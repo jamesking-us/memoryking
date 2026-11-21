@@ -196,6 +196,8 @@ Operator sequence (the paths below are placeholders for your reviewed configurat
 
 For the dashboard, add `--dashboard-tenant team`. Bootstrap requires the configured tenant's wildcard administrator. The shared dashboard has the same Team view as the local one: per-principal activity, grant revocation (which advances the policy epoch and signs every browser session out) and the audit export; see the [reference](reference.md#dashboard-team-view).
 
+To move a tenant to the current lexical ranking after an upgrade, run `.venv/bin/python -m memoryking.shared reindex --dsn-file /private/runtime.dsn --content /private/content --control /private/control --tenant team --credential /private/admin.credential --wait` (admin credential). The starting call is short at any size; with `--wait` the command does the batched rebuild itself and prints percent complete and an estimate on stderr until the tenant is `current`, and without it the serving process advances the rebuild between requests. `status` shows the same progress. The local equivalent is `memoryking reindex [--project P] [--wait]`.
+
 Shared `request` accepts `--url`, `--tenant`, `--project`, `--credential` and optional `--ca-file`. Its stdin envelope is `{"version":1,"operation":"NAME","args":{...}}`. Grant/delegate output requires a new `--credential-output`; dashboard bootstrap requires `--bootstrap-output`. The [shared demo](../tools/shared_demo.py) is a complete disposable operator/client example.
 
 ### Rotating credentials
