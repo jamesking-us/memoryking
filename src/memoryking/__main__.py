@@ -635,6 +635,23 @@ def main() -> int:
                 "context may reach; without it only the local recorder is accepted",
             )
             cmd.add_argument(
+                "--workers",
+                type=int,
+                help="Requests served at once (default 8; 1 to 256)",
+            )
+            cmd.add_argument(
+                "--waiters",
+                type=int,
+                help="Connections that may wait for a free worker, up to five seconds each "
+                "(default 16; 0 to 1024); more are refused as service_busy",
+            )
+            cmd.add_argument(
+                "--health-port",
+                type=int,
+                help="Loopback port serving /healthz (liveness) and /readyz (readiness) "
+                "without credentials; 0 chooses a free port; off by default",
+            )
+            cmd.add_argument(
                 "--summary-idle",
                 default="30m",
                 help="Derive a 'where this left off' summary for a task idle this long "
@@ -645,6 +662,13 @@ def main() -> int:
             cmd.add_argument("--principal", default="owner")
         if name in {"backup", "restore"}:
             cmd.add_argument("--backup", type=Path, required=True)
+        if name == "backup":
+            cmd.add_argument(
+                "--incremental-from",
+                type=Path,
+                help="An earlier backup of this store on the same filesystem: blobs it holds "
+                "are hard-linked after their hash is verified, not copied",
+            )
         if name == "restore":
             cmd.add_argument(
                 "--lost-anchor-journal-head",
@@ -1412,6 +1436,14 @@ def main() -> int:
                         from memoryking.adapters.local_embeddings import LocalOnnxReranker
 
                         store.reranker = LocalOnnxReranker(args.reranker_model)
+                    health_server = None
+                    if args.health_port is not None:
+                        from memoryking.health import LocalHealthServer
+
+                        if not 0 <= args.health_port <= 65535:
+                            raise LocalError("invalid_health_configuration")
+                        health_server = LocalHealthServer(store.readiness, args.health_port)
+                        event("serve", "health", port=health_server.start())
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")
@@ -1419,7 +1451,7 @@ def main() -> int:
                         store.dashboard = dashboard
                         dashboard.start()
                     try:
-                        with Server(store) as server:
+                        with Server(store, workers=args.workers, waiters=args.waiters) as server:
                             print(
                                 json.dumps({"ready": True, "socket": str(server.path)}), flush=True
                             )
@@ -1440,8 +1472,10 @@ def main() -> int:
                             embeddings.stop()
                         if dashboard:
                             dashboard.stop()
+                        if health_server:
+                            health_server.stop()
                 elif args.command == "backup":
-                    print(json.dumps(store.backup(args.backup)))
+                    print(json.dumps(store.backup(args.backup, previous=args.incremental_from)))
                 elif args.command == "gc":
                     print(
                         json.dumps(

@@ -111,6 +111,12 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--project", required=True)
         if name == "backup":
             item.add_argument("--backup-dsn-file", type=Path, required=True)
+            item.add_argument(
+                "--previous",
+                type=Path,
+                help="An earlier archive of this tenant: blobs it holds are hard-linked "
+                "(after their hash is verified) instead of copied",
+            )
         if name in {"backup", "restore"}:
             item.add_argument("--archive", type=Path, required=True)
         if name == "restore":
@@ -124,6 +130,12 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--tls-key", type=Path)
             item.add_argument("--loopback-http", action="store_true")
             item.add_argument("--pool-size", type=int, default=8)
+            item.add_argument(
+                "--max-requests",
+                type=int,
+                default=32,
+                help="Requests in flight at once (1 to 1,024); more are refused as service_busy",
+            )
             item.add_argument("--dashboard-tenant")
             item.add_argument("--log-level", default="warning", choices=LEVELS)
             item.add_argument(
@@ -266,12 +278,14 @@ def run(args: Any) -> dict[str, Any]:
 
                 service.egress_policy = EgressPolicy.load(args.egress_policy)
             threading.Thread(target=service.warm, name="journal-warm", daemon=True).start()
+            service.start_housekeeping()
             app = create_app(
                 service,
                 hosts=args.host,
                 origins=args.origin,
                 loopback_http=args.loopback_http,
                 dashboard_tenant=args.dashboard_tenant,
+                capacity=args.max_requests,
             )
             uvicorn.run(
                 app,
@@ -302,7 +316,7 @@ def run(args: Any) -> dict[str, Any]:
                 store.finish(credential, args.project, lease["lease"], "complete")
                 return {"status": "complete", "provider_calls": 0, "projection": "audit_probe"}
             with psycopg.connect(dsn(args.backup_dsn_file), autocommit=True) as connection:
-                manifest = backup(store, connection, args.archive)
+                manifest = backup(store, connection, args.archive, previous=args.previous)
                 return {
                     "status": "complete",
                     "archive": str(args.archive),

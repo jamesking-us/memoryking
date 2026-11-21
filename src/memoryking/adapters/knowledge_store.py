@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
+from memoryking.adapters.blobs import blob_path
 from memoryking.adapters.local_files import private_file
 from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.application.storage import insert_ignore
@@ -158,7 +159,7 @@ class Knowledge:
             ).fetchone()
             if row is None or not self.s._visible(who, row, at):
                 raise LocalError("evidence_unavailable")
-            path = self.s.root / "blobs" / who["tenant"] / row["blob"]
+            path = blob_path(self.s.root, who["tenant"], row["blob"])
             private_file(path)
             raw = path.read_bytes()
             if (

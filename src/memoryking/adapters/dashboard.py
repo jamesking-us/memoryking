@@ -188,6 +188,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return value
 
     def route(self) -> None:
+        if self.command in {"GET", "HEAD"} and self.path in {"/healthz", "/readyz"}:
+            # Probes carry no credential and learn only a fixed boolean.
+            from memoryking.health import LIVE_BODY, readiness_response
+
+            probe_status, probe_body = (
+                (200, LIVE_BODY)
+                if self.path == "/healthz"
+                else readiness_response(self.server.store.readiness())
+            )
+            self.send(probe_status, probe_body)
+            return
         self.guard()
         dashboard, store = self.server, self.server.store
         if self.path == "/metrics" and self.command == "GET":
@@ -199,7 +210,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if self.headers.get("Cookie"):
                 raise LocalError("mixed_authentication")
             status = store.status(authorization[0][7:], "metrics")
-            self.send(200, render(store.counters, status).encode(), "text/plain; version=0.0.4")
+            self.send(
+                200,
+                render(store.counters, status, store.extra_gauges()).encode(),
+                "text/plain; version=0.0.4",
+            )
             return
         if self.path == "/api/v1/retrieval" and self.command == "POST":
             from memoryking.adapters.retrieval import Retrieval

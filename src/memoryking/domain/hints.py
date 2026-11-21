@@ -375,6 +375,8 @@ HINTS: dict[str, str] = {
     "pool_reset_failed": "A pooled connection could not be reset; restart the service.",
     "primary_required": "Writes must go to the primary database, not a replica.",
     "primary_nonprivileged_runtime_required": "The runtime role must not be a superuser or bypass row security.",
+    "invalid_concurrency": "Concurrency limits are whole numbers: workers 1 to 256, waiters 0 to 1,024, shared requests 1 to 1,024.",
+    "invalid_health_configuration": "The health port must be a whole number from 0 to 65535; 0 chooses a free port.",
     "schema_unsupported": "The database schema version is newer or older than this release supports; migrate or upgrade.",
     "recovery_admin_missing": "No tenant-wide admin grant exists to receive the recovered credential.",
     "recovery_checkpoint_invalid": "The supplied journal head does not match the journal.",

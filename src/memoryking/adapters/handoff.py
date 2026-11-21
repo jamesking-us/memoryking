@@ -16,6 +16,7 @@ from memoryking.adapters.working import Working
 from memoryking.application.retention import (
     HANDOFF_LIMIT,
     HANDOFF_VIEW_LIMIT,
+    index_receipt,
     live_handoff_views,
     live_handoffs,
     release_handoff_views,
@@ -218,7 +219,7 @@ class Handoff:
             who = self.s._auth(credential, "read", args["project"], at)
             if action in {"prepare", "preview", "cancel"}:
                 self.s._auth(credential, "handoff", args["project"], at)
-            self.r._expire(at)
+            self.r._expire(at, who["tenant"])
             row = None
             if action == "prepare":
                 stream = self._prepare_check(who, args, at)
@@ -310,6 +311,7 @@ class Handoff:
                     json.dumps([d["id"] for d in deps if d["kind"] == "observation"]),
                 ),
             )
+            index_receipt(self.db, who["tenant"], receipt)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, receipt)

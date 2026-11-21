@@ -15,6 +15,7 @@ from test_journal import observation
 from test_local_store import FakeClock
 
 from memoryking import backups
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
 from memoryking.contracts.canonical import MAX_BYTES, ContractError
@@ -138,7 +139,10 @@ class BackupScaleTests(ScaleCase):
         self.assertEqual(
             20_001, self.store.db.execute("SELECT count(*) FROM observations").fetchone()[0]
         )
-        self.assertEqual(20_001, len(list((self.root / "blobs" / "main").iterdir())))
+        # Restored blobs are sharded by hash prefix, and no flat duplicate remains.
+        names = [name for name, _ in blobfiles.iterate(self.root / "blobs" / "main")]
+        self.assertEqual(20_001, len(names))
+        self.assertFalse(any(p.is_file() for p in (self.root / "blobs" / "main").iterdir()))
 
 
 class BackupIntegrityTests(ScaleCase):

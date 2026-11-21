@@ -15,7 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from memoryking.adapters.local_files import private_dir, private_file, sync_dir
+from memoryking.adapters import blobs as blobfiles
+from memoryking.adapters.local_files import private_dir, private_file
 from memoryking.adapters.local_store import (
     CAPABILITIES,
     MAX_COUNTER,
@@ -141,6 +142,7 @@ class PostgresStore(StoreCore):
         self.committed: dict[str, Any] | None = None
         self.pool = pool
         self.request_deadline = request_deadline
+        from memoryking.adapters.postgres_admin import schema_compatible, schema_refusal
         from memoryking.adapters.postgres_pool import acquire, check
 
         remaining = None if request_deadline is None else request_deadline - time.monotonic()
@@ -158,8 +160,10 @@ class PostgresStore(StoreCore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "11":
+            if version is None:
                 raise LocalError("schema_unsupported")
+            if not (version[0].isdigit() and schema_compatible(int(version[0]))):
+                raise schema_refusal(version[0])
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException as exc:
             pool.putconn(self.connection)
@@ -490,12 +494,32 @@ class PostgresStore(StoreCore):
             removed = 0
             if directory.exists():
                 private_dir(directory)
-                for path in directory.iterdir():
+                touched = {directory}
+                for name, path in blobfiles.iterate(directory):
                     private_file(path)
-                    if path.name not in live:
+                    if name not in live:
                         path.unlink()
+                        touched.add(path.parent)
                         removed += 1
-                sync_dir(directory)
+                blobfiles.sync_directories(touched)
+        return removed
+
+    def _delete_unreferenced(self, items: list[tuple[str, str]]) -> int:
+        """Delete the files of purged observations that no other observation names, under the
+        exclusive gate, so a capture that is staging the same content cannot lose its file."""
+        if self.release_only:
+            raise LocalError("exclusive_gate_required")
+        removed = 0
+        with self.transaction():
+            for tenant, digest in dict.fromkeys(items):
+                if (
+                    self.db.execute(
+                        "SELECT 1 FROM observations WHERE tenant=? AND blob=? LIMIT 1",
+                        (tenant, digest),
+                    ).fetchone()
+                    is None
+                ):
+                    removed += blobfiles.remove(self.root, tenant, digest)
         return removed
 
     def backup(self, destination: Path) -> dict[str, Any]:
