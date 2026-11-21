@@ -507,6 +507,59 @@ class SharedHTTPTests(unittest.TestCase):
 
         anyio.run(exercise)
 
+    def test_an_mcp_tool_call_makes_one_context_decision(self):
+        import anyio
+        import httpx2
+        import mcp_types as types
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        def receipts():
+            with self.store() as store:
+                with store.transaction():
+                    return store.db.execute("SELECT count(*) FROM receipts").fetchone()[0]
+
+        seen = {}
+
+        async def exercise():
+            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+            async with httpx2.AsyncClient(
+                headers={"Authorization": "Bearer " + self.credential}, timeout=10
+            ) as http:
+                async with streamable_http_client(
+                    endpoint, http_client=http, terminate_on_close=False
+                ) as (read, write):
+                    async with ClientSession(read, write, read_timeout_seconds=10) as session:
+                        await session.initialize()
+                        await session.list_tools()  # lets the initialized notification settle
+
+                        async def spent(call):
+                            before = await anyio.to_thread.run_sync(receipts)
+                            result = await call()
+                            self.assertFalse(result.is_error, getattr(result, "content", None))
+                            return await anyio.to_thread.run_sync(receipts) - before
+
+                        async def listing():
+                            await session.list_tools()
+                            return types.CallToolResult(content=[])
+
+                        seen["list"] = await spent(listing)
+                        seen["status"] = await spent(
+                            lambda: session.call_tool("memory_status", {"project": "demo"})
+                        )
+                        seen["brief"] = await spent(
+                            lambda: session.call_tool(
+                                "memory_brief", {"action": "brief", "args": {"query": "durable"}}
+                            )
+                        )
+
+        anyio.run(exercise)
+        # The request's own context decision (what a listing costs) serves the tool: a status
+        # call adds nothing to it and a briefing adds its own receipt. Before, each tool call
+        # made two or three further context decisions.
+        self.assertEqual(seen["list"], seen["status"])
+        self.assertEqual(seen["list"] + 1, seen["brief"])
+
     def test_delegation_expiry_and_no_self_escalation(self):
         from memoryking.adapters.postgres_store import PostgresStore
         from tests.test_local_store import FakeClock

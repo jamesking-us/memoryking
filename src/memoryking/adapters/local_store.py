@@ -133,6 +133,11 @@ __all__ = [
 ]
 
 
+# What the anchor holds beyond the history it protects (the commit serial, the clock's
+# high-water mark) is written at most this late; a change of history is written at once.
+ANCHOR_INTERVAL_MS = 1000
+
+
 SCHEMA_VERSION = 19  # the SQLite user_version the daemon migrates every store to
 
 
@@ -160,6 +165,7 @@ class LocalStore(StoreCore):
         self.clock = clock or SystemClock()
         self.fault = fault or (lambda _: None)
         self.lock = threading.RLock()
+        self._anchor_at = self.clock.monotonic_ms()  # when the anchor was last written
         self.dialect = SQLiteDialect()
         # Per-thread transaction timings, collected only while a traced request runs.
         self.timings = threading.local()
@@ -475,6 +481,10 @@ class LocalStore(StoreCore):
         return target
 
     def close(self) -> None:
+        try:
+            self.flush_anchor(force=True)
+        except Exception:
+            pass  # the store reopens against the last anchor, which never leads the database
         self.db.close()
         self.control_owner.close()
         self.owner.close()
@@ -509,22 +519,26 @@ class LocalStore(StoreCore):
         self.db.execute("BEGIN IMMEDIATE")
         try:
             decision = self._now()
+            before = self.db.total_changes
             self._hold_lease(decision.evaluated_ms)
             yield decision
             self.fault("before_commit")
             decision.check(self.clock)
-            if (
-                int(
-                    self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[
-                        0
-                    ]
+            # A transaction that changed no row has nothing to order: the serial counts commits
+            # that changed the database, so a status read or a refused request costs no fsync.
+            if self.db.total_changes != before:
+                if (
+                    int(
+                        self.db.execute(
+                            "SELECT value FROM meta WHERE key='commit_serial'"
+                        ).fetchone()[0]
+                    )
+                    >= MAX_COUNTER
+                ):
+                    raise LocalError("counter_exhausted")
+                self.db.execute(
+                    "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
                 )
-                >= MAX_COUNTER
-            ):
-                raise LocalError("counter_exhausted")
-            self.db.execute(
-                "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
-            )
             self.db.commit()
             self.fault("after_commit")
             decision.check(self.clock)
@@ -568,20 +582,80 @@ class LocalStore(StoreCore):
             self._expose_locked()
 
     def _expose_locked(self) -> None:
+        """Make the anchor cover everything this process has committed and may now acknowledge.
+
+        The anchor refuses a database or journal rolled back behind an acknowledged write. What
+        it must therefore cover before an acknowledgment is the history: a tenant's position
+        (a watermark names it) and, through the journal's own append, the journal and operations
+        heads. A transaction that moved none of them needs no anchor write, because the anchor
+        already covers every position anyone has been told. The commit serial and the clock's
+        high-water mark only tighten the check for a change that touched no history (a receipt),
+        so they are written when due: after ANCHOR_INTERVAL_MS, on `close` and by the daemon's
+        maintenance pass. A writer that finds its position already covered by another's anchor
+        write (made under this lock, so finished) acknowledges without a second fsync."""
         if not self.healthy:
             raise LocalError("recovery_required")
         try:
-            self.fault("before_anchor")
-            self.anchor["frontiers"] = dict(self.db.execute("SELECT tenant,position FROM tenants"))
-            self.anchor["last_utc"] = self.last_utc
-            self.anchor["commit_serial"] = int(
-                self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[0]
+            frontiers, serial = self._anchor_state()
+            now = self.clock.monotonic_ms()
+            covered = frontiers == self.anchor["frontiers"]
+            soft = (
+                serial != self.anchor["commit_serial"] or self.last_utc != self.anchor["last_utc"]
             )
-            self.control.anchor(self.anchor)
-            self.fault("after_anchor")
+            due = soft and (
+                now - self._anchor_at >= ANCHOR_INTERVAL_MS
+                or self.last_utc - self.anchor["last_utc"] >= ANCHOR_INTERVAL_MS
+            )
+            if covered and not due:
+                return
+            self._write_anchor(frontiers, serial, now)
         except BaseException:
             self.healthy = False
             raise
+
+    def _anchor_state(self) -> tuple[dict[str, int], int]:
+        frontiers = dict(self.db.execute("SELECT tenant,position FROM tenants"))
+        serial = int(
+            self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[0]
+        )
+        return frontiers, serial
+
+    def _write_anchor(self, frontiers: dict[str, int], serial: int, now: int) -> None:
+        self.fault("before_anchor")
+        anchor = {
+            **self.anchor,
+            "frontiers": frontiers,
+            "last_utc": self.last_utc,
+            "commit_serial": serial,
+        }
+        self.control.anchor(anchor)
+        self.anchor, self._anchor_at = anchor, now
+        self.fault("after_anchor")
+
+    def flush_anchor(self, *, force: bool = False) -> None:
+        """Write what `_expose` left for later, when it is due (or at once with `force`)."""
+        with self.lock:
+            if not self.healthy:
+                return
+            if not force:
+                self._expose_locked()
+                return
+            try:
+                # Only ever the history this store opened: a control tree that was restored or
+                # replaced underneath it is left exactly as the operation made it.
+                disk = self.control.read_anchor()
+                if disk["state"] != "active" or disk["incarnation"] != self.incarnation:
+                    return
+                frontiers, serial = self._anchor_state()
+                if (
+                    frontiers != self.anchor["frontiers"]
+                    or serial != self.anchor["commit_serial"]
+                    or self.last_utc != self.anchor["last_utc"]
+                ):
+                    self._write_anchor(frontiers, serial, self.clock.monotonic_ms())
+            except BaseException:
+                self.healthy = False
+                raise
 
     def _replay_journal(self) -> None:
         applied = int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0])

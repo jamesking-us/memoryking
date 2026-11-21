@@ -27,16 +27,33 @@ PROTOCOL_VERSION = "2025-11-25"
 class RequestClient(LocalClient):
     """Reuse tool mappings without a network hop; each operation has a fresh DB gate."""
 
-    def __init__(self, service: SharedService, tenant: str, credential: str, project: str):
+    def __init__(
+        self,
+        service: SharedService,
+        tenant: str,
+        credential: str,
+        project: str,
+        context: dict[str, Any] | None = None,
+    ):
+        """`context` is the decision the HTTP request already made (and logged a receipt for);
+        a call that has none makes one. Each operation below still authenticates itself in its
+        own transaction, so this only spares the repeated context reads, never a check."""
         self.service, self.tenant, self.token, self.project = service, tenant, credential, project
         self.namespace = "sdk"
         self.bindings: list[dict[str, Any]] = [{}]
         self.released: Released | None = None
-        self.last_context = self._request(credential, "context", {"project": project})
+        self.last_context = (
+            context
+            if context is not None
+            else self._request(credential, "context", {"project": project})
+        )
         self.binding = tuple(self.last_context[key] for key in BINDING_FIELDS)
 
     def _credential(self) -> str:
         return self.token
+
+    def _current(self) -> tuple[str, dict[str, Any]]:
+        return self.token, self.last_context
 
     def _request(self, credential: str, operation: str, args: dict[str, Any]) -> dict[str, Any]:
         result = self.service.execute(
@@ -82,11 +99,17 @@ class SharedMCP:
         )
 
     def invoke(
-        self, tenant: str, project: str, token: str, name: str, arguments: dict[str, Any]
+        self,
+        tenant: str,
+        project: str,
+        token: str,
+        name: str,
+        arguments: dict[str, Any],
+        context: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], Released | None]:
         if name not in TOOL_VALIDATORS or not TOOL_VALIDATORS[name].is_valid(arguments):
             raise LocalError("invalid_tool_arguments")
-        client = RequestClient(self.service, tenant, token, project)
+        client = RequestClient(self.service, tenant, token, project, context)
         result = client.tool(name, arguments)
         return result, client.released
 
@@ -104,6 +127,7 @@ class SharedMCP:
                 bearer(request.headers),
                 params.name,
                 params.arguments or {},
+                request.scope.get("memoryking_context"),
             )
             request.scope["memoryking_release"] = released
             return types.CallToolResult(
@@ -157,6 +181,11 @@ class SharedMCP:
                 time.monotonic() + 5.0,
             )
             scope["memoryking_release"] = released
+            if isinstance(released, Released):
+                # One context decision serves every operation of this request.
+                body: list[bytes] = []
+                released.emit(body.append)
+                scope["memoryking_context"] = json.loads(body[0])
         except LocalError as exc:
             await error(exc.code, 403)(scope, receive, send)
             return

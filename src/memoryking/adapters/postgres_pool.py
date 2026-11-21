@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from psycopg.pq import TransactionStatus
@@ -47,11 +48,26 @@ def busy_sqlstate(exc: BaseException | None) -> str | None:
 def reset(connection: Any) -> None:
     if connection.info.transaction_status != TransactionStatus.IDLE:
         connection.rollback()
-    connection.execute("RESET ALL")
-    connection.execute("UNLISTEN *")
-    connection.execute("SELECT pg_advisory_unlock_all()")
+    # One round trip. RESET ALL also returns the session role and authorization to what the
+    # connection logged in as, which is why a checked connection stays checked (see `check`).
+    connection.execute("RESET ALL; UNLISTEN *; SELECT pg_advisory_unlock_all()")
     if connection.info.transaction_status != TransactionStatus.IDLE:
         raise LocalError("pool_reset_failed")
+
+
+# A connection's role and the server's durability settings change only by an administrator's
+# action, never by a request (every return runs `reset`), so a request checks them when the
+# connection is first used and again after this many seconds, not every time.
+CHECK_SECONDS = 5.0
+
+
+def checked(connection: Any, *, max_age: float = CHECK_SECONDS) -> bool:
+    """Check the connection unless it passed `check` within `max_age` seconds; whether it ran."""
+    when = getattr(connection, "memoryking_checked", None)
+    if when is not None and time.monotonic() - when < max_age:
+        return False
+    check(connection)
+    return True
 
 
 def check(connection: Any) -> None:
@@ -69,6 +85,7 @@ def check(connection: Any) -> None:
     for setting in ("fsync", "synchronous_commit", "full_page_writes"):
         if connection.execute(f"SHOW {setting}").fetchone()[0] != "on":
             raise LocalError("database_durability_required")
+    connection.memoryking_checked = time.monotonic()
 
 
 def create_pool(dsn: str, *, size: int = 8, timeout: float = 5) -> Any:
