@@ -179,6 +179,19 @@ class ExperienceRecords:
             ),
             None,
         )
+        if item is None and packet.get("format") == "text":
+            # A text briefing retains its envelope, whose `sources` name what it delivered.
+            entry = next(
+                (e for e in packet.get("sources", []) if e.get("id") == args["reference"]), None
+            )
+            if entry is not None:
+                item = {
+                    "reference": entry["id"],
+                    "authority": "observed_episode"
+                    if entry.get("kind") == "observation"
+                    else "claim",
+                    "ref": entry.get("ref"),
+                }
         if item is None:
             raise LocalError("feedback_reference_not_retrieved")
         if args["usefulness"] == "helpful" and args["use"] != "used":

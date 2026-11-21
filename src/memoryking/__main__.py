@@ -14,11 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__, profiles, session_bindings
+from memoryking import __version__, daemon, profiles, session_bindings
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
-from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
+from memoryking.adapters.local_store import CAPABILITIES, SCHEMA_VERSION, LocalStore
 from memoryking.application.lexical_index import RATE_PER_SECOND
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
@@ -123,6 +123,19 @@ def render_status(result: dict[str, Any], version: str) -> str:
             )
             flag = "  warning" if value.get("warning") else ""
             lines.append(f"  {name:<20}{shown:>22}  {bar(used, limit)}{flag}")
+    if result.get("daemon"):
+        info = result["daemon"]
+        lines.append(
+            f"Daemon     running{' (pid ' + str(info['pid']) + ')' if info.get('pid') else ''}"
+            f", {'starts on demand' if info.get('autostart') else 'started by hand'}"
+            f", log {info['log']}"
+        )
+    scopes = result.get("user_scopes")
+    if scopes and scopes["scopes"]:
+        lines.append(
+            f"User memory {scopes['observations']:,} observations in {scopes['scopes']} user scope(s)"
+            " (counts only; readable by each user and their agents)"
+        )
     if result.get("satisfied") is not None:
         lines.append(f"Watermark  {'satisfied' if result['satisfied'] else 'not yet reached'}")
     return "\n".join(lines)
@@ -197,6 +210,66 @@ def lean_command(args: Any) -> dict[str, Any]:
     )
     bindings = session_bindings.resolve(args.binding, profile=args.profile, config=args.config)
     return lean.call(LocalClient(socket, credential, project, bindings=bindings), name, arguments)
+
+
+def user_command(args: Any) -> int:
+    """`memoryking user show|export|purge`: the user's own memory across projects."""
+    from memoryking import vault as vault_module
+
+    credential = read_credential(args.credential)
+
+    def ask(**body: Any) -> dict[str, Any]:
+        return request(args.socket, credential, "user", body)
+
+    if args.user_command == "export":
+        client = vault_module.connect(
+            socket=args.socket, credential=args.credential, project=None, scope="user"
+        )
+        report = vault_module.export(args.dir, client, "user")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"Exported {report['observations']} file(s) from {report['versions']} "
+                f"observation(s) and {report['claims']} claim(s) to {report['directory']}"
+            )
+    elif args.user_command == "purge":
+        if not args.yes:
+            print(
+                "This erases the user memory and everything built from it, and cannot be"
+                " undone. Run again with --yes.",
+                file=sys.stderr,
+            )
+            return 2
+        body = {"user": args.user} if args.user else {}
+        total = 0
+        while True:
+            report = ask(action="purge", **body)
+            total += report["purged"]
+            if not report["remaining"] or not report["purged"]:
+                break
+        report["purged"] = total
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(f"Erased {total} observation(s) and what was built from them.")
+    else:
+        try:
+            ask(action="ensure")  # the owner is the default user; a no-op for anyone else
+        except LocalError:
+            pass
+        report = ask(action="show")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"User memory of {report['user']}: {report['observations']} observation(s), "
+                f"{report['claims']} claim(s), {report['constraints']} constraint(s), "
+                f"{report['held']} held"
+            )
+            for agent in report["agents"]:
+                print(f"  acts for you: {agent['principal']} ({','.join(agent['capabilities'])})")
+    return 0
 
 
 def summarize(args: Any) -> dict[str, Any]:
@@ -867,7 +940,26 @@ def default_trust_key(project: str, source: str, level: str) -> str:
     return f"trust-{digest[:32]}"
 
 
+def autostart(args: Any) -> None:
+    """Start the profile's daemon when a command needs its socket and the profile allows it."""
+    if (
+        not args.profile
+        or args.command in {"doctor", "stop"}
+        or getattr(args, "socket", None) is None
+        or getattr(args, "store", None) is not None
+    ):
+        return
+    profile = profiles.resolve(args.profile, args.config)
+    if profile.get("autostart") and Path(args.socket) == Path(profile["socket"]):
+        daemon.ensure(args.profile, args.config)
+
+
 def main() -> int:
+    if sys.argv[1:2] == ["mcp"]:
+        # The bridge has its own options; argparse would claim the ones that start with `--`.
+        from memoryking.adapters import stdio
+
+        return stdio.main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
     parser.add_argument(
@@ -889,6 +981,11 @@ def main() -> int:
     adder.add_argument("--credential", type=Path, help="Default admin credential file")
     adder.add_argument("--socket", type=Path, help="Default: STORE/service.sock")
     adder.add_argument("--dashboard-port", type=int)
+    adder.add_argument(
+        "--autostart",
+        action="store_true",
+        help="Let the CLI and the stdio bridge start this store's daemon when it is not running",
+    )
     adder.add_argument("--embedding-model", type=Path, help="Installed local model directory")
     adder.add_argument("--reranker-model", type=Path, help="Installed local reranker directory")
     adder.add_argument("--backup-dir", type=Path)
@@ -1010,6 +1107,43 @@ def main() -> int:
     status.add_argument("--credential", type=Path)
     status.add_argument("--project", default="main")
     status.add_argument("--json", action="store_true", help="Print the raw status result")
+    stopper = commands.add_parser("stop", help="Stop the background daemon of the profile")
+    stopper.add_argument("--store", type=Path)
+    stopper.add_argument("--control", type=Path)
+    stopper.add_argument("--socket", type=Path)
+    setup = commands.add_parser(
+        "setup",
+        help="Connect a host in one idempotent run: store, daemon, agent credential, MCP, hooks",
+    )
+    setup.add_argument("host", choices=("claude-code", "codex", "generic"))
+    setup.add_argument("--project", required=True, help="The project the agent works in")
+    setup.add_argument("--principal", default="agent", help="Agent principal (default agent)")
+    setup.add_argument(
+        "--data-dir", type=Path, help="Where a new store lives; default ~/.memoryking/NAME"
+    )
+    setup.add_argument(
+        "--scope",
+        choices=("user", "project"),
+        default="user",
+        help="Where the session hooks go: your home directory (default) or this directory",
+    )
+    setup.add_argument("--cwd", type=Path, help="Project directory for --scope project")
+    setup.add_argument("--task", help="Task the hooks resume and checkpoint")
+    setup.add_argument("--expires", help="Credential validity such as 90d; default none")
+    setup.add_argument(
+        "--dashboard-port",
+        type=int,
+        help="Also serve the loopback dashboard on this port (0 chooses one); needs a daemon restart",
+    )
+    setup.add_argument("--no-hooks", action="store_true", help="Register the MCP bridge only")
+    setup.add_argument("--dry-run", action="store_true", help="Print every change, make none")
+    setup.add_argument("--remove", action="store_true", help="Undo this host's registration")
+    add_binding(setup)
+    mcp = commands.add_parser(
+        "mcp",
+        help="Run the MCP stdio bridge (arguments as for `python -m memoryking.adapters.stdio`)",
+    )
+    mcp.add_argument("rest", nargs="*", help="Bridge options; run `memoryking mcp --help`")
     reindex = commands.add_parser(
         "reindex",
         help="Start the rebuild into the current lexical configuration; --wait shows progress",
@@ -1069,9 +1203,41 @@ def main() -> int:
                 action="store_true",
                 help="Replace the principal's credential: every earlier one stops working",
             )
+            who = item.add_mutually_exclusive_group()
+            who.add_argument(
+                "--for-user",
+                metavar="USER",
+                help="The user this agent acts for, so it reads and writes their own memory "
+                "across projects; default: the issuing owner",
+            )
+            who.add_argument(
+                "--no-user",
+                action="store_true",
+                help="Do not let this credential see anyone's user memory",
+            )
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
+    usr = commands.add_parser(
+        "user", help="Your own memory across projects: show, export or erase it"
+    )
+    usr_commands = usr.add_subparsers(dest="user_command", required=True)
+    for name, text in (
+        ("show", "What your user memory holds and which agents act for you"),
+        ("export", "Write your user memory as Markdown files"),
+        ("purge", "Erase your user memory and everything built from it"),
+    ):
+        sub = usr_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--json", action="store_true")
+        if name == "export":
+            sub.add_argument("--dir", type=Path, required=True, help="Directory to write")
+        if name == "purge":
+            sub.add_argument(
+                "--user", help="Administrators only: purge this user's scope without reading it"
+            )
+            sub.add_argument("--yes", action="store_true", help="Confirm: this cannot be undone")
     summ = commands.add_parser(
         "summarize", help="Derive a 'where this left off' summary of a task, with its own receipt"
     )
@@ -1145,6 +1311,13 @@ def main() -> int:
         "--observed-ms",
         type=int,
         help="Observation time in Unix ms; default is today to the day so a rerun replays",
+    )
+    cap.add_argument(
+        "--scope",
+        choices=("project", "user"),
+        default="project",
+        help="`user` saves a durable fact or preference about you that applies in every "
+        "project (never project facts or secrets)",
     )
     cap.add_argument(
         "--supersedes",
@@ -1305,6 +1478,12 @@ def main() -> int:
         sub.add_argument("--socket", type=Path)
         sub.add_argument("--credential", type=Path)
         sub.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        sub.add_argument(
+            "--scope",
+            choices=("project", "user"),
+            default="project",
+            help="`user` is your own memory across projects, as the `user` folder",
+        )
         sub.add_argument("--dir", type=Path, required=True, help="The vault directory")
         sub.add_argument("--json", action="store_true")
         if name == "import":
@@ -1395,6 +1574,10 @@ def main() -> int:
     login.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        if args.command == "setup":
+            from memoryking import setup_host
+
+            return setup_host.run(args)
         if args.command == "profile":
             if args.profile_command == "add":
                 values: dict[str, Any] = {
@@ -1413,6 +1596,8 @@ def main() -> int:
                 for field in ("dashboard_port", "backup_every", "backup_keep"):
                     if getattr(args, field) is not None:
                         values[field] = getattr(args, field)
+                if args.autostart:
+                    values["autostart"] = True
                 if args.binding:
                     values["bindings"] = session_bindings.parse_pairs(args.binding)
                 path = profiles.save(args.name, values, args.config)
@@ -1427,6 +1612,7 @@ def main() -> int:
                         print(f"  {field} = {value}")
             return 0
         profiles.apply(args, args.profile, args.config)
+        autostart(args)
         optional = (
             {"socket", "credential"}
             if args.command
@@ -1466,6 +1652,11 @@ def main() -> int:
                 lost_anchor_journal_head=args.lost_anchor_journal_head,
             )
             print(json.dumps({"credential_file": str(path), "reconciliation_required": True}))
+        elif args.command == "stop":
+            if not args.profile:
+                raise LocalError("profile_required")
+            result = daemon.stop(profiles.resolve(args.profile, args.config))
+            print(json.dumps(result))
         elif args.command == "dashboard-login":
             private_file(args.credential)
             private_dir(args.output.parent)
@@ -1530,6 +1721,7 @@ def main() -> int:
                 classification=args.classification,
                 observed_ms=args.observed_ms,
                 supersedes=args.supersedes,
+                scope=args.scope,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
@@ -1694,14 +1886,29 @@ def main() -> int:
                     "project": args.project,
                     "capabilities": sorted(set(args.capabilities.split(","))),
                 }
+                unknown = sorted(set(grant["capabilities"]) - (CAPABILITIES - {"admin"}))
+                if unknown:
+                    # Say which name is wrong and which exist, not a bare invalid_request.
+                    raise LocalError(
+                        "invalid_capabilities",
+                        detail={
+                            "path": "--capabilities",
+                            "problem": "unknown capability " + ", ".join(unknown[:4]),
+                            "expected": "any of " + ", ".join(sorted(CAPABILITIES - {"admin"})),
+                        },
+                    )
                 if args.rotate:
                     grant["rotate"] = True
+                if not args.no_user and {"capture", "read"} & set(grant["capabilities"]):
+                    grant["for_user"] = args.for_user or "@self"
                 if args.expires:
                     grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
                 result = request(args.socket, credential, "grant", grant)
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command == "user":
+            return user_command(args)
         elif args.command in {"save-progress", "resume"}:
             result = lean_command(args)
             if args.json:
@@ -1782,12 +1989,18 @@ def main() -> int:
             from memoryking import vault as vault_module
 
             client = vault_module.connect(
-                socket=args.socket, credential=args.credential, project=args.project
+                socket=args.socket,
+                credential=args.credential,
+                project=args.project,
+                scope=args.scope,
             )
+            folder = "user" if args.scope == "user" else None
             if args.vault_command == "export":
-                report = vault_module.export(args.dir, client)
+                report = vault_module.export(args.dir, client, folder)
             else:
-                report = vault_module.import_(args.dir, client, dry_run=args.dry_run)
+                report = vault_module.import_(
+                    args.dir, client, dry_run=args.dry_run, directory_name=folder
+                )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
             elif args.vault_command == "export":
@@ -1938,6 +2151,8 @@ def main() -> int:
                 "status",
                 {"project": args.project},
             )
+            if args.profile:
+                result["daemon"] = daemon.state(profiles.resolve(args.profile, args.config))
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
             else:
@@ -2028,8 +2243,10 @@ def main() -> int:
                         dashboard = Dashboard(store, args.dashboard_port)
                         store.dashboard = dashboard
                         dashboard.start()
+                    pid_file = store.root / daemon.PID
                     try:
                         with Server(store, workers=args.workers, waiters=args.waiters) as server:
+                            atomic(pid_file, (str(os.getpid()) + "\n").encode())
                             print(
                                 json.dumps({"ready": True, "socket": str(server.path)}), flush=True
                             )
@@ -2048,6 +2265,7 @@ def main() -> int:
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        pid_file.unlink(missing_ok=True)
                         if consolidation_loop is not None:
                             consolidation_loop.stop()
                         if embeddings is not None:
@@ -2081,14 +2299,11 @@ def main() -> int:
                     )
         return 0
     except (LocalError, ContractError) as exc:
-        print(
-            json.dumps(
-                {"error": code, "hint": hint(code)}
-                if (code := exc.code if isinstance(exc, LocalError) else "invalid_request")
-                else {}
-            ),
-            file=sys.stderr,
-        )
+        code = exc.code if isinstance(exc, LocalError) else "invalid_request"
+        extra = dict(exc.detail) if isinstance(exc, LocalError) else {}
+        if code == "transport_unavailable" and "start" not in extra:
+            extra["start"] = daemon.start_hint(args.profile)
+        print(json.dumps({"error": code, "hint": hint(code), **extra}), file=sys.stderr)
         return 2
     except (OSError, ValueError):
         code = "local_io_or_configuration_error"

@@ -293,7 +293,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: Any) -> AsyncIterator[None]:
-        async with mcp.manager.run():
+        async with mcp.run():
             yield
 
     app = Starlette(

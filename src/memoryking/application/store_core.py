@@ -46,7 +46,18 @@ from memoryking.application.retention import (
 )
 from memoryking.application.storage import Dialect, insert_ignore, upsert
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
-from memoryking.domain.local import Clock, Decision, LocalError, Released, temporal_valid
+from memoryking.domain.local import (
+    USER_AGENT_CAPABILITIES,
+    USER_OWNER_CAPABILITIES,
+    Clock,
+    Decision,
+    LocalError,
+    Released,
+    is_user_project,
+    project_owner,
+    temporal_valid,
+    user_project,
+)
 
 Row = Any
 
@@ -268,8 +279,12 @@ class StoreCore:
 
     def _auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
         identity = self._decode(token, "credential")
+        # A user scope is private to the user and the agents that act for them: a `*` grant,
+        # administrators' included, never reaches it.
         rows = self.db.execute(
-            "SELECT * FROM grants WHERE tenant=? AND principal=? AND project IN (?, '*')",
+            "SELECT * FROM grants WHERE tenant=? AND principal=? AND project=?"
+            if is_user_project(project)
+            else "SELECT * FROM grants WHERE tenant=? AND principal=? AND project IN (?, '*')",
             (identity["tenant"], identity["principal"], project),
         ).fetchall()
         if not any(
@@ -280,7 +295,9 @@ class StoreCore:
             and temporal_valid(at, row["starts"], row["expires"])
             for row in rows
         ):
-            raise LocalError("denied")
+            # Which capability an operation needs is public (the reference lists it); naming
+            # it tells the caller nothing about what the store holds.
+            raise LocalError("denied", detail={"required_capability": capability})
         # After the grant check, so a principal without a current grant is refused exactly as
         # before; only a credential that would otherwise be accepted learns it was replaced.
         generation = identity.get("generation", 0)
@@ -293,9 +310,48 @@ class StoreCore:
             raise LocalError("credential_replaced")
         return identity
 
+    def user_scope(self, who: dict[str, Any], capability: str, at: int) -> str | None:
+        """The user scope this principal acts for with `capability` now, if any.
+
+        A principal acts for at most one user, so the answer is unambiguous. Decided from the
+        principal's own grants, so it never names a scope the caller cannot already use. A
+        delegated credential (a narrowed token for one project) acts for no user."""
+        if who.get("delegation"):
+            return None
+        for row in self.db.execute(
+            "SELECT project,capabilities,starts,expires FROM grants WHERE tenant=? AND principal=? AND substr(project,1,6)=? ORDER BY project",
+            (who["tenant"], who["principal"], user_project("")),
+        ).fetchall():
+            capabilities = row["capabilities"]
+            if isinstance(capabilities, str):
+                capabilities = json.loads(capabilities)
+            if capability in capabilities and temporal_valid(at, row["starts"], row["expires"]):
+                return cast(str, row["project"])
+        return None
+
+    def user_authority(self, token: str, project: str, at: int) -> dict[str, Any]:
+        """Authority over a user scope's membership and contents: the user, or an administrator.
+
+        An administrator can administer (link, unlink, purge) but cannot read; see `_auth`."""
+        try:
+            return self._auth(token, "admin", "*", at)
+        except LocalError as exc:
+            if exc.code != "denied":
+                raise
+        who = self._auth(token, "policy", project, at)
+        if who["principal"] != project_owner(project):
+            raise LocalError("denied")
+        return who
+
     def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
-        """Internal intersection check; never an alternate transport credential entry point."""
-        return self._auth(token, capability, project, at)
+        """Internal intersection check; never an alternate transport credential entry point.
+
+        The subject may be another principal, so a refusal never says which capability they
+        lack."""
+        try:
+            return self._auth(token, capability, project, at)
+        except LocalError as exc:
+            raise LocalError(exc.code) from None
 
     def namespace(self, credential: str, project: str, name: str | None = None) -> str:
         """A capture namespace token.
@@ -743,20 +799,44 @@ class StoreCore:
         starts: int | None = None,
         expires: int | None = None,
         rotate: bool = False,
+        for_user: str | None = None,
     ) -> str:
         """Grant (or restate) access and return the principal's credential.
 
         With `rotate`, the principal's credential generation advances in the same journaled
-        decision, so every credential issued before it stops working.
+        decision, so every credential issued before it stops working. With `for_user` (a
+        user principal, or `@self` for the caller) the principal also acts for that user:
+        it gets the agent capabilities in the user's scope, one more journaled grant.
+        A grant on a user scope itself (`_user_<principal>`) is the same record.
         """
         identifier(principal)
         identifier(project)
-        if not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
+        scoped = is_user_project(project)
+        if scoped:
+            allowed = (
+                USER_OWNER_CAPABILITIES
+                if principal == project_owner(project)
+                else USER_AGENT_CAPABILITIES
+            )
+            if not capabilities or not set(capabilities) <= allowed:
+                raise LocalError("invalid_capabilities")
+            identifier(project_owner(project))
+        elif not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
             raise LocalError("invalid_capabilities")
+        if for_user is not None and for_user != "@self":
+            identifier(user_project(for_user))
         if starts is not None and expires is not None and starts >= expires:
             raise LocalError("invalid_interval")
         with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
+            at = decision.evaluated_ms
+            who = (
+                self.user_authority(credential, project, at)
+                if scoped
+                else self._auth(credential, "admin", "*", at)
+            )
+            owner = who["principal"] if for_user == "@self" else for_user
+            if scoped:
+                self._link_checked(who, principal, project, at)
             # Replacement can reduce authority, so every change goes to the current journal.
             action = {
                 "kind": "grant",
@@ -771,10 +851,73 @@ class StoreCore:
             if rotate:
                 action["rotate"] = True
             record = self._journal(action)
-            self._apply(record, decision.evaluated_ms)
+            self._apply(record, at)
+            if owner is not None and not scoped:
+                self._link_user(
+                    credential, who, principal, owner, capabilities, starts, expires, at
+                )
             token = self._token("credential", tenant=who["tenant"], principal=principal)
         self._expose()
         return token
+
+    def _link_checked(self, who: dict[str, Any], principal: str, project: str, at: int) -> None:
+        """A principal acts for one user only: refuse a second scope for the same principal."""
+        other = self.db.execute(
+            "SELECT 1 FROM grants WHERE tenant=? AND principal=? AND substr(project,1,6)=? AND project<>?",
+            (who["tenant"], principal, user_project(""), project),
+        ).fetchone()
+        if other is not None:
+            raise LocalError("user_link_conflict")
+
+    def _link_user(
+        self,
+        credential: str,
+        who: dict[str, Any],
+        principal: str,
+        owner: str,
+        requested: list[str],
+        starts: int | None,
+        expires: int | None,
+        at: int,
+    ) -> None:
+        """Make `principal` act for `owner`, creating the owner's own scope grant first.
+
+        The link carries only what the credential was issued with, and only what an agent may
+        hold in a user scope; a credential with neither `capture` nor `read` acts for nobody."""
+        project = user_project(owner)
+        allowed = USER_OWNER_CAPABILITIES if principal == owner else USER_AGENT_CAPABILITIES
+        capabilities = sorted(set(requested) & allowed)
+        if not capabilities:
+            return
+        # Authority over that scope is checked for this very call, not inherited from the
+        # grant it accompanies: only an administrator or the user may link anyone to it.
+        self.user_authority(credential, project, at)
+        self._link_checked(who, principal, project, at)
+        steps: list[tuple[str, list[str], int | None, int | None]] = []
+        if (
+            principal != owner
+            and self.db.execute(
+                "SELECT 1 FROM grants WHERE tenant=? AND principal=? AND project=?",
+                (who["tenant"], owner, project),
+            ).fetchone()
+            is None
+        ):
+            steps.append((owner, sorted(USER_OWNER_CAPABILITIES), None, None))
+        steps.append((principal, capabilities, starts, expires))
+        for name, capabilities, start, end in steps:
+            record = self._journal(
+                {
+                    "kind": "grant",
+                    "actor": who["principal"],
+                    "tenant": who["tenant"],
+                    "principal": name,
+                    "project": project,
+                    "capabilities": capabilities,
+                    "starts": start,
+                    "expires": end,
+                }
+            )
+            self._apply(record, at)
 
     def grants(self, credential: str) -> list[dict[str, Any]]:
         """Every grant in the caller's tenant, for operators; needs admin rights."""
@@ -862,7 +1005,21 @@ class StoreCore:
 
     def _policy(self, credential: str, action: dict[str, Any]) -> None:
         with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
+            at = decision.evaluated_ms
+            tenant = self._decode(credential, "credential")["tenant"]
+            project = action.get("project")
+            if action["kind"] == "purge":
+                found = self.db.execute(
+                    "SELECT project FROM observations WHERE tenant=? AND id=?",
+                    (tenant, action["observation"]),
+                ).fetchone()
+                project = found[0] if found is not None else None
+            who = (
+                # In a user scope the user decides, and an administrator may still purge it.
+                self.user_authority(credential, project, at)
+                if isinstance(project, str) and is_user_project(project)
+                else self._auth(credential, "admin", "*", at)
+            )
             action["tenant"] = who["tenant"]
             action["actor"] = who["principal"]
             record = self._journal(action)
@@ -1036,16 +1193,26 @@ class StoreCore:
                 "DELETE FROM grants WHERE tenant=? AND principal=? AND project=?",
                 (tenant, action["principal"], action["project"]),
             )
-            if (
-                held is not None
-                and self.db.execute(
-                    "SELECT 1 FROM grants WHERE tenant=? AND principal=?",
-                    (tenant, action["principal"]),
-                ).fetchone()
-                is None
-            ):
-                # The principal lost its last grant: a later grant must not revive old credentials.
-                self._advance_generation(tenant, action["principal"])
+            if held is not None:
+                left = [
+                    row[0]
+                    for row in self.db.execute(
+                        "SELECT project FROM grants WHERE tenant=? AND principal=?",
+                        (tenant, action["principal"]),
+                    ).fetchall()
+                ]
+                # Links to a user's scope are not grants of their own: an agent whose project
+                # access ended no longer acts for anyone, so they end with it.
+                if all(
+                    is_user_project(p) and project_owner(p) != action["principal"] for p in left
+                ):
+                    self.db.execute(
+                        "DELETE FROM grants WHERE tenant=? AND principal=?",
+                        (tenant, action["principal"]),
+                    )
+                    # The principal lost its last grant: a later grant must not revive old
+                    # credentials.
+                    self._advance_generation(tenant, action["principal"])
         elif kind == "purge":
             obs = action["observation"]
             self.db.execute(
@@ -1461,6 +1628,20 @@ class StoreCore:
                 ),
                 "capacity": self._capacity(tenant),
                 "lexical": lexical_index.describe(self.db, tenant, self._lexical_rate),
+                # Counts only: an administrator sees that user memory exists, never what it says.
+                "user_scopes": dict(
+                    zip(
+                        ("scopes", "observations"),
+                        (
+                            int(n)
+                            for n in self.db.execute(
+                                "SELECT count(DISTINCT project),count(*) FROM observations WHERE tenant=? AND deleted=0 AND substr(project,1,6)=?",
+                                (tenant, user_project("")),
+                            ).fetchone()
+                        ),
+                        strict=True,
+                    )
+                ),
             }
         self._expose()
         return result

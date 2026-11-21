@@ -76,15 +76,23 @@ def capture(
     observed_ms: int | None = None,
     namespace: str = "hooks",
     supersedes: str | None = None,
+    scope: str = "project",
     **where: Any,
 ) -> dict[str, Any]:
     """Capture one observation; the text is truncated to the capture limit with a marker.
+
+    With `scope="user"` it goes to the user scope the credential acts for instead of the
+    project: durable facts and preferences about the user, shared by all their projects.
 
     A replayed capture must send identical bytes, so the default observed time is the
     current day rather than the millisecond; the store's event log records the exact
     moment of the capture itself. Pass `observed_ms` to keep a precise time.
     """
     socket, token, project = connection(**where)
+    if scope == "user":
+        project = request(socket, token, "user", {"action": "scope"})["project"]
+    elif scope != "project":
+        raise LocalError("invalid_request")
     # Unpaired surrogates (e.g. from a decoded traceback) become replacement characters.
     text = text.encode("utf-8", "replace").decode("utf-8")
     if len(text.encode()) > TEXT_LIMIT:

@@ -23,7 +23,7 @@ from memoryking.contracts.validation import (
     validate_working,
 )
 from memoryking.domain.checkpoint import complete
-from memoryking.domain.local import LocalError
+from memoryking.domain.local import LocalError, is_user_project
 from memoryking.memory_api import MemoryMethods
 
 CATALOG = json.loads(Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text())
@@ -33,6 +33,14 @@ TOOL_VALIDATORS = {
 DEFAULT_BUDGET = 6000
 MUTATION_TOOLS = {"memory_checkpoint", "memory_handoff", "memory_feedback"}
 PLAN_MUTATIONS = {"plan_save", "plan_step"}
+# Nullable fields a call may leave out: null already means "none" or "the latest" (kept in
+# step with TOOL_DEFAULTED in tools/generate_stdio.py, which drops them from `required`).
+NULL_DEFAULTS = {
+    "memory_resume": ("checkpoint",),
+    "memory_handoff": ("run",),
+    "memory_plan": ("decision", "revision", "cursor"),
+    "memory_feedback": ("comment",),
+}
 
 
 def _resolve(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
@@ -221,12 +229,27 @@ class LocalClient(MemoryMethods):
         credential, _ = self._current()
         self._request(credential, "purge", {"observation": observation})
 
+    def user(self, action: str = "scope", **arguments: Any) -> dict[str, Any]:
+        """The user scope this identity acts for: `scope`, `show`, `ensure` or `purge`."""
+        credential, _ = self._current()
+        return self._request(credential, "user", {"action": action, **arguments})
+
+    def user_project(self) -> str:
+        """The reserved project holding memory about the user this identity acts for."""
+        found = getattr(self, "_user_project", None)
+        if found is None:
+            found = self._user_project = self.user("scope")["project"]
+        return str(found)
+
     def capture(self, key: str, observation: dict[str, Any]) -> dict[str, Any]:
-        if observation.get("project") != self.project:
+        project = observation.get("project")
+        if project != self.project and not (
+            isinstance(project, str) and is_user_project(project) and project == self.user_project()
+        ):
             raise LocalError("scope_mismatch")
         credential, _ = self._current()
         namespace = self._request(
-            credential, "namespace", {"project": self.project, "name": self.namespace}
+            credential, "namespace", {"project": project, "name": self.namespace}
         )["namespace"]
         return self._request(
             credential, "capture", {"namespace": namespace, "key": key, "request": observation}
@@ -287,6 +310,9 @@ class LocalClient(MemoryMethods):
                 args["checkpoint"] = complete(args["checkpoint"], int(time.time() * 1000))
         if name == "memory_resume" and action == "resume":
             args.setdefault("run", None)
+        for field in NULL_DEFAULTS.get(name, ()):
+            if field in fields:
+                args.setdefault(field, None)
         if "project" in fields:
             args.setdefault("project", self.project)
         if "bindings" in fields:

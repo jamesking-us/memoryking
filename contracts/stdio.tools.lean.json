@@ -57,6 +57,13 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,96}$",
             "description": "Id of an earlier memory you can read that this replaces."
+          },
+          "scope": {
+            "enum": [
+              "project",
+              "user"
+            ],
+            "description": "Where to keep it. `project` (default): this project's own facts. `user`: a durable fact or preference about the person you work for that applies in every project, such as the tools they want used, how they like changes split, or the language to reply in. Never project facts, code or secrets. Their other agents will read it, and it counts as a standing instruction only once they review it."
           }
         },
         "required": [
@@ -472,6 +479,108 @@
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "fetch",
+      "description": "Read the exact text behind a citation: pass an id from a briefing's Sources (obs_... or a claim id), and a byte range to read part of a long record. Receipted like a briefing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reference": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "Id from a Sources line."
+          },
+          "start_byte": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65536,
+            "description": "First byte. Default 0."
+          },
+          "end_byte": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536,
+            "description": "End byte. Default 16384."
+          }
+        },
+        "required": [
+          "reference"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "feedback",
+      "description": "Say whether a recalled item helped, after you used it: it tunes later briefings and shows in memory health. Pass the receipt id from the briefing's status line and the item's id or tag (g1).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "receipt": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "rcpt_... id from the briefing."
+          },
+          "item": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "Id from Sources, or a tag such as g1."
+          },
+          "rating": {
+            "enum": [
+              "helpful",
+              "not_helpful",
+              "harmful"
+            ]
+          },
+          "comment": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "task": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "description": "The task id the briefing was for, if any."
+          }
+        },
+        "required": [
+          "receipt",
+          "item",
+          "rating"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "recent",
+      "description": "List the newest memories you may read in this project, with ids, so you can correct, forget or fetch one.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "How many. Default 5."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
         "openWorldHint": false
       }
     }

@@ -1,6 +1,6 @@
 # Getting started
 
-This guide takes you from a new checkout to a local service and dashboard. No model account, Docker or Node installation is needed for this route.
+This guide takes you from an installed package to an agent that remembers, with one command. No model account, Docker or Node installation is needed for this route.
 
 ## 1. Install
 
@@ -15,7 +15,31 @@ git clone https://github.com/jamesking-us/memoryking.git && cd memoryking
 
 This installs the released package from PyPI (`0.1.0`). The checkout is for the examples and tools in this guide; the installed service itself does not need it. To pin the wheel by hash, use the `install` line from the release's `RELEASE.json` on the [release page](https://github.com/jamesking-us/memoryking/releases). To build from source instead, install the locks and the checkout as the [contributing guide](../CONTRIBUTING.md) describes, or use the [release wheel or container image](deployment.md#release-build).
 
-## 2. Try the complete example
+## 2. Connect your agent
+
+```sh
+.venv/bin/memoryking setup claude-code --project my-app
+```
+
+Use `codex` instead of `claude-code` for Codex, or `generic` for any other host that launches MCP servers over stdio. In one run this:
+
+1. creates a store under `~/.memoryking/default` (and a profile named `default`) if you have none, and starts the service in the background; from then on the bridge and the command line start it again whenever it is not running, so you never run `serve` yourself;
+2. issues one agent credential, `agent`, with the capabilities the memory tools use and no expiry: `capture` (remember, correct, propose, forget, feedback), `read` (recall, resume, fetch, recent), `checkpoint` (save_progress) and `handoff` (hand_off). It has no `review` or `admin`, so the agent cannot approve its own proposals or change policy;
+3. registers the small ("lean") MCP tool set with the host. For Codex that is a marked block in `~/.codex/config.toml`. For Claude Code the command to register it (`claude mcp add ...`) is printed for you to run, because MemoryKing does not edit Claude Code's MCP file; for `generic` it prints the command and the `mcpServers` JSON;
+4. installs the session hooks (Claude Code and Codex) so a session starts briefed and saves before compaction and at its end, as the same agent as the tools, in your home directory's host settings rather than in the project's shared file. Because that file is per user, the hooks apply to every project you open on that host and save into `--project`; add `--scope project` to put them in this directory's host file instead, or `--no-hooks` to skip them;
+5. prints a five-line summary, including the command that undoes it.
+
+Run it again and nothing changes. `--dry-run` prints every change, including the exact file contents, without making any. `memoryking setup claude-code --project my-app --remove` puts every file it edited back byte for byte (and deletes the ones it created); it keeps the store and the credential, and `memoryking --profile default stop` stops the service. Setup refuses, before creating anything, a location whose socket path would exceed the 100-byte limit (`--data-dir` chooses another).
+
+Restart the host, ask it to "remember that the deploy script needs the VPN", and later ask what it remembers. To check the service:
+
+```sh
+.venv/bin/memoryking --profile default status
+```
+
+`status` includes whether the service is running, whether it starts on demand and where its log is (`daemon.log` in the store directory). To rotate the credential later, use `credential issue --rotate` (see the reference below).
+
+## 3. Try the complete example
 
 ```sh
 .venv/bin/python examples/remember_and_resume.py
@@ -25,53 +49,22 @@ The walkthrough uses a disposable store and two client connections. It saves an 
 
 This is real storage and client behavior with synthetic task content. It does not run an AI model or establish that a model will make better decisions.
 
-## 3. Create your own store
-
-Choose **new** directories. MemoryKing refuses to initialize over an existing store.
-
-```sh
-.venv/bin/python -m memoryking init \
-  --store "$HOME/.memoryking-data" \
-  --control "$HOME/.memoryking-control"
-```
-
-The output gives the path to an owner credential file. Keep it private. The data directory holds content; the separate control directory holds identity and recovery information. Neither directory may be inside the other. For disk-loss protection, retain control information independently of the content disk as well.
-
-Name the store once so later commands need no paths:
-
-```sh
-.venv/bin/python -m memoryking profile add home \
-  --store "$HOME/.memoryking-data" \
-  --control "$HOME/.memoryking-control" \
-  --dashboard-port 8771
-```
-
-Start the service:
-
-```sh
-.venv/bin/python -m memoryking --profile home serve
-```
-
-Without a profile, pass `--store`, `--control` and `--dashboard-port 8771` explicitly; explicit flags always override the profile.
-
-Leave this terminal running. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes. The service completes its own bookkeeping jobs between requests and prunes expired records once an hour, so no separate worker or scheduled cleanup is needed. Add `--log-level info` to see redacted operational events on stderr, or `--trace` to log how long each request took, including time spent waiting for the store.
-
 ## 4. Check the service
 
 In a second terminal, from the same checkout:
 
 ```sh
-.venv/bin/python -m memoryking --profile home status
+.venv/bin/python -m memoryking --profile default status
 ```
 
-This prints the store's history id, position, frontier, job states and a capacity bar for every bounded resource. `--version` prints the installed package version. If anything looks wrong, `memoryking --profile home doctor` checks the installation and names the fix for each failed check.
+This prints the store's history id, position, frontier, job states and a capacity bar for every bounded resource. `--version` prints the installed package version. If anything looks wrong, `memoryking --profile default doctor` checks the installation and names the fix for each failed check.
 
 ## 5. Open the dashboard
 
-From the same terminal, the quickest route signs you in directly:
+The dashboard is opt-in. Add `--dashboard-port 8771` to the `setup` command (then `memoryking --profile default stop`; the service restarts on demand with it) and the quickest route signs you in directly:
 
 ```sh
-.venv/bin/python -m memoryking --profile home dashboard open
+.venv/bin/python -m memoryking --profile default dashboard open
 ```
 
 When no browser can be opened from the terminal, request a code file instead:
@@ -102,23 +95,58 @@ Lexical search works out of the box. For meaning-based recall, install the embed
 ```sh
 .venv/bin/python -I -m pip install --require-hashes -r requirements-embeddings.lock
 .venv/bin/python -m memoryking.model_install --destination "$HOME/.memoryking-model"
-.venv/bin/python -m memoryking profile add home --store "$HOME/.memoryking-data" --control "$HOME/.memoryking-control" --dashboard-port 8771 --embedding-model "$HOME/.memoryking-model"
-.venv/bin/python -m memoryking --profile home embeddings enable --project demo
+.venv/bin/python -m memoryking profile add default --store "$HOME/.memoryking/default/store" --control "$HOME/.memoryking/default/control" --autostart --embedding-model "$HOME/.memoryking-model"
+.venv/bin/python -m memoryking --profile default embeddings enable --project demo
 ```
 
-Restart `serve` after adding the model to the profile. The same profile can schedule backups: add `--backup-dir "$HOME/.memoryking-backups" --backup-every 1d --backup-keep 14` to `profile add`, and `doctor` will tell you when the newest backup is stale. The service then indexes the project in the background and every briefing searches by meaning as well as by words; `doctor` reports both the runtime and the model. The model runs on your CPU and nothing leaves the machine.
+Stop the service (`memoryking --profile default stop`) after adding the model to the profile; it restarts on demand with it. `profile add` replaces the whole profile, so repeat any other setting you want to keep. The same profile can schedule backups: add `--backup-dir "$HOME/.memoryking-backups" --backup-every 1d --backup-keep 14` to `profile add`, and `doctor` will tell you when the newest backup is stale. The service then indexes the project in the background and every briefing searches by meaning as well as by words; `doctor` reports both the runtime and the model. The model runs on your CPU and nothing leaves the machine.
 
-## 7. Connect an agent
+## Reference: doing it by hand
+
+The steps `setup` performs, for when you want other paths or a service run by your own supervisor. Skip creating a store if `setup` already made one.
+
+### Create your own store
+
+Choose **new** directories: MemoryKing refuses to initialize over an existing store.
+
+```sh
+.venv/bin/python -m memoryking init \
+  --store "$HOME/.memoryking-data" \
+  --control "$HOME/.memoryking-control"
+```
+
+The output gives the path to an owner credential file. Keep it private. The data directory holds content; the separate control directory holds identity and recovery information. Neither directory may be inside the other. For disk-loss protection, retain control information independently of the content disk as well.
+
+Name the store once so later commands need no paths:
+
+```sh
+.venv/bin/python -m memoryking profile add home \
+  --store "$HOME/.memoryking-data" \
+  --control "$HOME/.memoryking-control" \
+  --dashboard-port 8771
+```
+
+Start the service:
+
+```sh
+.venv/bin/python -m memoryking --profile home serve
+```
+
+Without a profile, pass `--store`, `--control` and `--dashboard-port 8771` explicitly; explicit flags always override the profile.
+
+Leave this terminal running, or add `--autostart` to `profile add` so the command line and the MCP bridge start the service in the background when it is down. Ctrl-C stops the service cleanly. Restarting the same command uses the saved store. The socket is `$HOME/.memoryking-data/service.sock`; its full encoded path must fit within 100 bytes. The service completes its own bookkeeping jobs between requests and prunes expired records once an hour, so no separate worker or scheduled cleanup is needed. Add `--log-level info` to see redacted operational events on stderr, or `--trace` to log how long each request took, including time spent waiting for the store.
+
+### Connecting an agent by hand
 
 The [agent guide](agent-guide.md) covers the Python client and MCP stdio bridge. A typical integration saves observations during work, checkpoints before interruption, and requests a briefing and resume packet when work continues.
 
-Agents should not use the owner credential. Issue each one a scoped credential:
+Agents should not use the owner credential. Issue each one a scoped credential. `capture,read` alone is not enough for an agent that saves progress: `save_progress` needs `checkpoint` and `hand_off` needs `handoff`. Leave out `--expires` unless you want the agent to stop working on a date (a credential issued with `--expires 30d` silently stops after thirty days); `--rotate` replaces a credential and invalidates every earlier one of that principal:
 
 ```sh
-.venv/bin/python -m memoryking --profile home credential issue agent-1 --project demo --capabilities capture,read --expires 30d --output "$HOME/.memoryking-control/agent-1.credential"
+.venv/bin/python -m memoryking --profile home credential issue agent-1 --project demo --capabilities capture,read,checkpoint,handoff --output "$HOME/.memoryking-control/agent-1.credential"
 ```
 
-`credential list` shows what is issued and `credential revoke` withdraws one.
+`credential list` shows what is issued and `credential revoke` withdraws one. Register the bridge with `--profile lean` (on the bridge `--profile` chooses the tool set; `--store-profile` names the store) and install the hooks with the same credential, so the hooks and the tools act as one principal: `memoryking hooks install --host claude --scope user --project demo --credential PATH --socket PATH`. The [agent guide](agent-guide.md) has the configuration for each host.
 
 To follow a multi-step piece of work rather than one agent's checkpoint, have the agents keep a structured plan with the `memory_plan` tool described in the [agent guide](agent-guide.md#structured-plans); `.venv/bin/python tools/plans_demo.py` runs a disposable example. In the dashboard, choose the project under **Task activity** and open **Plans**: a phase shows its steps, evidence and progress.
 

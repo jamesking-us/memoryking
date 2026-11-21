@@ -12,7 +12,99 @@ DEFAULTED = ("project", "bindings", "max_output_tokens", "tokenizer")
 # Per tool, further fields the bridge fills: a checkpoint saves from a minimal body.
 TOOL_DEFAULTED = {
     "memory_checkpoint": ("run", "readers", "expected_revision", "checkpoint_sections"),
-    "memory_resume": ("run",),
+    "memory_resume": ("run", "checkpoint"),
+    # Nullable fields whose null means "none" or "the latest": a call that leaves them out is
+    # completed with null (src/memoryking/sdk.py NULL_DEFAULTS), not refused.
+    "memory_handoff": ("run",),
+    "memory_plan": ("decision", "revision", "cursor"),
+    "memory_feedback": ("comment",),
+}
+
+# What a model needs to know to fill a field, by name. Applied where the contract schema has
+# no description of its own, to the fields directly under a tool call and its `args`.
+FIELD_DESCRIPTIONS = {
+    "key": "Retry key: repeat it to replay the first result instead of repeating the write. "
+    "Minted when omitted.",
+    "args": "Arguments of the chosen action.",
+    "request": "The observation to record.",
+    "project": "Project id. Defaults to this session's project.",
+    "incarnation": "History id. Defaults to this session's.",
+    "version": "Contract version, 1. Defaults to 1.",
+    "query": "What you are about to work on, as a short phrase.",
+    "task": "Task id, stable across sessions.",
+    "run": "Run id within the task, or null.",
+    "bindings": "Where this session works (environment, role, path ...). Defaults to the session's.",
+    "max_output_tokens": "Token budget for the reply. Defaults to 6000.",
+    "tokenizer": "Tokenizer used to count the budget. Defaults to the installed one.",
+    "as_of_ms": "Brief as the project stood at this Unix-millisecond time; omit for now.",
+    "format": "json for a program, text for a Markdown reply.",
+    "consistency": "Whether to wait for recent writes before answering.",
+    "freshness": "How recent the indexed data must be.",
+    "dense": "Whether to use meaning-based search when it is available.",
+    "salience": "Let your own recent use of memories nudge the ranking.",
+    "rerank": "Let the local cross-encoder reorder the top candidates.",
+    "top_k": "How many candidates to consider.",
+    "recorded_position": "Answer as of this recorded history position.",
+    "valid_ms": "Judge validity at this Unix-millisecond time.",
+    "status": "Filter by status.",
+    "brief": "The briefing request to run again with a new query.",
+    "predecessor": "Receipt id of the earlier briefing this one follows.",
+    "receipt": "Receipt id returned with an earlier briefing or fetch.",
+    "reference": "Id of the record: an obs_ observation id or a claim revision id.",
+    "kind": "observation or revision (claim).",
+    "start_byte": "First byte of the range to read.",
+    "end_byte": "End byte of the range to read.",
+    "rendered_hash": "Hash of the rendered text being replayed.",
+    "checkpoint": "The progress to save: objective and current_state are required, the rest optional.",
+    "expected_revision": "The revision you last saw, so a concurrent save conflicts instead of "
+    "overwriting; null accepts the current one.",
+    "readers": "Principals allowed to read it; null means everyone in the project.",
+    "handle": "Handoff handle returned by prepare.",
+    "materialization": "Id of the materialized handoff.",
+    "recipient": "Principal who will receive the handoff.",
+    "role": "The recipient's role for this handoff.",
+    "stage": "The stage of work being handed off.",
+    "ttl_ms": "How long the handoff stays valid, in milliseconds.",
+    "plan": "The whole plan: phases and steps with stable ids.",
+    "step": "Id of the plan step to update.",
+    "decision": "A recorded decision for the step, or null.",
+    "evidence": "Evidence for the step: observation ids and spans.",
+    "notes": "Notes on the step.",
+    "revision": "Plan revision to read; null for the current one.",
+    "cursor": "Page cursor from the previous listing; null for the first page.",
+    "limit": "How many to return.",
+    "logical_key": "Stable name of the record across revisions.",
+    "body": "The outcome record: task result with its acceptance evidence.",
+    "use": "Whether the item was read or used: unknown, read or used.",
+    "usefulness": "unknown, helpful, irrelevant, misleading or harmful.",
+    "comment": "A short note, or null.",
+    "source": "Where it came from, such as pytest or git.",
+    "source_event": "Stable id of the event, so a retry replays.",
+    "text": "What you observed.",
+    "classification": "public, internal or restricted.",
+    "observed_at_ms": "When you observed it, in Unix milliseconds.",
+    "supersedes": "Id of an earlier memory you can read that this replaces.",
+}
+ACTION_DESCRIPTIONS = {
+    "brief": "Ask for a briefing.",
+    "rerun": "Run an earlier briefing again with a new query.",
+    "fetch": "Read a cited source in full or by byte range.",
+    "receipt": "Show the diagnostics behind a receipt.",
+    "replay": "Return the exact bytes delivered for a receipt.",
+    "receipts": "List recent receipts.",
+    "save": "Save a checkpoint.",
+    "resume": "Pick up a saved task.",
+    "plan_save": "Create or revise the whole plan.",
+    "plan_step": "Update one step.",
+    "plan_get": "Read a plan.",
+    "plan_list": "List the project's plans.",
+    "prepare": "Prepare a handoff from a checkpoint.",
+    "preview": "Preview what the recipient would receive.",
+    "materialize": "Materialize the handoff as the recipient.",
+    "ack": "Acknowledge a materialized handoff.",
+    "cancel": "Cancel a handoff.",
+    "outcome": "Record the result of a run with its evidence.",
+    "feedback": "Rate whether a specific memory helped.",
 }
 
 DESCRIPTIONS = {
@@ -109,6 +201,66 @@ def relax_checkpoint(node: dict, defs: dict) -> None:
         node["required"] = [f for f in node["required"] if f in ("objective", "current_state")]
 
 
+def reachable(node, defs, found=None):
+    """The names of the $defs a schema node uses, following references transitively."""
+    found = found if found is not None else set()
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            name = ref.removeprefix("#/$defs/")
+            if name not in found:
+                found.add(name)
+                reachable(defs[name], defs, found)
+        for value in node.values():
+            reachable(value, defs, found)
+    elif isinstance(node, list):
+        for value in node:
+            reachable(value, defs, found)
+    return found
+
+
+def prune(schema):
+    """Drop the $defs that no branch of the tool's schema refers to."""
+    defs = schema.get("$defs")
+    if not defs:
+        return schema
+    body = {k: v for k, v in schema.items() if k != "$defs"}
+    used = reachable(body, defs)
+    schema["$defs"] = {name: defs[name] for name in defs if name in used}
+    if not schema["$defs"]:
+        del schema["$defs"]
+    return schema
+
+
+def describe(node, defs, names):
+    """Give the properties of `node` (following $ref) the description for their name."""
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        node = defs[ref.removeprefix("#/$defs/")]
+    for field, value in node.get("properties", {}).items():
+        if isinstance(value, dict) and "description" not in value and field in names:
+            value["description"] = names[field]
+
+
+def document(tools):
+    """Describe every field a model fills directly under a call and under its `args`."""
+    for tool in tools:
+        schema = tool["inputSchema"]
+        defs = schema.get("$defs", {})
+        for branch in schema.get("oneOf") or [schema]:
+            describe(branch, defs, FIELD_DESCRIPTIONS)
+            action = branch.get("properties", {}).get("action")
+            if isinstance(action, dict) and action.get("const") in ACTION_DESCRIPTIONS:
+                action["description"] = ACTION_DESCRIPTIONS[action["const"]]
+            args = branch.get("properties", {}).get("args")
+            if isinstance(args, dict):
+                describe(args, defs, FIELD_DESCRIPTIONS)
+        for name in ("request",):
+            nested = schema.get("properties", {}).get(name)
+            if isinstance(nested, dict):
+                describe(nested, defs, FIELD_DESCRIPTIONS)
+
+
 def generate():
     wire = json.loads((ROOT / "src/memoryking/adapters/local_wire.schema.json").read_text())
     context = json.loads((ROOT / "contracts/context-v1.schema.json").read_text())
@@ -201,6 +353,9 @@ def generate():
                     },
                 }
             )
+    for tool in tools:
+        prune(tool["inputSchema"])
+    document(tools)
     raw = (
         json.dumps(
             {"protocol_version": "2025-11-25", "transport": "stdio", "tools": tools}, indent=2

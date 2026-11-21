@@ -21,15 +21,27 @@ from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.adapters.user_scope import UserScope
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.contracts.problems import explain
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure, summarize, timings, trace, tracing
 
 WIRE_LIMIT = 262144
+# Public fields a refusal may carry beside `error` and `hint`.
+REPLY_DETAIL = ("required_capability", "path", "problem", "expected", "missing")
+
+
+def refusal(exc: LocalError) -> bytes:
+    """The wire reply for a refusal: code, hint and any public detail."""
+    return canonical_bytes(
+        {"error": exc.code, "hint": hint(exc.code)}
+        | {k: v for k, v in exc.detail.items() if k in REPLY_DETAIL}
+    )
 
 
 class StoreOperations:
@@ -87,8 +99,9 @@ class StoreOperations:
         return action if isinstance(action, str) and action.isidentifier() else "-"
 
     def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
-        if not VALIDATOR.is_valid(request):
-            raise LocalError("invalid_request")
+        found = explain(VALIDATOR, request)
+        if found is not None:
+            raise LocalError("invalid_request", detail=found)
         op, args, credential = request["operation"], request["args"], request["credential"]
         store = self.store
         if op == "experience":
@@ -128,6 +141,8 @@ class StoreOperations:
             return store.status(credential, **args)
         if op == "grants":
             return {"items": store.grants(credential)}
+        if op == "user":
+            return UserScope(store).execute(credential, args)
         if op == "claim":
             return {"job": store.claim(credential, **args)}
         if op == "finish":
@@ -161,7 +176,9 @@ class Handler(socketserver.StreamRequestHandler):
                 self.request.sendall(canonical_bytes(response) + b"\n")
         except (LocalError, ContractError) as exc:
             code = exc.code if isinstance(exc, LocalError) else "invalid_request"
-            self.request.sendall(canonical_bytes({"error": code, "hint": hint(code)}) + b"\n")
+            self.request.sendall(
+                (refusal(exc) if isinstance(exc, LocalError) else refusal(LocalError(code))) + b"\n"
+            )
         except (TimeoutError, BrokenPipeError, ConnectionResetError):
             return
         except Exception as exc:
@@ -321,7 +338,11 @@ def request(
         raise LocalError("invalid_request")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
         stream.settimeout(10)
-        stream.connect(str(socket_path))
+        try:
+            stream.connect(str(socket_path))
+        except (FileNotFoundError, ConnectionRefusedError) as exc:
+            # Nothing is listening: the request never left this process, so it is safe to retry.
+            raise LocalError("transport_unavailable") from exc
         stream.sendall(payload + b"\n")
         with stream.makefile("rb") as response:
             raw = response.readline(1048577)
@@ -329,5 +350,9 @@ def request(
         if not isinstance(value, dict):
             raise LocalError("invalid_response")
         if "error" in value:
-            raise LocalError(value["error"], value.get("hint"))
+            raise LocalError(
+                value["error"],
+                value.get("hint"),
+                {k: v for k, v in value.items() if k in REPLY_DETAIL},
+            )
         return value
