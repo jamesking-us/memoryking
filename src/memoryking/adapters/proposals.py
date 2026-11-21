@@ -228,7 +228,7 @@ class Proposals:
                     "text": sentence,
                 }
             )
-        return {
+        report: dict[str, Any] = {
             "drafted": drafted,
             "skipped": skipped,
             "window": len(items),
@@ -236,3 +236,10 @@ class Proposals:
             "coverage": f"newest_{WINDOW}_visible_observations; anchors_then_rare_terms; drafts_are_proposals_awaiting_review",
             "digest": canonical_hash([d["revision"] for d in drafted]),
         }
+        if args.get("procedures", True):
+            # Procedures from outcomes that recur across tasks: proposals for the existing
+            # review-then-activate lifecycle, never active on their own.
+            from memoryking.adapters.outcome_drafts import OutcomeDrafts
+
+            report["procedures"] = OutcomeDrafts(self.k).draft(credential, who, project, limit, at)
+        return report

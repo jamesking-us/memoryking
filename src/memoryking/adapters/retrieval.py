@@ -651,6 +651,7 @@ class Retrieval:
             # Long queries are searched on their leading terms; the cut is disclosed.
             diag["query_terms_truncated"] = QUERY_TERM_LIMIT
         groups: list[list[dict[str, Any]]] = []
+        drafted: list[list[dict[str, Any]]] = []
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
             if mandatory.get("unbound_fields"):
@@ -692,6 +693,19 @@ class Retrieval:
                 evaluation=ranking_override is not None,
                 lexical_current=lexical_current,
             )
+            if (
+                "recorded_position" not in args
+                and "valid_ms" not in args
+                and args.get("freshness", "any") != "attested"
+            ):
+                # Off unless an admin turned the project's tier on; then unreviewed drafts
+                # follow the accepted guidance in a section of their own.
+                from memoryking.adapters.unreviewed import Unreviewed
+
+                drafted = Unreviewed(self.s).groups(who, args, at, recorded)
+                if drafted:
+                    groups = [*groups, *drafted]
+                    base["warnings"].append("unreviewed_drafts_included")
             for stage in trace:
                 if stage.get("stage") == "rerank_v1" and "model" in stage:
                     diag["model_fingerprints"].append(stage["model"])
@@ -722,6 +736,7 @@ class Retrieval:
                 and knowledge["status"] == "complete"
                 and not missing
                 and "dense" not in args
+                and not drafted
             ):
                 base["status"] = "no_relevant_memory"
                 base["coverage"]["optional"] = "no_literal_overlap"

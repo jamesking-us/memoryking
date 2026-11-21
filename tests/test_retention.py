@@ -342,8 +342,8 @@ class LocalRetentionTests(RetentionCases, unittest.TestCase):
         self.store.db.execute("PRAGMA user_version=18")
         self.store.close()
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(19, SCHEMA_VERSION)
-        self.assertEqual(19, self.store.db.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(20, SCHEMA_VERSION)
+        self.assertEqual(20, self.store.db.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(before, self.count("receipt_observations"))
         names = {
             r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='index'")
@@ -384,7 +384,7 @@ class PostgresRetentionTests(RetentionCases, pg.NativeFixture):
             version = db.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()[0]
-        self.assertEqual("14", version)
+        self.assertEqual("15", version)
         self.assertEqual(before, self.count("receipt_observations"))
         # Row-level security is forced again after the copy.
         with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as db:
