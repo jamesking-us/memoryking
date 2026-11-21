@@ -54,8 +54,10 @@ class ReleaseResponse(Response):
         await super().__call__(scope, receive, guarded)
 
 
-def error(code: str, status: int = 400, request_id: str | None = None) -> Response:
-    body: dict[str, str] = {"error": code, "hint": hint(code)}
+def error(
+    code: str, status: int = 400, request_id: str | None = None, detail: str | None = None
+) -> Response:
+    body: dict[str, str] = {"error": code, "hint": detail or hint(code)}
     if request_id is not None:
         body["request_id"] = request_id
     return Response(
@@ -92,18 +94,54 @@ class Boundary:
         origins: list[str],
         capacity: int = 32,
         loopback_http: bool = False,
+        readiness: Any = None,
+        observe: Any = None,
     ):
         if not hosts or any("*" in value for value in [*hosts, *origins]):
             raise LocalError("explicit_shared_hosts_required")
         self.app, self.hosts, self.origins = app, set(hosts), set(origins)
+        if not 1 <= capacity <= 1024:
+            raise LocalError("invalid_concurrency")
         self.slots = threading.BoundedSemaphore(capacity)
+        self.capacity = capacity
+        self.in_flight = 0
+        self.counter = threading.Lock()
         self.loopback_http = loopback_http
+        self.readiness = readiness
+        self.observe = observe
+
+    def probe(self, path: str) -> Response:
+        from memoryking.health import LIVE_BODY, readiness_response
+
+        if path == "/healthz" or self.readiness is None:
+            status, body = 200, LIVE_BODY
+        else:
+            status, body = readiness_response(self.readiness())
+        return Response(
+            body,
+            status_code=status,
+            media_type="application/json",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         request = Request(scope, receive)
+        real_send = send
+
+        async def counted(message: Any) -> None:
+            if message["type"] == "http.response.start" and self.observe is not None:
+                self.observe(int(message["status"]))
+            await real_send(message)
+
+        send = counted
+        if scope["method"] in {"GET", "HEAD"} and scope["path"] in {"/healthz", "/readyz"}:
+            # Probes come from a load balancer or orchestrator by address, so the host and
+            # origin allowlists do not apply; they answer a fixed boolean and take no credential.
+            await self.probe(scope["path"])(scope, receive, send)
+            return
         if scope.get("scheme") != "https" and not (
             self.loopback_http and scope.get("client", (None,))[0] in {"127.0.0.1", "::1"}
         ):
@@ -124,6 +162,8 @@ class Boundary:
         if not self.slots.acquire(blocking=False):
             await error("service_busy", 503)(scope, receive, send)
             return
+        with self.counter:
+            self.in_flight += 1
         body_started = time.monotonic()
         body_bytes = 0
         body_done = False
@@ -148,6 +188,8 @@ class Boundary:
             await self.app(scope, bounded_receive, send)
         finally:
             self.slots.release()
+            with self.counter:
+                self.in_flight -= 1
 
 
 def create_app(
@@ -157,6 +199,7 @@ def create_app(
     origins: list[str],
     loopback_http: bool = False,
     dashboard_tenant: str | None = None,
+    capacity: int = 32,
 ) -> Any:
     async def operations(request: Request) -> Response:
         request_started = time.monotonic()
@@ -185,7 +228,10 @@ def create_app(
         except (LocalError, ContractError) as exc:
             code = exc.code if isinstance(exc, LocalError) else "invalid_request"
             default = 403 if code in {"denied", "credential_required"} else 400
-            return error(code, http_status(code, default))
+            detail = (
+                exc.hint if isinstance(exc, LocalError) and code == "schema_unsupported" else None
+            )
+            return error(code, http_status(code, default), detail=detail)
         except TimeoutError:
             return error("request_timeout", 408)
         except Exception as exc:
@@ -194,6 +240,44 @@ def create_app(
                 return error("service_busy", 429)
             # No SQL, supplied content, filesystem paths or credentials in responses.
             return error("service_unavailable", 503, failure("shared_http", exc))
+
+    from memoryking.health import CachedChecks
+
+    checks = CachedChecks(lambda: service.readiness())
+
+    async def metrics(request: Request) -> Response:
+        """Prometheus text behind the tenant's admin credential, like the local `/metrics`."""
+        started = time.monotonic()
+        code: str | None = None
+        try:
+            credential = bearer(request.headers)
+            if request.headers.get("cookie"):
+                raise LocalError("mixed_authentication")
+            text = await anyio.to_thread.run_sync(
+                service.metrics_text,
+                request.path_params["tenant"],
+                credential,
+                started + 5.0,
+                checks(),
+            )
+            return Response(
+                text.encode(),
+                media_type="text/plain; version=0.0.4",
+                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+            )
+        except LocalError as exc:
+            code = exc.code
+            return error(
+                code, http_status(code, 403 if code in {"denied", "credential_required"} else 400)
+            )
+        except Exception as exc:
+            code = "internal_error"
+            if (state := busy_sqlstate(exc)) is not None:
+                busy("shared_http", state)
+                return error("service_busy", 429)
+            return error("service_unavailable", 503, failure("shared_http", exc))
+        finally:
+            service.metrics.observe("http_metrics", (time.monotonic() - started) * 1000, code)
 
     from memoryking.adapters.shared_mcp import SharedMCP
 
@@ -217,6 +301,7 @@ def create_app(
         routes=[
             *dashboard_routes,
             Route("/v1/tenants/{tenant}/operations", operations, methods=["POST"]),
+            Route("/v1/tenants/{tenant}/metrics", metrics, methods=["GET"]),
             Route(
                 "/v1/tenants/{tenant}/projects/{project}/mcp",
                 mcp,
@@ -224,4 +309,14 @@ def create_app(
             ),
         ],
     )
-    return Boundary(app, hosts=hosts, origins=origins, loopback_http=loopback_http)
+    boundary = Boundary(
+        app,
+        hosts=hosts,
+        origins=origins,
+        capacity=capacity,
+        loopback_http=loopback_http,
+        readiness=checks,
+        observe=service.http_response,
+    )
+    service.http_gauge = lambda: (boundary.capacity, boundary.in_flight)
+    return boundary

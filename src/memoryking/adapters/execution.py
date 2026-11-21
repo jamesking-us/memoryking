@@ -153,7 +153,13 @@ class Execution:
             ).fetchall()
             # Never let an audit-only checkpoint rehabilitate a changed definition
             # carrying unchanged proof. Bounded or inaccessible history stays unknown.
-            history_complete = len(history) <= 128
+            # A stream that released revisions (retention shrinks the window of ordinary
+            # streams under pressure) is incomplete whatever the caller can still read.
+            released = self.db.execute(
+                "SELECT 1 FROM checkpoints WHERE tenant=? AND project=? AND task=? AND stream=? AND incarnation=? AND state='retired' LIMIT 1",
+                (who["tenant"], project, stream["task"], stream["stream"], self.s.incarnation),
+            ).fetchone()
+            history_complete = len(history) <= 128 and released is None
             previous_body = None
             prior_bodies = []
             for index, previous in enumerate(history[:128]):
@@ -294,10 +300,19 @@ class Execution:
             }
             if len(result["tasks"]) >= 8:
                 break
-        candidates = self.db.execute(
-            "SELECT o.*,e.at_ms AS recorded_ms FROM observations o JOIN events e ON e.tenant=o.tenant AND e.position=o.position WHERE o.tenant=? AND o.project=? AND o.position<=? AND o.source IN ('reference-harness-v1','reference-heartbeat-v1') ORDER BY o.position DESC LIMIT 128",
-            (who["tenant"], project, frontier),
-        ).fetchall()
+        # One indexed lookup per source: an IN list lets the planner walk every observation
+        # of the project in position order looking for the few that match.
+        candidates = sorted(
+            (
+                row
+                for source in ("reference-harness-v1", "reference-heartbeat-v1")
+                for row in self.db.execute(
+                    "SELECT o.*,e.at_ms AS recorded_ms FROM observations o JOIN events e ON e.tenant=o.tenant AND e.position=o.position WHERE o.tenant=? AND o.project=? AND o.source=? AND o.position<=? ORDER BY o.position DESC LIMIT 128",
+                    (who["tenant"], project, source, frontier),
+                ).fetchall()
+            ),
+            key=lambda row: -row["position"],
+        )[:128]
         for row in candidates:
             if not self.s._visible(who, row, at):
                 continue

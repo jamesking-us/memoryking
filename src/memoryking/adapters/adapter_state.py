@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from memoryking.adapters.inference import EGRESS_REVISION
 from memoryking.adapters.local_store import MAX_COUNTER, uid
 from memoryking.adapters.token_count import counter
+from memoryking.application.retention import index_receipt
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.briefing import counted
 from memoryking.domain.delta import MAX_BYTES, SCHEMA, SERIALIZATION, apply, changes
@@ -61,6 +62,7 @@ def resume(
             json.dumps([d["id"] for d in deps if d["kind"] == "observation"]),
         ),
     )
+    index_receipt(db, who["tenant"], context_receipt)
     db.execute("DELETE FROM adapter_bases WHERE tenant=? AND expires<=?", (who["tenant"], at))
     base = None
     base_deps: list[dict[str, str]] = []

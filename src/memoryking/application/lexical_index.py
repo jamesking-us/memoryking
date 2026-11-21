@@ -308,12 +308,13 @@ def step(db: Any, tenant: str, text_of: Any, budget_ms: int = STEP_MS) -> bool:
 
 def blob_text(root: Any, row: Any, tenant: str) -> str | None:
     """The retained text of an observation, verified against its content hash."""
+    from memoryking.adapters.blobs import blob_path
     from memoryking.adapters.local_files import private_file
     from memoryking.domain.local import LocalError
 
     if row["blob"] is None:
         return None
-    path = root / "blobs" / tenant / row["blob"]
+    path = blob_path(root, tenant, row["blob"])
     try:
         private_file(path)
         raw = path.read_bytes()

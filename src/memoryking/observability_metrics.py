@@ -42,8 +42,13 @@ class Metrics:
             }
 
 
-def render(metrics: Metrics, status: dict[str, Any]) -> str:
-    """Prometheus exposition text from the counters and a status result."""
+# One gauge family: (name, help text, [(labels, value), ...]). Names and label values come from
+# fixed vocabularies in this package; no content, identity or path ever appears in one.
+Gauge = tuple[str, str, list[tuple[dict[str, str], float]]]
+
+
+def render(metrics: Metrics, status: dict[str, Any], extra: list[Gauge] | None = None) -> str:
+    """Prometheus exposition text from the counters, a status result and extra gauges."""
     snap = metrics.snapshot()
     lines = [
         "# HELP memoryking_requests_total Requests handled, by operation.",
@@ -97,4 +102,12 @@ def render(metrics: Metrics, status: dict[str, Any]) -> str:
         "# TYPE memoryking_frontier gauge",
         f"memoryking_frontier {projection.get('frontier', 0)}",
     ]
+    for name, help_text, samples in extra or []:
+        lines += [
+            f"# HELP {name} {help_text}",
+            f"# TYPE {name} {'counter' if name.endswith('_total') else 'gauge'}",
+        ]
+        for labels, value in samples:
+            label = ",".join(f'{key}="{val}"' for key, val in sorted(labels.items()))
+            lines.append(f"{name}{{{label}}} {value:g}" if label else f"{name} {value:g}")
     return "\n".join(lines) + "\n"

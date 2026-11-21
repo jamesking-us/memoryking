@@ -16,6 +16,7 @@ from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_store import RETRY_MS, USAGE_LIMIT, uid
 from memoryking.adapters.token_count import counter
 from memoryking.adapters.working import Working
+from memoryking.application.retention import index_receipt
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.briefing import counted
@@ -80,6 +81,7 @@ class Processing:
                     json.dumps([d["id"] for d in deps if d["kind"] == "observation"]),
                 ),
             )
+            index_receipt(self.db, who["tenant"], receipt)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, receipt)

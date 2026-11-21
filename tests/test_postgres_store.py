@@ -560,7 +560,9 @@ class PostgresStoreTests(unittest.TestCase):
             restore_archive()
         self.assertEqual("backup_invalid", caught.exception.code)
         atomic(archive / "blob-index", index)
-        blob = archive / "blobs" / digests[0]
+        from memoryking.adapters.postgres_recovery import archived_blob
+
+        blob = archived_blob(archive, digests[0])
         original = blob.read_bytes()
         atomic(blob, original + b"x")
         with self.assertRaises(LocalError) as caught:
@@ -576,10 +578,136 @@ class PostgresStoreTests(unittest.TestCase):
         }
         atomic(archive / "manifest", control.sign(legacy).encode())
         (archive / "blob-index").unlink()
+        # Archives of the previous release also kept every blob flat under blobs/.
+        for digest in digests:
+            sharded = archived_blob(archive, digest)
+            os.rename(sharded, archive / "blobs" / digest)
+            sharded.parent.rmdir()
         self.credential = restore_archive()
         with self.store() as store:
             self.namespace = store.namespace(self.credential, "demo")
             self.assertEqual(2, len(delivered(store.read(self.credential, "demo"))["items"]))
+
+    def archive(self, name, **kwargs):
+        from memoryking.adapters.postgres_recovery import backup
+
+        with (
+            self.store() as store,
+            psycopg.connect(self.cluster.dsn("mk_backup"), autocommit=True) as connection,
+        ):
+            return backup(store, connection, self.base / (self.tenant + name), **kwargs)
+
+    def test_backup_fences_the_tenant_only_while_the_snapshot_is_taken(self):
+        from unittest import mock
+
+        from memoryking.adapters import blobs as blobfiles
+        from memoryking.adapters.postgres_recovery import restore
+
+        self.capture(1, text="before the backup")
+        seen = []
+        real = blobfiles.copy_verified
+
+        def during_copy(source, destination, expected):
+            if not seen:
+                # Requests run while blob files are copied: the fence is already gone.
+                with self.store() as store:
+                    seen.append(
+                        store.capture(
+                            self.credential,
+                            self.namespace,
+                            "mid",
+                            observation(2, text="during the copy"),
+                        )
+                    )
+                    seen.append(store.anchor["state"])
+            return real(source, destination, expected)
+
+        with mock.patch.object(blobfiles, "copy_verified", during_copy):
+            manifest = self.archive("-brief")
+        self.assertEqual("active", seen[1])
+        self.assertEqual(1, manifest["blob_index"]["count"])
+        # The archive is the snapshot: the capture made during the copy is not in it.
+        archive = self.base / (self.tenant + "-brief")
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+            self.credential = restore(
+                connection, self.root, self.control, self.tenant, archive, clock=self.clock
+            ).read_text()
+        with self.store() as store, store.transaction():
+            texts = [
+                r[0]
+                for r in store.db.execute(
+                    "SELECT count(*) FROM observations WHERE blob IS NOT NULL"
+                )
+            ]
+        self.assertEqual([1], texts)
+
+    def test_an_incremental_archive_links_verified_blobs_and_restores_on_its_own(self):
+        import shutil
+
+        from memoryking.adapters import blobs as blobfiles
+        from memoryking.adapters.postgres_recovery import archived_blob, restore
+
+        self.capture(1, text="first distinct body")
+        self.capture(2, text="second distinct body")
+        first = self.archive("-a")
+        self.capture(3, text="third distinct body")
+        # A damaged copy in the earlier archive is not linked, whatever its name.
+        digest = first and (self.base / (self.tenant + "-a") / "blob-index").read_text().split()[0]
+        damaged = archived_blob(self.base / (self.tenant + "-a"), digest)
+        damaged.unlink()
+        damaged.write_bytes(b"damaged")
+        damaged.chmod(0o600)
+        second = self.archive("-b", previous=self.base / (self.tenant + "-a"))
+        self.assertEqual((1, 2), (second["blobs_linked"], second["blobs_copied"]))
+        self.assertEqual(
+            digest, blobfiles.sha256_file(archived_blob(self.base / (self.tenant + "-b"), digest))
+        )
+        shutil.rmtree(self.base / (self.tenant + "-a"))
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+            self.credential = restore(
+                connection,
+                self.root,
+                self.control,
+                self.tenant,
+                self.base / (self.tenant + "-b"),
+                clock=self.clock,
+            ).read_text()
+        with self.store() as store, store.transaction():
+            self.assertEqual(
+                3,
+                store.db.execute(
+                    "SELECT count(*) FROM observations WHERE blob IS NOT NULL"
+                ).fetchone()[0],
+            )
+
+    def test_purge_deletes_its_own_blob_and_the_sweep_is_explicit(self):
+        from unittest import mock
+
+        from memoryking.adapters import blobs as blobfiles
+        from memoryking.adapters.local_files import atomic
+
+        first = self.capture(1, text="shared content")
+        self.capture(2, text="shared content")
+        orphan = self.root / "blobs" / self.tenant / "ab" / ("ab" + "0" * 62)
+        orphan.parent.mkdir(mode=0o700, exist_ok=True)
+        atomic(orphan, b"left behind")
+        name = __import__("hashlib").sha256(b"shared content").hexdigest()
+        with (
+            mock.patch.object(PostgresStore, "gc", side_effect=AssertionError("no sweep")),
+            self.store() as store,
+        ):
+            store.purge(self.credential, first["observation"])
+            self.assertTrue(blobfiles.blob_path(self.root, self.tenant, name).is_file())
+            with store.transaction():
+                other = store.db.execute(
+                    "SELECT id FROM observations WHERE blob=? AND deleted=0", (name,)
+                ).fetchone()[0]
+            store.purge(self.credential, other)
+        self.assertFalse(blobfiles.blob_path(self.root, self.tenant, name).is_file())
+        self.assertTrue(orphan.exists())
+        with self.store() as store:
+            self.assertEqual(1, store.gc())
+        self.assertFalse(orphan.exists())
 
     def test_job_position_index_exists_and_reindex_backlog_does_not_refuse_capture(self):
         from memoryking.application import store_core

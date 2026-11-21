@@ -373,9 +373,10 @@ class PlanCases:
         self.assertEqual(json.loads(old_bytes)["receipt"], old_receipt)
         self.store.expire_results()
         capacity = self.store.status(self.owner, "p")["capacity"]["checkpoints"]
-        # Ten ordinary streams keep 130 revisions each, the cited first revision stays
-        # for its receipt, and the plan keeps both of its revisions.
-        self.assertEqual(capacity["used"], 10 * 130 + 1 + 2)
+        # The save that reached 4,096 released under pressure: ten ordinary streams kept 32
+        # revisions each, the cited first revision stayed for its receipt and the plan kept
+        # both of its revisions (10 * 32 + 1 + 2 live). The 906 saves after that add to it.
+        self.assertEqual(capacity["used"], 10 * 32 + 1 + 2 + 906)
         rows = self.store.db.execute("SELECT count(*) FROM checkpoints").fetchone()[0]
         self.assertEqual(rows, 5002)
         states = dict(
