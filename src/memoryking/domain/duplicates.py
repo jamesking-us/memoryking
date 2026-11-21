@@ -18,7 +18,6 @@ short notes are compared exactly.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 from memoryking.domain.anchors import extract
 from memoryking.domain.lexicon import analyze
@@ -29,40 +28,55 @@ OVERLAP = 0.8
 DIFFERENCE = 2
 
 
-@dataclass(frozen=True)
 class Shape:
-    """What a comparison needs from one excerpt."""
+    """What a comparison needs from one excerpt; words and anchors are worked out when a
+    comparison first needs them, because most pairs differ in length or text already."""
 
-    normalized: str
-    words: frozenset[str]
-    negations: frozenset[str]
-    anchors: frozenset[tuple[str, str]]
+    __slots__ = ("text", "normalized", "_words", "_anchors")
+
+    def __init__(self, text: str):
+        self.text = text
+        self.normalized = " ".join(text.casefold().split())
+        self._words: frozenset[str] | None = None
+        self._anchors: frozenset[tuple[str, str]] | None = None
+
+    @property
+    def words(self) -> frozenset[str]:
+        if self._words is None:
+            self._words = frozenset(token for token, _ in analyze(self.text))
+        return self._words
+
+    @property
+    def anchors(self) -> frozenset[tuple[str, str]]:
+        if self._anchors is None:
+            self._anchors = frozenset(extract(self.text))
+        return self._anchors
 
 
 def shape(text: str) -> Shape:
-    words = frozenset(token for token, _ in analyze(text))
-    return Shape(
-        " ".join(text.casefold().split()),
-        words,
-        words & NEGATIONS,
-        frozenset(extract(text)),
-    )
+    return Shape(text)
 
 
 def duplicates(a: Shape, b: Shape) -> bool:
-    if a.anchors != b.anchors:
-        return False
     if a.normalized == b.normalized:
-        return True
-    if min(len(a.words), len(b.words)) < MINIMUM_WORDS or a.negations != b.negations:
+        return a.anchors == b.anchors
+    longer, shorter = (
+        max(len(a.normalized), len(b.normalized)),
+        min(len(a.normalized), len(b.normalized)),
+    )
+    if shorter < 2 * MINIMUM_WORDS or longer > shorter * 1.25 + 8:
+        return False  # too short to compare loosely, or too different in length
+    if min(len(a.words), len(b.words)) < MINIMUM_WORDS:
         return False
     only_a, only_b = a.words - b.words, b.words - a.words
-    return (
-        len(a.words & b.words) / len(a.words | b.words) >= OVERLAP
-        and len(only_a) <= DIFFERENCE
-        and len(only_b) <= DIFFERENCE
-        and all(word.isdigit() for word in only_a | only_b)
-    )
+    if (
+        len(only_a) > DIFFERENCE
+        or len(only_b) > DIFFERENCE
+        or not all(word.isdigit() for word in only_a | only_b)
+        or len(a.words & b.words) / len(a.words | b.words) < OVERLAP
+    ):
+        return False
+    return a.anchors == b.anchors and a.words & NEGATIONS == b.words & NEGATIONS
 
 
 _VERSION = re.compile(r"^(.+?)__v[0-9]+$")

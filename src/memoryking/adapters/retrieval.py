@@ -47,8 +47,8 @@ from memoryking.domain.lexicon import (
     QUERY_TERM_LIMIT,
     Corpus,
     Term,
-    observation_score,
     query_terms,
+    rescued,
 )
 from memoryking.domain.lexicon import score as bm25
 from memoryking.domain.local import Decision, LocalError, Released, is_user_project
@@ -570,8 +570,8 @@ class Retrieval:
 
         tenant_row = self.db.execute("SELECT * FROM tenants WHERE tenant=?", (tenant,)).fetchone()
         source = tenant_row["position"]
-        configuration = lexical_index.configuration(self.db, tenant)
-        lexical_current = configuration != LEGACY_CONFIGURATION
+        lexical_current = lexical_index.state(self.db, tenant)[0] == lexical_index.CURRENT
+        configuration = CONFIGURATION if lexical_current else LEGACY_CONFIGURATION
         if "as_of_ms" in args:
             # One instant stands for both clocks: the history frontier as it was then
             # (the last event recorded by that wall time) and the claim validity time.
@@ -1080,7 +1080,6 @@ class Retrieval:
             if qterms
             else Corpus()
         )
-        passaged = configuration == CONFIGURATION
 
         def scorer(text: str) -> int:
             return bm25(qterms, text, corpus) if lexical_current else relevance(query, text)
@@ -1248,25 +1247,23 @@ class Retrieval:
             raw = self._blob(row)
             # A whole atomic excerpt has attribution and bounds; never a paraphrase.
             full = raw.decode()
-            parts = split(full)
-            if passaged:
-                # lexical-v3 ranks the best passage: length is judged per passage, so a
-                # long capture holding the answer is not outranked by short notes, and
-                # only mildly damped by how many passages the capture has.
+            score = scorer(full)
+            # Only a long observation is read as passages: to quote the one that answers,
+            # and (lexical-v2 rescue) to score a long capture by its best passage when that
+            # beats the whole, which length normalisation would otherwise bury.
+            parts = split(full) if len(raw) > EXCERPT_BYTES else []
+            passage_scores = [0] * len(parts)
+            if parts and (score or lexical_current):
                 passage_scores = [scorer(full[p.start : p.end]) for p in parts]
-                score = observation_score(passage_scores)
-            else:
-                score = scorer(full)
-                passage_scores = [0] * len(parts)
-                if score and len(raw) > EXCERPT_BYTES and len(parts) > 1:
-                    passage_scores = [scorer(full[p.start : p.end]) for p in parts]
+                if lexical_current:
+                    score = rescued(score, passage_scores)
             anchor_hits = 0
             if anchors:
                 # Exact overlap of the query's anchors with the record's, in millionths,
                 # on the same scale as term overlap; the larger of the two is the score.
                 anchor_hits = sum(1 for a in anchors if a in anchor_sets.get(observation, ()))
                 score = max(score, anchor_hits * 1000000 // len(anchors))
-                if anchor_hits and len(raw) > EXCERPT_BYTES:
+                if anchor_hits and parts:
                     # An anchor hit steers the quote to the passage that names it.
                     folded = [full[p.start : p.end].casefold() for p in parts]
                     passage_scores = [
@@ -1278,7 +1275,7 @@ class Retrieval:
                         )
                         for value, text in zip(passage_scores, folded, strict=True)
                     ]
-            first, last = quote(full, parts, passage_scores)
+            first, last = quote(full, parts, passage_scores) if parts else (0, len(full))
             excerpt_text = full[first:last]
             offset = len(full[:first].encode())
             if score or observation in dense_scores:
@@ -1570,8 +1567,8 @@ class Retrieval:
 
         # Only the head of the ranking can reach the briefing once repeats are folded, so
         # only it is compared (a comparison is quadratic); the rest keeps its order.
-        entries: list[Entry] = list(ranked[: 3 * limit + 8])
-        rest: list[Entry] = list(ranked[3 * limit + 8 :])
+        entries: list[Entry] = list(ranked[: min(3 * limit + 8, 64)])
+        rest: list[Entry] = list(ranked[min(3 * limit + 8, 64) :])
         # 1. versions of one file
         by_family: dict[tuple[str, str, str], list[int]] = {}
         for index, entry in enumerate(entries):

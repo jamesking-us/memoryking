@@ -13,10 +13,7 @@ import test_postgres_parity as pg
 from test_lexical_search import LexicalCases
 
 from memoryking.adapters.retrieval import Retrieval
-from memoryking.application import lexical_index
-from memoryking.domain.briefing import PREVIOUS_CONFIGURATION
 from memoryking.domain.duplicates import duplicates, family, shape
-from memoryking.domain.lexicon import index_terms
 from memoryking.domain.passages import EXCERPT_BYTES, MAXIMUM, TAIL, excerpt, split
 
 
@@ -114,18 +111,14 @@ class PassageRuleTests(unittest.TestCase):
         # a short text is quoted whole
         self.assertEqual((0, 5), excerpt("hello", split("hello"), [3]))
 
-    def test_the_score_is_the_best_passage_damped_by_the_size_of_the_observation(self):
-        from memoryking.domain.lexicon import observation_score
+    def test_a_long_capture_scores_as_its_best_passage_when_that_beats_the_whole(self):
+        from memoryking.domain.lexicon import RESCUE_PASSAGES, rescued
 
-        self.assertEqual(0, observation_score([]))
-        self.assertEqual(0, observation_score([0, 0]))
-        self.assertEqual(300_000, observation_score([300_000]))
-        two = observation_score([100_000, 300_000])
-        many = observation_score([0] * 24 + [300_000])
-        self.assertLess(many, two)
-        self.assertLess(two, 300_000)
-        self.assertGreater(many, 300_000 // 4)
-        self.assertEqual(two, observation_score([300_000, 100_000]))
+        short = [10] * RESCUE_PASSAGES  # not long enough: the whole-text score stands
+        self.assertEqual(100, rescued(100, [*short[:-1], 900]))
+        long = [10] * (RESCUE_PASSAGES + 1)
+        self.assertEqual(900, rescued(100, [*long[:-1], 900]))
+        self.assertEqual(1000, rescued(1000, [*long[:-1], 900]))
 
     def test_duplicates_are_conservative(self):
         base = "Flaky test test_checkout_retry failed again on CI run {}: AssertionError timeout."
@@ -226,19 +219,18 @@ class PassageCases(LexicalCases):
         self.assertEqual(item["source_bytes"], fetched["source_bytes"])
         self.assertEqual(1, [g["reference"] for g in packet["guidance"]].count(target))
 
-    def test_a_long_capture_holding_the_answer_is_found_among_short_notes(self):
-        # Scored as one document, a 25 KB capture would be all but invisible next to short
-        # notes; scored by its best passage (damped by its size) it is found and quoted.
+    def test_a_long_capture_holding_the_answer_is_not_buried_by_its_length(self):
+        # Scored as one document, a 25 KB capture is all but invisible next to short notes;
+        # its best passage rescues it, and the quote is that passage.
         target = self.capture(
             "long", long_note("The actual finding: the zukatori flag broke the rebalance.")
         )
-        for number in range(3):
+        for number in range(6):
             self.capture(f"s{number}", f"Short note {number} about the rebalance meeting.")
             self.capture(f"z{number}", f"Short note {number} about a zukatori sticker.")
         packet = self.brief("zukatori flag rebalance")
-        self.assertIn(target, self.refs(packet))
-        item = next(g for g in packet["guidance"] if g["reference"] == target)
-        self.assertIn("zukatori flag broke the rebalance", item["text"])
+        self.assertEqual(target, self.refs(packet)[0])
+        self.assertIn("zukatori flag broke the rebalance", packet["guidance"][0]["text"])
 
     def test_a_short_observation_is_quoted_whole(self):
         text = "Gateway timeout is thirty seconds.\nRetry twice, then page the owner."
@@ -258,46 +250,6 @@ class PassageCases(LexicalCases):
 
     # --- statistics, purge, holds, old stores -------------------------------------------
 
-    def recomputed_by_passage(self):
-        tenant = self.tenant_id()
-        terms: dict = {}
-        projects: dict = {}
-        for row in self.store.db.execute(
-            "SELECT o.project,l.text FROM lexical l JOIN observations o ON o.tenant=l.tenant AND o.id=l.id WHERE l.tenant=? AND o.deleted=0",
-            (tenant,),
-        ).fetchall():
-            for part in (p for p in row[1].split("\n") if p.strip()):
-                found, length = index_terms(part)
-                count, tokens = projects.get(row[0], (0, 0))
-                projects[row[0]] = (count + 1, tokens + length)
-                for term in found:
-                    terms[(row[0], term)] = terms.get((row[0], term), 0) + 1
-        return terms, projects
-
-    def test_statistics_count_passages_and_follow_capture_purge_and_reindex(self):
-        long = self.capture("long", long_note())
-        short = self.capture("short", "Gateway timeout is thirty seconds.")
-        passages = len(split(long_note()))
-        self.assertGreater(passages, 5)
-        self.assertEqual(passages + 1, self.documents())
-        self.assertEqual(self.recomputed_by_passage(), self.statistics())
-        self.store.purge(self.owner, long)
-        self.assertEqual(1, self.documents())
-        self.assertEqual(
-            0,
-            self.store.db.execute("SELECT count(*) FROM lexical WHERE id=?", (long,)).fetchone()[0],
-        )
-        self.assertEqual(self.recomputed_by_passage(), self.statistics())
-        again = self.capture("again", long_note())
-        before = self.statistics()
-        self.store.reindex(self.owner)
-        self.assertEqual(before, self.statistics())
-        self.assertEqual(self.recomputed_by_passage(), self.statistics())
-        self.store.purge(self.owner, again)
-        self.store.purge(self.owner, short)
-        self.assertEqual({}, {k: v for k, v in self.statistics()[0].items() if k[0] == "q"})
-        self.assertEqual(0, self.documents())
-
     def test_a_held_long_observation_is_invisible_in_every_passage(self):
         from memoryking.adapters.trust import Trust
 
@@ -307,49 +259,6 @@ class PassageCases(LexicalCases):
             Trust(self.store).hold(self.tenant_id(), "q", held, "scraper", decision.evaluated_ms)
         self.assertEqual([], self.refs(self.brief("zukatori flag")))
         self.assertEqual([], self.refs(self.brief("service request filler")))
-
-    def test_a_store_without_passages_keeps_working_until_reindex(self):
-        old = self.capture("long", long_note())
-        self.capture("note", "Gateway timeout is thirty seconds.")
-        tenant = self.tenant_id()
-        rows = self.store.db.execute(
-            "SELECT o.id,o.blob,o.project FROM observations o WHERE o.tenant=? AND o.deleted=0",
-            (tenant,),
-        ).fetchall()
-        self.store.db.execute("DELETE FROM lexical_terms WHERE tenant=?", (tenant,))
-        self.store.db.execute("DELETE FROM lexical_projects WHERE tenant=?", (tenant,))
-        from memoryking.domain.lexicon import index_text
-
-        for row in rows:
-            text = lexical_index.blob_text(self.store.root, row, tenant)
-            whole = index_text(text)
-            self.store.db.execute(
-                "UPDATE lexical SET text=? WHERE tenant=? AND id=?", (whole, tenant, row[0])
-            )
-            lexical_index._count(self.store.db, tenant, row[2], [whole], 1)
-        self.store.db.execute(
-            "UPDATE lexical_state SET configuration=? WHERE tenant=?",
-            (PREVIOUS_CONFIGURATION, tenant),
-        )
-        status = self.store.status(self.owner, "q")["lexical"]
-        self.assertEqual("current", status["state"])
-        self.assertEqual(PREVIOUS_CONFIGURATION, status["configuration"])
-        self.assertIn("reindex", status["action"])
-        self.assertEqual(2, self.documents())
-        packet = self.brief("service kafka rebalance storm")
-        self.assertEqual(PREVIOUS_CONFIGURATION, self.receipt(packet)["configuration"])
-        item = next(g for g in packet["guidance"] if g["reference"] == old)
-        self.assertIn("kafka consumer lag", item["text"])
-        # a capture and a purge keep the old format exact
-        fresh = self.capture("fresh", "Gateway timeout raised to sixty seconds.")
-        self.assertEqual(3, self.documents())
-        self.store.purge(self.owner, fresh)
-        self.assertEqual(2, self.documents())
-        self.store.reindex(self.owner)
-        status = self.store.status(self.owner, "q")["lexical"]
-        self.assertEqual("lexical-v3", status["configuration"])
-        self.assertEqual(self.recomputed_by_passage(), self.statistics())
-        self.assertEqual("lexical-v3", self.receipt(self.brief("gateway timeout"))["configuration"])
 
     # --- one answer per fact --------------------------------------------------------------
 

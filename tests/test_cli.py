@@ -221,10 +221,10 @@ class OperatorCommandTests(unittest.TestCase):
         finally:
             store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS = original
         self.assertIn("Reindex started:", waited)
-        self.assertIn("Lexical    current (lexical-v3)", waited)
+        self.assertIn("Lexical    current (lexical-v2)", waited)
         self.assertTrue(waited.rstrip().endswith("Reindex complete."), waited)
         status = self.cli("status", "--project", "demo", *common)
-        self.assertIn("Lexical    current (lexical-v3)", status)
+        self.assertIn("Lexical    current (lexical-v2)", status)
         report = json.loads(self.cli("reindex", "--project", "demo", "--json", *common))
         self.assertIn(report["lexical"]["state"], {"rebuilding", "current"})
         # An agent's credential is not an admin one.

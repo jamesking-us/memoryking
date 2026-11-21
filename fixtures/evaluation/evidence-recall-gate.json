@@ -1,6 +1,6 @@
 {
   "sample": "longmemeval-regression-sample.json",
-  "measured": "pooled, 72 questions, as of each question's date, depth 32, budget 65536, ranking lexical-v2 at commit 165280c; thresholds sit about three questions' worth below the measurement. With lexical-v3 (passages) every threshold still holds except single-session-preference, whose twelve questions have almost no word overlap with their evidence: two of them moved out of the top ten sessions (0.8333 to 0.6667), so that one threshold was lowered from 0.75 to 0.58",
+  "measured": "pooled, 72 questions, as of each question's date, depth 32, budget 65536, ranking lexical-v2 at commit 165280c; thresholds sit about three questions' worth below the measurement",
   "minimum": {
     "session_recall_any_at_5": 0.81,
     "session_recall_any_at_10": 0.86,
@@ -21,7 +21,7 @@
       "knowledge-update": 0.9,
       "multi-session": 0.9,
       "single-session-assistant": 0.9,
-      "single-session-preference": 0.58,
+      "single-session-preference": 0.75,
       "single-session-user": 0.9,
       "temporal-reasoning": 0.5
     }

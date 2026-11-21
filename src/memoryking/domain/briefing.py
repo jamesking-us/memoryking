@@ -9,9 +9,8 @@ from typing import Any, Callable
 from memoryking.contracts.canonical import ContractError, canonical_bytes
 from memoryking.domain.lexicon import query_window
 
-CONFIGURATION = "lexical-v3"  # bm25 ranking over word forms, per passage
-PREVIOUS_CONFIGURATION = "lexical-v2"  # the same ranking over whole observations
-LEGACY_CONFIGURATION = "lexical-v1"  # term overlap; a store not rebuilt since then still ranks so
+CONFIGURATION = "lexical-v2"  # bm25 ranking over word forms; "lexical-v1" was term overlap
+LEGACY_CONFIGURATION = "lexical-v1"  # a store whose index was not rebuilt yet still ranks so
 COMPILER = "brief-json-v1"
 
 
