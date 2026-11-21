@@ -437,6 +437,30 @@ class SDKTests(unittest.TestCase):
             )
         )
 
+    def test_lean_advertised_budget_maximum_is_accepted_through_the_bridge(self):
+        from memoryking import lean
+
+        for tool in lean.TOOLS:
+            budget = tool["inputSchema"]["properties"].get("budget")
+            if budget is not None:
+                self.assertEqual(budget["maximum"], 65536, tool["name"])
+        top = lean.BUDGET["maximum"]
+        save = {
+            "task": "budget",
+            "objective": "Check budgets",
+            "current_state": "Started",
+            "next_actions": ["Resume"],
+        }
+        saved, recalled, resumed = self.lean_bridge(
+            [
+                ("save_progress", save),
+                ("recall", {"query": "budgets", "budget": top}),
+                ("resume", {"task": "budget", "budget": top}),
+            ]
+        )
+        for reply in (saved, recalled, resumed):
+            self.assertFalse(reply["isError"], reply)
+
     def test_lean_tools_with_a_scoped_constraint_block_without_a_binding_and_name_the_field(self):
         self.scoped_constraint()
         save = {

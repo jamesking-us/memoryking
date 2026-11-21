@@ -54,6 +54,7 @@ export interface Query {
   task?: string;
   run?: string;
   diagnostic?: boolean;
+  before_position?: number;
 }
 
 export interface OutcomeBody {

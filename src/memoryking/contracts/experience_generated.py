@@ -53,6 +53,7 @@ class Query(TypedDict):
     task: NotRequired[str]
     run: NotRequired[str]
     diagnostic: NotRequired[bool]
+    before_position: NotRequired[int]
 
 class OutcomeBody(TypedDict):
     task: str

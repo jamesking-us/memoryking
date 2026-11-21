@@ -682,7 +682,8 @@ class Working:
         """`own_state` is set only for the caller reading its own stream (action `resume`): when
         the sole blocker is that mandatory-constraint applicability is unknown, the checkpoint the
         caller is already authorized to read is returned beside the blocked status, with no
-        constraints. Every other consumer (handoff, adapter, summaries) still gets nothing."""
+        constraints, with the stream's operations and latest summary. Every other consumer
+        (handoff, adapter, summaries) still gets nothing."""
         at = decision.evaluated_ms
         row = self._checkpoint(who, args, at)
         body = json.loads(row["body"])
@@ -760,15 +761,27 @@ class Working:
             if mandatory.get("unbound_fields"):
                 base["unbound_fields"] = mandatory["unbound_fields"]
             if own_state and mandatory["reason"] == "applicability_unknown":
-                base["checkpoint"] = {
-                    "id": row["id"],
-                    "revision": row["revision"],
-                    "writer": row["writer"],
-                    "created_ms": row["created"],
-                    "body_hash": row["body_hash"],
-                    "compiler_revision": "checkpoint-v1",
-                    "state": body,
-                }
+                # The operations and summary the reader may see come with it: an earlier tool
+                # effect that is still uncertain must not be hidden because constraints are not
+                # resolved. Their dependencies are recorded as for an ordinary resume.
+                operations, operation_deps, operations_truncated = self._operations(
+                    who, args, at, include_all=True
+                )
+                deps.extend(operation_deps)
+                base.update(
+                    checkpoint={
+                        "id": row["id"],
+                        "revision": row["revision"],
+                        "writer": row["writer"],
+                        "created_ms": row["created"],
+                        "body_hash": row["body_hash"],
+                        "compiler_revision": "checkpoint-v1",
+                        "state": body,
+                    },
+                    operations=operations,
+                    operations_truncated=operations_truncated,
+                    summary=self.latest_summary(who, row["id"], at),
+                )
             else:
                 deps = []
         else:

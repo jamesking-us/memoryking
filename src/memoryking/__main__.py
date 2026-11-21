@@ -775,6 +775,7 @@ def main() -> int:
     inst.add_argument("--task", help="Task the hooks resume and checkpoint")
     inst.add_argument("--query", help="Fixed briefing query for session start")
     inst.add_argument("--cwd", type=Path, help="Project directory; default: current")
+    add_binding(inst)
     inst.add_argument("--print", action="store_true", help="Show the merged config, write nothing")
     inst.add_argument("--remove", action="store_true", help="Remove MemoryKing's hooks")
     rpc = commands.add_parser(
@@ -993,6 +994,7 @@ def main() -> int:
                 credential=args.credential if args.profile is None else None,
                 task=args.task,
                 query=args.query,
+                binding=args.binding,
                 remove=args.remove,
                 write=not args.print,
             )

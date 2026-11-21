@@ -441,6 +441,7 @@ def hook_command(
     credential: Path | None,
     task: str | None,
     query: str | None,
+    bindings: dict[str, str] | None = None,
 ) -> str:
     """The shell command a host runs; absolute paths so it works without the shell env."""
     parts = [json.dumps(sys.executable), "-m", "memoryking"]
@@ -455,6 +456,8 @@ def hook_command(
         parts += ["--task", task]
     if query and kind == "session-start":
         parts += ["--query", json.dumps(query)]
+    for key, value in sorted((bindings or {}).items()):
+        parts += ["--binding", json.dumps(f"{key}={value}")]
     return " ".join(parts)
 
 
@@ -534,11 +537,16 @@ def install(
     credential: Path | None = None,
     task: str | None = None,
     query: str | None = None,
+    binding: list[str] | None = None,
     remove: bool = False,
     write: bool = True,
 ) -> dict[str, Any]:
-    """Merge MemoryKing's three hooks into the host's config file (or show the result)."""
+    """Merge MemoryKing's three hooks into the host's config file (or show the result).
+
+    `binding` (`key=value` strings) is written into each command, so the hooks resolve
+    constraints as the MCP bridge does; a profile's or the environment's bindings still apply."""
     path = config_path(host, scope, cwd, home)
+    bindings = session_bindings.parse_pairs(binding or [])
     commands = {
         kind: hook_command(
             kind,
@@ -549,6 +557,7 @@ def install(
             credential=credential,
             task=task,
             query=query,
+            bindings=bindings,
         )
         for kind in KINDS
     }

@@ -21,6 +21,7 @@ VALIDATOR = Draft202012Validator(
 )
 POLICY = "reviewed-procedure-v1"
 LIMIT = 256
+LISTING_BYTES = 196608
 
 
 class Experience:
@@ -271,11 +272,27 @@ class Experience:
         position = self.db.execute(
             "SELECT position FROM tenants WHERE tenant=?", (tenant,)
         ).fetchone()[0]
+        # The reviewer diagnostic is a listing, not active-procedure resolution, so it pages:
+        # the newest revisions up to the bound, with `truncated` and `next_before_position`
+        # to continue with `before_position`. The briefing path stays complete-or-blocked.
+        listing = bool(args.get("diagnostic", False))
+        before = args.get("before_position")
         rows = self.db.execute(
-            "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project=? AND r.kind='procedure' ORDER BY r.created LIMIT 257",
-            (tenant, args["project"]),
+            "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project=? AND r.kind='procedure'"
+            + (" AND r.created<?" if listing and before is not None else "")
+            + (" ORDER BY r.created DESC" if listing else " ORDER BY r.created")
+            + " LIMIT ?",
+            (
+                tenant,
+                args["project"],
+                *((before,) if listing and before is not None else ()),
+                LIMIT + 1,
+            ),
         ).fetchall()
-        if len(rows) > LIMIT or len(points) > 32:
+        truncated = len(rows) > LIMIT
+        if listing:
+            rows = list(reversed(rows[:LIMIT]))
+        if (truncated and not listing) or len(points) > 32:
             return {"status": "blocked", "reason": "procedure_resolution_incomplete", "items": []}
         values: list[
             tuple[Any, dict[str, Any], str, bool, dict[str, Any] | None, bool, list[str]]
@@ -386,6 +403,17 @@ class Experience:
                     "execution_privileges": False,
                 }
             )
+        next_before = rows[0]["created"] if rows else None
+        if listing:
+            # A page also stays inside the response limit: drop the oldest items until it fits.
+            sizes = [len(canonical_bytes(i)) + 512 for i in items]
+            total = sum(sizes)
+            while len(items) > 1 and total > LISTING_BYTES:
+                total -= sizes.pop(0)
+                dropped = items.pop(0)
+                blockers = [b for b in blockers if b["revision"] != dropped["revision"]]
+                truncated = True
+                next_before = items[0]["created_position"]
         return {
             "status": "partial" if blockers else "complete",
             "items": items,
@@ -394,6 +422,8 @@ class Experience:
             "valid_ms": at,
             "policy": POLICY,
             "execution_privileges": False,
+            "truncated": listing and truncated,
+            "next_before_position": next_before if listing and truncated else None,
         }
 
     def verify_dependency(self, who: dict[str, Any], reference: str, at: int) -> None:
