@@ -27,6 +27,8 @@ LATER_TABLES = {
     "supersessions",
     "retirement_requests",
     "pins",
+    "consolidation_runs",
+    "unreviewed_tier",
 }
 
 

@@ -102,7 +102,7 @@ def enable_vector(admin: Any, roles: Roles | None = None) -> None:
 # columns or indexes that this build ignores, and nothing this build writes is read differently
 # by the newer one. Rolling upgrade order for an additive migration: migrate the database, then
 # restart services one at a time. Any other migration needs stop, migrate, start.
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 # Migration 13 -> 14 is not listed: the newer service finds receipts to delete on purge through
 # a join table the older one does not fill, so a mixed fleet could leave a receipt behind.
 ADDITIVE_MIGRATIONS: frozenset[int] = frozenset()
@@ -149,6 +149,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             "12",
             "13",
             "14",
+            "15",
         }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
@@ -201,6 +202,26 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
                 Path(__file__).with_name("postgres_retention_schema.sql").read_text()
             )
             connection.execute("UPDATE shared_meta SET value='14' WHERE key='schema'")
+        if version[0] in {
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+        }:
+            connection.execute(
+                Path(__file__).with_name("postgres_consolidation_schema.sql").read_text()
+            )
+            connection.execute("UPDATE shared_meta SET value='15' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [

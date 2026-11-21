@@ -704,6 +704,7 @@ class Inspection:
             "superseded": superseded,
         }
         waiting.sort(key=lambda item: (-item["age_ms"], item["revision"]))
+        drafts = self._drafts(tenant, project, frontier)
         backlog = {
             "proposed": len(waiting),
             "oldest_age_ms": waiting[0]["age_ms"] if waiting else None,
@@ -811,11 +812,57 @@ class Inspection:
             "briefings": briefings,
             "feedback": feedback,
             "claims": claims,
+            "drafts": drafts,
             "backlog": backlog,
             "signals": signals,
             "coverage": "counts_only_no_text_no_principals; retained_deliveries_in_window_only; latest_vote_per_actor_and_item; latest_revision_per_family; thresholds_fixed_not_learned",
             "source_position": frontier,
         }
+
+    def _drafts(self, tenant: str, project: str, frontier: int) -> dict[str, Any]:
+        """What each drafting method has produced and what reviewers made of it.
+
+        A draft is a claim or procedure whose provenance names a method (repeated
+        evidence, model consolidation, repeated outcome). Counts only, over the project's
+        newest 4,096 revisions, never windowed: `accepted` includes drafts accepted and
+        later deprecated, and a draft whose evidence was purged has no readable method, so
+        it is counted once under `purged`. The ratios say whether a method earns its keep."""
+        methods: dict[str, dict[str, int]] = {}
+        purged = 0
+        rows = self.db.execute(
+            "SELECT r.id,r.body,r.purged FROM revisions r JOIN families f ON f.tenant=r.tenant AND f.id=r.family WHERE r.tenant=? AND f.project=? AND r.kind IN ('knowledge','procedure') ORDER BY r.created DESC LIMIT 4097",
+            (tenant, project),
+        ).fetchall()
+        for row in rows[:4096]:
+            if row["purged"] or row["body"] is None:
+                purged += 1
+                continue
+            method = json.loads(row["body"]).get("provenance", {}).get("method")
+            if not isinstance(method, str):
+                continue
+            state, _ = self.r.k._state(tenant, row["id"], frontier)
+            entry = methods.setdefault(
+                method, {"drafted": 0, "accepted": 0, "rejected": 0, "waiting": 0}
+            )
+            entry["drafted"] += 1
+            entry[
+                {
+                    "accepted": "accepted",
+                    "deprecated": "accepted",
+                    "rejected": "rejected",
+                }.get(state, "waiting")
+            ] += 1
+        report = {}
+        for method, entry in sorted(methods.items()):
+            decided = entry["accepted"] + entry["rejected"]
+            report[method] = {
+                **entry,
+                "accepted_of_drafted_ppm": entry["accepted"] * 1_000_000 // entry["drafted"],
+                "accepted_of_decided_ppm": (
+                    entry["accepted"] * 1_000_000 // decided if decided else None
+                ),
+            }
+        return {"by_method": report, "purged": purged, "truncated": len(rows) > 4096}
 
     def trust_list(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
         from memoryking.adapters.trust import Trust
