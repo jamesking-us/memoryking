@@ -18,7 +18,15 @@ from memoryking.domain.local import LocalError
 from tools.postgres_dev_cluster import DevCluster
 
 BIN = Path(os.environ.get("MEMORYKING_PG_BIN", "tmp/postgres-dev/runtime/bin")).resolve()
-LATER_TABLES = {"credential_generations", "lexical_state", "lexical_projects", "lexical_terms"}
+LATER_TABLES = {
+    "credential_generations",
+    "lexical_state",
+    "lexical_projects",
+    "lexical_terms",
+    "supersessions",
+    "retirement_requests",
+    "pins",
+}
 
 
 @unittest.skipUnless((BIN / "pg_ctl").is_file(), "native PostgreSQL runtime not configured")
@@ -479,8 +487,8 @@ class PostgresStoreTests(unittest.TestCase):
             )
 
     def test_a_delegated_token_dies_when_its_issuer_or_its_subject_is_rotated(self):
-        # Decision: a delegated token carries the subject's generation (it acts as the
-        # subject) and the issuer's generation at delegation, so rotating either retires it.
+        # Decision: a delegated token acts as the issuer and also records the named
+        # subject's generation at delegation, so rotating either retires it.
         def usable(token):
             try:
                 with PostgresStore(
@@ -537,7 +545,7 @@ class PostgresStoreTests(unittest.TestCase):
             control = store.control
         self.assertEqual(2, manifest["blob_index"]["count"])
         self.assertNotIn("blobs", manifest)
-        self.assertEqual(9, manifest["schema"])
+        self.assertEqual(11, manifest["schema"])
         index = (archive / "blob-index").read_bytes()
         digests = index.decode().splitlines()
 

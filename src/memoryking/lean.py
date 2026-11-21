@@ -54,6 +54,10 @@ TOOLS: list[dict[str, Any]] = [
                     "maximum": 9007199254740991,
                     "description": "When you observed it, in Unix milliseconds. Default: today, to the day, so the same text replays all day.",
                 },
+                "supersedes": {
+                    **IDENTIFIER,
+                    "description": "Id of an earlier memory you can read that this replaces.",
+                },
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -214,6 +218,106 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+TOOLS += [
+    {
+        "name": "propose",
+        "description": (
+            "File a lasting fact or rule you believe is true, citing the memories it rests on, "
+            "so the user can review it. It becomes a proposal, never accepted knowledge; "
+            "nothing changes until the user confirms."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {**TEXT, "description": "The claim, as one clear statement."},
+                "evidence": {
+                    "type": "array",
+                    "items": IDENTIFIER,
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "description": "Ids of the remembered observations that support it.",
+                },
+            },
+            "required": ["text", "evidence"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+    {
+        "name": "confirm",
+        "description": (
+            "Record the user's decision on a proposal, after you asked them and they answered. "
+            "Quote their answer; never decide for them. Works only when the operator enabled "
+            "chat review and your credential may review."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "proposal": {**IDENTIFIER, "description": "The id propose returned."},
+                "decision": {"enum": ["accept", "reject"]},
+                "user_said": {**TEXT, "maxLength": 1024, "description": "The user's own words."},
+            },
+            "required": ["proposal", "decision", "user_said"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+    {
+        "name": "correct",
+        "description": (
+            "Replace a memory that is wrong or out of date. The old one stays as evidence but "
+            "briefings show the new text instead."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory": {**IDENTIFIER, "description": "Id of the memory to replace."},
+                "text": {**TEXT, "maxLength": 65536, "description": "The corrected text."},
+            },
+            "required": ["memory", "text"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+    {
+        "name": "forget",
+        "description": (
+            "Ask for a memory to be retired. You cannot delete: an admin approves, and until "
+            "then it is hidden from your briefings and marked for others."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory": {**IDENTIFIER, "description": "Id of the memory."},
+                "why": {**TEXT, "maxLength": 2048},
+            },
+            "required": ["memory", "why"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+]
+
 CATALOG: dict[str, Any] = {"protocol_version": "2025-11-25", "transport": "stdio", "tools": TOOLS}
 
 
@@ -257,8 +361,144 @@ def _event(source: str, text: str, observed_ms: int, project: str) -> str:
     )
 
 
-def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Run a lean tool through the full-profile client."""
+def _knowledge(
+    client: LocalClient, action: str, args: dict[str, Any], key: str | None = None
+) -> dict[str, Any]:
+    command: dict[str, Any] = {
+        "version": 1,
+        "incarnation": client.binding[-1],
+        "action": action,
+        "args": {"project": client.project, **args},
+    }
+    if key:
+        command["key"] = key
+    return client.knowledge(command)
+
+
+def _digest(*parts: Any) -> str:
+    return hashlib.sha256("\n".join(str(p) for p in parts).encode()).hexdigest()[:40]
+
+
+def _evidence(client: LocalClient, observation: str) -> dict[str, Any]:
+    """The whole observation as one evidence span, read as the caller (never beyond)."""
+    found = client.inspection(
+        {
+            "version": 1,
+            "incarnation": client.binding[-1],
+            "action": "catalog",
+            "args": {"project": client.project, "id": observation, "limit": 1},
+        }
+    )["items"]
+    if not found:
+        raise LocalError("evidence_unavailable")
+    return {
+        "observation": observation,
+        "start_byte": 0,
+        "end_byte": found[0]["bytes"],
+        "content_hash": found[0]["hash"],
+    }
+
+
+def _propose(client: LocalClient, arguments: dict[str, Any]) -> dict[str, Any]:
+    spans = [_evidence(client, o) for o in dict.fromkeys(arguments["evidence"])]
+    key = "agent-" + _digest(arguments["text"], *(s["observation"] for s in spans))
+    body = {
+        "text": arguments["text"],
+        "kind": "knowledge",
+        "selector": {"selector_version": "1", "any_of": [{"all_of": [{"op": "any"}]}]},
+        "valid_start": None,
+        "valid_end": None,
+        "task": None,
+        "run": None,
+        "readers": None,
+        "evidence": spans,
+        "authority": None,
+        "rule_key": None,
+        "effect": None,
+        "rule_value": None,
+        "provenance": {
+            "method": "agent_proposal_v1",
+            "proposed_by": client.binding[2],
+            "support": len(spans),
+        },
+    }
+    filed = _knowledge(
+        client, "propose", {"logical_key": key, "expected_version": 0, "body": body}, key
+    )
+    return {
+        "proposal": filed["revision"],
+        "state": "proposed",
+        "note": "Waiting for the user's review; it is not knowledge until accepted.",
+    }
+
+
+def _confirm(client: LocalClient, arguments: dict[str, Any]) -> dict[str, Any]:
+    """The user's decision, relayed. Only when the operator enabled chat review, and only
+    through the server's own review check; the record names the agent and the proposer."""
+    found = _knowledge(
+        client,
+        "query",
+        {
+            "bindings": [{}],
+            "diagnostic": True,
+            "revision": arguments["proposal"],
+            "kind": "knowledge",
+        },
+    )["items"]
+    if not found:
+        raise LocalError("unavailable")
+    item = found[0]
+    if item["state"] != "proposed":
+        raise LocalError("invalid_transition")
+    decision = arguments["decision"]
+    key = "chat-" + _digest(arguments["proposal"], decision, arguments["user_said"])
+    done = _knowledge(
+        client,
+        "review",
+        {
+            "revision": item["revision"],
+            "expected_version": item["family_version"],
+            "decision": decision,
+            "reason": "confirmed_in_chat" if decision == "accept" else "rejected_in_chat",
+            "note": "The user said: " + arguments["user_said"],
+            "channel": "chat",
+            "breadth_reviewed": True,
+        },
+        key,
+    )
+    return {"proposal": done["revision"], "state": done["state"]}
+
+
+def call(
+    client: LocalClient,
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    chat_review: bool = False,
+) -> dict[str, Any]:
+    """Run a lean tool through the full-profile client.
+
+    `chat_review` is the operator's switch (the bridge's `--allow-chat-review`); a model
+    cannot set it, and `confirm` refuses without it."""
+    if name == "propose":
+        return _propose(client, arguments)
+    if name == "confirm":
+        if not chat_review:
+            raise LocalError("chat_review_disabled")
+        return _confirm(client, arguments)
+    if name == "correct":
+        return call(
+            client,
+            "remember",
+            {"text": arguments["text"], "supersedes": arguments["memory"]},
+        )
+    if name == "forget":
+        return _knowledge(
+            client,
+            "retire",
+            {"observation": arguments["memory"], "note": arguments["why"]},
+            "forget-" + _digest(arguments["memory"], arguments["why"]),
+        )
     if name == "remember":
         source = arguments.get("source", "agent")
         # Replay needs identical bytes, so the default observed time is the day, not the
@@ -268,7 +508,11 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
         if observed is None:
             observed = int(time.time() * 1000) // DAY_MS * DAY_MS
         event = arguments.get("event") or _event(
-            source, arguments["text"], observed, client.project
+            source,
+            arguments["text"]
+            + (f"\n{arguments['supersedes']}" if "supersedes" in arguments else ""),
+            observed,
+            client.project,
         )
         return client.tool(
             "memory_capture",
@@ -281,6 +525,9 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
                     "readers": arguments.get("readers"),
                     "classification": arguments.get("classification", "internal"),
                     "observed_at_ms": observed,
+                    **(
+                        {"supersedes": arguments["supersedes"]} if "supersedes" in arguments else {}
+                    ),
                 },
             },
         )
@@ -288,7 +535,7 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
         args: dict[str, Any] = {
             "query": arguments["query"],
             "max_output_tokens": arguments.get("budget", 6000),
-            "format": "text",
+            "format": arguments.get("format", "text"),
         }
         if "task" in arguments:
             args["task"] = arguments["task"]

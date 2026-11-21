@@ -70,6 +70,7 @@ def parser() -> argparse.ArgumentParser:
         "end-maintenance",
         "rotate-owner",
         "journal-pending",
+        "compact-operations",
     ):
         item = commands.add_parser(name)
         item.add_argument("--dsn-file", type=Path, required=True)
@@ -82,7 +83,20 @@ def parser() -> argparse.ArgumentParser:
             )
         if name == "journal-pending":
             item.add_argument("--control", type=Path, required=True)
-        if name in {"init-tenant", "serve", "worker-once", "backup", "restore", "rotate-owner"}:
+        if name in {"serve", "worker-once", "backup", "compact-operations", "rotate-owner"}:
+            item.add_argument(
+                "--instance-id",
+                help="Name this deployment for the instance lease; set it on every process of a multi-host deployment (default: derived from the control directory)",
+            )
+        if name in {
+            "init-tenant",
+            "serve",
+            "worker-once",
+            "backup",
+            "restore",
+            "rotate-owner",
+            "compact-operations",
+        }:
             item.add_argument("--content", type=Path, required=True)
             item.add_argument("--control", type=Path, required=True)
             item.add_argument("--audience", default="memoryking-shared")
@@ -94,6 +108,7 @@ def parser() -> argparse.ArgumentParser:
             "end-maintenance",
             "rotate-owner",
             "journal-pending",
+            "compact-operations",
         }:
             item.add_argument("--tenant", required=True)
         if name == "end-maintenance":
@@ -105,8 +120,16 @@ def parser() -> argparse.ArgumentParser:
             )
         if name == "init-tenant":
             item.add_argument("--principal", default="owner")
-        if name in {"worker-once", "backup"}:
+        if name in {"worker-once", "backup", "compact-operations"}:
             item.add_argument("--credential", type=Path, required=True)
+        if name == "compact-operations":
+            item.add_argument(
+                "--archive-dir",
+                type=Path,
+                required=True,
+                help="Directory holding the retained archives; operation history they already "
+                "hold may be dropped, and none is without one",
+            )
         if name == "worker-once":
             item.add_argument("--project", required=True)
         if name == "backup":
@@ -260,7 +283,13 @@ def run(args: Any) -> dict[str, Any]:
                 raise LocalError("shared_tls_required")
             if args.tls_key:
                 private_file(args.tls_key)
-            service = SharedService(pool, args.content, args.control, audience=args.audience)
+            service = SharedService(
+                pool,
+                args.content,
+                args.control,
+                audience=args.audience,
+                instance_id=args.instance_id,
+            )
             if args.egress_policy is not None:
                 from memoryking.adapters.egress_policy import EgressPolicy
 
@@ -288,13 +317,29 @@ def run(args: Any) -> dict[str, Any]:
             return pending_journal(pool, args.control, args.tenant)
         if args.command == "rotate-owner":
             path = rotate_owner(
-                pool, args.content, args.control, args.tenant, audience=args.audience
+                pool,
+                args.content,
+                args.control,
+                args.tenant,
+                audience=args.audience,
+                instance_id=args.instance_id,
             )
             return {"credential_file": str(path), "rotated": True}
         credential = secret(args.credential)
         with PostgresStore(
-            pool, args.content, args.control, args.tenant, credential, audience=args.audience
+            pool,
+            args.content,
+            args.control,
+            args.tenant,
+            credential,
+            audience=args.audience,
+            instance_id=args.instance_id,
         ) as store:
+            if args.command == "compact-operations":
+                return {
+                    "status": "complete",
+                    "segments_dropped": store.compact_operations(args.archive_dir),
+                }
             if args.command == "worker-once":
                 lease = store.claim(credential, args.project)
                 if lease is None:

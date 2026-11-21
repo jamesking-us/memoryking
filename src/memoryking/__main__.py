@@ -135,6 +135,48 @@ def add_binding(parser: Any) -> None:
     )
 
 
+def failed_attempt(value: str) -> dict[str, str]:
+    action, arrow, outcome = value.partition("=>")
+    if not arrow or not action.strip() or not outcome.strip():
+        raise argparse.ArgumentTypeError('expected "action => outcome"')
+    return {"action": action.strip(), "outcome": outcome.strip()}
+
+
+def lean_command(args: Any) -> dict[str, Any]:
+    """Run the lean save_progress or resume tool for the CLI, through the same code."""
+    from memoryking import hooks, lean
+    from memoryking.adapters.stdio import LEAN_VALIDATORS
+    from memoryking.sdk import LocalClient
+
+    name = args.command.replace("-", "_")
+    arguments: dict[str, Any] = {"task": args.task, "run": args.run}
+    if name == "save_progress":
+        arguments.update(objective=args.objective, current_state=args.state)
+        for key, value in (
+            ("next_actions", args.next),
+            ("findings", args.finding),
+            ("blockers", args.blocker),
+            ("hard_constraints", args.constraint),
+            ("failed_attempts", args.failed),
+            ("share_with", args.share_with),
+        ):
+            if value:
+                arguments[key] = value
+    else:
+        arguments["budget"] = args.budget
+    if not LEAN_VALIDATORS[name].is_valid(arguments):
+        raise LocalError("invalid_tool_arguments")
+    socket, credential, project = hooks.connection_files(
+        profile=args.profile,
+        socket=args.socket,
+        credential=args.credential,
+        project=args.project,
+        config=args.config,
+    )
+    bindings = session_bindings.resolve(args.binding, profile=args.profile, config=args.config)
+    return lean.call(LocalClient(socket, credential, project, bindings=bindings), name, arguments)
+
+
 def summarize(args: Any) -> dict[str, Any]:
     """Extractive by default; with --provider, a policy adapter writes it through the audited path."""
     import uuid
@@ -268,6 +310,98 @@ def render_grants(items: list[dict[str, Any]]) -> str:
     return "\n".join("  ".join(c.ljust(widths[i]) for i, c in enumerate(r)).rstrip() for r in rows)
 
 
+def review_command(args: Any) -> int:
+    """`memoryking review ...`: the daemon decides authority; this only asks and prints."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    action = args.review_command
+    if action == "list":
+        found = [i for i in reviewer.waiting(args.kind) if i["created_position"] > args.after]
+        page, more = found[: args.limit], len(found) > args.limit
+        page = [reviewer.revision(i["revision"]) for i in page]
+        try:
+            asked = reviewer.retirements()["items"]
+        except LocalError as exc:
+            if exc.code != "denied":
+                raise
+            asked = []
+        if args.json:
+            report = {
+                "proposals": page,
+                "more": more,
+                "next_after": page[-1]["created_position"] if more else None,
+                "retirement_requests": asked,
+            }
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            return 0
+        for item in page:
+            print(reviewing.render(item, full=False))
+        if not page:
+            print("No proposals are waiting.")
+        if more:
+            print(f"More are waiting: continue with --after {page[-1]['created_position']}")
+        for entry in asked:
+            print(
+                f"{entry['request']}  retirement requested for {entry['observation']} by "
+                f"{entry['requested_by']}: {entry['note']}"
+            )
+            if entry.get("preview"):
+                print(f"    record: {entry['preview']!r}")
+        return 0
+    if action == "show":
+        item = reviewer.revision(args.id)
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(item) + b"\n")
+        else:
+            print(reviewing.render(item, full=True))
+        return 0
+    if action == "accept":
+        result = reviewer.accept(args.id, args.as_kind, args.reason, args.effect)
+        print(json.dumps(result if args.json else {**result["accepted"], "state": "accepted"}))
+        return 0
+    if action == "reject":
+        item = reviewer.revision(args.id, excerpts=False)
+        result = reviewer.decide(item, "reject", "rejected_in_cli", args.reason)
+        print(json.dumps(result))
+        return 0
+    decision = "approve" if action == "retire-approve" else "dismiss"
+    args_: dict[str, Any] = {
+        "request": args.id,
+        "decision": decision,
+        "reason": "approved_in_cli" if decision == "approve" else "dismissed_in_cli",
+    }
+    if args.reason:
+        args_["note"] = args.reason
+    result = reviewer.call("retire_decide", args_, "cli-retire-" + decision + "-" + args.id)
+    print(json.dumps(result))
+    return 0
+
+
+def pin_command(args: Any) -> None:
+    """`memoryking pin add|remove|list`: a policy decision by an admin or reviewer."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    if args.pin_command == "list":
+        report = reviewer.call("pins", {})
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            return
+        for pin in report["items"]:
+            print(f"{pin['target_kind']:<12} {pin['target']}  (pinned by {pin['pinned_by']})")
+        if not report["items"]:
+            print("Nothing is pinned.")
+        return
+    kind, target = ("claim", args.claim) if args.claim else ("observation", args.observation)
+    result = reviewer.call(
+        "pin",
+        {"mode": args.pin_command, "target_kind": kind, "target": target},
+        f"cli-pin-{args.pin_command}-{kind}-{target}-{int(time.time() * 1000)}",
+    )
+    print(json.dumps(result))
+
+
 def read_credential(path: Path) -> str:
     private_file(path)
     return path.read_text().strip()
@@ -306,10 +440,10 @@ def doctor(
     def record(level: str, name: str, detail: str) -> None:
         findings.append((level, name, detail))
 
-    if sys.version_info[:2] == (3, 12):
+    if sys.version_info[:2] in {(3, 12), (3, 13)}:
         record("ok", "python", sys.version.split()[0])
     else:
-        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12")
+        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12 or 3.13")
     for label, path in (("store", store), ("control", control)):
         try:
             private_dir(path)
@@ -603,6 +737,11 @@ def main() -> int:
         cmd = commands.add_parser(name)
         cmd.add_argument("--store", type=Path)
         cmd.add_argument("--control", type=Path)
+        if name in {"serve", "backup", "gc"}:
+            cmd.add_argument(
+                "--instance-id",
+                help="Name this deployment for the instance lease; set it on every process of a multi-host deployment (default: derived from the control directory)",
+            )
         if name == "serve":
             cmd.add_argument(
                 "--dashboard-port",
@@ -695,6 +834,9 @@ def main() -> int:
     )
     rotate_owner.add_argument("--store", type=Path)
     rotate_owner.add_argument("--control", type=Path)
+    rotate_owner.add_argument(
+        "--instance-id", help="The id the running instance uses, when it sets one"
+    )
     for name in ("issue", "list", "revoke"):
         item = cred_commands.add_parser(name)
         item.add_argument("--socket", type=Path)
@@ -720,7 +862,7 @@ def main() -> int:
     )
     summ.add_argument("--socket", type=Path)
     summ.add_argument("--credential", type=Path)
-    summ.add_argument("--project", required=True)
+    summ.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     summ.add_argument("--task", required=True)
     summ.add_argument("--run")
     summ.add_argument("--egress-policy", type=Path, help="With --provider: the daemon's policy")
@@ -755,7 +897,7 @@ def main() -> int:
     cap = commands.add_parser("capture", help="Save one observation from text or stdin")
     cap.add_argument("--socket", type=Path)
     cap.add_argument("--credential", type=Path)
-    cap.add_argument("--project", required=True)
+    cap.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     cap.add_argument("--text", help="The observation; omit to read it from stdin")
     cap.add_argument("--source", default="cli", help="Where it came from, e.g. git or pytest")
     cap.add_argument("--event", help="Stable event id so a rerun replays; default: a text hash")
@@ -770,11 +912,23 @@ def main() -> int:
         type=int,
         help="Observation time in Unix ms; default is today to the day so a rerun replays",
     )
+    cap.add_argument(
+        "--supersedes",
+        metavar="OBSERVATION",
+        help="An earlier observation you can read that this one replaces; it stays as evidence "
+        "but briefings prefer this one",
+    )
     rec = commands.add_parser("recall", help="Print a cited Markdown briefing for a query")
     rec.add_argument("--socket", type=Path)
     rec.add_argument("--credential", type=Path)
-    rec.add_argument("--project", required=True)
-    rec.add_argument("--query", required=True)
+    rec.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+    rec.add_argument("--query", help="What you are about to work on (or use --start)")
+    rec.add_argument(
+        "--start",
+        action="store_true",
+        help="No query: constraints, pinned items, the task's last checkpoint and recent decisions",
+    )
+    rec.add_argument("--days", type=int, help="With --start: how far back recent decisions go")
     rec.add_argument("--budget", type=int, default=6000)
     rec.add_argument("--task")
     rec.add_argument(
@@ -792,6 +946,84 @@ def main() -> int:
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     add_binding(rec)
+    sp = commands.add_parser(
+        "save-progress", help="Save where a task stands (the lean save_progress tool)"
+    )
+    res = commands.add_parser(
+        "resume", help="Print a task's latest saved progress (the lean resume tool)"
+    )
+    for item in (sp, res):
+        item.add_argument("--socket", type=Path)
+        item.add_argument("--credential", type=Path)
+        item.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        item.add_argument("--task", required=True, help="Task id, stable across sessions")
+        item.add_argument("--run")
+        item.add_argument("--json", action="store_true", help="Print the structured result")
+        add_binding(item)
+    sp.add_argument("--objective", required=True)
+    sp.add_argument("--state", required=True, help="Where the task stands now")
+    sp.add_argument("--next", action="append", metavar="ACTION", help="Repeatable")
+    sp.add_argument("--finding", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument("--blocker", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument("--constraint", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument(
+        "--failed",
+        action="append",
+        type=failed_attempt,
+        metavar='"ACTION => OUTCOME"',
+        help="A failed attempt and why; repeatable",
+    )
+    sp.add_argument("--share-with", action="append", metavar="PRINCIPAL", help="Repeatable")
+    res.add_argument("--budget", type=int, default=12000)
+    rv = commands.add_parser(
+        "review", help="Review waiting proposals and retirement requests from the terminal"
+    )
+    rv_commands = rv.add_subparsers(dest="review_command", required=True)
+    for name, text in (
+        ("list", "List proposals waiting for a decision, oldest first, with their evidence"),
+        ("show", "Show one proposal in full"),
+        ("accept", "Accept a proposal (knowledge, or --as constraint)"),
+        ("reject", "Reject a proposal; --reason is required"),
+        ("retire-approve", "Approve a retirement request: purge the record (admin)"),
+        ("retire-dismiss", "Dismiss a retirement request; the record stays"),
+    ):
+        sub = rv_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
+        if name == "list":
+            sub.add_argument("--limit", type=int, default=10, help="Proposals per page")
+            sub.add_argument("--after", type=int, default=0, help="Continue after this position")
+            sub.add_argument("--kind", choices=("knowledge", "constraint"), default="knowledge")
+        else:
+            sub.add_argument("id", help="A revision id, or a retirement request id")
+        if name == "accept":
+            sub.add_argument("--as", dest="as_kind", choices=("knowledge", "constraint"))
+            sub.add_argument(
+                "--effect",
+                choices=("require", "prohibit"),
+                default="require",
+                help="With --as constraint: whether the text requires or prohibits",
+            )
+        if name in {"accept", "reject", "retire-approve", "retire-dismiss"}:
+            sub.add_argument(
+                "--reason",
+                required=name in {"reject", "retire-dismiss"},
+                help="Why, in your own words; recorded with the decision",
+            )
+    pn = commands.add_parser("pin", help="Keep an accepted claim or observation in session start")
+    pn_commands = pn.add_subparsers(dest="pin_command", required=True)
+    for name in ("add", "remove", "list"):
+        sub = pn_commands.add_parser(name)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
+        if name != "list":
+            target = sub.add_mutually_exclusive_group(required=True)
+            target.add_argument("--claim", metavar="REVISION_OR_FAMILY")
+            target.add_argument("--observation", metavar="OBSERVATION")
     dr = commands.add_parser(
         "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
     )
@@ -865,7 +1097,9 @@ def main() -> int:
     hk.add_argument("--credential", type=Path)
     hk.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
-    hk.add_argument("--query", help="Briefing query at session start; default: task or project")
+    hk.add_argument(
+        "--query", help="Briefing query at session start; default: the query-free session start"
+    )
     hk.add_argument("--budget", type=int, default=6000)
     add_binding(hk)
     hk.add_argument(
@@ -945,9 +1179,17 @@ def main() -> int:
                 "influence",
                 "trust",
                 "draft-proposals",
+                "save-progress",
+                "resume",
+                "review",
+                "pin",
             }
             else set()
         )
+        if args.command in {"capture", "recall", "summarize"} and args.project is None:
+            args.project = os.environ.get("MEMORYKING_PROJECT")
+            if not args.project:
+                raise LocalError("project_required")
         for field in ("store", "control", "socket", "credential"):
             if hasattr(args, field) and getattr(args, field) is None and field not in optional:
                 raise LocalError(field + "_required")
@@ -1025,6 +1267,7 @@ def main() -> int:
                 readers=args.readers.split(",") if args.readers else None,
                 classification=args.classification,
                 observed_ms=args.observed_ms,
+                supersedes=args.supersedes,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
@@ -1033,20 +1276,36 @@ def main() -> int:
         elif args.command == "recall":
             from memoryking import hooks
 
-            packet = hooks.recall(
-                args.query,
-                budget=args.budget,
-                text=not args.json,
-                task=args.task,
-                as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
-                salience=args.salience,
-                rerank=args.rerank,
-                binding=args.binding,
-                socket=args.socket,
-                credential=args.credential,
-                project=args.project,
-                profile=args.profile,
-                config=args.config,
+            if bool(args.query) == bool(args.start):
+                raise LocalError("invalid_request")
+            where = {
+                "socket": args.socket,
+                "credential": args.credential,
+                "project": args.project,
+                "profile": args.profile,
+                "config": args.config,
+            }
+            packet = (
+                hooks.start(
+                    budget=args.budget,
+                    text=not args.json,
+                    task=args.task,
+                    days=args.days,
+                    binding=args.binding,
+                    **where,
+                )
+                if args.start
+                else hooks.recall(
+                    args.query,
+                    budget=args.budget,
+                    text=not args.json,
+                    task=args.task,
+                    as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
+                    salience=args.salience,
+                    rerank=args.rerank,
+                    binding=args.binding,
+                    **where,
+                )
             )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(packet) + b"\n")
@@ -1133,7 +1392,7 @@ def main() -> int:
         elif args.command == "journal":
             print(json.dumps(LocalStore.pending_journal(args.store, args.control)))
         elif args.command == "credential" and args.credential_command == "rotate-owner":
-            path = LocalStore.rotate_owner(args.store, args.control)
+            path = LocalStore.rotate_owner(args.store, args.control, instance_id=args.instance_id)
             print(json.dumps({"owner_credential": str(path), "rotated": True}))
         elif args.command == "credential":
             credential = read_credential(args.credential)
@@ -1168,6 +1427,14 @@ def main() -> int:
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command in {"save-progress", "resume"}:
+            result = lean_command(args)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+            elif args.command == "resume":
+                print(result["text"], end="")
+            else:
+                print(json.dumps({k: result[k] for k in ("task", "revision", "id") if k in result}))
         elif args.command == "summarize":
             result = summarize(args)
             if args.json:
@@ -1178,6 +1445,12 @@ def main() -> int:
                     f"receipt {result['receipt']} · {result['method']} · "
                     f"checkpoint {result['checkpoint']} revision {result['revision']}"
                 )
+        elif args.command == "review":
+            outcome = review_command(args)
+            if outcome:
+                return outcome
+        elif args.command == "pin":
+            pin_command(args)
         elif args.command == "draft-proposals":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})
@@ -1390,7 +1663,9 @@ def main() -> int:
                 result["credential_file"] = str(args.credential_output)
             sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
         else:
-            with LocalStore(args.store, args.control) as store:
+            with LocalStore(
+                args.store, args.control, instance_id=getattr(args, "instance_id", None)
+            ) as store:
                 if args.command == "serve":
                     configure(args.log_level, trace=args.trace)
                     if args.egress_policy is not None:

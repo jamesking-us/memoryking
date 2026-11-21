@@ -18,6 +18,12 @@ WARNING_NOTES = {
     "optional_coverage_uncalibrated": "Optional guidance coverage is not calibrated.",
     "procedures_require_current_query": "Procedures are withheld from an as-of or historical briefing.",
 }
+START_HEADINGS = {
+    "pinned": "Pinned",
+    "last_checkpoint": "Where the last session left off",
+    "recent_decision": "Recent decisions",
+    "user_decision": "Recent decisions",
+}
 ENVELOPE_FIELDS = (
     "version",
     "status",
@@ -75,6 +81,8 @@ def _missing_fields(packet: dict[str, Any]) -> str:
 def _qualifier(item: dict[str, Any], notes: list[str] | None = None) -> str:
     parts = [str(item[k]) for k in ("authority", "assurance", "selection_reason") if item.get(k)]
     parts.extend(notes or [])
+    if item.get("retirement_requested"):
+        parts.append("retirement requested")
     return f" _({'; '.join(parts)})_" if parts else ""
 
 
@@ -134,28 +142,53 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
             sources.append(line)
             entries.append(entry)
     guidance = packet.get("guidance", [])
+    start = packet.get("mode") == "start"
     if guidance:
-        # Reviewed knowledge and raw observations are different things: accepted
-        # knowledge was decided on, observations are what an actor reported.
-        accepted = [i for i in guidance if i.get("authority") != "observed_episode"]
-        unreviewed = [i for i in guidance if i.get("authority") == "observed_episode"]
-        number = 0
-        for heading, items in (
-            ("Accepted knowledge", accepted),
-            ("Unreviewed observations", unreviewed),
-        ):
-            if not items:
-                continue
-            lines.extend(["", f"## {heading}"])
-            for item in items:
-                number += 1
+        if start:
+            lines.extend(["", "## Session start"])
+            heading = None
+            for number, item in enumerate(guidance, 1):
                 tag = f"g{number}"
-                lines.append(
-                    f"{number}. **[{tag}]** {item.get('text', '')}{_qualifier(item, _notes(item))}"
-                )
+                if item.get("selection_reason") != heading:
+                    heading = item.get("selection_reason")
+                    lines.extend(["", f"### {START_HEADINGS.get(str(heading), str(heading))}"])
+                lines.append(f"{number}. **[{tag}]** {item.get('text', '')}{_qualifier(item)}")
                 line, entry = _item_source(tag, item)
                 sources.append(line)
                 entries.append(entry)
+        else:
+            # Reviewed knowledge and raw observations are different things: accepted
+            # knowledge was decided on, observations are what an actor reported.
+            accepted = [i for i in guidance if i.get("authority") != "observed_episode"]
+            unreviewed = [i for i in guidance if i.get("authority") == "observed_episode"]
+            number = 0
+            for heading, items in (
+                ("Accepted knowledge", accepted),
+                ("Unreviewed observations", unreviewed),
+            ):
+                if not items:
+                    continue
+                lines.extend(["", f"## {heading}"])
+                for item in items:
+                    number += 1
+                    tag = f"g{number}"
+                    lines.append(
+                        f"{number}. **[{tag}]** {item.get('text', '')}"
+                        f"{_qualifier(item, _notes(item))}"
+                    )
+                    line, entry = _item_source(tag, item)
+                    sources.append(line)
+                    entries.append(entry)
+    elif start and not packet.get("reason"):
+        lines.extend(
+            [
+                "",
+                "## Session start",
+                "",
+                "Nothing is recorded for this project yet under current permissions: no"
+                " constraints, pinned items, checkpoint for the task, or recent decisions.",
+            ]
+        )
     elif not packet.get("reason"):
         lines.extend(["", "## Guidance", "", "No relevant memory under current permissions."])
     conflicts = packet.get("conflicts", [])

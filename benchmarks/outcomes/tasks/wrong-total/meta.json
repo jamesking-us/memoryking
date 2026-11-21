@@ -1,0 +1,19 @@
+{
+  "id": "wrong-total",
+  "title": "Find why large-account export totals drift",
+  "kind": "failed_approach",
+  "carries": [
+    "The cents drift is not caused by the HALF_EVEN rounding change or the BATCH size: reverting the rounding mode leaves the same differences. It comes from rounding each batch's subtotal before adding them; the fix is to accumulate exactly and round once, keeping HALF_EVEN.",
+    "Only the production sample (removed between sessions) shows the drift; the visible tests use small accounts."
+  ],
+  "why_not_in_repo": "Session 1 changes no code and the replay tool and production sample are deleted between the sessions. CHANGES.txt points at the rounding mode as the likely culprit, and the visible tests use accounts below one batch, so nothing on disk shows that the mode change is innocent.",
+  "between": true,
+  "stub": {
+    "learn": [
+      "Failed: reverting rounding from HALF_EVEN to HALF_UP does not remove the cents drift in the export, so the rounding mode is not the cause. Changing BATCH size to 100000 makes the drift vanish.",
+      "Fact: the drift comes from export/pipeline.py account_total rounding each batch subtotal with money() before adding. Fix: add the exact amounts across batches and round once at the end, keep HALF_EVEN because finance asked for it."
+    ],
+    "recall_query": "export totals drift cents rounding batch reverting HALF_EVEN",
+    "must_recall": ["round once", "does not remove"]
+  }
+}

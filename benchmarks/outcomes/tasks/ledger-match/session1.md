@@ -1,0 +1,3 @@
+`recon.match.reconcile` is too slow at month-end volumes (around 20,000 lines on each side): it compares every bank line with every ledger entry. I'd like it indexed instead. One firm requirement: finance diffs the pairings month over month, so the pairs it produces have to stay exactly what the current code produces. `tools/replay_prod.py` replays last month's production statements and tells you how many of the signed-off pairs differ.
+
+For now, please only find out how to do this safely. Try the obvious indexing approaches and check them against the replay, then tell me which ones change the pairings, why, and what does work. Leave `recon/` as you found it, so we can decide on the change together.

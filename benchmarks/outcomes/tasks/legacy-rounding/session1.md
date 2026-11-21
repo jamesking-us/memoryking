@@ -1,0 +1,3 @@
+Please add `shop/cart.py` with a function `summary(items, tax_rate)` that returns a dict with two keys: `lines`, a list of `(name, qty, line_total)` tuples (the name comes from each item's `name`), and `total`, the amount charged for the cart. Add a test for it.
+
+Two ground rules for this repo that apply to everything we do here. `legacy/` is vendored from the payments team and gets overwritten on their next sync, so don't edit anything under it; if something there needs fixing, fix it on our side. And other services call `pricing.total(items, tax_rate)`, so its signature stays exactly as it is.

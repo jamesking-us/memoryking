@@ -1,0 +1,3 @@
+Please add `alerts/rules.py` with `evaluate(samples, rules)`. `samples` maps a host name to a dict of metric values and each rule is a dict like the one in the README (operators `>`, `<`, `>=` and `<=`). It returns a list of `Alert` objects for every host and rule that fires, with the message in the form `cpu=95 > 90`, ordered by host and then rule name. A host that has no value for the rule's metric is skipped. Add tests.
+
+For context on where this is going: we decided that delivery will go through the webhook sink only, since ops has moved off e-mail, so nothing should send mail. The sink won't be wired in this task. Also, `info` alerts are only for the dashboard and are never delivered anywhere. I'll ask for the delivery step next time.

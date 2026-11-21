@@ -55,11 +55,69 @@ context = client.context()
 
 Use a scoped agent credential for real integrations; the owner credential is for initial setup. The client binds store, tenant, principal, project and history. It refuses to silently move to a different context after restore or identity change.
 
-Client methods include `capture`, `retrieval`, `working`, `handoff`, `repository`, `embedding`, `processing` and `experience`. Requests use versioned JSON schemas, not free-form option dictionaries. See the [API reference](reference.md#interfaces) and executable examples for full request bodies.
+Besides the everyday methods in [Using the client libraries](#using-the-client-libraries), client methods include `capture`, `retrieval`, `working`, `handoff`, `repository`, `embedding`, `processing` and `experience`. Requests use versioned JSON schemas, not free-form option dictionaries. See the [API reference](reference.md#interfaces) and executable examples for full request bodies.
 
 For capture, keep a stable key and stable source-event identity for the same event. Changed bytes with the same identity produce a conflict. Save the exact request before dispatch; do not create a new identity merely to make an uncertain retry succeed. After a history change, reconcile first. The client captures in a named namespace (`namespace="sdk"` by default) that is deterministic for the principal, so the same key from any process replays the same result or reports `idempotency_conflict`; pass a different `namespace` to keep two integrations' keys apart.
 
 `SharedClient` in `memoryking.shared_sdk` provides the shared HTTP transport with tenant/project binding and verified TLS. It rejects redirects and does not automatically retry mutations.
+
+## Using the client libraries
+
+Three clients cover the everyday five operations, with the same names and meaning as the [lean MCP tools](#lean-profile-for-any-host): `remember`, `recall`, `save_progress` (`saveProgress` in TypeScript), `resume` and `hand_off` (`handOff`). Each call goes through the same authorization, receipts, idempotency and budgets as the tool of that name. In Python the method and the tool share one implementation; the TypeScript client follows the same steps over the shared service's MCP endpoint, and its tests run against a real service.
+
+### Python
+
+`LocalClient` (Unix socket) and `SharedClient` (HTTPS) both have the methods. Results are small frozen dataclasses (`Remembered`, `Briefing`, `Progress`, `Resumed`, `HandOff`); the service's whole reply is `.raw`. Bad arguments raise `LocalError` with code `invalid_tool_arguments` before any request, and every `LocalError` carries a `hint`.
+
+```python
+from memoryking.client import MemoryKing
+
+with MemoryKing.connect() as memory:  # profile or MEMORYKING_* variables, like the CLI
+    memory.remember("Raising every timeout exceeded the total retry deadline.", source="pytest")
+    briefing = memory.recall("timeouts", budget=4000)  # as_of=..., rerank=True, format="json"
+    print(briefing.status, briefing.text)
+    memory.save_progress("retry-fix", "Fix the retry deadline", "Investigating",
+                         next_actions=["Run the regression"], share_with=["reviewer"])
+    print(memory.resume("retry-fix").text)
+    memory.hand_off("retry-fix", "reviewer")
+```
+
+`connect()` reads `MEMORYKING_PROFILE`, or `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL`, with `MEMORYKING_PROJECT` and `MEMORYKING_BINDINGS`, exactly as the command line does. With `MEMORYKING_URL` (or `url=`), `MEMORYKING_TENANT` and `MEMORYKING_CREDENTIAL` it returns a `SharedClient`; `MEMORYKING_CA_FILE` names a private certificate authority. The context manager holds no connection; it exists so code can scope a client the same way for every transport.
+
+The async clients, `AsyncLocalClient` and `AsyncSharedClient` (or `await MemoryKing.aconnect()`), have the same five methods as coroutines and use only the standard library. They run the synchronous client on worker threads with `asyncio.to_thread`: the client's current-context checks, defaults, idempotency keys and checkpoint merging are one synchronous code path shared by both transports, and Python's standard library has no async HTTPS client, so a native async copy would duplicate security-relevant logic. The event loop never blocks and calls from different tasks run concurrently. Cancelling a task does not cancel a request already sent, so a cancelled write may still have been applied; retry it with the same `event` (for `remember`) or read the task's `revision` first.
+
+```python
+async with await MemoryKing.aconnect() as memory:
+    briefing = await memory.recall("timeouts")
+```
+
+Run [the executable example](../examples/client_python.py) with `.venv/bin/python examples/client_python.py`.
+
+### TypeScript
+
+`@memoryking/client` lives in `packages/client`, a second workspace package beside the contracts, because the npm workspace already builds every package together and the client needs the contracts' generated types. It is ready to publish (Apache-2.0, `files`, README) but is not published yet; the contracts package stays private. It needs Node 22, has no runtime dependencies and is an ES module.
+
+```ts
+import { MemoryKing, MemoryKingError } from "@memoryking/client";
+
+const memory = MemoryKing.connect(); // MEMORYKING_URL, _TENANT, _PROJECT, _CREDENTIAL (a file path)
+await memory.remember("Raising every timeout exceeded the total retry deadline.");
+const briefing = await memory.recall("timeouts", { budget: 4000 });
+await memory.saveProgress("retry-fix", "Fix the retry deadline", "Investigating", {
+  nextActions: ["Run the regression"],
+  shareWith: ["reviewer"],
+});
+const note = await memory.resume("retry-fix");
+try {
+  await memory.handOff("retry-fix", "reviewer");
+} catch (error) {
+  if (error instanceof MemoryKingError) console.error(error.code, error.hint);
+}
+```
+
+`MemoryKing` talks to the shared service over HTTPS (plain `http` only to loopback with `loopbackHttp: true`). Failures throw `MemoryKingError` carrying the service's `code` and `hint`. A private certificate authority is trusted through Node's `NODE_EXTRA_CA_CERTS`.
+
+The local daemon's loopback agent endpoint (`POST /api/v1/retrieval`, see [Dashboard agent endpoint](reference.md#dashboard-agent-endpoint)) serves retrieval commands only. `MemoryKingLocal` therefore has `recall` and nothing else, and needs the dashboard port and the store's history id (`History` in `memoryking status`). A local program that writes uses the Python client or the stdio MCP bridge, or the shared service. The [TypeScript example](../examples/client_typescript.mjs) recalls from a real local daemon; run it with `npm run build` then `.venv/bin/python examples/client_typescript.py`. The write operations are exercised by `tests/js/client.test.mjs` against a real shared service when PostgreSQL is available (`MEMORYKING_PG_BIN`); without it that test is skipped.
 
 ## MCP integration
 
@@ -97,7 +155,7 @@ The shared profile also exposes authenticated Streamable HTTP MCP at `/v1/tenant
 
 ### Lean profile for any host
 
-Add `--profile lean` to the bridge command and the host sees five flat tools instead of nine schema-heavy ones: `remember`, `recall`, `save_progress`, `resume` and `hand_off`. Their catalog is under 8 KB with no `oneOf`, every call has defaults, briefings and resumes come back as cited Markdown, and each tool maps onto the full profile through the same client, so authorization, receipts and idempotency are unchanged. The catalog is in [`contracts/stdio.tools.lean.json`](../contracts/stdio.tools.lean.json). Use the full profile when a program, not a model, drives the tools.
+Add `--profile lean` to the bridge command and the host sees nine flat tools instead of the full profile's schema-heavy ones: `remember`, `recall`, `save_progress`, `resume` and `hand_off`, plus `propose`, `confirm`, `correct` and `forget` for [reviewing and correcting memory](#reviewing-and-correcting-memory). Their catalog is under 10 KB with no `oneOf`, every call has defaults, briefings and resumes come back as cited Markdown, and each tool maps onto the full profile through the same client, so authorization, receipts and idempotency are unchanged. The catalog is in [`contracts/stdio.tools.lean.json`](../contracts/stdio.tools.lean.json). Use the full profile when a program, not a model, drives the tools.
 
 Lean `save_progress` merges: a section you leave out (`next_actions`, `hard_constraints`, `findings`, `failed_attempts`, `blockers`) keeps what the task stream's latest save recorded, a section you send replaces it, and an empty list clears it. If the stream exists but cannot be read back, the save is refused rather than replacing it blind. Each save passes the revision it merged from, so two racing writers conflict instead of overwriting. Findings are saved as `hypothesis` findings with no evidence; attach evidence through the full profile. The full profile's `memory_checkpoint` keeps explicit replace semantics.
 
@@ -188,7 +246,8 @@ Before stopping, an agent should capture its findings, save its checkpoint, then
 MemoryKing never reads a conversation on its own, but it is easy to feed from the places where evidence appears. Every route below uses the ordinary authorized capture with a deterministic event id derived from the project, the observed day and the full text, so re-running a hook replays instead of duplicating while the same text on another day or in another project is a new observation, and all of them work whatever model drives the agent.
 
 - **From any model, on any host:** the `remember` tool in the lean profile, or `memory_capture` in the full one. This is the one path that needs no shell access.
-- **From a shell:** `memoryking --profile home capture --project demo --source git --event "commit-$(git rev-parse HEAD)" --text "$(git log -1 --format=%s)"`, or pipe text on stdin. `memoryking recall --project demo --query "retry deadline"` prints the cited Markdown briefing. Connection details also come from `MEMORYKING_PROFILE`, or `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL`, with `MEMORYKING_PROJECT`.
+- **From a shell:** `memoryking --profile home capture --project demo --source git --event "commit-$(git rev-parse HEAD)" --text "$(git log -1 --format=%s)"`, or pipe text on stdin. `memoryking recall --project demo --query "retry deadline"` prints the cited Markdown briefing. Connection details also come from `MEMORYKING_PROFILE`, or `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL`, with `MEMORYKING_PROJECT` as the default for `--project` in `capture`, `recall`, `summarize`, `save-progress` and `resume`.
+- **Checkpoints from a shell:** a shell-only agent can save and read task progress with the same code as the lean `save_progress` and `resume` tools: `memoryking save-progress --task fix-retry --objective "Fix the retry deadline" --state "Backoff exceeds the deadline" --next "Run the regression" --next "Update the changelog" --finding "Raising every timeout hides it" --blocker "Need a full regression run" --failed "Raise every timeout => still failed"`, then `memoryking resume --task fix-retry`. Only `--task`, `--objective` and `--state` are required; `--next`, `--finding`, `--blocker`, `--constraint`, `--failed "action => outcome"` and `--share-with` repeat. A section left out keeps what the last save recorded, as in the tool; `--json` prints the structured result.
 - **From pytest:** `pytest -p memoryking.pytest_plugin` with those environment variables set records each failing test's id and report tail under source `pytest`. Without the variables it stays silent, and a capture error never fails the run.
 - **From git:** a `post-commit` hook that runs the capture command above records each commit as an observation.
 - **From Claude Code:** a `PostToolUse` hook on `Bash` that pipes the tool's output into `memoryking capture --source claude-code` when the command was a test or build. Codex and other hosts with shell hooks use the same command; hosts without hooks rely on the model calling `remember`.
@@ -199,6 +258,16 @@ Hook captures record the observation time to the day unless `--observed-ms` is g
 ## Drafts that never accept themselves
 
 Every other memory system lets a model extract facts on write. MemoryKing keeps its review layer and adds a drafting pass instead: `memoryking draft-proposals --project demo` (or the `knowledge` action `draft`, or the **Draft proposals** button in the dashboard's Review view) looks at the newest 512 visible observations for a name that several independent observations share, an anchor first (a path, ticket, host, symbol or error code) and failing that a rare term, takes the most recent sentence that carries it, and files an ordinary proposal with one evidence span per supporting observation. Two captures of the same event are one occurrence, not repetition. The draft is a `knowledge` claim in state `proposed`, its provenance names the method, topic and support, it carries the drafting principal, and it waits in the review queue like any proposal: nothing it writes becomes a constraint, a guide or accepted knowledge until a reviewer accepts it. A repeated run with the same evidence files nothing; new evidence on a known topic files a new revision on the same family, which a reviewer sees as a superseding proposal. Drafting needs the capture capability and is replay-safe under its retry key. It is deterministic and uses no model; a provider-written draft can be admitted later only through the egress policy, the way summaries are.
+
+## Reviewing and correcting memory
+
+**Review from the terminal.** `memoryking review list --project demo` shows the proposals waiting for a decision, oldest first, ten to a page (`--limit`, `--after`; `--kind constraint` lists proposed constraints), each with its id, text, how it was filed (`repeated_evidence_v1` for a draft, `agent_proposal_v1` for one an agent filed), how many observations support it and the sentences it cites, then the retirement requests waiting (below). `review show ID` prints one in full with the scope it would apply to, `review accept ID --reason "why"` accepts it, `review reject ID --reason "why"` rejects it, and `review accept ID --as constraint [--effect prohibit]` files and accepts a mandatory constraint with the same words and evidence and closes the draft (a constraint accepted this way has no machine rule beyond its text). Accepting confirms that you read the scope `show` prints. The reason is free text kept with the decision (the `note` field); the identifier `reason` stays a machine code. These commands send the existing `review` action with your own credential, so the same capabilities apply: `review` for knowledge, `policy` for a constraint. The dashboard's Review view shows the same queue.
+
+**Review from chat.** The lean `propose` tool lets an agent file a claim with the observations it rests on; it is a proposal, never accepted knowledge. The lean `confirm` tool records the user's accept or reject of a proposal, with the user's own words. It is off unless the operator starts the bridge with `--allow-chat-review`, and it works only when the bridge's credential also holds the `review` capability. Turning it on means: the agent can record a decision the user gave in conversation, and the daemon cannot tell a truthful relay from a made-up one. So the decision is recorded as *confirmed in chat*, naming the principal that relayed it and the principal that proposed the claim, with the quoted answer, and a reviewer sees that in `review show` and can undo it with `deprecate`. Only knowledge can be confirmed this way; a constraint, a deprecation or a quarantine cannot. Leave it off when you do not trust the agent to report your answers.
+
+**Replace and retire.** `remember` and the CLI's `capture --supersedes ID` (and the lean `correct`, which saves new text that replaces a memory) link the new record to an earlier one the caller can read, in the same project. The old record stays as evidence, untouched, but a briefing prefers the replacement: the old one no longer appears beside it, and appears alone only when the replacement is not visible to the reader (unreadable to them, held, or purged). The lean `forget` asks for a memory to be retired and cannot delete anything. Anyone who may capture and can read the record may ask. Until it is decided the record is marked "retirement requested" in other readers' briefings and hidden from the requester's own. A reviewer or admin sees the request in `review list` and the dashboard; a reviewer or admin may dismiss it (`review retire-dismiss ID --reason "why"`), and only an admin may approve it (`review retire-approve ID`), which purges the record with the usual dependency follow-through. A reviewer without the admin grant sees requests and dismisses them but cannot approve.
+
+**Pins and the session start.** `memoryking pin add|remove|list --project demo --claim REVISION` (or `--observation ID`) keeps an accepted claim or an observation in front of every session; an admin or a reviewer decides, and the pin is a journaled policy decision. `memoryking recall --project demo --start [--task T] [--days N]` prints a briefing with no query: the mandatory constraints for the session's bindings, the pins, the task's latest checkpoint (objective, next actions, what not to repeat), and the most recent decisions (claims accepted in the last 14 days and the newest five observations whose source is `decision`, `instruction` or `user`, optionally followed by `-` or `_` and a suffix, such as `user-instruction`), all inside the token budget, with the same receipt, permissions and holds as any briefing, and a plain statement when nothing is recorded yet. It is also what the session-start hook prints when no `--query` is given. The lean `recall` tool still needs a query.
 
 ## Anchors: the exact names memory hangs on
 
@@ -218,7 +287,7 @@ Every stage above is deterministic and needs no model. The one place a model may
 
 ## Measuring recall without a judge
 
-`tools/evidence_recall.py --data longmemeval_oracle.json --output report.json` records LongMemEval's sessions at their own dates, asks each question at its date through a real briefing, and scores whether the cited observations come from the labelled evidence sessions and answer turns. No answer is generated or judged, so the figure measures the memory layer alone and is not comparable to answer-accuracy leaderboards. Download the data separately (it is not committed); the check runs the same harness on a small committed sample as a gate.
+`tools/evidence_recall.py --data longmemeval_oracle.json --output report.json` records LongMemEval's sessions at their own dates, asks each question at its date through a real briefing, and scores whether the cited observations come from the labelled evidence sessions and answer turns. No answer is generated or judged, so the figure measures the memory layer alone and is not comparable to answer-accuracy leaderboards. Download the data separately (it is not committed); the check runs the same harness on a committed 72-question sample as a gate. The tool also reports recall at 5 and 10, with `--no-pool` for the per-question setting other systems publish, and compares a change with an earlier report (`--compare`); the [reference](reference.md#retrieval-quality-gate) gives the definitions and the measured figures, and also covers the stale-versus-current and scale benchmarks.
 
 ## Briefings as of a moment
 
@@ -234,7 +303,7 @@ Claude Code, Codex and Grok all run command hooks at the same three moments, and
 
 | Moment | Host event | What `memoryking hook …` does |
 | --- | --- | --- |
-| Session start, resume, or right after compaction | `SessionStart` | `session-start` prints the agent's own latest checkpoint for `--task`, then the hooks' checkpoint for it (each only when one exists), followed by a cited Markdown briefing for `--query`, the task, or the project. Claude Code and Codex add the output to the model's context. |
+| Session start, resume, or right after compaction | `SessionStart` | `session-start` prints the hooks' checkpoint for `--task` (when one exists) and a cited Markdown briefing: with `--query` the agent's own latest checkpoint first, then a briefing for that query; without one, the query-free session start (constraints, pins, the task's last checkpoint, recent decisions). Claude Code and Codex add the output to the model's context. |
 | Before the transcript is compacted | `PreCompact` | `pre-compact` captures the tail of the transcript (user turns, assistant text and tool errors from the JSONL, bounded to 16 KiB) plus any compaction instructions as an observation under source `<host>-compact`, and with `--task` saves a minimal checkpoint that references it. The checkpoint holds the newest 2,000 characters of the tail and goes to its own stream, `<task>--mkhook`, so it never replaces a checkpoint the agent saved on `<task>`; each hook has its own retry key, so pre-compact followed by session-end both succeed. |
 | Session end | `SessionEnd` | `session-end` captures the host's last assistant message when it is given, else the transcript tail, under source `<host>-session`. |
 

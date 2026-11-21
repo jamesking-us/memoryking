@@ -88,6 +88,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `budget_insufficient` | The required content does not fit the token budget; raise max_output_tokens or narrow scope. |
 
+## chat
+
+| Code | What to do |
+| --- | --- |
+| `chat_review_disabled` | Confirming in chat is off for this bridge; ask the user to run `memoryking review accept` or start the bridge with --allow-chat-review. |
+
 ## checkpoint
 
 | Code | What to do |
@@ -140,6 +146,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `control_busy` | Another process holds the control lock; wait or stop it. |
+| `control_lease_held` | Another instance holds this tenant (a copied control tree or a different --instance-id); it lapses 60 s after its last renewal. Stop it, or give every process one --instance-id. |
 | `control_must_be_independent` | Store and control directories may not contain each other. |
 | `control_required` | Pass `--control PATH` or use `--profile NAME`. |
 
@@ -194,6 +201,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `delegation_depth_exceeded` | Delegated credentials cannot delegate again; request a grant from an administrator. |
+| `delegation_superseded` | This delegated credential predates the rule that a delegation acts for its issuer; ask the issuer to delegate again. |
 
 ## delta
 
@@ -942,6 +950,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `temporal_requirement_failed` | A claim's validity window does not cover the requested time. |
+
+## tenant
+
+| Code | What to do |
+| --- | --- |
+| `tenant_required` | Pass the shared tenant name or set `MEMORYKING_TENANT`. |
 
 ## tokenizer
 
