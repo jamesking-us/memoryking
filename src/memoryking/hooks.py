@@ -23,15 +23,15 @@ TEXT_LIMIT = 65536
 DAY_MS = 86_400_000
 
 
-def connection(
+def connection_files(
     *,
     profile: str | None = None,
     socket: Path | None = None,
     credential: Path | None = None,
     project: str | None = None,
     config: Path | None = None,
-) -> tuple[Path, str, str]:
-    """(socket, credential token, project) from arguments, then the environment."""
+) -> tuple[Path, Path, str]:
+    """(socket, credential file, project) from arguments, then the environment."""
     name = profile or os.environ.get("MEMORYKING_PROFILE")
     if name and (socket is None or credential is None):
         resolved = profiles.resolve(name, config)
@@ -53,6 +53,12 @@ def connection(
     if not project:
         raise LocalError("project_required")
     private_file(credential)
+    return socket, credential, project
+
+
+def connection(**where: Any) -> tuple[Path, str, str]:
+    """(socket, credential token, project) from arguments, then the environment."""
+    socket, credential, project = connection_files(**where)
     return socket, credential.read_text().strip(), project
 
 
