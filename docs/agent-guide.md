@@ -216,7 +216,7 @@ Every stage above is deterministic and needs no model. The one place a model may
 
 ## Measuring recall without a judge
 
-`tools/evidence_recall.py --data longmemeval_oracle.json --output report.json` records LongMemEval's sessions at their own dates, asks each question at its date through a real briefing, and scores whether the cited observations come from the labelled evidence sessions and answer turns. No answer is generated or judged, so the figure measures the memory layer alone and is not comparable to answer-accuracy leaderboards. Download the data separately (it is not committed); the check runs the same harness on a small committed sample as a gate.
+`tools/evidence_recall.py --data longmemeval_oracle.json --output report.json` records LongMemEval's sessions at their own dates, asks each question at its date through a real briefing, and scores whether the cited observations come from the labelled evidence sessions and answer turns. No answer is generated or judged, so the figure measures the memory layer alone and is not comparable to answer-accuracy leaderboards. Download the data separately (it is not committed); the check runs the same harness on a committed 72-question sample as a gate. The tool also reports recall at 5 and 10, with `--no-pool` for the per-question setting other systems publish, and compares a change with an earlier report (`--compare`); the [reference](reference.md#retrieval-quality-gate) gives the definitions and the measured figures, and also covers the stale-versus-current and scale benchmarks.
 
 ## Briefings as of a moment
 
