@@ -319,7 +319,7 @@ There are five arms; the first four are identical except for one closing sentenc
 | `notes` | a short `NOTES.md` in the working directory, the plain-file baseline |
 | `on` (the CLI arm) | a private store, a daemon, a credential limited to `capture`, `read`, `checkpoint` and `handoff`, the configured `memoryking` command and a `MEMORY.md` that explains `capture`, `recall`, `save-progress` and `resume` |
 | `mcp` | the same store and credential, reached only as the lean MCP tools (`remember`, `recall`, `save_progress`, `resume`) through a standard `mcpServers` configuration written outside the working directory; no `memoryking` command and no `MEMORY.md` |
-| `setup` | what `memoryking setup claude-code` installs for a user: the session hooks (start briefing with the note naming the tools, pre-compact, session end) and the lean bridge with `alwaysLoad`, under one agent credential, as a host settings file and an MCP configuration in `<DIR>.bench/` for the runner to pass to the host explicitly. The prompt says nothing about memory: the question is whether memory is used without the agent being told how. Added after the first run; not yet run with a real agent |
+| `setup` | what `memoryking setup claude-code` installs for a user: the session hooks (start briefing with the note naming the tools, pre-compact, session end) and the lean bridge with `alwaysLoad`, under one agent credential, as a host settings file and an MCP configuration in `<DIR>.bench/` for the runner to pass to the host explicitly. The prompt says nothing about memory: the question is whether memory is used without the agent being told how. Added after the first run; run with a real agent in the second run |
 
 | Command | Does |
 | --- | --- |
@@ -336,7 +336,9 @@ A run "left notes on disk" when session 1 added a non-code file (or edited a non
 
 The tool never calls a model unless the person running it supplies an agent command. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically, using the CLI, the MCP bridge over stdio or a notes file as the arm requires, so the pipeline is tested offline in all five arms (in arm `setup` it runs the installed hook commands as a host does, from a transcript it writes in Claude Code's JSONL shape, and the start briefing printed for session 2 is all it has); its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality. The exact run protocol, including a worked example of driving a headless agent CLI, is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
 
-#### What the first run shows
+#### What the runs show
+
+##### First run (before the P4-9 changes)
 
 One repetition of all ten tasks in all four arms was run with the Claude Code CLI (model `sonnet`, at most 60 turns and 15 minutes per session, a new empty home directory for every session). Full setup, per-run table and the report output are in [`benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5.md`](../benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5.md).
 
@@ -353,7 +355,7 @@ How memory was used decides how to read the memory arms. In arm `on`, 7 of 10 ru
 
 The limits are one repetition, ten synthetic tasks, one model and one host with runs in parallel (timings are noisy), so only large effects could be seen and none was. It is not evidence of real-task quality.
 
-#### What the product changed in response, and what is not measured
+##### What the product changed in response
 
 The result above stays as measured. It was taken on code from before the latest MCP-surface work (server instructions that say when to recall and remember, lean as the default profile, Markdown replies), with no hooks installed, although the intended setup (`memoryking setup claude-code`) installs hooks that load and save memory without the model choosing to. Reading the 80 sessions showed two causes: Claude Code lists an MCP server's tools by name only and loads a schema when the model fetches it, and none of the ten `mcp` session-1 agents did (three session-2 agents fetched `recall` and found an empty store); and in arm `on` one agent recalled from an empty store, did the work and never saved what it had been told. Afterwards the product was changed so that saving and loading do not depend on the model deciding to fetch a tool:
 
@@ -362,7 +364,28 @@ The result above stays as measured. It was taken on code from before the latest 
 - The `MEMORY.md` note for command-line agents says to save an instruction or decision the moment it is given and not to recall from an empty store.
 - The benchmark gained the `setup` arm and `report --rep`; `RUNNING.md` shows how to pass the settings and MCP files to a headless host.
 
-None of this has been re-measured with a real agent. The deterministic replay shows that the hooks and the start briefing carry the facts a synthetic session left behind; whether Claude Code (or any model) uses the always-loaded tools, how large the effect is, and whether the hooks run as expected in a headless session are open until a real run, which should use at least three repetitions.
+##### Second run (after the P4-9 changes)
+
+Five arms, ten tasks and three repetitions (150 runs, 300 sessions) with the same agent, model, limits and isolation, on one commit, run by the same harness. Arm `setup` installs what `memoryking setup claude-code` installs (hooks and the lean bridge with `alwaysLoad`) and its prompt does not mention memory. Setup, the isolation probe, the per-run table and the report output are in [`benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5-2954501.md`](../benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5-2954501.md).
+
+| Arm | Passed, all 10 tasks (of 30) | Passed, the 4 knowledge tasks (of 12) | Mean tokens per run | Mean seconds per run |
+| --- | ---: | ---: | ---: | ---: |
+| `off` | 16 | 0 | 227,189 | 55 |
+| `notes` | 26 | 11 | 281,082 | 54 |
+| `on` (CLI) | 25 | 9 | 285,822 | 57 |
+| `mcp` | 14 | 0 | 282,438 | 61 |
+| `setup` | 27 | 10 | 336,058 | 64 |
+
+What the numbers show:
+
+- The mechanism works as installed. In the first ten `setup` runs the session-start hook fired and its briefing was injected in 10 of 10 first and 10 of 10 second sessions, the memory tools were in the tool list from the start with no search step, 10 of 10 first sessions saved something (7 by a tool call, all 10 by the session-end hook, which completed in every session), and 9 of 10 second-session start texts held the carried knowledge.
+- Memory as installed beat no memory on the tasks that need carried knowledge: 10 of 12 against 0 of 12 (the knowledge tasks are `alert-sink`, `job-states`, `partner-feed`, `staging-collector`). Over all ten tasks `setup` passed 27 of 30 against 16 of 30 for `off`; by task it was higher on 5 tasks and lower on none (exact p = 0.0625), and the by-run p of 0.001 is too small because repetitions of a task are correlated.
+- A notes file did as well: `notes` passed 26 of 30 and 11 of 12, `setup` 27 of 30 and 10 of 12. `setup` against `notes` p = 1.0, `setup` against `on` p = 0.69, `notes` against `off` p = 0.013 by run and 0.375 by task. This run does not show that MemoryKing beats a notes file the agent is told to keep.
+- The MCP-only arm passed 0 of 12 knowledge tasks although the agent saved in 23 of 30 runs: in this CLI version the model is shown a tool result's `structuredContent` and not its text block, so a lean `recall` or `resume` reply (briefing as text, envelope as `structuredContent`) reaches the model as a JSON envelope with no briefing. The hooks hide the defect in arm `setup`. This is a defect in the product's reply shape for this host, found by the run and not yet fixed.
+- `setup` used about 109,000 more tokens per run than `off` and was slower on average; there is no saving to report.
+- Several failures in every arm that carried the right facts (for example `staging-collector`, where the agent passed a JSON string where the check wants a dict) are the agent's design choices, not lost memory.
+
+Limits: ten synthetic tasks, one model, one host and version, one machine with four runs in parallel, three repetitions (which add pairs, not independent tasks), a knowledge-task split made after the first run, and `fetch` not allowed in the benchmark's tool list. Ten tasks can show only a large effect, nothing was corrected for ten comparisons, and none of this is evidence of real-task quality or production performance.
 
 ## Plan tracking contracts
 
