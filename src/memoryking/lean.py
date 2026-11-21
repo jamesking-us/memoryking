@@ -288,7 +288,7 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
         args: dict[str, Any] = {
             "query": arguments["query"],
             "max_output_tokens": arguments.get("budget", 6000),
-            "format": "text",
+            "format": arguments.get("format", "text"),
         }
         if "task" in arguments:
             args["task"] = arguments["task"]
