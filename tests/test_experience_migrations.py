@@ -123,7 +123,7 @@ class NativeExperienceStorage(NativeFixture):
         # Archives written before egress_audit and session_summaries existed.
         archive = backup_fixture(self)
         manifest = self.store.control.verify_document(archive / "manifest")
-        self.assertEqual(manifest["schema"], 10)
+        self.assertEqual(manifest["schema"], 11)
         manifest["schema"] = 3
         manifest["tables"] = {
             name: meta for name, meta in manifest["tables"].items() if name in TABLES_V3
