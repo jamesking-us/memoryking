@@ -4,13 +4,15 @@ Two observation excerpts are duplicates when, and only when:
 
 * they are the same after case and whitespace are normalised; or
 * each holds at least eight distinct words, they share at least 80% of their combined
-  distinct words, each lacks at most two words the other has, and they use the same
-  negation words (not, no, never, ...).
+  distinct words, they use the same negation words (not, no, never, ...), and every word
+  that one has and the other lacks is a number, at most two per side ("failed again on CI
+  run 3" and "... run 4").
 
 Either way they must also name the same anchors: the same ticket ids, paths, symbols,
 hosts and error codes. Two notes about PAY-142 and PAY-143, or about different files, are
-never duplicates, however alike the rest of the sentence is. Short notes are compared
-exactly, so "the limit is thirty requests" and "the limit is sixty requests" stay apart.
+never duplicates, however alike the rest of the sentence is. A differing word that is not a
+number (another entity, another value, "thirty" against "sixty") keeps two notes apart, and
+short notes are compared exactly.
 """
 
 from __future__ import annotations
@@ -54,11 +56,12 @@ def duplicates(a: Shape, b: Shape) -> bool:
         return True
     if min(len(a.words), len(b.words)) < MINIMUM_WORDS or a.negations != b.negations:
         return False
-    shared = len(a.words & b.words)
+    only_a, only_b = a.words - b.words, b.words - a.words
     return (
-        shared / len(a.words | b.words) >= OVERLAP
-        and len(a.words) - shared <= DIFFERENCE
-        and len(b.words) - shared <= DIFFERENCE
+        len(a.words & b.words) / len(a.words | b.words) >= OVERLAP
+        and len(only_a) <= DIFFERENCE
+        and len(only_b) <= DIFFERENCE
+        and all(word.isdigit() for word in only_a | only_b)
     )
 
 

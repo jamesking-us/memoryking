@@ -155,6 +155,17 @@ class PassageRuleTests(unittest.TestCase):
                 ),
             )
         )
+        chatty = "After the review the whole team agreed that from now on the {} channel is {} for every environment."
+        self.assertFalse(
+            duplicates(
+                shape(chatty.format("vezudo", "kaso")), shape(chatty.format("rodote", "mune"))
+            )
+        )
+        self.assertFalse(
+            duplicates(
+                shape(chatty.format("vezudo", "kaso")), shape(chatty.format("vezudo", "mune"))
+            )
+        )
         self.assertEqual(("a", "s", "name"), family("a", "s", "name__v7"))
         self.assertEqual(family("a", "s", "name"), family("a", "s", "name__v2"))
         self.assertNotEqual(family("a", "s", "name"), family("b", "s", "name"))
