@@ -1,0 +1,1 @@
+Now the delivery step. Add `alerts/dispatch.py` with `run(samples, rules, email_transport, webhook_post)`: it evaluates the rules and delivers the alerts that should go out, and returns the number delivered. `email_transport` is anything with a `send(message)` method and `webhook_post` is a `post(url, payload)` callable, as the existing sinks expect. Add tests.

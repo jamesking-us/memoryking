@@ -1,0 +1,19 @@
+{
+  "id": "cache-lock",
+  "title": "Make the LRU cache thread-safe",
+  "kind": "failed_approach",
+  "carries": [
+    "A plain threading.Lock around the cache methods deadlocks the service: the eviction callback (EvictionLog.record) runs inside put() and calls cache.stats(), which takes the lock again. Use an RLock (or run callbacks outside the lock).",
+    "Counters (hits, misses, evictions) race as well as the OrderedDict, so every method that touches them needs the lock, not just put and get."
+  ],
+  "why_not_in_repo": "The deadlock was seen only by running the multi-minute stress tool, which is removed between the sessions along with scratch copies, and session 1 leaves kvcache/ as it found it. The visible tests never evict through build_cache, so a plain Lock passes them.",
+  "between": true,
+  "stub": {
+    "learn": [
+      "Failed: wrapping LRUCache.get and put in a plain threading.Lock makes the stress run HANG. The eviction callback EvictionLog.record runs inside put and calls cache.stats(), which acquires the lock again.",
+      "Fact: the fix that works is a re-entrant lock (threading.RLock) taken by every method including stats, len and keys; the counters race too."
+    ],
+    "recall_query": "LRUCache thread safety lock deadlock eviction callback stress",
+    "must_recall": ["RLock", "plain threading.Lock"]
+  }
+}

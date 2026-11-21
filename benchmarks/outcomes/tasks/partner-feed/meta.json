@@ -1,0 +1,19 @@
+{
+  "id": "partner-feed",
+  "title": "Parse the partner feed, format version 3",
+  "kind": "environment",
+  "carries": [
+    "Feed format v3: header '#FEED v3 <n>' (other versions unusable); lines 'id|ddmmyyyy|amount|currency|crc'; amount in minor units with two implied decimals and an optional leading minus; crc is CRC32 of the text before the final '|' as 8 lowercase hex digits; bad-checksum rows are dropped and counted; a header count that differs from the number of data lines fails the feed."
+  ],
+  "why_not_in_repo": "The partner's format description was given to the agent in session 1 for later; session 1's own work (currency code normalisation) does not touch it, and no sample feed or spec file exists in the repository."
+  ,
+  "between": false,
+  "stub": {
+    "learn": [
+      "Fact: partner feed format v3. First line is the header #FEED v3 <n> where n is the number of data lines and any other version is unusable. Data lines are id|ddmmyyyy|amount|currency|crc with the date as day month year without separators.",
+      "Fact: partner feed amount is an integer in minor units with two implied decimals (12345 is 123.45, leading minus means negative). crc is the CRC32 of the text before the final pipe as 8 lowercase hex digits. Rows with a wrong checksum are dropped and counted. A header count that does not match the number of data lines fails the feed."
+    ],
+    "recall_query": "partner feed format v3 header crc amount minor units ddmmyyyy",
+    "must_recall": ["ddmmyyyy", "CRC32", "minor units"]
+  }
+}

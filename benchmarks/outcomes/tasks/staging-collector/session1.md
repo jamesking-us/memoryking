@@ -1,0 +1,3 @@
+Please add `metricsd/batch.py` with `chunks(points, size=50)`, a generator that yields lists of at most `size` points, in order, and yields nothing for an empty input. It should reject a `size` below 1 with `ValueError`. Add tests.
+
+This is groundwork for sending to the staging collector, which I'll ask you to do next. For when you get to that: the collector listens on `collector.staging.internal`, port 9411, and the ingest path is `/v4/ingest` over plain http. It is switched on by setting the environment variable `ENABLE_COLLECTOR_V2` to `1`. Requests carry the header `X-Collector-Key` with the value of the `COLLECTOR_KEY` environment variable, and the JSON body has to be `{"schema_version": 4, "points": [...]}`.

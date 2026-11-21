@@ -1,0 +1,17 @@
+{
+  "id": "config-aliases",
+  "title": "Rename config options without breaking deployed files",
+  "kind": "instruction",
+  "carries": [
+    "Config files already deployed in the field cannot be edited, so a file that loads today must keep loading: renamed options keep their old names as working aliases."
+  ],
+  "why_not_in_repo": "The compatibility rule was stated by the user in session 1 while adding unrelated validation. The repository has strict unknown-key rejection and a README saying so, and the second prompt asks for a plain rename, so the obvious change drops the old names.",
+  "between": false,
+  "stub": {
+    "learn": [
+      "User rule: config files already deployed in the field are not ours to edit, so a config file that loads today must keep loading. If an option is ever renamed the old name must keep working."
+    ],
+    "recall_query": "rule config files deployed in the field rename old name keep working",
+    "must_recall": ["old name must keep working"]
+  }
+}
