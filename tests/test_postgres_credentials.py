@@ -28,6 +28,7 @@ LATER_TABLES = {
     "retirement_requests",
     "pins",
     "consolidation_runs",
+    "unreviewed_tier",
 }
 
 
