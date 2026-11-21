@@ -64,5 +64,15 @@ strict = true
 files = ["src/memoryking"]
 
 [[tool.mypy.overrides]]
-module = ["jsonschema", "jsonschema.*"]
+module = [
+  "jsonschema",
+  "jsonschema.*",
+  # Optional framework adapters import these lazily; they are not installed for this check.
+  "claude_agent_sdk",
+  "mcp.types",
+  "agents",
+  "langchain_core.*",
+  "langgraph.*",
+  "llama_index.*",
+]
 ignore_missing_imports = true

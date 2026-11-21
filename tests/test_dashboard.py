@@ -749,6 +749,33 @@ class DashboardTests(unittest.TestCase):
         status, _, raw = self.call("GET", "/metrics", headers={"Authorization": "Bearer " + reader})
         self.assertEqual(status, 403)
 
+    def test_health_and_readiness_need_no_credential_and_metrics_carry_the_extra_gauges(self):
+        # A probe sends no credential, cookie or matching Host header and learns a fixed answer.
+        for path, body in (("/healthz", b'{"status":"ok"}'), ("/readyz", b'{"ready":true}')):
+            status, headers, raw = self.call("GET", path, headers={"Host": "probe.invalid"})
+            self.assertEqual((status, raw), (200, body), path)
+            self.assertEqual(headers["Cache-Control"], "no-store")
+        status, _, raw = self.call(
+            "GET", "/metrics", headers={"Authorization": "Bearer " + self.owner}
+        )
+        text = raw.decode()
+        for family in (
+            "memoryking_journal_bytes",
+            "memoryking_backup_age_seconds -1",
+            'memoryking_ready{check="database"} 1',
+            'memoryking_ready{check="control"} 1',
+            'memoryking_ready{check="schema"} 1',
+        ):
+            self.assertIn(family, text)
+        self.store.db.execute("PRAGMA user_version=3")
+        try:
+            status, _, raw = self.call("GET", "/readyz")
+            self.assertEqual((status, raw), (503, b'{"ready":false}'))
+        finally:
+            from memoryking.adapters.local_store import SCHEMA_VERSION
+
+            self.store.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
     def test_projects_lists_readable_projects_with_counts(self):
         from memoryking.adapters.projects import visible_projects
 

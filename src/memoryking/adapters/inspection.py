@@ -113,7 +113,7 @@ class Inspection:
             self.s.fault("after_validation")
         self.s._expose()
         if action == "purge":
-            self.s.gc()
+            self.s.collect_purged()
         return Released(raw, decision, self.s.clock, result["receipt"])
 
     def history(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:

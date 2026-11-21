@@ -14,6 +14,7 @@ import test_knowledge as knowledge_helpers
 import test_retrieval as retrieval_helpers
 from migration_helpers import historical_inventory
 
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import LocalStore
@@ -539,7 +540,7 @@ class WorkingTests(unittest.TestCase):
         self.save(body, revision=1)
         self.assertEqual(self.resume()["status"], "ready")
         blob = self.store.db.execute("SELECT blob FROM observations").fetchone()[0]
-        path = self.data / "blobs" / self.tenant / blob
+        path = blobfiles.blob_path(self.data, self.tenant, blob)
         self.assertTrue(path.is_file())
         path.unlink()
         self.assertEqual(self.resume()["status"], "incomplete")
@@ -825,7 +826,7 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
                 db.execute("DROP TABLE " + table)
             historical_inventory(db, 3)
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 18)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 19)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],
@@ -964,17 +965,18 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
         full = self.checkpoint_capacity()
         self.assertEqual((full["used"], full["warning"]), (4096, True))
         self.save()  # refused as checkpoint_capacity before live counting and release
-        self.assertEqual(self.checkpoint_capacity()["used"], 8 * 130 + 1)
+        # Above 80 percent of the bound an ordinary stream keeps its newest 32 revisions.
+        self.assertEqual(self.checkpoint_capacity()["used"], 8 * 32 + 1)
         rows = self.store.db.execute("SELECT count(*) FROM checkpoints").fetchone()[0]
         self.assertEqual(rows, 4097)  # retired revisions stay as tombstones
         old, newest = (
             self.store.db.execute(
                 "SELECT state,body,revision FROM checkpoints WHERE id=?", (f"ckpt_bulk0_{n}",)
             ).fetchone()
-            for n in (382, 383)
+            for n in (480, 481)
         )
-        self.assertEqual(tuple(old), ("retired", None, 382))
-        self.assertEqual(tuple(newest)[0], "available")  # 512 - 129 is the oldest kept
+        self.assertEqual(tuple(old), ("retired", None, 480))
+        self.assertEqual(tuple(newest)[0], "available")  # 512 - 31 is the oldest kept
         # The stream's revision number was never freed: compare-and-set still counts on.
         self.assertEqual(self.save(checkpoint(), 512, task="bulk0")["revision"], 513)
         self.fails("checkpoint_revision_conflict", lambda: self.save(revision=1, task="bulk0"))
@@ -990,8 +992,8 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
     def test_a_restored_tenant_that_was_at_the_cap_checkpoints_again(self):
         from recovery_helpers import backup_fixture, restore_fixture
 
-        self.fabricate_checkpoints(8, 128)  # 1,024 rows; ordinary streams under the window
-        self.fabricate_checkpoints(24, 128, prefix="more")  # 4,096 live in all
+        self.fabricate_checkpoints(64, 32)  # 2,048 rows; ordinary streams within the window
+        self.fabricate_checkpoints(64, 32, prefix="more")  # 4,096 live in all
         self.assertEqual(self.checkpoint_capacity()["used"], 4096)
         self.fails("checkpoint_capacity", lambda: self.save())
         archive = backup_fixture(self)

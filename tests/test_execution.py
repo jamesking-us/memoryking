@@ -7,6 +7,7 @@ import test_knowledge as knowledge_helpers
 import test_working as working_helpers
 from test_working import checkpoint
 
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.execution import Execution
 from memoryking.contracts.canonical import canonical_bytes
@@ -108,7 +109,7 @@ class ExecutionTests(unittest.TestCase):
         row = self.store.db.execute(
             "SELECT * FROM observations WHERE id=?", (self.obs["observation"],)
         ).fetchone()
-        (self.store.root / "blobs" / row["tenant"] / row["blob"]).unlink()
+        blobfiles.blob_path(self.store.root, row["tenant"], row["blob"]).unlink()
         task = self.view()["tasks"][0]
         self.assertEqual(task["progress"]["unknown"], 1)
         self.assertFalse(task["criteria"][0]["evidence_available"])

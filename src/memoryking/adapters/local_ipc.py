@@ -183,9 +183,21 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     max_waiting = 16
     wait_seconds = 5
 
-    def __init__(self, store: StoreCore):
+    def __init__(self, store: StoreCore, *, workers: int | None = None, waiters: int | None = None):
+        """`workers` requests run at once and up to `waiters` more wait for a worker (defaults 8
+        and 16); a connection beyond both is refused as `service_busy`."""
+        if workers is not None:
+            if not 1 <= workers <= 256:
+                raise LocalError("invalid_concurrency")
+            self.max_concurrent = workers
+        if waiters is not None:
+            if not 0 <= waiters <= 1024:
+                raise LocalError("invalid_concurrency")
+            self.max_waiting = waiters
         self.slots = threading.BoundedSemaphore(self.max_concurrent)
-        self.waiting = threading.BoundedSemaphore(self.max_waiting)
+        self.waiting = threading.BoundedSemaphore(max(1, self.max_waiting))
+        if self.max_waiting == 0:
+            self.waiting.acquire()  # no waiting room at all
         self.path = store.root / "service.sock"
         if len(os.fsencode(self.path)) > 100:
             raise LocalError("socket_path_too_long")
@@ -196,6 +208,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             self.path.unlink()
         self.operations: LocalOperations = StoreOperations(store)
         self.store = store
+        store.concurrency_gauge = self.saturation
         super().__init__(str(self.path), Handler)
         os.chmod(self.path, 0o600)
 
@@ -248,13 +261,28 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         finally:
             self.slots.release()
 
-    def service_actions(self) -> None:
-        """Between requests, complete trivial audit jobs so the queue never fills.
+    def saturation(self) -> dict[str, tuple[int, int]]:
+        """(limit, in use) for the worker slots and the waiting room."""
+        free = getattr(self.slots, "_value", self.max_concurrent)
+        room = getattr(self.waiting, "_value", 0)
+        waiting = 0 if self.max_waiting == 0 else self.max_waiting - room
+        return {
+            "local_workers": (self.max_concurrent, self.max_concurrent - free),
+            "local_waiters": (self.max_waiting, waiting),
+        }
 
-        Draining and housekeeping are independent: a failure in one never skips the
-        other or escapes serve_forever. A fenced or unhealthy store reports its state
-        on the next request; anything else is logged.
-        """
+    def service_actions(self) -> None:
+        """Called by the accept loop between polls. It does nothing: draining, housekeeping and
+        scheduled backups run on the maintenance thread, because a backup or a long expiry on
+        the accept thread would stop the daemon accepting connections for as long as it ran."""
+
+    def maintain(self) -> None:
+        """One maintenance pass: complete trivial audit jobs so the queue never fills, then
+        housekeeping (expiry, retention, the blob layout move and scheduled backups).
+
+        Draining and housekeeping are independent: a failure in one never skips the other
+        or ends the thread. A fenced or unhealthy store reports its state on the next
+        request; anything else is logged."""
         for action in (self.store.drain, self.store.housekeeping):
             try:
                 action()
@@ -262,6 +290,21 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
                 pass
             except Exception as exc:
                 failure("local_ipc", exc, action=action.__name__)
+
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
+        stop = threading.Event()
+
+        def loop() -> None:
+            while not stop.wait(poll_interval):
+                self.maintain()
+
+        thread = threading.Thread(target=loop, name="maintenance", daemon=True)
+        thread.start()
+        try:
+            super().serve_forever(poll_interval)
+        finally:
+            stop.set()
+            thread.join(60)
 
     def server_close(self) -> None:
         super().server_close()

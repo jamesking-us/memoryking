@@ -33,6 +33,7 @@ UNAVAILABLE_CODES = {
     "provider_unavailable",
     "database_durability_required",
     "transport_unavailable",
+    "schema_unsupported",
 }
 
 
