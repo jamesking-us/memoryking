@@ -161,6 +161,18 @@ class SharedHTTPTests(unittest.TestCase):
         )
         self.assertEqual("invalid_request", self.raw({**read, "credential": reader})[1]["error"])
 
+    def test_client_methods_over_https_match_the_local_surface(self):
+        saved = self.client.remember("shared retry finding", source="pytest")
+        self.assertEqual(self.client.remember("shared retry finding", source="pytest"), saved)
+        brief = self.client.recall("retry finding")
+        self.assertEqual(brief.sources[0]["id"], saved.observation)
+        progress = self.client.save_progress("shared-task", "Fix retries", "Investigating")
+        self.assertEqual(progress.revision, 1)
+        self.assertIn("Investigating", self.client.resume("shared-task").text)
+        with self.assertRaises(LocalError) as caught:
+            self.client.hand_off("shared-task", "nobody")
+        self.assertTrue(caught.exception.hint)
+
     def test_missing_tenant_answers_like_a_bad_credential_for_an_existing_one(self):
         read = {"version": 1, "operation": "context", "args": {"project": "demo"}}
         with self.assertNoLogs("memoryking", level="ERROR"):
@@ -427,6 +439,10 @@ class SharedHTTPTests(unittest.TestCase):
                             "memory_capture", {"key": "mcp", "request": observation(8)}
                         )
                         self.assertFalse(captured.is_error)
+                        briefed = await session.call_tool(
+                            "memory_brief", {"action": "brief", "args": {"query": "durable"}}
+                        )
+                        self.assertFalse(briefed.is_error, briefed.content)
                         outcome = json.loads(
                             (
                                 Path(__file__).resolve().parents[1]

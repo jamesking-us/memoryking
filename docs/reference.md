@@ -192,9 +192,30 @@ Every per-tenant bound counts only live rows, has a release path and is reported
 | `processing_usage` | 100,000 attempts | tenant | 30-day retention: expired rows are pruned by `gc` and when the cap is reached. | `usage_retention_limit` |
 | access receipts | unbounded | tenant | 30-day retention, pruned by `gc` and by the daemon's hourly housekeeping, which also expires replay results and artifacts. | none |
 
-The product has been exercised on macOS with Python 3.12 and native PostgreSQL 18.6, and through a single-host Linux-container rehearsal. A full native Linux matrix, Windows, physical touch, complete OS reduced-motion/browser coverage and third-party agent hosts remain unqualified. Intermittent dashboard scope refresh loss needs further investigation.
+The product has been exercised on macOS with Python 3.12 and native PostgreSQL 18.6 (the Python 3.13 test run is described under Runtimes), and through a single-host Linux-container rehearsal. A full native Linux matrix, Windows, physical touch, complete OS reduced-motion/browser coverage and third-party agent hosts remain unqualified. Intermittent dashboard scope refresh loss needs further investigation.
 
 Measured local/shared workload targets have not been met. No real-task success, noninferiority, longitudinal-learning or full-cost savings result is established. Automatic failover, production PITR and disaster RPO/RTO are not promised. Benchmark commands are available to measure your environment; their successful exit alone is not proof that a target passed.
+
+### Runtimes: Python versions and Windows
+
+**Python.** The core install runs on CPython 3.12 and 3.13. The pinned optional extras (`tokenizers`, `embeddings`, `shared`) install from the hash-pinned lock files on both. Python 3.14 is not claimed: no 3.14 interpreter was available to run the test suite on, and `requires-python` stops at 3.13. The clean-checkout job (`tools/local_ci.py`) runs on one interpreter, the pinned 3.12; it has no version matrix, so 3.13 is covered by running the test suite in a separate environment, not by that job.
+
+**Windows is not supported, and the code does not import there.** The product has only been run on macOS and Linux. A qualification pass by reading the code found these POSIX-only dependencies; each needs real work and a Windows machine to test on, so none of it is written yet.
+
+| Dependency | Where | What a Windows port needs |
+| --- | --- | --- |
+| `import fcntl` at module level | `adapters/local_files.py`, `adapters/shared_control.py` | Nothing imports on Windows today, including the Python client. Move the lock and `F_FULLFSYNC` calls behind a platform module so the client and CLI import. |
+| Unix-domain socket transport | `adapters/local_ipc.py` (`socketserver.UnixStreamServer`, `AF_UNIX`), `sdk.py`, the stdio bridge | CPython on Windows has no `AF_UNIX`. Needs a named pipe, or loopback TCP on an ephemeral port with a per-start secret (any local user can reach a loopback port, so the secret is the access control), and the same framing, bounds and `service_busy` behavior on it. The 100-byte path limit goes away; the port or pipe name has to be discoverable by clients. |
+| `fcntl.flock` single-owner lock | `Ownership` (`owner.lock`), shared control tree | `msvcrt.locking` or `LockFileEx` on the same file. Windows locks are mandatory and byte-range, not advisory, so the lock file must not be one the code also reads. |
+| Mode and owner checks: 0600 and 0700 modes, `st_uid`, `os.getuid`, `chmod` of the socket | `private_file`, `private_dir`, `Server`, credential and backup writers | Windows ignores POSIX modes and has no `getuid`. Needs an ACL check (owner is the current user, no access for anyone else) and files created with a restrictive ACL; credential files are the security boundary, so this is the largest piece. |
+| `os.fsync` on a directory | `sync_dir`, after every atomic rename and directory creation | Windows cannot open a directory for `fsync`. NTFS journals metadata, but the exact guarantee for a rename after power loss has to be decided and documented, not assumed equal to POSIX. |
+| Atomic replace and unlink of open files | `atomic`, staged files, socket and lock cleanup | `os.replace` is atomic but raises `PermissionError` when another process holds the target open without delete sharing (antivirus, a reader). Needs a bounded retry. Deleting an open file, which SQLite and the daemon rely on during cleanup, behaves differently. |
+| `O_NOFOLLOW`, `O_DIRECTORY`, `dir_fd` traversal | `adapters/repository_git.py`, `harness.py`, `local_files.py` | Not available in `os` on Windows. Symlink-safe reads need `CreateFile` with reparse-point handling that also treats junctions as links, and the "path swapped outside the root" checks need handle-based comparison. |
+| `SIGTERM` for a clean stop | `memoryking serve` | Windows `terminate()` kills without running a handler. Needs a console control event, a stop request on the control channel, or a service wrapper, and Windows supervision (service or scheduled task) is unqualified like systemd. |
+| Locale-dependent text and POSIX shell | About 70 `read_text()` and `write_text()` calls without `encoding`; host-hook command lines; `providers.py` token command `PATH` | Pass `encoding="utf-8"` everywhere; quote hook commands for `cmd` and PowerShell; build the token command environment from the platform. |
+| `/tmp` and POSIX tools in tests, tools and examples | `tests`, `tools`, `examples`, `runuser` PostgreSQL runs | Use the platform temporary directory and skip POSIX-only cases explicitly. |
+
+What does not block a port: SQLite itself, the signed control journal and the HTTP, MCP and dashboard code, the shared service (a Linux container deployment), and the TypeScript client, whose code has no POSIX dependency beyond a credential-mode check it skips on Windows (it has not been run there). A Windows machine could use the shared service through the TypeScript client or the HTTP interface; the Python client and the local daemon cannot be used there.
 
 ## Importing legacy memory
 

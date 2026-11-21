@@ -4,7 +4,7 @@ Start with the local profile unless you need several machines or tenants. These 
 
 ## Installation profiles
 
-All profiles use Python 3.12. Dependencies are hash-locked; package source is installed separately with `--no-deps`.
+All profiles use Python 3.12; the container images pin it, and 3.13 is supported for the core install (see [Runtimes](reference.md#runtimes-python-versions-and-windows)). Dependencies are hash-locked; package source is installed separately with `--no-deps`.
 
 | Lock | Purpose |
 | --- | --- |

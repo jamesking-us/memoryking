@@ -243,6 +243,24 @@
     "contains": "Memory tool demo passed."
   },
   {
+    "id": "client-python",
+    "command": [
+      "{python}",
+      "examples/client_python.py"
+    ],
+    "exit_code": 0,
+    "contains": "Client example passed."
+  },
+  {
+    "id": "client-typescript",
+    "command": [
+      "{python}",
+      "examples/client_typescript.py"
+    ],
+    "exit_code": 0,
+    "contains": "TypeScript client example passed."
+  },
+  {
     "id": "outcome-benchmark-validate",
     "command": [
       "{python}",
