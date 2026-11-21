@@ -42,14 +42,15 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 
 ## Phase 2: find the right memory
 
-- [~] **P2-1 Rank by how informative a match is.** Scoring is the share of query terms present, and each term contributes only its 256 newest matches, so a rare word counts like a common one and an older record matching every term can be crowded out. *Change:* BM25-style scoring with term rarity and length normalisation, driven from the full-text index on both backends; candidate windows chosen by score, not recency. *Done when:* the benchmark includes the crowded-out case and the rare-versus-common case and both pass.
-- [~] **P2-2 Match word forms.** "retry" does not find "retries". *Change:* stemming applied identically at index and query time on both backends and in the pure scorer; a real stop list.
+- [x] **P2-1 Rank by how informative a match is.** Scoring is the share of query terms present, and each term contributes only its 256 newest matches, so a rare word counts like a common one and an older record matching every term can be crowded out. *Change:* BM25-style scoring with term rarity and length normalisation, driven from the full-text index on both backends; candidate windows chosen by score, not recency. *Done when:* the benchmark includes the crowded-out case and the rare-versus-common case and both pass. *Done: unreleased, as configuration `lexical-v2`; existing stores stay on `lexical-v1` until reindexed. Not yet measured on the full LongMemEval files, which this build environment could not download.*
+- [x] **P2-2 Match word forms.** "retry" does not find "retries". *Change:* stemming applied identically at index and query time on both backends and in the pure scorer; a real stop list. *Done: unreleased.*
 - [ ] **P2-3 Index and quote passages.** A long observation is embedded by its first 256 tokens and excerpted from its first matching word. *Change:* split captures into passages for both the lexical and semantic indexes; return the best passage; keep the observation as the unit of evidence and authorization.
-- [ ] **P2-4 One answer per fact.** *Change:* collapse exact and near duplicates and superseded versions at render time; break ties by authority, then recency; show accepted knowledge and unreviewed observations as separate sections with the recorded time.
+- [ ] **P2-4 One answer per fact.** *Change:* collapse exact and near duplicates and superseded versions at render time; break ties by authority, then recency; show accepted knowledge and unreviewed observations as separate sections with the recorded time. *The tie-break is done; duplicate and superseded-version collapsing and the separate sections remain.*
 - [ ] **P2-5 Semantic search on by default and at any size.** The scan is pure Python, takes over a second at 10,000 vectors and is refused above that. *Change:* vectorised exact scan; approximate index on PostgreSQL; a current small local embedder chosen by measurement; enable with one command.
 - [ ] **P2-6 Reranking chosen by measurement.** *Change:* a wider window and a current small cross-encoder if the recall harness shows a gain within the deadline.
 - [ ] **P2-7 Budgets count what the model receives.** *Change:* budget the rendered text; a characters-per-token estimate when no tokenizer is installed; say how many items were left out and the minimum budget.
 - [ ] **P2-8 Understand time in a question.** *Change:* resolve relative dates in a query to a range and prefer records in it.
+- [ ] **P2-9 Reindex for operators.** A shared tenant has no command to start the rebuild into `lexical-v2`, and the local CLI reaches it only through a raw `request`. *Change:* `memoryking reindex` and a shared equivalent, with progress in `status`.
 
 ## Phase 3: evidence into knowledge
 
@@ -82,7 +83,7 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 
 ## Phase 6: proof
 
-- [ ] **P6-1 A recall gate that means something.** *Change:* the standard per-question LongMemEval setting alongside the pooled one, with corpus construction, K and the metric stated; a committed sample large enough to detect a regression.
+- [ ] **P6-1 A recall gate that means something.** First, run `tools/evidence_recall.py` on the full pooled-oracle file against `lexical-v2` and record the result beside the `lexical-v1` baseline (session recall at eight 0.576, MRR 0.477); the new ranking shipped without that measurement. *Change:* the standard per-question LongMemEval setting alongside the pooled one, with corpus construction, K and the metric stated; a committed sample large enough to detect a regression.
 - [ ] **P6-2 Task outcomes with memory on and off.** *Change:* an executable coding-task benchmark run with and without MemoryKing, reporting success, tokens and time.
 - [ ] **P6-3 Scale regression tests.** *Change:* capture, drain, brief, backup and restore at 20,000 and 100,000 observations in the clean-checkout job.
 - [ ] **P6-4 Updated facts.** *Change:* a benchmark of stale-versus-current answers after corrections.
