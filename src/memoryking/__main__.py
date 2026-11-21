@@ -616,6 +616,12 @@ def main() -> int:
     doc.add_argument("--backup-every", help="Backup policy interval the directory should meet")
     cred = commands.add_parser("credential", help="Issue, list and revoke agent credentials")
     cred_commands = cred.add_subparsers(dest="credential_command", required=True)
+    rotate_owner = cred_commands.add_parser(
+        "rotate-owner",
+        help="Offline: replace the owner credential file with a new credential; stop the daemon first",
+    )
+    rotate_owner.add_argument("--store", type=Path)
+    rotate_owner.add_argument("--control", type=Path)
     for name in ("issue", "list", "revoke"):
         item = cred_commands.add_parser(name)
         item.add_argument("--socket", type=Path)
@@ -628,6 +634,11 @@ def main() -> int:
                 "--capabilities", required=True, help="Comma-separated, for example capture,read"
             )
             item.add_argument("--expires", help="Validity such as 45m, 12h or 30d")
+            item.add_argument(
+                "--rotate",
+                action="store_true",
+                help="Replace the principal's credential: every earlier one stops working",
+            )
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
@@ -1046,6 +1057,9 @@ def main() -> int:
             failed = sum(level == "fail" for level, _, _ in findings)
             print(f"{len(findings)} checks, {failed} failed")
             return 1 if failed else 0
+        elif args.command == "credential" and args.credential_command == "rotate-owner":
+            path = LocalStore.rotate_owner(args.store, args.control)
+            print(json.dumps({"owner_credential": str(path), "rotated": True}))
         elif args.command == "credential":
             credential = read_credential(args.credential)
             if args.credential_command == "list":
@@ -1071,6 +1085,8 @@ def main() -> int:
                     "project": args.project,
                     "capabilities": sorted(set(args.capabilities.split(","))),
                 }
+                if args.rotate:
+                    grant["rotate"] = True
                 if args.expires:
                     grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
                 result = request(args.socket, credential, "grant", grant)

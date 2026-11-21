@@ -22,6 +22,8 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 
 The local CLI reads `{"operation":"NAME","args":{...}}` from stdin. Shared operations add top-level `"version":1`. Structured domain commands inside `args.command` carry their own version, current `incarnation`, action and project-scoped arguments; mutations also require a stable key. Use current context values, not copied example history IDs.
 
+The `grant` operation takes `principal`, `project`, `capabilities` and optional `starts`, `expires` and `rotate`, and returns the principal's credential. With `rotate: true` every earlier credential of that principal is refused (`credential_replaced`); without it an unchanged grant returns the current credential. Revoking a principal's last grant does the same. See [rotating credentials](deployment.md#rotating-credentials).
+
 Authoritative contracts:
 
 | Area | Schema / complete example |

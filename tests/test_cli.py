@@ -306,6 +306,42 @@ class OperatorCommandTests(unittest.TestCase):
         levels = {n: lv for lv, n, _ in doctor(self.store_dir, self.control_dir, None, None)}
         self.assertEqual("ok", levels["clock"])
 
+    def test_credential_rotation_flags_and_rotate_owner_needs_a_stopped_daemon(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        issue = ["credential", "issue", "agent-r", "--project", "demo", "--capabilities", "read"]
+        files = [Path(self.temp.name) / name for name in ("a", "b", "c")]
+        self.cli(*issue, "--output", str(files[0]), *common)
+        self.cli(*issue, "--output", str(files[1]), *common)
+        self.assertEqual(files[0].read_text(), files[1].read_text())
+        self.cli(*issue, "--rotate", "--output", str(files[2]), *common)
+        self.assertNotEqual(files[0].read_text(), files[2].read_text())
+        status = ["status", "--socket", str(self.server.path), "--credential"]
+        self.cli(*status, str(files[0]), expect=2)  # refused: credential_replaced
+        self.cli(*status, str(files[2]), expect=2)  # status needs admin; the grant is read only
+        listed = json.loads(self.cli("credential", "list", "--json", *common))["items"]
+        agent = next(i for i in listed if i["principal"] == "agent-r")
+        self.assertEqual(["read"], agent["capabilities"])
+        # The daemon holds the store, so the offline owner rotation refuses and changes nothing.
+        before = self.credential.read_text()
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking",
+                "credential",
+                "rotate-owner",
+                "--store",
+                str(self.store_dir),
+                "--control",
+                str(self.control_dir),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(2, run.returncode, run.stdout + run.stderr)
+        self.assertIn("owner_busy_or_unsafe", run.stdout + run.stderr)
+        self.assertEqual(before, self.credential.read_text())
+
     def test_doctor_reports_a_healthy_store_and_a_missing_daemon_query(self):
         findings = doctor(self.store_dir, self.control_dir, self.server.path, self.credential)
         levels = {name: level for level, name, _ in findings}

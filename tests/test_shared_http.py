@@ -203,6 +203,19 @@ class SharedHTTPTests(unittest.TestCase):
         self.assertEqual((429, "service_busy"), (status, body["error"]))
         self.assertLess(time.monotonic() - started, 8)
 
+    def test_rotation_over_http_retires_the_old_credential_and_keeps_the_grant(self):
+        args = {"principal": "rotating", "project": "demo", "capabilities": ["read"]}
+        first = self.command("grant", args)["credential"]
+        self.assertEqual(first, self.command("grant", args)["credential"])
+        rotated = self.command("grant", {**args, "rotate": True})["credential"]
+        self.assertNotEqual(first, rotated)
+        context = self.command("context", {"project": "demo"}, rotated)
+        self.assertEqual("rotating", context["principal"])
+        with self.assertRaises(LocalError) as caught:
+            self.command("context", {"project": "demo"}, first)
+        self.assertEqual("credential_replaced", caught.exception.code)
+        self.assertEqual(rotated, self.command("grant", args)["credential"])
+
     def test_delegation_live_intersection_expiry_audience_and_context_switch(self):
         delegator = self.command(
             "grant",

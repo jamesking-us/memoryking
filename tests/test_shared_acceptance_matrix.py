@@ -225,45 +225,49 @@ class ReleaseCases:
                     with self.assertRaises(LocalError) as caught:
                         self.packet(store, reader, surface, prior["receipt"])
                     self.assertEqual("denied", caught.exception.code)
-                    self.store.grant(self.owner, "r_" + surface, "p", ["read", "export"])
-                    # The previous materialization is no longer reusable after an epoch change.
-                    prior = materialize(self.packet(store, reader, "compile"))
-                    validated, proceed, revoking, revoked = (threading.Event() for _ in range(4))
-                    output = []
-
-                    def pause(point, validated=validated, proceed=proceed):
-                        if point == "after_validation" and not validated.is_set():
-                            validated.set()
-                            if not proceed.wait(3):
-                                raise RuntimeError("Test did not release validation pause")
-
-                    def revoke(revoking=revoking, surface=surface, revoked=revoked):
-                        revoking.set()
-                        self.store.revoke(self.owner, "r_" + surface, "p")
-                        revoked.set()
-
-                    store.fault = pause
-                    with ThreadPoolExecutor(2) as executor:
-                        reading = executor.submit(
-                            self.packet, store, reader, surface, prior["receipt"]
+                    reader = self.store.grant(self.owner, "r_" + surface, "p", ["read", "export"])
+                    # A rotated credential is a new session, so the store is reopened with it.
+                    with self.reader(reader) as store:
+                        # The previous materialization is no longer reusable after an epoch change.
+                        prior = materialize(self.packet(store, reader, "compile"))
+                        validated, proceed, revoking, revoked = (
+                            threading.Event() for _ in range(4)
                         )
-                        try:
-                            self.assertTrue(validated.wait(3))
-                            revocation = executor.submit(revoke)
-                            self.assertTrue(revoking.wait(1))
-                            self.assertFalse(revoked.wait(0.05))
-                            self.assertEqual([], output)
-                        finally:
-                            proceed.set()
-                        released = reading.result(3)
-                        revocation.result(3)
-                    store.fault = lambda _: None
-                    self.assertTrue(revoked.is_set())
-                    released.emit(output.append)
-                    self.assertIn(b"timeout=30", output[0])
-                    with self.assertRaises(LocalError) as caught:
-                        self.packet(store, reader, surface, prior["receipt"])
-                    self.assertEqual("denied", caught.exception.code)
+                        output = []
+
+                        def pause(point, validated=validated, proceed=proceed):
+                            if point == "after_validation" and not validated.is_set():
+                                validated.set()
+                                if not proceed.wait(3):
+                                    raise RuntimeError("Test did not release validation pause")
+
+                        def revoke(revoking=revoking, surface=surface, revoked=revoked):
+                            revoking.set()
+                            self.store.revoke(self.owner, "r_" + surface, "p")
+                            revoked.set()
+
+                        store.fault = pause
+                        with ThreadPoolExecutor(2) as executor:
+                            reading = executor.submit(
+                                self.packet, store, reader, surface, prior["receipt"]
+                            )
+                            try:
+                                self.assertTrue(validated.wait(3))
+                                revocation = executor.submit(revoke)
+                                self.assertTrue(revoking.wait(1))
+                                self.assertFalse(revoked.wait(0.05))
+                                self.assertEqual([], output)
+                            finally:
+                                proceed.set()
+                            released = reading.result(3)
+                            revocation.result(3)
+                        store.fault = lambda _: None
+                        self.assertTrue(revoked.is_set())
+                        released.emit(output.append)
+                        self.assertIn(b"timeout=30", output[0])
+                        with self.assertRaises(LocalError) as caught:
+                            self.packet(store, reader, surface, prior["receipt"])
+                        self.assertEqual("denied", caught.exception.code)
 
     def test_each_expiry_predicate_at_4999_and_5001_ms(self):
         clock = self.fixed_clock()

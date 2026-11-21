@@ -108,7 +108,7 @@ A host holding an `inference` credential can always copy bytes elsewhere by its 
 
 A request namespace and idempotency key bind a mutation to its canonical payload and history. Equal retries can reuse the recorded result; changed input conflicts. Expired result bodies leave consumed-key tombstones. Retired sources cannot be recreated by reusing their old event identity.
 
-A restored backup creates a **new history incarnation**. Old credentials, namespaces, watermarks, leases, resumable handles and adapter bases do not silently bind to replacement history. Restore replays current independently retained revocations/deletions before reopening access. Missing control evidence keeps the store unavailable.
+A credential also carries its principal's **generation**; revoking the principal's last grant or rotating it advances the generation through the signed control journal, and every authorization refuses a credential that is not at the current one (a credential with no generation is generation 0). A restore replays those decisions, so it cannot bring a rotated-away credential back. A restored backup creates a **new history incarnation**. Old credentials, namespaces, watermarks, leases, resumable handles and adapter bases do not silently bind to replacement history. Restore replays current independently retained revocations/deletions before reopening access. Missing control evidence keeps the store unavailable.
 
 External tool effects need their own operation records and reconciliation. A local transaction cannot guarantee exactly-once execution of an unrelated external system.
 

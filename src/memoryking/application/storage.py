@@ -18,6 +18,10 @@ UPSERTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("tenant", "principal", "project", "capabilities", "starts", "expires"),
         ("tenant", "principal", "project"),
     ),
+    "credential_generations": (
+        ("tenant", "principal", "generation"),
+        ("tenant", "principal"),
+    ),
     "projection_items": (
         (
             "tenant",

@@ -105,7 +105,8 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `health --project P`, `--days N`, `--json` | Whether memory is paying for itself in one project: helpful feedback, empty briefings, memory never read, lost evidence and the review backlog, as counts with fixed thresholds (see the [reference](reference.md#memory-health)). Needs an admin credential. |
 | `--version` | Prints the installed package version. |
 | `doctor --store`, `--control` | Checks Python, directory ownership and layout, socket path, schema version, journal integrity and tokenizer; with `--socket` and `--credential` it also reports capacity and frontier from the daemon. Exit 1 when a check fails. |
-| `credential issue NAME --project P --capabilities a,b [--expires 30d] --output FILE` | Issues a scoped credential into a new private file. `credential list` shows every grant with validity; `credential revoke NAME --project P` removes one. All take `--socket` and an admin `--credential`. |
+| `credential issue NAME --project P --capabilities a,b [--expires 30d] [--rotate] --output FILE` | Issues a scoped credential into a new private file; `--rotate` replaces the principal's credential so every earlier one stops working. `credential list` shows every grant with validity; `credential revoke NAME --project P` removes one. All take `--socket` and an admin `--credential`. |
+| `credential rotate-owner --store`, `--control` | Offline: replaces `owner.credential` with a new credential and retires the old one. The daemon must be stopped. See [rotating credentials](#rotating-credentials). |
 | `capture --project P [--text T] [--source S] [--event E]` | Saves one observation from `--text` or stdin with a stable event id; `recall --project P --query Q` prints a cited Markdown briefing (`--json` for the packet). Both accept `--profile` or `MEMORYKING_SOCKET`, `MEMORYKING_CREDENTIAL` and `MEMORYKING_PROJECT`. |
 | `dashboard open --socket`, `--credential` | Issues a one-use code and opens the dashboard signed in; `--print-only` prints the link instead. The code travels in the URL fragment and expires in 60 seconds. |
 | `request --socket`, `--credential` | Required socket and private credential file paths. |
@@ -113,7 +114,7 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `dashboard-login --output` | New private file containing a one-use code; expires after 60 seconds. |
 | `--backup` | New external directory for backup; verified existing directory for restore. |
 
-Paths/runtime changes require restart. Permission changes apply transactionally. Keep owner credentials out of agent prompts and browser pages; issue scoped credentials for normal agents. Files use owner-only modes (directories 0700, sensitive files 0600).
+Paths/runtime changes require restart. Permission changes apply transactionally; for retiring a credential see [rotating credentials](#rotating-credentials). Keep owner credentials out of agent prompts and browser pages; issue scoped credentials for normal agents. Files use owner-only modes (directories 0700, sensitive files 0600).
 
 ### Egress policy
 
@@ -190,6 +191,25 @@ Operator sequence (the paths below are placeholders for your reviewed configurat
 For the dashboard, add `--dashboard-tenant team`. Bootstrap requires the configured tenant's wildcard administrator. The shared dashboard has the same Team view as the local one: per-principal activity, grant revocation (which advances the policy epoch and signs every browser session out) and the audit export; see the [reference](reference.md#dashboard-team-view).
 
 Shared `request` accepts `--url`, `--tenant`, `--project`, `--credential` and optional `--ca-file`. Its stdin envelope is `{"version":1,"operation":"NAME","args":{...}}`. Grant/delegate output requires a new `--credential-output`; dashboard bootstrap requires `--bootstrap-output`. The [shared demo](../tools/shared_demo.py) is a complete disposable operator/client example.
+
+### Rotating credentials
+
+A credential is a signed document naming the store, history, tenant and principal (and, in the shared profile, the service audience). Each principal also has a **generation**, stored with its grants and carried in the credential once it is above zero. A credential is accepted only when its generation is the principal's current one; otherwise it is refused with `credential_replaced`. The generation advances in two cases, both journaled in the signed control journal like every other policy change, so a restore replays them and they retire retained briefings the way a revoke does:
+
+- **A principal loses its last grant** (`credential revoke` of the only grant it held; revoking one of several grants leaves the rest, and the credential, in place). Granting the principal again afterwards issues a different credential, and the old one stays refused.
+- **An explicit rotation.** `credential issue NAME --project P --capabilities a,b --rotate --output NEW_FILE` restates the grant, advances the generation and writes the new credential; the old one is refused from that moment. Pass the principal's existing project and capabilities to leave its access unchanged. In the shared profile, send the `grant` operation through `memoryking.shared request` with `"rotate": true` in `args` and a new `--credential-output`. Without `--rotate`, issuing for an unchanged grant returns the principal's current credential, as before, so existing automation keeps working.
+
+Distribute the new credential to the agent before or right after rotating; the old one stops at the commit, so there is a short interval in which the agent must be restarted with the new file.
+
+**The owner credential** is rotated offline with `memoryking credential rotate-owner --store STORE --control CONTROL`, with the daemon stopped (it refuses while the store is open). The command writes the new credential durably as `owner.credential.next`, commits the new generation through the journal, then renames the file over `owner.credential`, so the working credential is on disk at every moment after the old one stops. If the command dies after the commit, the new credential is in `owner.credential.next`; run the command again and it completes the rename without rotating a second time. Copy the new file to wherever agents or profiles read the owner credential. The shared profile has no owner rotation command: its owner credential lives beside the tenant's control files and is written by the same restore and recovery paths as the database, so do not rotate or revoke the principal that holds the tenant's recovery admin grant there (`grant` with `rotate`, or `credential revoke`); a shared restore issues that principal a credential without a generation.
+
+**Upgrades.** Credentials issued before this release carry no generation and are treated as generation 0, so they keep working until their principal is revoked or rotated; nothing needs re-issuing. A principal at generation 0 gets exactly the credential it always did. SQLite stores migrate to schema 15 and shared stores to schema 10 when opened or migrated.
+
+**Restore.** The generations are part of the backup (SQLite schema 10, shared archive schema 8) and the journal replays any later rotation. A restore still creates a new history and retires every credential; the credential it issues carries the principal's current generation, and a credential that lacks a replayed generation is refused even if its history matches.
+
+**Delegation.** A delegated credential (shared profile) acts as its subject and records the issuer's generation when it is issued. Rotating or revoking either the issuer or the subject retires it.
+
+**Expiry.** `--expires` sets the grant's expiry. It is enforced by the store against its own clock on every authorization, not by the credential file, so a credential cannot outlive its grant and extending the grant revives the same credential; rotate to retire it instead.
 
 ## Docker evaluation
 

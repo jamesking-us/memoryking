@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
+import test_credentials
 import test_execution
 import test_handoff
 import test_knowledge
@@ -32,6 +33,7 @@ from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.working import Working
+from memoryking.domain.local import LocalError
 from tools.postgres_dev_cluster import DevCluster
 
 BIN = Path(os.environ.get("MEMORYKING_PG_BIN", "tmp/postgres-dev/runtime/bin")).resolve()
@@ -352,3 +354,19 @@ class PostgresTeamParity(test_team.TeamCases, NativeFixture):
     def who(self, credential=None):
         with self.actor(credential) as store, store.transaction() as decision:
             return store._auth(credential or self.owner, "read", "p", decision.evaluated_ms)
+
+
+class PostgresCredentialParity(NativeFixture):
+    def check(self, token, capability="read", project="demo"):
+        """None when the credential authorizes the action, else the refusal code."""
+        try:
+            with PostgresStore(self.pool, self.data, self.control, self.tenant, token) as store:
+                with store.transaction() as decision:
+                    store._auth(token, capability, project, decision.evaluated_ms)
+        except LocalError as exc:
+            return exc.code
+        return None
+
+
+reuse(PostgresCredentialParity, test_credentials.CredentialTests, "issue body now_ms pass_time")
+adopt(PostgresCredentialParity, test_credentials.CredentialTests)
