@@ -161,6 +161,52 @@ class SharedHTTPTests(unittest.TestCase):
         )
         self.assertEqual("invalid_request", self.raw({**read, "credential": reader})[1]["error"])
 
+    def test_housekeeping_runs_on_its_own_pass_without_a_request_and_logs_a_failure(self):
+        # An expired replay result and an artifact tombstone older than its grace are
+        # released by the service's own pass; no request from the tenant is involved.
+        self.client.capture("old", observation())
+        now = int(time.time() * 1000)
+        with self.store() as store, store.transaction():
+            store.db.execute("UPDATE retries SET expires=? WHERE tenant=?", (now - 1, self.tenant))
+            store.db.execute(
+                "INSERT INTO rendered_artifacts VALUES (?,?,?,?,?,?,?,?,NULL,?,NULL,NULL,'[]')",
+                (self.tenant, "old", "owner", "demo", store.incarnation, 1, 2, "expired", "h" * 64),
+            )
+        self.assertEqual(0, self.service.housekeeping_pass())
+        with self.store() as store, store.transaction():
+            self.assertEqual(
+                0,
+                store.db.execute(
+                    "SELECT count(*) FROM retries WHERE tenant=? AND result IS NOT NULL",
+                    (self.tenant,),
+                ).fetchone()[0],
+            )
+            self.assertEqual(
+                0,
+                store.db.execute(
+                    "SELECT count(*) FROM rendered_artifacts WHERE tenant=?", (self.tenant,)
+                ).fetchone()[0],
+            )
+        self.assertIn(self.tenant, self.service._housekeeping)
+        # A failing tenant is logged, counted, and does not stop the pass.
+        with (
+            mock.patch.object(self.service, "maintain", side_effect=RuntimeError("boom")),
+            self.assertLogs("memoryking", level="ERROR") as logs,
+        ):
+            self.assertEqual(len(self.service.tenants()), self.service.housekeeping_pass())
+        self.assertIn("event=internal_error", logs.output[0])
+        self.assertNotIn("boom", logs.output[0])
+        # The thread form runs a first pass right away and stops with the service.
+        passes = self.service.housekeeping_passes
+        thread = self.service.start_housekeeping(interval_s=3600)
+        deadline = time.monotonic() + 10
+        while self.service.housekeeping_passes == passes and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertGreater(self.service.housekeeping_passes, passes)
+        self.service.stopping.set()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+
     def test_client_methods_over_https_match_the_local_surface(self):
         saved = self.client.remember("shared retry finding", source="pytest")
         self.assertEqual(self.client.remember("shared retry finding", source="pytest"), saved)

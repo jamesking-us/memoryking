@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from memoryking.adapters.local_embeddings import MODEL, model_manifest
 from memoryking.adapters.local_store import MAX_COUNTER, RETRY_MS, USAGE_LIMIT, uid
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.retention import index_receipt
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.embeddings import EmbeddingBatch, fingerprint
@@ -72,6 +73,7 @@ class Embeddings:
                     json.dumps([result["observation"]] if "observation" in result else []),
                 ),
             )
+            index_receipt(self.db, who["tenant"], receipt)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, receipt)

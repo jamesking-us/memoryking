@@ -119,6 +119,30 @@ try {
 
 The local daemon's loopback agent endpoint (`POST /api/v1/retrieval`, see [Dashboard agent endpoint](reference.md#dashboard-agent-endpoint)) serves retrieval commands only. `MemoryKingLocal` therefore has `recall` and nothing else, and needs the dashboard port and the store's history id (`History` in `memoryking status`). A local program that writes uses the Python client or the stdio MCP bridge, or the shared service. The [TypeScript example](../examples/client_typescript.mjs) recalls from a real local daemon; run it with `npm run build` then `.venv/bin/python examples/client_typescript.py`. The write operations are exercised by `tests/js/client.test.mjs` against a real shared service when PostgreSQL is available (`MEMORYKING_PG_BIN`); without it that test is skipped.
 
+## Using MemoryKing from agent frameworks
+
+Each adapter is a thin translation between a framework's interface and the [client methods](#using-the-client-libraries): the tools run `memoryking.lean.call`, the code the lean MCP tools run, so authorization, receipts, idempotency and budgets are unchanged and nothing is copied. A refusal comes back to the model as text (`{"error": code, "hint": ...}`), not as an exception that ends the run. The adapters live in `memoryking.integrations`; the framework is imported only when you call them, and MemoryKing does not install any of them. Install the framework in your own environment. MemoryKing declares no extras for them, because a hash-pinned lock of each framework's dependency tree is not maintained here.
+
+| Framework | Tested version | The adapter provides | It deliberately does not |
+| --- | --- | --- | --- |
+| Any provider, your own loop (`memoryking.integrations.function_calling`) | none needed | `FunctionTools(client)`: the tool definitions in the Chat Completions or Responses shape, and `call(name, arguments_json)` returning the text a model should see. | Run the loop, pick a provider or retry. |
+| Claude Agent SDK (`memoryking.integrations.claude_agent_sdk`) | `claude-agent-sdk` 0.2.187 | `mcp_server_config` (the lean bridge for `mcp_servers`), `sdk_server` and `sdk_tools` (the same tools in-process), `session_context` (a briefing for the system prompt), `pre_compact_hook` and `hooks` (save before a compaction), `session_start_hook`. | Drive a live Claude Code session in its tests. `session_start_hook` is registered under `SessionStart`, which the SDK's typed hook events do not list; it has been called directly, not by a live session, so use `session_context` in the system prompt for a dependable load. Hooks need the local socket, so a `SharedClient` is refused. |
+| OpenAI Agents SDK (`memoryking.integrations.openai_agents`) | `openai-agents` 0.25.0 | `tools(client)`: `FunctionTool` objects for `Agent(tools=...)`. | A `Session`. The session protocol stores a conversation and requires `pop_item` and `clear_session`; MemoryKing is not a transcript store, keeps observations as evidence and never deletes on request. Keep the SDK's session for the conversation and use `resume` and `recall` for what should outlive it. |
+| LangChain and LangGraph (`memoryking.integrations.langchain`) | `langchain-core` 1.8.4, `langgraph` 1.2.24 | `tools(client)`: `StructuredTool` objects. `MemoryKingStore`: a `BaseStore` where `put` is a capture (the key and value saved as one observation, so a changed value is a new version), `search((project,), query=...)` is a briefing returned as one `SearchItem`, `delete(namespace, memory_id)` is a retirement request. | `get`, `list_namespaces`, TTLs, filters, offsets, a query-less search and a search narrower than the project raise `NotImplementedError`. Namespaces are `(project, *labels)`; the labels become the observation's source and may use only letters, digits, `_` and `-`. `delete` takes the id of a memory from a briefing's sources, not the key you put, and an admin decides. |
+| LlamaIndex (`memoryking.integrations.llama_index`) | `llama-index-core` 0.14.26 | `tools(client)`: `FunctionTool` objects. `MemoryKingBlock`: a memory block that briefs the latest user message into the prompt. | Write. The block's `put` does nothing, because ejected messages are a transcript; an agent saves what matters with `remember` or `save_progress`. It briefs from what was saved; it is not a retriever over documents. |
+
+Every adapter was exercised against the real framework classes and a real temporary store and daemon, with no model and no provider key: the Claude Agent SDK tools and hooks by calling them as the SDK does, the lean bridge command over MCP stdio, the OpenAI Agents tools inside the SDK's own `Runner` loop with its scripted test model, the LangChain tools inside a LangGraph `ToolNode`, and the LlamaIndex block inside `Memory`. No live model session was run, so how a particular model uses the tools is not tested here. The tests are in `tests/integrations/` and skip when a framework is missing; run them in a scratch environment that has the frameworks installed with `python -m unittest discover -s tests/integrations`. The function-calling helper's tests are part of the main suite. Each framework has an example in [`examples/integrations`](../examples/integrations) that needs no model; `with_function_calling.py` needs only MemoryKing, and each example's comments show where a real model plugs in.
+
+```python
+from agents import Agent
+
+from memoryking.client import MemoryKing
+from memoryking.integrations import openai_agents
+
+memory = MemoryKing.connect()
+agent = Agent(name="engineer", tools=openai_agents.tools(memory))
+```
+
 ## MCP integration
 
 The quickest route is `memoryking setup <claude-code|codex|generic> --project NAME` ([getting started](getting-started.md#2-connect-your-agent)): it creates the store if needed, starts the service, issues one agent credential, registers the lean bridge and installs the hooks under that same credential. What follows is the manual configuration it writes for you.
