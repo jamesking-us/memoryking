@@ -19,6 +19,7 @@ from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
+from memoryking.application.lexical_index import RATE_PER_SECOND
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, SystemClock
@@ -59,6 +60,35 @@ def lexical_findings(db: Any, version: int) -> list[tuple[str, str, int]]:
     return found
 
 
+def lexical_line(lexical: dict[str, Any]) -> str:
+    """One line for the lexical index: state, and for a rebuild its progress and estimate."""
+    line = f"{lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
+    if lexical.get("state") == "current":
+        return line
+    left, total = lexical.get("remaining_observations"), lexical.get("total_observations")
+    if left is not None and total is not None:
+        line += (
+            f"; {lexical.get('percent_complete', 0)}% rebuilt into "
+            f"{lexical.get('target_configuration', '?')} ({total - left:,} of {total:,} observations"
+        )
+        if left:
+            line += f", about {duration(int(lexical.get('estimated_seconds', 0)) * 1000)} left"
+        line += ")"
+    return line + f". {lexical.get('action', '')}"
+
+
+def lexical_total(database: Path, tenant: str) -> int:
+    """Live observations of a tenant, from a read-only connection (for the doctor's percent)."""
+    import sqlite3
+
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
+        return int(
+            db.execute(
+                "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0", (tenant,)
+            ).fetchone()[0]
+        )
+
+
 def render_status(result: dict[str, Any], version: str) -> str:
     """A human summary of the status operation; `--json` prints the raw result instead."""
     projection = result.get("projection", {})
@@ -80,13 +110,7 @@ def render_status(result: dict[str, Any], version: str) -> str:
     ]
     lexical = result.get("lexical")
     if lexical:
-        line = f"Lexical    {lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
-        if lexical.get("state") != "current":
-            line += (
-                f"; {lexical.get('remaining_observations', '?')} observations to rewrite for "
-                f"{lexical.get('target_configuration', '?')}. {lexical.get('action', '')}"
-            )
-        lines.append(line)
+        lines.append("Lexical    " + lexical_line(lexical))
     capacity = result.get("capacity", {})
     if capacity:
         lines.append("Capacity")
@@ -484,13 +508,24 @@ def doctor(
                 if state == "current":
                     record("ok", "lexical index", f"{tenant}: current (lexical-v2)")
                 else:
+                    total = lexical_total(database, tenant)
+                    done = (
+                        f"{(total - remaining) * 100 // total}% rebuilt, about "
+                        f"{duration((remaining // RATE_PER_SECOND + 1) * 1000)} left at the reference rate; "
+                        if total
+                        else ""
+                    )
                     record(
                         "warn",
                         "lexical index",
                         f"{tenant}: {state}, still on the previous configuration (lexical-v1) with "
-                        f"{remaining} observations to rewrite; run a reindex "
-                        "(`memoryking request` with the operation reindex and empty args); "
-                        "the daemon finishes it in batches and captures keep working",
+                        f"{remaining} observations to rewrite; {done}"
+                        + (
+                            "run `memoryking reindex`; "
+                            if state == "legacy"
+                            else "`memoryking reindex --wait` shows progress; "
+                        )
+                        + "the daemon finishes it in batches and captures keep working",
                     )
         except sqlite3.Error as exc:
             record("fail", "schema", f"cannot read {database}: {type(exc).__name__}")
@@ -800,6 +835,17 @@ def main() -> int:
     status.add_argument("--credential", type=Path)
     status.add_argument("--project", default="main")
     status.add_argument("--json", action="store_true", help="Print the raw status result")
+    reindex = commands.add_parser(
+        "reindex",
+        help="Start the rebuild into the current lexical configuration; --wait shows progress",
+    )
+    reindex.add_argument("--socket", type=Path)
+    reindex.add_argument("--credential", type=Path, help="An admin credential file")
+    reindex.add_argument("--project", default="main", help="Project used to read the progress")
+    reindex.add_argument(
+        "--wait", action="store_true", help="Show progress until the rebuild completes"
+    )
+    reindex.add_argument("--json", action="store_true", help="Print the raw result")
     doc = commands.add_parser("doctor", help="Check the installation and report fixes")
     doc.add_argument("--store", type=Path)
     doc.add_argument("--control", type=Path)
@@ -927,6 +973,16 @@ def main() -> int:
     rec.add_argument("--task")
     rec.add_argument(
         "--as-of", help="Brief as the project stood then: a date, ISO date-time, or Unix ms"
+    )
+    rec.add_argument(
+        "--from",
+        dest="from_time",
+        help="Only records observed at or after this: a date, ISO date-time, or Unix ms",
+    )
+    rec.add_argument(
+        "--to",
+        dest="to_time",
+        help="Only records observed at or before this (a bare date means the end of the day)",
     )
     rec.add_argument(
         "--salience",
@@ -1295,6 +1351,19 @@ def main() -> int:
                     text=not args.json,
                     task=args.task,
                     as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
+                    time_range={
+                        **(
+                            {"from_ms": hooks.range_ms(args.from_time, end=False)}
+                            if args.from_time
+                            else {}
+                        ),
+                        **(
+                            {"to_ms": hooks.range_ms(args.to_time, end=True)}
+                            if args.to_time
+                            else {}
+                        ),
+                    }
+                    or None,
                     salience=args.salience,
                     rerank=args.rerank,
                     binding=args.binding,
@@ -1638,6 +1707,24 @@ def main() -> int:
                 sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
             else:
                 print(render_status(result, __version__))
+        elif args.command == "reindex":
+            private_file(args.credential)
+            token = args.credential.read_text().strip()
+            started = request(args.socket, token, "reindex", {})
+            lexical = started.get("lexical", {})
+            if not args.json:
+                print("Reindex started: " + lexical_line(lexical))
+            while args.wait and lexical.get("state") != "current":
+                time.sleep(1)
+                lexical = request(args.socket, token, "status", {"project": args.project})[
+                    "lexical"
+                ]
+                if not args.json:
+                    print("Lexical    " + lexical_line(lexical), flush=True)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes({"lexical": lexical}) + b"\n")
+            elif args.wait:
+                print("Reindex complete.")
         elif args.command == "request":
             private_file(args.credential)
             body = load_strict(sys.stdin.buffer.read(262145))

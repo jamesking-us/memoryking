@@ -59,6 +59,22 @@ class SharedService:
                 failure("shared_service", exc, action="warm")
 
     HOUSEKEEPING_S = 3600
+    REBUILD_S = 5  # how often a request may advance an unfinished lexical rebuild
+
+    def _rebuild(self, tenant: str, store: PostgresStore) -> None:
+        """Advance an unfinished lexical rebuild in bounded batches, between requests."""
+        now = time.monotonic()
+        key = tenant + "\0rebuild"
+        with self._housekeeping_lock:
+            if now - self._housekeeping.get(key, -self.REBUILD_S) < self.REBUILD_S:
+                return
+            self._housekeeping[key] = now
+        try:
+            store.rebuild_lexical(wall_ms=1000)
+        except LocalError:
+            pass
+        except Exception as exc:
+            failure("shared_service", exc, action="rebuild")
 
     def _retention(self, tenant: str, store: PostgresStore) -> None:
         """Expire results, receipts, usage, egress audit and summaries for this tenant."""
@@ -142,6 +158,7 @@ class SharedService:
             outcome = StoreOperations(store).execute(value)
             if not release_only:
                 self._retention(tenant, store)
+                self._rebuild(tenant, store)
             if request["operation"] == "capture":
                 # A tenant that captures also drains its own audit jobs, so the shared
                 # profile never depends solely on the scheduled worker to stay under
