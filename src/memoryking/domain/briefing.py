@@ -8,14 +8,11 @@ from typing import Any, Callable
 
 from memoryking.contracts.canonical import ContractError, canonical_bytes
 
-CONFIGURATION = "lexical-v1"
+from memoryking.domain.lexicon import QUERY_TERM_LIMIT, STOP, query_window
+
+CONFIGURATION = "lexical-v1"  # replaced by lexical-v2 with the BM25 ranking
+LEGACY_CONFIGURATION = "lexical-v1"  # a store whose index was not rebuilt yet still ranks so
 COMPILER = "brief-json-v1"
-STOP = frozenset(
-    "a an and are as at be by for from in is it of on or that the this to with".split()
-)
-
-
-QUERY_TERM_LIMIT = 32
 
 
 def term_window(text: str) -> tuple[list[str], bool]:
@@ -24,11 +21,7 @@ def term_window(text: str) -> tuple[list[str], bool]:
     Earlier words win because a query reads most important first; the caller discloses
     truncation instead of failing a long query.
     """
-    seen: dict[str, None] = {}
-    for term in re.findall(r"[^\W_]+", text.casefold()):
-        if term not in STOP:
-            seen.setdefault(term, None)
-    return sorted(list(seen)[:QUERY_TERM_LIMIT]), len(seen) > QUERY_TERM_LIMIT
+    return query_window(text)
 
 
 def terms(text: str) -> list[str]:
