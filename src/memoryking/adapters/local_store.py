@@ -25,7 +25,9 @@ from memoryking.adapters.local_files import (
     atomic,
     private_dir,
     private_file,
+    read_blob_index,
     sync_dir,
+    write_blob_index,
 )
 from memoryking.application.storage import SQLiteDialect
 from memoryking.application.store_core import (  # noqa: F401
@@ -121,7 +123,7 @@ __all__ = [
 ]
 
 
-SCHEMA_VERSION = 13  # the SQLite user_version the daemon migrates every store to
+SCHEMA_VERSION = 14  # the SQLite user_version the daemon migrates every store to
 
 
 class LocalStore(StoreCore):
@@ -221,6 +223,8 @@ class LocalStore(StoreCore):
             self.db.executescript(Path(__file__).with_name("trust_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}:
             self.db.executescript(Path(__file__).with_name("anchor_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}:
+            self.db.executescript(Path(__file__).with_name("position_schema.sql").read_text())
         elif version != SCHEMA_VERSION:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
@@ -466,14 +470,14 @@ class LocalStore(StoreCore):
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 8,
+                "schema": 9,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
                 "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
                 "database_sha256": hashlib.sha256(
                     (destination / "store.sqlite").read_bytes()
                 ).hexdigest(),
-                "blobs": sorted(blobs),
+                "blob_index": write_blob_index(destination, blobs),
             }
             atomic(destination / "manifest", self.control.sign(manifest).encode())
             sync_dir(destination)
@@ -532,14 +536,20 @@ class LocalStore(StoreCore):
             controller.journal(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9}
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")
             data = (backup / "store.sqlite").read_bytes()
             if hashlib.sha256(data).hexdigest() != manifest["database_sha256"]:
                 raise LocalError("backup_invalid")
-            for relative in manifest["blobs"]:
+            # Backups before schema 9 embed the list; later ones commit to a separate index.
+            blobs = (
+                read_blob_index(backup, manifest["blob_index"])
+                if "blob_index" in manifest
+                else manifest["blobs"]
+            )
+            for relative in blobs:
                 if not re.fullmatch(r"blobs/[A-Za-z0-9_-]{1,96}/[a-f0-9]{64}", relative):
                     raise LocalError("backup_invalid")
                 if (
@@ -555,7 +565,7 @@ class LocalStore(StoreCore):
             for suffix in ("-wal", "-shm"):
                 (root / ("store.sqlite" + suffix)).unlink(missing_ok=True)
             atomic(root / "store.sqlite", data)
-            for relative in manifest["blobs"]:
+            for relative in blobs:
                 private_dir((root / relative).parent, create=True)
                 atomic(root / relative, (backup / relative).read_bytes())
             # Build an unavailable instance under the already-held ownership locks.

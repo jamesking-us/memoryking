@@ -97,12 +97,16 @@ class Policy:
                 "backup",
                 "complete",
                 archive_bytes=manifest.get("archive_bytes", 0),
-                blobs=len(manifest.get("blobs", [])),
+                blobs=manifest["blob_index"]["count"]
+                if "blob_index" in manifest
+                else len(manifest.get("blobs", [])),
                 pruned=len(removed),
             )
             self.failed_ms = None
             return target
-        except (LocalError, OSError) as exc:
+        except (
+            Exception
+        ) as exc:  # any failure is recorded and cleaned up, never left to the daemon loop
             failure("backup", exc)
             self.failed_ms = now_ms
             # A partial copy has no manifest, so retention would never remove it.

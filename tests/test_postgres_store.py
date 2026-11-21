@@ -386,6 +386,77 @@ class PostgresStoreTests(unittest.TestCase):
                     self.pool, self.root, self.control, self.tenant, credential, clock=self.clock
                 )
 
+    def test_archive_commits_to_a_blob_index_and_legacy_embedded_list_restores(self):
+        from memoryking.adapters.local_files import atomic
+        from memoryking.adapters.postgres_recovery import backup, restore
+
+        self.capture(1, text="first distinct body")
+        self.capture(2, text="second distinct body")
+        archive = self.base / (self.tenant + "-index-backup")
+        with (
+            self.store() as store,
+            psycopg.connect(self.cluster.dsn("mk_backup"), autocommit=True) as connection,
+        ):
+            manifest = backup(store, connection, archive)
+            control = store.control
+        self.assertEqual(2, manifest["blob_index"]["count"])
+        self.assertNotIn("blobs", manifest)
+        self.assertEqual(7, manifest["schema"])
+        index = (archive / "blob-index").read_bytes()
+        digests = index.decode().splitlines()
+
+        def restore_archive():
+            with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+                return restore(
+                    connection, self.root, self.control, self.tenant, archive, clock=self.clock
+                ).read_text()
+
+        atomic(archive / "blob-index", "".join(d + "\n" for d in digests[:1]).encode())
+        with self.assertRaises(LocalError) as caught:
+            restore_archive()
+        self.assertEqual("backup_invalid", caught.exception.code)
+        atomic(archive / "blob-index", index)
+        blob = archive / "blobs" / digests[0]
+        original = blob.read_bytes()
+        atomic(blob, original + b"x")
+        with self.assertRaises(LocalError) as caught:
+            restore_archive()
+        self.assertEqual("backup_invalid", caught.exception.code)
+        atomic(blob, original)
+        # The layout of the previous release: the list embedded in the signed manifest.
+        legacy = dict(manifest)
+        legacy.pop("blob_index")
+        legacy.update(schema=6, blobs=digests)
+        atomic(archive / "manifest", control.sign(legacy).encode())
+        (archive / "blob-index").unlink()
+        self.credential = restore_archive()
+        with self.store() as store:
+            self.namespace = store.namespace(self.credential, "demo")
+            self.assertEqual(2, len(delivered(store.read(self.credential, "demo"))["items"]))
+
+    def test_job_position_index_exists_and_reindex_backlog_does_not_refuse_capture(self):
+        from memoryking.application import store_core
+
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT 1 FROM pg_indexes WHERE schemaname='memoryking' "
+                    "AND indexname='jobs_position'"
+                ).fetchone()
+            )
+        original, store_core.QUEUE_LIMIT = store_core.QUEUE_LIMIT, 3
+        try:
+            for number in (1, 2, 3):
+                self.capture(number)
+            with self.assertRaises(LocalError) as caught:
+                self.capture(4)
+            self.assertEqual("queue_full", caught.exception.code)
+            with self.store() as store:
+                store.reindex(self.credential)
+            self.capture(4)  # the reindexed jobs are backlog, not new captures
+        finally:
+            store_core.QUEUE_LIMIT = original
+
     def test_restore_interruption_stays_fenced_then_explicit_retry_recovers(self):
         from memoryking.adapters.postgres_recovery import backup, restore
 

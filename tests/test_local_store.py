@@ -381,8 +381,9 @@ class LocalTests(unittest.TestCase):
         self.store.backup(backup)
         manifest_path = backup / "manifest"
         manifest = manifest_path.read_bytes()
-        self.assertGreater(len(manifest), 8192)
-        self.error("invalid_token", self.store.control.verify, manifest.decode())
+        self.assertLess(len(manifest), 8192, "the manifest commits to the blob index by hash")
+        self.assertEqual(90, len((backup / "blob-index").read_text().splitlines()))
+        self.error("invalid_token", self.store.control.verify, (manifest + b"0" * 8192).decode())
         oversized = self.base / "oversized-manifest"
         atomic(oversized, b"x" * (16 * 1024 * 1024 + 1))
         self.error("invalid_token", self.store.control.verify_document, oversized)

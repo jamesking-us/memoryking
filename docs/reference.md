@@ -88,7 +88,7 @@ The model installer command is `python -m memoryking.model_install --destination
 | Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. `format: "text"` returns a cited Markdown rendering in an envelope with the same receipt; the token count is of the rendered text. |
 | Authorization | Five-second evaluation-to-commit/first-byte deadline, with UTC and monotonic checks. |
 | Idempotency | Replay bodies retained for 30 days; expired/deleted results do not free a consumed identity. |
-| Generic jobs | 30-second leases, five attempts, bounded retry backoff, 1,000 unfinished jobs and four live leases per tenant. The local daemon completes `audit_probe` jobs itself between requests, so a default installation never needs a worker to keep capturing. |
+| Generic jobs | 30-second leases, five attempts, bounded retry backoff, 1,000 unfinished jobs and four live leases per tenant. Jobs reset by a `reindex` or restore are backlog the daemon rebuilds, not new captures, and do not count toward the 1,000. The local daemon completes `audit_probe` jobs itself between requests, so a default installation never needs a worker to keep capturing. |
 | Mandatory resolution | 256 candidate revisions/bindings and 65,536 atom-binding work units; overflow blocks. |
 | Atlas | Default 200 nodes/400 edges; maxima 500/1,500; 196,608-byte response; cursor expires after 60 seconds. Counts describe only the returned window. Each node carries `citations`, the number of the caller's retained briefings, fetches and reruns that depended on it; atlas pages themselves never count. A new citation changes the view, so an open cursor then needs a resync. |
 | Dense retrieval | Exact authorized scan capped at 10,000 eligible vectors and 256 candidates; insufficient index/frontier is explicit. |
@@ -107,7 +107,7 @@ Every per-tenant bound has a release path and is reported by `status` under `cap
 
 | Resource | Limit | Scope | Released by | Error when full |
 | --- | --- | --- | --- | --- |
-| `jobs` | 1,000 pending or leased | tenant | The daemon drains `audit_probe` jobs between requests; `claim`/`finish` workers also drain. | `queue_full` |
+| `jobs` | 1,000 pending or leased (new captures; a reindex or restore backlog is excluded) | tenant | The daemon drains `audit_probe` jobs between requests; `claim`/`finish` workers also drain. | `queue_full` |
 | `rendered_artifacts` | 1,024 retained briefings, replays and resume packets | tenant, evicting the caller's own oldest first | 30-day expiry, and eviction of the oldest retained artifact when the count or byte cap is reached; an evicted receipt replays as `replay_expired`. | `retention_capacity` only when a single artifact exceeds 128 MiB |
 | `rendered_bytes` | 128 MiB of retained artifact bodies | tenant | As above. | As above |
 | `operation_intents` | 4,096 open intents per tenant and 32 per task stream | tenant and stream | Transitioning an intent to `succeeded` or `failed`. Resolved intents keep their consumed identity but no longer count. | `operation_capacity`, `operation_scope_capacity` |

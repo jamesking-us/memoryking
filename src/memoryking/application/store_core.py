@@ -49,6 +49,12 @@ RETRY_MS = 30 * 24 * 60 * 60 * 1000
 
 
 QUEUE_LIMIT = 1000
+DRAIN_BUDGET_MS = 2000  # one drain pass stays well inside the five-second transaction deadline
+# Work waiting on the queue. A pending job with a nonzero fence was reset by a reindex or
+# restore (or already attempted): it is backlog the drain rebuilds, not growth to refuse.
+QUEUED_JOBS = (
+    "SELECT count(*) FROM jobs WHERE tenant=? AND (state='leased' OR (state='pending' AND fence=0))"
+)
 
 
 CONCURRENCY_LIMIT = 4
@@ -291,10 +297,7 @@ class StoreCore:
                         "held": Trust(self).held(tenant, occurrence["id"]),
                     }
                 else:
-                    count = self.db.execute(
-                        "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')",
-                        (tenant,),
-                    ).fetchone()[0]
+                    count = self.db.execute(QUEUED_JOBS, (tenant,)).fetchone()[0]
                     if count >= QUEUE_LIMIT:
                         raise LocalError("queue_full")
                     blob = self._blob(tenant, request["text"].encode())
@@ -1162,9 +1165,7 @@ class StoreCore:
             (tenant,),
         ).fetchone()
         used = {
-            "jobs": count(
-                "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')"
-            ),
+            "jobs": count(QUEUED_JOBS),
             "rendered_artifacts": int(artifacts),
             "rendered_bytes": int(artifact_bytes),
             "operation_intents": count(
@@ -1191,7 +1192,7 @@ class StoreCore:
                 idle = (
                     self.healthy
                     and self.db.execute(
-                        "SELECT 1 FROM jobs WHERE state='pending' AND available<=? LIMIT 1",
+                        "SELECT 1 FROM tenants t WHERE EXISTS (SELECT 1 FROM jobs j WHERE j.tenant=t.tenant AND j.state='pending' AND j.available<=?) LIMIT 1",
                         (self.clock.utc_ms(),),
                     ).fetchone()
                     is None
@@ -1213,6 +1214,9 @@ class StoreCore:
                     (tenant, at, MAX_ATTEMPTS, limit - completed),
                 ).fetchall()
                 for row in rows:
+                    if self.clock.monotonic_ms() - decision.monotonic_ms > DRAIN_BUDGET_MS:
+                        limit = completed  # the rest waits for the next pass
+                        break
                     path = self.root / "blobs" / tenant / row["blob"]
                     try:
                         private_file(path)
