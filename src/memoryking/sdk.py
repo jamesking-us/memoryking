@@ -72,7 +72,7 @@ def default_tokenizer() -> str:
             encoding()
             _TOKENIZER.append("cl100k_base")
         except LocalError:
-            _TOKENIZER.append("utf8-byte-estimate-v1")
+            _TOKENIZER.append("chars-estimate-v1")
     return _TOKENIZER[0]
 
 

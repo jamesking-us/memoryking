@@ -243,7 +243,7 @@ HINTS: dict[str, str] = {
     "delta_reconstruction_failed": "Applying the delta did not reproduce the target hash; fetch a full packet.",
     "delta_sequence_mismatch": "Deltas must apply in order; fetch the missing ones or a full packet.",
     "delta_target_mismatch": "The reconstructed packet does not match the target.",
-    "tokenizer_unavailable": "Install the tokenizers lock for exact counts, or request `utf8-byte-estimate-v1`.",
+    "tokenizer_unavailable": "Install the tokenizers lock for exact counts, or request `chars-estimate-v1`.",
     "tokenizer_version_unsupported": "The installed tiktoken version differs from the pinned one; install the tokenizers lock.",
     "tokenizer_integrity_failure": "The bundled vocabulary file is corrupt; reinstall the package.",
     "query_term_limit": "Queries are searched on their first 32 distinct terms.",

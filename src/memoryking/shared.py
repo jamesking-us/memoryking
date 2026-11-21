@@ -71,6 +71,7 @@ def parser() -> argparse.ArgumentParser:
         "rotate-owner",
         "journal-pending",
         "compact-operations",
+        "reindex",
     ):
         item = commands.add_parser(name)
         item.add_argument("--dsn-file", type=Path, required=True)
@@ -83,7 +84,14 @@ def parser() -> argparse.ArgumentParser:
             )
         if name == "journal-pending":
             item.add_argument("--control", type=Path, required=True)
-        if name in {"serve", "worker-once", "backup", "compact-operations", "rotate-owner"}:
+        if name in {
+            "serve",
+            "worker-once",
+            "backup",
+            "compact-operations",
+            "rotate-owner",
+            "reindex",
+        }:
             item.add_argument(
                 "--instance-id",
                 help="Name this deployment for the instance lease; set it on every process of a multi-host deployment (default: derived from the control directory)",
@@ -96,6 +104,7 @@ def parser() -> argparse.ArgumentParser:
             "restore",
             "rotate-owner",
             "compact-operations",
+            "reindex",
         }:
             item.add_argument("--content", type=Path, required=True)
             item.add_argument("--control", type=Path, required=True)
@@ -109,6 +118,7 @@ def parser() -> argparse.ArgumentParser:
             "rotate-owner",
             "journal-pending",
             "compact-operations",
+            "reindex",
         }:
             item.add_argument("--tenant", required=True)
         if name == "end-maintenance":
@@ -120,8 +130,15 @@ def parser() -> argparse.ArgumentParser:
             )
         if name == "init-tenant":
             item.add_argument("--principal", default="owner")
-        if name in {"worker-once", "backup", "compact-operations"}:
+        if name in {"worker-once", "backup", "compact-operations", "reindex"}:
             item.add_argument("--credential", type=Path, required=True)
+        if name == "reindex":
+            item.add_argument(
+                "--wait",
+                action="store_true",
+                help="Do the batched rebuild in this process and show progress on stderr until "
+                "it completes (without it, the serving process finishes it in the background)",
+            )
         if name == "compact-operations":
             item.add_argument(
                 "--archive-dir",
@@ -182,6 +199,35 @@ def parser() -> argparse.ArgumentParser:
     request.add_argument("--ca-file", type=Path)
     request.add_argument("--loopback-http", action="store_true")
     return result
+
+
+def progress_line(lexical: dict[str, Any]) -> str:
+    left, total = lexical.get("remaining_observations"), lexical.get("total_observations")
+    if left is None or total is None:
+        return f"lexical index {lexical.get('state')}"
+    return (
+        f"lexical index {lexical['state']}: {lexical['percent_complete']}% "
+        f"({total - left:,} of {total:,} observations), about "
+        f"{lexical.get('estimated_seconds', 0)} s left"
+    )
+
+
+def reindex(store: PostgresStore, credential: str, tenant: str, wait: bool) -> dict[str, Any]:
+    """Start the tenant's rebuild into the current lexical configuration (admin credential).
+
+    The starting call is short whatever the corpus size. With `wait`, this process then runs
+    the batched rebuild itself and reports progress on stderr; otherwise the serving process's
+    housekeeping finishes it."""
+    from memoryking.application import lexical_index
+
+    lexical = store.reindex(credential)
+    while wait and lexical.get("state") != lexical_index.CURRENT:
+        store.rebuild_lexical(tenant, wall_ms=1500)
+        with store.transaction():
+            lexical = lexical_index.describe(store.db, tenant, store._lexical_rate)
+        sys.stderr.write(progress_line(lexical) + "\n")
+        sys.stderr.flush()
+    return {"status": "complete" if wait else "started", "lexical": lexical}
 
 
 def run(args: Any) -> dict[str, Any]:
@@ -354,6 +400,8 @@ def run(args: Any) -> dict[str, Any]:
                     "status": "complete",
                     "segments_dropped": store.compact_operations(args.archive_dir),
                 }
+            if args.command == "reindex":
+                return reindex(store, credential, args.tenant, args.wait)
             if args.command == "worker-once":
                 lease = store.claim(credential, args.project)
                 if lease is None:

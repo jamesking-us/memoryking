@@ -972,7 +972,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `tokenizer_integrity_failure` | The bundled vocabulary file is corrupt; reinstall the package. |
-| `tokenizer_unavailable` | Install the tokenizers lock for exact counts, or request `utf8-byte-estimate-v1`. |
+| `tokenizer_unavailable` | Install the tokenizers lock for exact counts, or request `chars-estimate-v1`. |
 | `tokenizer_version_unsupported` | The installed tiktoken version differs from the pinned one; install the tokenizers lock. |
 
 ## tool

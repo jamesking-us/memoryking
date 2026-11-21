@@ -7,7 +7,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from jsonschema import Draft202012Validator
 
@@ -32,13 +32,14 @@ from memoryking.domain.briefing import (
     COMPILER,
     CONFIGURATION,
     LEGACY_CONFIGURATION,
+    budget_scope,
     counted,
     pack,
     relevance,
     term_window,
     terms,
 )
-from memoryking.domain.briefing_text import textualize
+from memoryking.domain.briefing_text import render_brief, textualize
 from memoryking.domain.lexicon import (
     QUERY_TERM_LIMIT,
     STEM_MARK,
@@ -50,6 +51,7 @@ from memoryking.domain.lexicon import (
 from memoryking.domain.lexicon import score as bm25
 from memoryking.domain.local import Decision, LocalError, Released, is_user_project
 from memoryking.domain.selectors import bindings
+from memoryking.domain.timeexpr import Understanding, in_ranges, resolve
 
 # Salience: a bounded, documented nudge from use, never a rewrite of the record.
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
@@ -64,9 +66,24 @@ SALIENCE_WINDOW_MS = 90 * 86_400_000  # deliveries older than this do not count
 SALIENCE_HALF_LIFE_MS = 30 * 86_400_000  # use fades by half every thirty days
 ARCHIVE_AFTER_MS = 180 * 86_400_000  # never-used records older than this rank last
 ARCHIVAL_PENALTY = 4_000_000  # below any reachable score; archival stays searchable
+# Time in the question: records whose time falls in a range the query names are raised by this
+# share of the best score in the candidate list, so a date never beats a clearly better match
+# on words but does decide between near-equal ones. A hard filter only on an explicit time_range.
+TIME_BOOST_PPM = 250_000
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("retrieval.schema.json").read_text())
 )
+
+
+MAX_MS = 9007199254740991
+
+
+def search_text(query: str, understanding: Understanding | None) -> str:
+    """The words to search: the query without its date expressions, unless nothing is left."""
+    if understanding is not None and understanding.expressions:
+        if terms(understanding.remaining):
+            return understanding.remaining
+    return query
 
 
 class Retrieval:
@@ -196,6 +213,13 @@ class Retrieval:
                 "vector": batch.vectors[0],
             },
         }
+
+    @staticmethod
+    def renderer(args: dict[str, Any]) -> Callable[[dict[str, Any]], str] | None:
+        """What the budget counts: the text the model reads when the caller asked for text."""
+        if args.get("format") != "text":
+            return None
+        return lambda packet: render_brief(packet)[0]
 
     def textual(
         self, args: dict[str, Any], kind: str, raw: bytes, diag: dict[str, Any]
@@ -514,6 +538,8 @@ class Retrieval:
         if recorded > source:
             raise LocalError("invalid_recorded_position")
         args = self._auto_dense(who, args)
+        # Dates in the question, resolved against the briefing's reference instant.
+        understanding = resolve(args["query"], args.get("as_of_ms", at))
         dense = dense_search(self.s, who, args, recorded, target_position)
         missing = [
             c
@@ -582,7 +608,7 @@ class Retrieval:
             "cache": "not_used",
             "trace": [],
         }
-        if term_window(args["query"])[1]:
+        if term_window(search_text(args["query"], understanding))[1]:
             # Long queries are searched on their leading terms; the cut is disclosed.
             diag["query_terms_truncated"] = QUERY_TERM_LIMIT
         groups: list[list[dict[str, Any]]] = []
@@ -627,6 +653,7 @@ class Retrieval:
                 ranking,
                 evaluation=ranking_override is not None,
                 lexical_current=lexical_current,
+                understanding=understanding,
             )
             if (
                 "recorded_position" not in args
@@ -683,7 +710,9 @@ class Retrieval:
                 base["warnings"].append("optional_conflict_possible")
             if any(t.get("candidate_limit_reached", False) for t in trace):
                 base["warnings"].append("optional_candidate_limit")
-        raw, used, selected, omitted = pack(base, groups, count, args["max_output_tokens"])
+        raw, used, selected, omitted = pack(
+            base, groups, count, args["max_output_tokens"], self.renderer(args)
+        )
         output = json.loads(raw)
         rendered_items = output["constraints"] + selected
         deps = self._dependencies(rendered_items)
@@ -695,9 +724,7 @@ class Retrieval:
         diag.update(
             status=output["status"],
             minimum_required_tokens=output.get("minimum_required_tokens"),
-            budget_count_scope="failure_envelope"
-            if output["status"] == "budget_insufficient"
-            else "context",
+            budget_count_scope=budget_scope(output),
             usage={**output["usage"], "output_tokens": used, "serialized_bytes": len(raw)},
             coverage=output["coverage"],
             selected=[
@@ -775,6 +802,62 @@ class Retrieval:
             sizes.append(1)
         return list(dict.fromkeys(sizes))
 
+    @staticmethod
+    def _when(args: dict[str, Any]) -> tuple[str, tuple[int, ...]]:
+        """The SQL clause (and its parameters) for an explicit `time_range`, else nothing."""
+        window = args.get("time_range")
+        if not window:
+            return "", ()
+        return "o.observed_at_ms>=? AND o.observed_at_ms<=? AND ", (
+            window.get("from_ms", 0),
+            window.get("to_ms", MAX_MS),
+        )
+
+    @staticmethod
+    def _time_boost(
+        understanding: Understanding | None,
+        window: dict[str, int] | None,
+        ranked: list[tuple[int, str, list[dict[str, Any]]]],
+        observed: dict[str, int],
+        rank_key: Any,
+    ) -> tuple[dict[str, Any], list[tuple[int, str, list[dict[str, Any]]]]]:
+        """Raise matches whose time is in a range the question names (never filters).
+
+        An observation counts by its observed time; a claim by its validity interval, and only
+        when that interval has a bound (an open-ended claim is in no particular time)."""
+        trace: dict[str, Any] = {"stage": "time_v1", "language": "en"}
+        if window:
+            trace["explicit_range"] = {
+                "from_ms": window.get("from_ms", 0),
+                "to_ms": window.get("to_ms", MAX_MS),
+                "filter": "hard",
+            }
+        if understanding is None or not understanding.expressions:
+            trace["state"] = "no_time_in_query"
+            return trace, ranked
+        trace.update(understanding.trace())
+        ranges = understanding.ranges
+        top = max((score for score, _, _ in ranked), default=0)
+        bonus = top * TIME_BOOST_PPM // 1_000_000
+        boosted = 0
+        rescored = []
+        for score, reference, group in ranked:
+            hit = False
+            for entry in group:
+                if entry.get("authority") == "observed_episode":
+                    when = observed.get(reference)
+                    hit = hit or (when is not None and in_ranges(ranges, when, when))
+                elif entry.get("valid_start") is not None or entry.get("valid_end") is not None:
+                    hit = hit or in_ranges(ranges, entry["valid_start"], entry["valid_end"])
+            if hit and score > 0:
+                for entry in group:
+                    entry["in_time_range"] = True
+                score += bonus
+                boosted += 1
+            rescored.append((score, reference, group))
+        trace.update(state="applied", boost_ppm_of_best=TIME_BOOST_PPM, boosted=boosted)
+        return trace, sorted(rescored, key=rank_key)
+
     def _select(
         self,
         who: dict[str, Any],
@@ -793,7 +876,8 @@ class Retrieval:
         recorded position, readers, not held) before its limit, so a reader never competes
         with, or is crowded out by, records they cannot read."""
         tenant, project = who["tenant"], args["project"]
-        scope = (tenant, project, recorded, who["principal"])
+        when, bounds = self._when(args)
+        scope = (tenant, project, recorded, who["principal"], *bounds)
         chosen: dict[str, int] = {}
         if anchors:
             hits: dict[str, int] = {}
@@ -801,6 +885,7 @@ class Retrieval:
             for anchor in anchors:
                 for row in self.db.execute(
                     self.SCOPE
+                    + when
                     + "o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
                     (*scope, tenant, anchor),
                 ).fetchall():
@@ -823,6 +908,7 @@ class Retrieval:
             ran += 1
             for row in self.db.execute(
                 self.SCOPE
+                + when
                 + "o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
                 + self.s.dialect.lexical_boolean()
                 + ") ORDER BY o.position DESC,o.id DESC LIMIT ?",
@@ -843,13 +929,15 @@ class Retrieval:
     ) -> list[str]:
         """The pre-lexical-v2 selection, kept for a store whose index is not rebuilt yet."""
         tenant = who["tenant"]
-        scope = (tenant, args["project"], recorded, who["principal"])
+        when, bounds = self._when(args)
+        scope = (tenant, args["project"], recorded, who["principal"], *bounds)
         coverage: dict[str, int] = {}
         position: dict[str, int] = {}
         limited = False
         for term in query:
             rows = self.db.execute(
                 self.SCOPE
+                + when
                 + "o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
                 + self.s.dialect.lexical_match()
                 + ") ORDER BY o.position DESC,o.id DESC LIMIT 257",
@@ -863,6 +951,7 @@ class Retrieval:
         for anchor in anchors:
             rows = self.db.execute(
                 self.SCOPE
+                + when
                 + "o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
                 (*scope, tenant, anchor),
             ).fetchall()
@@ -886,10 +975,24 @@ class Retrieval:
         *,
         evaluation: bool = False,
         lexical_current: bool = False,
+        understanding: Understanding | None = None,
     ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]], str]:
         tenant = who["tenant"]
-        query = terms(args["query"])
-        qterms = query_terms(args["query"]) if lexical_current else []
+        # Date words are not search words: "last week" must not look for "week".
+        words = search_text(args["query"], understanding)
+        query = terms(words)
+        qterms = query_terms(words) if lexical_current else []
+        window = args.get("time_range")
+        if window:
+            span = [(window.get("from_ms", 0), window.get("to_ms", MAX_MS))]
+            knowledge = {
+                **knowledge,
+                "items": [
+                    i
+                    for i in knowledge["items"]
+                    if in_ranges(span, i["body"]["valid_start"], i["body"]["valid_end"])
+                ],
+            }
         anchors = anchors_in(args["query"])[:16]
         candidates = knowledge["items"]
         # Term weights come from whole-project statistics (not what this reader may see)
@@ -1051,6 +1154,7 @@ class Retrieval:
             ranked.append((score, lead, group))
         dense_scores = dense["scores"]
         positions: dict[str, int] = {}
+        observed: dict[str, int] = {}
         # Corrections: a record with a visible replacement, or one this reader asked to have
         # retired, is left out; one someone else asked to retire is marked (see corrections.py).
         corrected, retiring = Corrections(self.s).screen(
@@ -1064,6 +1168,11 @@ class Retrieval:
             ).fetchone()
             if row is None or not self.s._visible(who, row, at):
                 continue
+            if window and not (
+                window.get("from_ms", 0) <= row["observed_at_ms"] <= window.get("to_ms", MAX_MS)
+            ):
+                continue
+            observed[observation] = row["observed_at_ms"]
             positions[observation] = row["position"]
             tie[observation] = (1, -row["position"], observation)
             raw = self._blob(row)
@@ -1159,6 +1268,7 @@ class Retrieval:
                 for _, reference, group in ranked
             ]
             ranked.sort(key=rank_key)
+        time_trace, ranked = self._time_boost(understanding, window, ranked, observed, rank_key)
         historical = "recorded_position" in args or "valid_ms" in args
         salience_trace: dict[str, Any] = {"stage": "salience_v1"}
         if historical:
@@ -1298,6 +1408,7 @@ class Retrieval:
             trace[-1]["metric"] = "equal_channel_rrf60_v1"
         # The rank stage stays last among the fixed stages; salience and the reranker
         # sit before it, in the order they ran.
+        trace.insert(len(trace) - 1, time_trace)
         trace.insert(len(trace) - 1, salience_trace)
         trace.insert(len(trace) - 1, rerank_trace)
         if ranking["state"] != "disabled":
