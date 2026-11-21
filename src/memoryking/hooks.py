@@ -69,6 +69,7 @@ def capture(
     classification: str = "internal",
     observed_ms: int | None = None,
     namespace: str = "hooks",
+    supersedes: str | None = None,
     **where: Any,
 ) -> dict[str, Any]:
     """Capture one observation; the text is truncated to the capture limit with a marker.
@@ -90,6 +91,18 @@ def capture(
     # The derived key covers everything the payload varies by (project, observed time,
     # text), so a rerun replays and another day or project is a new capture.
     event = event or event_id(source, text, f"{project}\n{observed}")
+    body: dict[str, Any] = {
+        "version": 1,
+        "project": project,
+        "source": source,
+        "source_event": event,
+        "text": text,
+        "readers": readers,
+        "classification": classification,
+        "observed_at_ms": observed,
+    }
+    if supersedes:
+        body["supersedes"] = supersedes
     space = request(socket, token, "namespace", {"project": project, "name": namespace})
     return request(
         socket,
@@ -98,16 +111,7 @@ def capture(
         {
             "namespace": space["namespace"],
             "key": event,
-            "request": {
-                "version": 1,
-                "project": project,
-                "source": source,
-                "source_event": event,
-                "text": text,
-                "readers": readers,
-                "classification": classification,
-                "observed_at_ms": observed,
-            },
+            "request": body,
         },
     )
 
@@ -129,6 +133,43 @@ def as_of_ms(value: str) -> int:
         # A bare date means the end of that day: everything recorded on it counts.
         parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999000)
     return int(parsed.timestamp() * 1000)
+
+
+def start(
+    *,
+    budget: int = 6000,
+    text: bool = True,
+    task: str | None = None,
+    days: int | None = None,
+    binding: list[str] | None = None,
+    **where: Any,
+) -> dict[str, Any]:
+    """The query-free session-start briefing: constraints, pins, the task's last checkpoint
+    and recent decisions (see `adapters/session_start.py`), as Markdown by default."""
+    socket, token, project = connection(**where)
+    points = session_bindings.resolve(
+        binding, profile=where.get("profile"), config=where.get("config")
+    )
+    context = request(socket, token, "context", {"project": project})
+    args: dict[str, Any] = {
+        "project": project,
+        "bindings": points,
+        "max_output_tokens": budget,
+        "tokenizer": "utf8-byte-estimate-v1",
+    }
+    if text:
+        args["format"] = "text"
+    if task:
+        args["task"] = task
+    if days:
+        args["recent_days"] = days
+    command = {
+        "version": 1,
+        "incarnation": context["incarnation"],
+        "action": "start",
+        "args": args,
+    }
+    return request(socket, token, "retrieval", {"command": command})
 
 
 def recall(
