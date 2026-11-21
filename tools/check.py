@@ -24,6 +24,7 @@ def main():
     out = ROOT / "tmp/checks"
     out.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+    env["MEMORYKING_PYTHON"] = sys.executable  # the JavaScript client tests start real services
     commands = [
         [sys.executable, "tools/generate_contracts.py", "--check"],
         [sys.executable, "tools/generate_error_codes.py", "--check"],
