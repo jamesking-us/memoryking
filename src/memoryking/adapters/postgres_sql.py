@@ -82,15 +82,21 @@ class PostgresSQL:
     def __init__(self, connection: Any, active: Callable[[], bool] = lambda: True):
         self.connection = connection
         self.active = active
+        # Statements other than a plain SELECT since the transaction began (reset by the store):
+        # a transaction with none changed nothing and needs no commit serial.
+        self.writes = 0
 
     def execute(self, statement: str, parameters: Sequence[Any] = ()) -> Any:
         if not self.active():
             raise LocalError("database_transaction_required")
+        if not statement.lstrip()[:6].upper() == "SELECT":
+            self.writes += 1
         return self.connection.execute(native_statement(statement), parameters)
 
     def executemany(self, statement: str, rows: Sequence[Sequence[Any]]) -> Any:
         if not self.active():
             raise LocalError("database_transaction_required")
+        self.writes += 1
         cursor = self.connection.cursor()
         cursor.executemany(native_statement(statement), rows)
         return cursor
@@ -100,3 +106,21 @@ class PostgresSQL:
 
     def rollback(self) -> None:
         self.connection.rollback()
+
+
+def take_gate(connection: Any, tenant: str, *, shared: bool) -> Any:
+    """The tenant's gate: briefings and appends share it, policy changes, purges and restores
+    hold it alone. The advisory lock gives the exclusive request its turn (a row lock alone lets
+    a steady stream of shared holders keep an exclusive request waiting for ever); the row lock
+    stays for every path that takes only that."""
+    connection.execute(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended(%s,0))"
+        if shared
+        else "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+        ("memoryking.gate:" + tenant,),
+    )
+    return connection.execute(
+        "SELECT tenant FROM memoryking.tenant_gates WHERE tenant=%s FOR "
+        + ("SHARE" if shared else "UPDATE"),
+        (tenant,),
+    ).fetchone()

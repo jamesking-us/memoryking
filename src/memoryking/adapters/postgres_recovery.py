@@ -37,7 +37,7 @@ from memoryking.adapters.local_files import (
 )
 from memoryking.adapters.local_store import LocalStore, identifier, recovery_admin, uid
 from memoryking.adapters.postgres_admin import Roles
-from memoryking.adapters.postgres_sql import PostgresSQL, record_factory
+from memoryking.adapters.postgres_sql import PostgresSQL, record_factory, take_gate
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.contracts.canonical import canonical_bytes, load_strict
@@ -510,9 +510,7 @@ def restore(
                 raise LocalError("backup_invalid")
         with connection.transaction():
             settings(connection, tenant)
-            connection.execute(
-                "SELECT tenant FROM tenant_gates WHERE tenant=%s FOR UPDATE", (tenant,)
-            )
+            take_gate(connection, tenant, shared=False)
             with controller.locked():
                 if lost_anchor_journal_head is None:
                     anchor = controller.read_anchor()

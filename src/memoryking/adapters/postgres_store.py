@@ -25,7 +25,7 @@ from memoryking.adapters.local_store import (
     paths,
     uid,
 )
-from memoryking.adapters.postgres_sql import PostgresSQL
+from memoryking.adapters.postgres_sql import PostgresSQL, take_gate
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.application.storage import PostgresDialect
 from memoryking.application.store_core import StoreCore, lease_holder
@@ -45,6 +45,12 @@ class _ReplayPending(Exception):
 # request's budget. Each statement may run this long (milliseconds); the record count is
 # bounded by the journal, and each record commits on its own.
 JOURNAL_APPLY_STATEMENT_MS = 900_000
+
+
+# What the anchor holds beyond history (see `_expose`) is written at most this often per tenant
+# directory in this process.
+ANCHOR_SECONDS = 1.0
+ANCHOR_WRITTEN: dict[str, float] = {}
 
 
 class PostgresStore(StoreCore):
@@ -96,6 +102,8 @@ class PostgresStore(StoreCore):
         clock: Clock | None = None,
         fault: Callable[[str], None] | None = None,
         release_only: bool = False,
+        append: bool = False,
+        replay_pending: bool = False,
         audience: str = "memoryking-shared",
         request_deadline: float | None = None,
         instance_id: str | None = None,
@@ -142,13 +150,22 @@ class PostgresStore(StoreCore):
         self.reranker: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
+        # An appending request (a capture and the drain after it) shares the gate with briefings
+        # and with other appends, which a per-tenant lock serializes among themselves. It may
+        # record events but not journal a policy decision, delete files or purge.
+        self.append = append
+        # A release-only request normally refuses while journal records are unapplied (a writer
+        # applies them). A briefing keeps the behaviour it had under the exclusive gate: it
+        # applies them first, in transactions of their own, then starts over on the share gate.
+        self.replay_pending = replay_pending
         self.active = False
         self.metrics: list[dict[str, float]] = []
         self.committed: dict[str, Any] | None = None
+        self.serial_seen = 0  # the database's commit serial when this transaction began
         self.pool = pool
         self.request_deadline = request_deadline
         from memoryking.adapters.postgres_admin import schema_compatible, schema_refusal
-        from memoryking.adapters.postgres_pool import acquire, check
+        from memoryking.adapters.postgres_pool import acquire, checked
 
         remaining = None if request_deadline is None else request_deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
@@ -160,16 +177,22 @@ class PostgresStore(StoreCore):
                 self.connection.execute(
                     "SELECT set_config('statement_timeout',%s,false)", (str(remaining_ms),)
                 )
-            # getconn() does not run the pool's checkout check callback.
-            check(self.connection)
-            version = self.connection.execute(
-                "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
-            ).fetchone()
-            if version is None:
+            # getconn() does not run the pool's checkout check callback. The schema version is
+            # read with the checks: it moves only when someone migrates, and a connection that
+            # has just been checked has just been told.
+            ran = checked(self.connection)
+            cached = getattr(self.connection, "memoryking_schema", None)
+            if cached is None or ran:
+                version = self.connection.execute(
+                    "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
+                ).fetchone()
+                cached = None if version is None else version[0]
+                self.connection.memoryking_schema = cached
+            if cached is None:
                 raise LocalError("schema_unsupported")
-            if not (version[0].isdigit() and schema_compatible(int(version[0]))):
-                raise schema_refusal(version[0])
-            self.db = PostgresSQL(self.connection, lambda: self.active)
+            if not (cached.isdigit() and schema_compatible(int(cached))):
+                raise schema_refusal(cached)
+            self.db = self.facade = PostgresSQL(self.connection, lambda: self.active)
         except BaseException as exc:
             pool.putconn(self.connection)
             if request_deadline is not None and (
@@ -286,8 +309,9 @@ class PostgresStore(StoreCore):
     def _settings(self, statement_ms: int | None = None) -> None:
         """Transaction settings. `statement_ms` replaces the request budget for one statement,
         which only journal replay uses: its work is not part of any request's five seconds."""
-        self.connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        self.connection.execute("SET LOCAL search_path=memoryking,pg_catalog")
+        self.connection.execute(
+            "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL search_path=memoryking,pg_catalog"
+        )
         remaining_ms = (
             5000
             if self.request_deadline is None
@@ -295,19 +319,18 @@ class PostgresStore(StoreCore):
         )
         if remaining_ms <= 0:
             raise LocalError("service_busy")
-        self.connection.execute("SELECT set_config('lock_timeout',%s,true)", (str(remaining_ms),))
-        self.connection.execute(
-            "SELECT set_config('statement_timeout',%s,true)",
-            (str(remaining_ms if statement_ms is None else statement_ms),),
-        )
-        self.connection.execute("SELECT set_config('memoryking.tenant',%s,true)", (self.tenant,))
-        self.connection.execute(
-            "SELECT set_config('memoryking.principal',%s,true)", (self.principal,)
-        )
         # Journal replay applies records other principals wrote; it carries no subject.
         self.connection.execute(
-            "SELECT set_config('memoryking.on_behalf_of',%s,true)",
-            ((self.on_behalf_of or "") if statement_ms is None else "",),
+            "SELECT set_config('lock_timeout',%s,true),set_config('statement_timeout',%s,true),"
+            "set_config('memoryking.tenant',%s,true),set_config('memoryking.principal',%s,true),"
+            "set_config('memoryking.on_behalf_of',%s,true)",
+            (
+                str(remaining_ms),
+                str(remaining_ms if statement_ms is None else statement_ms),
+                self.tenant,
+                self.principal,
+                (self.on_behalf_of or "") if statement_ms is None else "",
+            ),
         )
 
     def _control_guard(self) -> Any:
@@ -340,6 +363,7 @@ class PostgresStore(StoreCore):
             # journal tail was lost or another control tree is in use. Never skip silently.
             raise LocalError("journal_rollback")
         self.last_utc = max(self.last_utc, self.anchor["last_utc"])
+        self.serial_seen = int(meta["commit_serial"])
         if applied == held and applied_operations == held_operations:
             return []
         with self.control.locked():
@@ -357,15 +381,19 @@ class PostgresStore(StoreCore):
         (sequence, kind, tenant and error code only) and raised; nothing is skipped, so the
         records after it stay pending.
         """
+        restore, self.release_only = self.release_only, False  # applying is a policy write
+        try:
+            self._apply_pending(records)
+        finally:
+            self.release_only = restore
+
+    def _apply_pending(self, records: list[dict[str, Any]]) -> None:
         for record in records:
             try:
                 with self.connection.transaction():
                     self._settings(JOURNAL_APPLY_STATEMENT_MS)
                     self.active = True
-                    row = self.connection.execute(
-                        "SELECT tenant FROM memoryking.tenant_gates WHERE tenant=%s FOR UPDATE",
-                        (self.tenant,),
-                    ).fetchone()
+                    row = take_gate(self.connection, self.tenant, shared=False)
                     if row is None:
                         raise LocalError("denied")
                     self._apply(record, self._now().evaluated_ms)
@@ -409,34 +437,50 @@ class PostgresStore(StoreCore):
                         with self.connection.transaction():
                             self._settings()
                             self.active = True
-                            mode = "SHARE" if self.release_only else "UPDATE"
-                            row = self.connection.execute(
-                                f"SELECT tenant FROM memoryking.tenant_gates WHERE tenant=%s FOR {mode}",
-                                (self.tenant,),
-                            ).fetchone()
+                            row = take_gate(
+                                self.connection,
+                                self.tenant,
+                                shared=self.release_only or self.append,
+                            )
                             if row is None:
                                 raise LocalError("denied")
+                            if self.append:
+                                # Appends keep their order among themselves (positions, retries,
+                                # one lexical index writer) exactly as under the exclusive gate.
+                                self.connection.execute(
+                                    "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                                    ("memoryking.append:" + self.tenant,),
+                                )
                             locked = time.monotonic()
                             # Before any replay: a refused holder must not apply records.
-                            self._hold_lease(self.clock.utc_ms(), writer=not self.release_only)
+                            self._hold_lease(
+                                self.clock.utc_ms(), writer=not (self.release_only or self.append)
+                            )
                             pending = self._validate_anchor()
-                            if pending and self.release_only:
+                            if pending and self.release_only and not self.replay_pending:
                                 raise LocalError("journal_replay_required")
                             if pending:
                                 # Applied outside this request's transaction and budget, one record
                                 # per transaction, then this request starts over on a settled journal.
                                 raise _ReplayPending(pending)
                             decision = self._now()
+                            self.facade.writes = 0
                             yield decision
                             self.fault("before_commit")
                             decision.check(self.clock)
                             clock_started = time.monotonic()
-                            serial = self.connection.execute(
-                                "SELECT memoryking.next_commit_serial(%s,%s)",
-                                (self.tenant, MAX_COUNTER),
-                            ).fetchone()
-                            if serial is None or serial[0] is None:
-                                raise LocalError("counter_exhausted")
+                            if self.facade.writes:
+                                serial = self.connection.execute(
+                                    "SELECT memoryking.next_commit_serial(%s,%s)",
+                                    (self.tenant, MAX_COUNTER),
+                                ).fetchone()
+                                if serial is None or serial[0] is None:
+                                    raise LocalError("counter_exhausted")
+                            else:
+                                # Nothing was written: there is nothing to order, and the one
+                                # tenant-wide counter row is not taken (a plain read does not
+                                # queue behind every committing request).
+                                serial = (self.serial_seen,)
                             clock_locked = time.monotonic()
                             position = self.db.execute(
                                 "SELECT position FROM tenants WHERE tenant=?", (self.tenant,)
@@ -484,15 +528,38 @@ class PostgresStore(StoreCore):
         return super()._event(tenant, kind, subject, at, actor)
 
     def _journal(self, action: dict[str, Any]) -> dict[str, Any]:
-        if self.release_only or action["tenant"] != self.tenant:
+        if self.release_only or self.append or action["tenant"] != self.tenant:
             raise LocalError("exclusive_gate_required")
         with self.control.locked():
             self.anchor = self.control.read_anchor()
             return super()._journal(action)
 
     def _expose(self) -> None:
+        """Make the anchor cover the history this request committed before it acknowledges.
+
+        See `LocalStore._expose_locked` for what the anchor protects. Here the anchor read at the
+        start of this transaction already covers every position a request may name when it is at
+        or past this one, so a request that moved none (a briefing that wrote only its receipt)
+        writes nothing; the commit serial and the clock's high-water mark are written when due,
+        at most once per interval and tenant in this process."""
         if not self.healthy or self.committed is None:
             raise LocalError("recovery_required")
+        committed, held = self.committed, self.anchor
+        covered = committed["position"] <= held["frontiers"].get(self.tenant, 0)
+        now = time.monotonic()
+        key = str(self.control_path)
+        soft = (
+            committed["commit_serial"] > held["commit_serial"]
+            or committed["last_utc"] > held["last_utc"]
+        )
+        due = soft and (
+            now - ANCHOR_WRITTEN.get(key, 0.0) >= ANCHOR_SECONDS
+            or committed["last_utc"] - held["last_utc"] >= ANCHOR_SECONDS * 1000
+        )
+        if covered and not due:
+            if self.metrics:
+                self.metrics[-1]["anchor_ms"] = 0.0
+            return
         started = time.monotonic()
         try:
             with self.control.locked():
@@ -501,12 +568,13 @@ class PostgresStore(StoreCore):
                     raise LocalError("history_changed")
                 self.fault("before_anchor")
                 anchor["frontiers"][self.tenant] = max(
-                    anchor["frontiers"].get(self.tenant, 0), self.committed["position"]
+                    anchor["frontiers"].get(self.tenant, 0), committed["position"]
                 )
-                for key in ("commit_serial", "last_utc"):
-                    anchor[key] = max(anchor[key], self.committed[key])
+                for field in ("commit_serial", "last_utc"):
+                    anchor[field] = max(anchor[field], committed[field])
                 self.control.anchor(anchor)
                 self.anchor = anchor
+                ANCHOR_WRITTEN[key] = now
                 self.fault("after_anchor")
             if self.metrics:
                 self.metrics[-1]["anchor_ms"] = (time.monotonic() - started) * 1000
@@ -516,7 +584,7 @@ class PostgresStore(StoreCore):
 
     def gc(self) -> int:
         # The exclusive gate prevents deleting a durable staging blob before adoption.
-        if self.release_only:
+        if self.release_only or self.append:
             raise LocalError("exclusive_gate_required")
         with self.transaction():
             live = {
@@ -543,7 +611,7 @@ class PostgresStore(StoreCore):
     def _delete_unreferenced(self, items: list[tuple[str, str]]) -> int:
         """Delete the files of purged observations that no other observation names, under the
         exclusive gate, so a capture that is staging the same content cannot lose its file."""
-        if self.release_only:
+        if self.release_only or self.append:
             raise LocalError("exclusive_gate_required")
         removed = 0
         with self.transaction():
