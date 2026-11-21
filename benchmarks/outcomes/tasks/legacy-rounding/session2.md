@@ -1,0 +1,1 @@
+Customers are complaining that some totals come out a cent low. For example, one item priced 2.675 with quantity 1 and a tax rate of 0 should be charged 2.68, and so should a cart that lands on half a cent after tax. Half cents should round up. Please fix it, including the per-line totals that `cart.summary` reports, and add tests.

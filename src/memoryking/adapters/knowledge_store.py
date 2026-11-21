@@ -43,6 +43,12 @@ class Knowledge:
             "review": "review",
             "attest": "attest",
             "promote": "review",
+            # Anyone who can write may ask for a record to be retired; deciding is a review.
+            "retire": "capture",
+            "retire_decide": "review",
+            "retirements": "review",
+            "pin": "review",
+            "pins": "review",
         }.get(action, "read")
         with self.s.transaction() as decision:
             who = self.s._auth(credential, cap, args["project"], decision.evaluated_ms)
@@ -62,7 +68,16 @@ class Knowledge:
                 source = self._revision(who["tenant"], args["revision"])
                 self.s._auth(credential, "review", source["project"], at)
                 self.s._auth(credential, "export", source["project"], at)
-            mutation = action in {"propose", "draft", "review", "attest", "promote"}
+            mutation = action in {
+                "propose",
+                "draft",
+                "review",
+                "attest",
+                "promote",
+                "retire",
+                "retire_decide",
+                "pin",
+            }
             key = command.get("key")
             if mutation and not key:
                 raise LocalError("request_key_required")
@@ -105,6 +120,21 @@ class Knowledge:
                 result = self.review(credential, who, args, at)
             elif action == "attest":
                 result = self.attest(who, args, at)
+            elif action in {"retire", "retirements", "retire_decide", "pin", "pins"}:
+                from memoryking.adapters.corrections import Corrections
+
+                corrections = Corrections(self.s)
+                result = (
+                    corrections.request(who, args, at)
+                    if action == "retire"
+                    else corrections.listing(who, args, at)
+                    if action == "retirements"
+                    else corrections.decide(credential, who, args, at)
+                    if action == "retire_decide"
+                    else corrections.pin(who, args, at)
+                    if action == "pin"
+                    else corrections.pins(who, args, at)
+                )
             else:
                 result = self.query(who, args, at, constraints=action == "constraints")
             if mutation and existing is None:
@@ -175,6 +205,24 @@ class Knowledge:
                 raw[start:end].decode()
             except UnicodeDecodeError as exc:
                 raise LocalError("invalid_evidence_span") from exc
+
+    def _excerpts(self, who: dict[str, Any], body: dict[str, Any]) -> list[dict[str, Any]]:
+        """The cited sentences, read from observations this reader may see (bounded)."""
+        from memoryking.adapters.retrieval import Retrieval
+
+        found = []
+        for span in body["evidence"][:16]:
+            row = self.db.execute(
+                "SELECT * FROM observations WHERE tenant=? AND id=?",
+                (who["tenant"], span["observation"]),
+            ).fetchone()
+            if row is None or row["blob"] != span["content_hash"]:
+                continue
+            raw = Retrieval(self.s)._blob(row)[span["start_byte"] : span["end_byte"]]
+            found.append(
+                {"observation": span["observation"], "text": raw[:512].decode("utf-8", "replace")}
+            )
+        return found
 
     def _evidence(self, tenant: str, revision: str) -> list[dict[str, Any]]:
         return [
@@ -373,6 +421,12 @@ class Knowledge:
             or (action == "release_quarantine" and not quarantine)
         ):
             raise LocalError("invalid_transition")
+        if args.get("channel") == "chat" and (
+            row["kind"] != "knowledge" or action not in {"accept", "reject"}
+        ):
+            # A decision relayed through a conversation can never create a constraint
+            # or change an accepted claim's standing.
+            raise LocalError("invalid_request")
         replacement = args.get("replacement")
         if replacement and action != "accept":
             raise LocalError("invalid_transition")
@@ -422,6 +476,14 @@ class Knowledge:
             "replacement": replacement,
             "expected_hash": row["body_hash"],
         }
+        if args.get("note"):
+            journal["note"] = args["note"]
+        if args.get("channel") == "chat":
+            journal["confirmation"] = {
+                "channel": "chat",
+                "relayed_by": who["principal"],
+                "proposed_by": row["issuer"],
+            }
         self.s._apply(self.s._journal(journal), at)
         return {
             "revision": row["id"],
@@ -460,7 +522,13 @@ class Knowledge:
                 row["id"],
                 position,
                 action["decision"],
-                json.dumps({"reason": action["reason"], "actor": action["actor"]}),
+                json.dumps(
+                    {
+                        "reason": action["reason"],
+                        "actor": action["actor"],
+                        **{k: action[k] for k in ("note", "confirmation") if k in action},
+                    }
+                ),
             ),
         )
         if replacement:
@@ -652,6 +720,13 @@ class Knowledge:
         accepted_only = constraints or not args.get("diagnostic", False)
         listing = not accepted_only
         before = args.get("before_position")
+        # A reviewer may list proposed constraints too, or look one revision up by id.
+        wanted = (
+            "constraint"
+            if constraints
+            else (args.get("kind", "knowledge") if listing else "knowledge")
+        )
+        only = args.get("revision") if listing else None
         rows = self.db.execute(
             "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project IN (?,?,?) AND r.created<=? AND r.kind=?"
             + (
@@ -660,6 +735,7 @@ class Knowledge:
                 else ""
             )
             + (" AND r.created<?" if listing and before is not None else "")
+            + (" AND r.id=?" if only else "")
             + (" ORDER BY r.created DESC" if listing else " ORDER BY r.created")
             + " LIMIT ?",
             (
@@ -668,9 +744,10 @@ class Knowledge:
                 "_tenant" if constraints else args["project"],
                 "_workspace" if constraints else args["project"],
                 recorded,
-                "constraint" if constraints else "knowledge",
+                wanted,
                 *((recorded, recorded) if accepted_only else ()),
                 *((before,) if listing and before is not None else ()),
+                *((only,) if only else ()),
                 REGISTRY_LIMIT + 1,
             ),
         ).fetchall()
@@ -795,6 +872,16 @@ class Knowledge:
                 "applicability": matches,
                 "attestations": attestations,
             }
+            if args.get("diagnostic", False):
+                item["proposed_by"] = row["issuer"]
+                last = self.db.execute(
+                    "SELECT action,detail FROM lifecycle WHERE tenant=? AND revision=? AND action IN ('accept','reject','deprecate') ORDER BY position DESC LIMIT 1",
+                    (tenant, row["id"]),
+                ).fetchone()
+                if last is not None:
+                    item["decision"] = {"action": last["action"], **json.loads(last["detail"])}
+                if args.get("excerpts", False):
+                    item["evidence_text"] = self._excerpts(who, body)
             from memoryking.adapters.repository_store import Repository
 
             item["code_validation"] = [

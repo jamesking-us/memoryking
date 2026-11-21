@@ -12,6 +12,7 @@ from typing import Any, cast
 from jsonschema import Draft202012Validator
 
 from memoryking.adapters.blobs import blob_path
+from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.dense_search import search as dense_search
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_files import private_file
@@ -103,8 +104,13 @@ class Retrieval:
                 args = args["brief"]
                 action = "brief"
             deps: list[dict[str, str]] = []
-            if action in {"brief", "fetch", "atlas"}:
-                if action == "atlas":
+            if action in {"brief", "fetch", "atlas", "start"}:
+                if action == "start":
+                    from memoryking.adapters.session_start import start
+
+                    raw, diag, deps = start(self, who, args, decision, access_id)
+                    raw, diag = self.textual(args, "brief", raw, diag)
+                elif action == "atlas":
                     from memoryking.adapters.atlas import query
 
                     raw, diag, deps = query(self, who, args, decision, access_id)
@@ -1017,7 +1023,14 @@ class Retrieval:
             ranked.append((score, lead, group))
         dense_scores = dense["scores"]
         positions: dict[str, int] = {}
+        # Corrections: a record with a visible replacement, or one this reader asked to have
+        # retired, is left out; one someone else asked to retire is marked (see corrections.py).
+        corrected, retiring = Corrections(self.s).screen(
+            who, list(dict.fromkeys([*ids[:256], *dense_scores])), recorded, at
+        )
         for observation in dict.fromkeys([*ids[:256], *dense_scores]):
+            if observation in corrected:
+                continue
             row = self.db.execute(
                 "SELECT * FROM observations WHERE tenant=? AND id=?", (who["tenant"], observation)
             ).fetchone()
@@ -1073,6 +1086,11 @@ class Retrieval:
                                 if score
                                 else "semantic_similarity",
                                 "lexical_score_ppm": score,
+                                **(
+                                    {"retirement_requested": True}
+                                    if observation in retiring
+                                    else {}
+                                ),
                                 **(
                                     {"dense_score_ppm": dense_scores[observation]}
                                     if observation in dense_scores

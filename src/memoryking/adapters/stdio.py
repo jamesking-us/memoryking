@@ -23,11 +23,12 @@ LEAN_VALIDATORS = {item["name"]: Draft202012Validator(item["inputSchema"]) for i
 
 
 class StdioBridge:
-    def __init__(self, client: LocalClient, profile: str = "full"):
+    def __init__(self, client: LocalClient, profile: str = "full", chat_review: bool = False):
         if profile not in {"full", "lean"}:
             raise LocalError("invalid_request")
         self.client = client
         self.profile = profile
+        self.chat_review = chat_review
         self.initialized = False
         self.ready = False
 
@@ -41,7 +42,7 @@ class StdioBridge:
                 raise LocalError("unknown_tool")
             if not validator.is_valid(arguments):
                 raise LocalError("invalid_tool_arguments")
-            return lean.call(self.client, name, arguments)
+            return lean.call(self.client, name, arguments, chat_review=self.chat_review)
         return self.client.tool(name, arguments)
 
     @staticmethod
@@ -174,7 +175,15 @@ def main() -> int:
         "--profile",
         choices=("full", "lean"),
         default="full",
-        help="lean: five flat tools (remember, recall, save_progress, resume, hand_off)",
+        help="lean: nine flat tools (remember, recall, save_progress, resume, hand_off, "
+        "propose, confirm, correct, forget)",
+    )
+    parser.add_argument(
+        "--allow-chat-review",
+        action="store_true",
+        help="Let the lean `confirm` tool record the user's accept or reject of a proposal "
+        "through this agent. Off by default; the credential must also hold the review "
+        "capability. Decisions are recorded as confirmed in chat, naming the proposer.",
     )
     parser.add_argument(
         "--binding",
@@ -192,7 +201,9 @@ def main() -> int:
     try:
         bindings = session_bindings.resolve(args.binding, profile=args.store_profile)
         client = LocalClient(args.socket, args.credential, args.project, bindings=bindings)
-        StdioBridge(client, args.profile).serve(sys.stdin.buffer, sys.stdout.buffer)
+        StdioBridge(client, args.profile, args.allow_chat_review).serve(
+            sys.stdin.buffer, sys.stdout.buffer
+        )
     except (LocalError, OSError, ContractError) as exc:
         print(
             exc.code if isinstance(exc, LocalError) else "local_transport_unavailable",

@@ -1,0 +1,19 @@
+{
+  "id": "ledger-match",
+  "title": "Index the reconciliation matcher without changing pairings",
+  "kind": "failed_approach",
+  "carries": [
+    "The pairings must stay identical to the current matcher (finance diffs them month over month).",
+    "Indexing by amount and choosing the closest day, or bucketing by (amount, day), changes about a tenth of the production pairs: the current rule is the first free ledger entry in ledger order that fits the tolerance. What works is a per-amount list of free ledger indices scanned in ledger order."
+  ],
+  "why_not_in_repo": "The pairing requirement was stated in session 1 only, and the production replay that showed which indexing variants break it is deleted between the sessions. The docstring does describe the first-fit rule, but the natural indexed rewrite (closest day) looks equally valid and passes every visible test.",
+  "between": true,
+  "stub": {
+    "learn": [
+      "Rule: the pairings from recon.match.reconcile must stay exactly what the current code produces because finance diffs them month over month.",
+      "Failed: indexing ledger entries by amount and picking the closest day changes about 10 percent of the production pairs, and so does bucketing by amount and day. Works: keep a list of free ledger indices per amount in ledger order and take the first that fits the tolerance."
+    ],
+    "recall_query": "reconcile indexing pairings identical closest day first free ledger entry",
+    "must_recall": ["closest day", "ledger order"]
+  }
+}

@@ -266,6 +266,98 @@ def render_grants(items: list[dict[str, Any]]) -> str:
     return "\n".join("  ".join(c.ljust(widths[i]) for i, c in enumerate(r)).rstrip() for r in rows)
 
 
+def review_command(args: Any) -> int:
+    """`memoryking review ...`: the daemon decides authority; this only asks and prints."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    action = args.review_command
+    if action == "list":
+        found = [i for i in reviewer.waiting(args.kind) if i["created_position"] > args.after]
+        page, more = found[: args.limit], len(found) > args.limit
+        page = [reviewer.revision(i["revision"]) for i in page]
+        try:
+            asked = reviewer.retirements()["items"]
+        except LocalError as exc:
+            if exc.code != "denied":
+                raise
+            asked = []
+        if args.json:
+            report = {
+                "proposals": page,
+                "more": more,
+                "next_after": page[-1]["created_position"] if more else None,
+                "retirement_requests": asked,
+            }
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            return 0
+        for item in page:
+            print(reviewing.render(item, full=False))
+        if not page:
+            print("No proposals are waiting.")
+        if more:
+            print(f"More are waiting: continue with --after {page[-1]['created_position']}")
+        for entry in asked:
+            print(
+                f"{entry['request']}  retirement requested for {entry['observation']} by "
+                f"{entry['requested_by']}: {entry['note']}"
+            )
+            if entry.get("preview"):
+                print(f"    record: {entry['preview']!r}")
+        return 0
+    if action == "show":
+        item = reviewer.revision(args.id)
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(item) + b"\n")
+        else:
+            print(reviewing.render(item, full=True))
+        return 0
+    if action == "accept":
+        result = reviewer.accept(args.id, args.as_kind, args.reason, args.effect)
+        print(json.dumps(result if args.json else {**result["accepted"], "state": "accepted"}))
+        return 0
+    if action == "reject":
+        item = reviewer.revision(args.id, excerpts=False)
+        result = reviewer.decide(item, "reject", "rejected_in_cli", args.reason)
+        print(json.dumps(result))
+        return 0
+    decision = "approve" if action == "retire-approve" else "dismiss"
+    args_: dict[str, Any] = {
+        "request": args.id,
+        "decision": decision,
+        "reason": "approved_in_cli" if decision == "approve" else "dismissed_in_cli",
+    }
+    if args.reason:
+        args_["note"] = args.reason
+    result = reviewer.call("retire_decide", args_, "cli-retire-" + decision + "-" + args.id)
+    print(json.dumps(result))
+    return 0
+
+
+def pin_command(args: Any) -> None:
+    """`memoryking pin add|remove|list`: a policy decision by an admin or reviewer."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    if args.pin_command == "list":
+        report = reviewer.call("pins", {})
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            return
+        for pin in report["items"]:
+            print(f"{pin['target_kind']:<12} {pin['target']}  (pinned by {pin['pinned_by']})")
+        if not report["items"]:
+            print("Nothing is pinned.")
+        return
+    kind, target = ("claim", args.claim) if args.claim else ("observation", args.observation)
+    result = reviewer.call(
+        "pin",
+        {"mode": args.pin_command, "target_kind": kind, "target": target},
+        f"cli-pin-{args.pin_command}-{kind}-{target}-{int(time.time() * 1000)}",
+    )
+    print(json.dumps(result))
+
+
 def read_credential(path: Path) -> str:
     private_file(path)
     return path.read_text().strip()
@@ -784,11 +876,23 @@ def main() -> int:
         type=int,
         help="Observation time in Unix ms; default is today to the day so a rerun replays",
     )
+    cap.add_argument(
+        "--supersedes",
+        metavar="OBSERVATION",
+        help="An earlier observation you can read that this one replaces; it stays as evidence "
+        "but briefings prefer this one",
+    )
     rec = commands.add_parser("recall", help="Print a cited Markdown briefing for a query")
     rec.add_argument("--socket", type=Path)
     rec.add_argument("--credential", type=Path)
     rec.add_argument("--project", required=True)
-    rec.add_argument("--query", required=True)
+    rec.add_argument("--query", help="What you are about to work on (or use --start)")
+    rec.add_argument(
+        "--start",
+        action="store_true",
+        help="No query: constraints, pinned items, the task's last checkpoint and recent decisions",
+    )
+    rec.add_argument("--days", type=int, help="With --start: how far back recent decisions go")
     rec.add_argument("--budget", type=int, default=6000)
     rec.add_argument("--task")
     rec.add_argument(
@@ -806,6 +910,55 @@ def main() -> int:
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     add_binding(rec)
+    rv = commands.add_parser(
+        "review", help="Review waiting proposals and retirement requests from the terminal"
+    )
+    rv_commands = rv.add_subparsers(dest="review_command", required=True)
+    for name, text in (
+        ("list", "List proposals waiting for a decision, oldest first, with their evidence"),
+        ("show", "Show one proposal in full"),
+        ("accept", "Accept a proposal (knowledge, or --as constraint)"),
+        ("reject", "Reject a proposal; --reason is required"),
+        ("retire-approve", "Approve a retirement request: purge the record (admin)"),
+        ("retire-dismiss", "Dismiss a retirement request; the record stays"),
+    ):
+        sub = rv_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
+        if name == "list":
+            sub.add_argument("--limit", type=int, default=10, help="Proposals per page")
+            sub.add_argument("--after", type=int, default=0, help="Continue after this position")
+            sub.add_argument("--kind", choices=("knowledge", "constraint"), default="knowledge")
+        else:
+            sub.add_argument("id", help="A revision id, or a retirement request id")
+        if name == "accept":
+            sub.add_argument("--as", dest="as_kind", choices=("knowledge", "constraint"))
+            sub.add_argument(
+                "--effect",
+                choices=("require", "prohibit"),
+                default="require",
+                help="With --as constraint: whether the text requires or prohibits",
+            )
+        if name in {"accept", "reject", "retire-approve", "retire-dismiss"}:
+            sub.add_argument(
+                "--reason",
+                required=name in {"reject", "retire-dismiss"},
+                help="Why, in your own words; recorded with the decision",
+            )
+    pn = commands.add_parser("pin", help="Keep an accepted claim or observation in session start")
+    pn_commands = pn.add_subparsers(dest="pin_command", required=True)
+    for name in ("add", "remove", "list"):
+        sub = pn_commands.add_parser(name)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
+        if name != "list":
+            target = sub.add_mutually_exclusive_group(required=True)
+            target.add_argument("--claim", metavar="REVISION_OR_FAMILY")
+            target.add_argument("--observation", metavar="OBSERVATION")
     dr = commands.add_parser(
         "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
     )
@@ -879,7 +1032,9 @@ def main() -> int:
     hk.add_argument("--credential", type=Path)
     hk.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
-    hk.add_argument("--query", help="Briefing query at session start; default: task or project")
+    hk.add_argument(
+        "--query", help="Briefing query at session start; default: the query-free session start"
+    )
     hk.add_argument("--budget", type=int, default=6000)
     add_binding(hk)
     hk.add_argument(
@@ -959,6 +1114,8 @@ def main() -> int:
                 "influence",
                 "trust",
                 "draft-proposals",
+                "review",
+                "pin",
             }
             else set()
         )
@@ -1039,6 +1196,7 @@ def main() -> int:
                 readers=args.readers.split(",") if args.readers else None,
                 classification=args.classification,
                 observed_ms=args.observed_ms,
+                supersedes=args.supersedes,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
@@ -1047,20 +1205,36 @@ def main() -> int:
         elif args.command == "recall":
             from memoryking import hooks
 
-            packet = hooks.recall(
-                args.query,
-                budget=args.budget,
-                text=not args.json,
-                task=args.task,
-                as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
-                salience=args.salience,
-                rerank=args.rerank,
-                binding=args.binding,
-                socket=args.socket,
-                credential=args.credential,
-                project=args.project,
-                profile=args.profile,
-                config=args.config,
+            if bool(args.query) == bool(args.start):
+                raise LocalError("invalid_request")
+            where = {
+                "socket": args.socket,
+                "credential": args.credential,
+                "project": args.project,
+                "profile": args.profile,
+                "config": args.config,
+            }
+            packet = (
+                hooks.start(
+                    budget=args.budget,
+                    text=not args.json,
+                    task=args.task,
+                    days=args.days,
+                    binding=args.binding,
+                    **where,
+                )
+                if args.start
+                else hooks.recall(
+                    args.query,
+                    budget=args.budget,
+                    text=not args.json,
+                    task=args.task,
+                    as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
+                    salience=args.salience,
+                    rerank=args.rerank,
+                    binding=args.binding,
+                    **where,
+                )
             )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(packet) + b"\n")
@@ -1192,6 +1366,12 @@ def main() -> int:
                     f"receipt {result['receipt']} · {result['method']} · "
                     f"checkpoint {result['checkpoint']} revision {result['revision']}"
                 )
+        elif args.command == "review":
+            outcome = review_command(args)
+            if outcome:
+                return outcome
+        elif args.command == "pin":
+            pin_command(args)
         elif args.command == "draft-proposals":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})

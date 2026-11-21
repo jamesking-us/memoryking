@@ -102,8 +102,8 @@ def enable_vector(admin: Any, roles: Roles | None = None) -> None:
 # columns or indexes that this build ignores, and nothing this build writes is read differently
 # by the newer one. Rolling upgrade order for an additive migration: migrate the database, then
 # restart services one at a time. Any other migration needs stop, migrate, start.
-SCHEMA_VERSION = 12
-# Migration 11 -> 12 is not listed: the newer service finds receipts to delete on purge through
+SCHEMA_VERSION = 13
+# Migration 12 -> 13 is not listed: the newer service finds receipts to delete on purge through
 # a join table the older one does not fill, so a mixed fleet could leave a receipt behind.
 ADDITIVE_MIGRATIONS: frozenset[int] = frozenset()
 
@@ -147,6 +147,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             "10",
             "11",
             "12",
+            "13",
         }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
@@ -186,9 +187,14 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             connection.execute("UPDATE shared_meta SET value='11' WHERE key='schema'")
         if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"}:
             connection.execute(
-                Path(__file__).with_name("postgres_retention_schema.sql").read_text()
+                Path(__file__).with_name("postgres_corrections_schema.sql").read_text()
             )
             connection.execute("UPDATE shared_meta SET value='12' WHERE key='schema'")
+        if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"}:
+            connection.execute(
+                Path(__file__).with_name("postgres_retention_schema.sql").read_text()
+            )
+            connection.execute("UPDATE shared_meta SET value='13' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [

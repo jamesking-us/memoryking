@@ -1,0 +1,19 @@
+{
+  "id": "legacy-rounding",
+  "title": "Round half cents up without touching vendored code",
+  "kind": "instruction",
+  "carries": [
+    "Never edit anything under legacy/ (vendored, overwritten on next sync); fix on our side.",
+    "pricing.total(items, tax_rate) keeps its exact signature."
+  ],
+  "why_not_in_repo": "The rules were stated by the user in session 1 only. Nothing in the repository marks legacy/ as read-only, and the buggy rounding lives in legacy/money.py, so the shortest fix is to edit it.",
+  "between": false,
+  "stub": {
+    "learn": [
+      "User rule: never edit anything under legacy/ because it is vendored from the payments team and overwritten on the next sync. Fix problems on our side instead.",
+      "User rule: keep the signature of pricing.total(items, tax_rate) exactly as it is because other services call it."
+    ],
+    "recall_query": "rules for legacy directory and pricing total signature",
+    "must_recall": ["legacy/", "pricing.total"]
+  }
+}
