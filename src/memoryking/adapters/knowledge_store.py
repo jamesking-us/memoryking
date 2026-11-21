@@ -638,8 +638,12 @@ class Knowledge:
         # skips every other lifecycle state), so the bound counts exactly those: unreviewed,
         # rejected and deprecated revisions never crowd out mandatory resolution. This mirrors
         # `_state`: the latest accept/reject/deprecate at or before `recorded` must be an accept.
-        # The reviewer diagnostic lists every state of knowledge, so it keeps the unfiltered scan.
+        # The reviewer diagnostic lists every state of knowledge. It is a listing, not
+        # mandatory resolution, so it pages: the newest revisions up to the bound, with
+        # `truncated` and `next_before_position` to continue with `before_position`.
         accepted_only = constraints or not args.get("diagnostic", False)
+        listing = not accepted_only
+        before = args.get("before_position")
         rows = self.db.execute(
             "SELECT r.*,f.project,f.version AS family_version FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project IN (?,?,?) AND r.created<=? AND r.kind=?"
             + (
@@ -647,7 +651,9 @@ class Knowledge:
                 if accepted_only
                 else ""
             )
-            + " ORDER BY r.created LIMIT ?",
+            + (" AND r.created<?" if listing and before is not None else "")
+            + (" ORDER BY r.created DESC" if listing else " ORDER BY r.created")
+            + " LIMIT ?",
             (
                 tenant,
                 args["project"],
@@ -656,10 +662,14 @@ class Knowledge:
                 recorded,
                 "constraint" if constraints else "knowledge",
                 *((recorded, recorded) if accepted_only else ()),
+                *((before,) if listing and before is not None else ()),
                 REGISTRY_LIMIT + 1,
             ),
         ).fetchall()
-        if len(rows) > REGISTRY_LIMIT:
+        truncated = len(rows) > REGISTRY_LIMIT
+        if listing:
+            rows = list(reversed(rows[:REGISTRY_LIMIT]))
+        elif truncated:
             return {
                 "status": "blocked",
                 "reason": "constraint_resolution_incomplete"
@@ -810,4 +820,6 @@ class Knowledge:
             "valid_ms": valid,
             "binding_count": len(points),
             "authority": "complete_registry" if constraints else "knowledge_inspection",
+            "truncated": listing and truncated,
+            "next_before_position": rows[0]["created"] if listing and truncated else None,
         }
