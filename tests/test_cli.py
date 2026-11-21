@@ -438,6 +438,46 @@ class ProfileTests(OperatorCommandTests):
 
 
 class CaptureCommandTests(OperatorCommandTests):
+    def test_draft_proposals_files_drafts_through_the_daemon(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        for source, text in (
+            ("a", "Scoped the deadline per request in payments/retry.py yesterday."),
+            ("b", "Review note: payments/retry.py now retries once per request."),
+        ):
+            self.cli("capture", "--project", "demo", "--source", source, "--text", text, *common)
+        report = json.loads(
+            self.cli("draft-proposals", "--project", "demo", "--key", "k1", "--json", *common)
+        )
+        self.assertEqual(len(report["drafted"]), 1)
+        self.assertEqual(report["drafted"][0]["topic"], "payments/retry.py")
+        text = self.cli("draft-proposals", "--project", "demo", "--key", "k1", *common)
+        self.assertIn("1 draft(s) filed for review", text)  # same key: replayed, not refiled
+        again = json.loads(
+            self.cli("draft-proposals", "--project", "demo", "--key", "k2", "--json", *common)
+        )
+        self.assertEqual(again["drafted"], [])
+
+    def test_trust_and_egress_audit_reach_the_daemon(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        self.cli(
+            "trust",
+            "set",
+            "--project",
+            "demo",
+            "--source",
+            "scraper-*",
+            "--level",
+            "untrusted",
+            "--key",
+            "rule-1",
+            *common,
+        )
+        listed = self.cli("trust", "list", "--project", "demo", *common)
+        self.assertIn("scraper-*", listed)
+        self.assertIn("untrusted", listed)
+        audit = json.loads(self.cli("egress-audit", "--project", "demo", "--json", *common))
+        self.assertIsInstance(audit, dict)
+
     def test_capture_and_recall_through_the_cli_and_hooks(self):
         common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
         out = json.loads(

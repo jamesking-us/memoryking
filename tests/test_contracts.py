@@ -21,6 +21,19 @@ class ContractTests(unittest.TestCase):
     def test_schema_itself_is_valid(self):
         Draft202012Validator.check_schema(schema())
 
+    def test_local_wire_embeds_the_current_knowledge_command_schema(self):
+        # The wire schema carries a verbatim copy; a stale copy makes the daemon reject an
+        # action the store supports (the `draft` action once did).
+        adapters = ROOT / "src/memoryking/adapters"
+        wire = json.loads((adapters / "local_wire.schema.json").read_text())
+        source = json.loads((adapters / "knowledge.schema.json").read_text())
+        embedded = [
+            branch["properties"]["args"]["properties"]["command"]
+            for branch in wire["oneOf"]
+            if branch["properties"]["operation"] == {"const": "knowledge"}
+        ]
+        self.assertEqual(embedded, [source])
+
     def test_bounded_and_nonfinite_values(self):
         for value in [float("nan"), float("inf"), 1.0, {1: "x"}, "\ud800", 2**53]:
             with self.subTest(value=repr(value)), self.assertRaises(ContractError):
