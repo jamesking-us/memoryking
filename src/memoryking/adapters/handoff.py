@@ -117,7 +117,7 @@ class Handoff:
         )
         # Do not bind to the wall clock or unrelated receipt/event positions.
         policy = {k: v for k, v in policy.items() if k not in {"valid_ms", "recorded_position"}}
-        operations, deps = self.w._operations(recipient, args, at, include_all=True)
+        operations, deps, truncated = self.w._operations(recipient, args, at, include_all=True)
         deps.extend(self.r._dependencies([self.r._claim(item) for item in policy["items"]]))
         checkpoint = self.w._checkpoint(recipient, args, at)
         available = []
@@ -140,6 +140,8 @@ class Handoff:
                 "compiler_revision": "handoff-v1",
                 "policy": policy,
                 "operations": operations,
+                # Only when set, so stamps of existing complete views keep their value.
+                **({"operations_truncated": True} if truncated else {}),
                 "checkpoint_hash": checkpoint["body_hash"],
                 "stream_revision": row["stream_revision"],
                 "epochs": list(epoch),

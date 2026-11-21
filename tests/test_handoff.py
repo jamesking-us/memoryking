@@ -406,6 +406,15 @@ class HandoffTests(unittest.TestCase):
         self.fails("handoff_view_stale", lambda: self.ack(prepared, raw))
         self.assertEqual(self.view(prepared)["status"], "ready")
 
+    def test_handoff_of_a_long_task_carries_every_open_operation_and_reports_truncation(self):
+        helpers.WorkingTests.long_history(self)
+        prepared = self.prepare()
+        for preview in (True, False):
+            packet = self.view(prepared, preview=preview)
+            self.assertEqual(len(packet["operations"]), 32)
+            self.assertTrue(packet["operations_truncated"])
+            self.assertIn("open-first", [op["id"] for op in packet["operations"]])
+
     def test_purge_erases_handoff_copies_and_restore_retires_old_history(self):
         # Purge follows recorded dependencies: this handoff's checkpoint cites the source.
         body = helpers.checkpoint()

@@ -252,7 +252,7 @@ The default method is `extractive-v1`: a deterministic paragraph built from the 
 2. Save useful observations and checkpoints; MemoryKing does not scrape the conversation automatically.
 3. Inspect briefing/resume status. `blocked`, `budget_insufficient`, `incomplete` and unavailable results require a decision, not silent truncation or permission bypass.
 4. Treat source text and proposed lessons as untrusted evidence.
-5. Reconcile uncertain external operations before repeating them.
+5. Reconcile uncertain external operations before repeating them. A resume packet lists every unresolved operation and the newest resolved ones; `operations_truncated: true` means older resolved operations were left out, which never hides an unresolved one.
 6. Recheck authorization before sending retained context to a model.
 
 For the last step, use `AuthorizedConversation` from `memoryking.harness_context`. It binds retained content and derived messages to authorization, checks current status before dispatch and rebuilds or blocks when dependencies become unavailable. Retrieved memory enters the conversation as user-role content whose bytes the store verifies against the receipt, never as a system instruction. A conversation holds at most 128 messages, so a dispatch carries up to 127 and the reply still fits; the request stays within 96 KiB. Ordinary capture/retrieval calls cannot remove restricted text from an unrelated host's old chat transcript. Provider requests already delivered cannot be recalled.

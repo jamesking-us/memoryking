@@ -148,6 +148,15 @@ class WorkingTests(unittest.TestCase):
     def operations(self):
         return self.execute(self.command("operations", self.scope()))["operations"]
 
+    def long_history(self, resolved=40):
+        """One open intent recorded first, then `resolved` succeeded operations after it."""
+        self.intent(operation="open-first")
+        for number in range(resolved):
+            name = f"done{number:02d}"
+            self.intent(operation=name)
+            self.transition("dispatching", 1, operation=name)
+            self.transition("succeeded", 2, operation=name)
+
     def restart(self):
         self.store.close()
         self.store = LocalStore(self.data, self.control)
@@ -737,6 +746,50 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
         self.assertEqual(
             self.store.status(self.owner, "p")["capacity"]["operation_intents"]["used"], 32
         )
+
+    def test_a_long_task_resumes_with_every_open_operation_and_the_newest_resolved(self):
+        self.save()
+        self.long_history()  # 41 recorded operations: past the 32 a stream may hold open
+        listed = self.execute(self.command("operations", self.scope()))
+        self.assertEqual(len(listed["operations"]), 32)
+        self.assertTrue(listed["operations_truncated"])
+        # The oldest operation is still unresolved, so truncation can never hide it.
+        ids = [op["id"] for op in listed["operations"]]
+        self.assertIn("open-first", ids)
+        self.assertEqual(
+            [op["state"] for op in listed["operations"] if op["id"] == "open-first"],
+            ["intent_recorded"],
+        )
+        self.assertEqual(sum(op["state"] == "succeeded" for op in listed["operations"]), 31)
+        self.assertIn("done39", ids)
+        self.assertNotIn("done00", ids)
+        packet = self.resume(max_output_tokens=16000)
+        self.assertEqual(len(packet["operations"]), 32)
+        self.assertTrue(packet["operations_truncated"])
+        self.assertIn("open-first", [op["id"] for op in packet["operations"]])
+        summary = self.summarize()
+        self.assertEqual(summary["method"], "extractive-v1")
+
+    def test_every_open_operation_is_returned_even_when_they_fill_the_window(self):
+        self.save()
+        for number in range(32):
+            self.intent(operation=f"open{number:02d}")
+        packet = self.resume(max_output_tokens=16000)
+        self.assertEqual(len(packet["operations"]), 32)
+        self.assertFalse(packet["operations_truncated"])
+        # Resolve one, add resolved history past the bound: all 31 open stay, no error.
+        self.transition("dispatching", 1, operation="open00")
+        self.transition("succeeded", 2, operation="open00")
+        for number in range(3):
+            name = f"later{number}"
+            self.intent(operation=name)
+            self.transition("dispatching", 1, operation=name)
+            self.transition("succeeded", 2, operation=name)
+        listed = self.execute(self.command("operations", self.scope()))
+        self.assertTrue(listed["operations_truncated"])
+        ids = {op["id"] for op in listed["operations"]}
+        self.assertEqual({f"open{n:02d}" for n in range(1, 32)} - ids, set())
+        self.assertEqual(len(listed["operations"]), 32)
 
     def test_unacknowledged_dispatch_is_recovered_as_ambiguous_after_deadline(self):
         self.save()

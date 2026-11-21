@@ -231,7 +231,8 @@ class Working:
             elif action.startswith("operation_"):
                 result = self._write_operation(who, command, at)
             elif action == "operations":
-                result = {"operations": self._operations(who, args, at)[0]}
+                operations, _, truncated = self._operations(who, args, at)
+                result = {"operations": operations, "operations_truncated": truncated}
             elif action == "adapter_resume":
                 from memoryking.adapters.adapter_state import resume
 
@@ -374,7 +375,7 @@ class Working:
         deps: list[dict[str, str]] = [{"kind": "checkpoint", "id": row["id"]}]
         if args["source"] == "extractive":
             observations = self._recent_observations(who, args["project"], row["position"], at)
-            operations, _ = self._operations(who, args, at, include_all=True)
+            operations, _, _ = self._operations(who, args, at, include_all=True)
             text, method = compose(body, observations, operations), METHOD
             deps.extend({"kind": "observation", "id": o["id"]} for o in observations)
         else:
@@ -585,21 +586,40 @@ class Working:
 
     def _operations(
         self, who: dict[str, Any], args: dict[str, Any], at: int, *, include_all: bool = False
-    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]], bool]:
+        """Return the stream's operations, their evidence dependencies and a truncation flag.
+
+        Every open operation is returned, however many there are: an intent that may or may not
+        have run is safety-relevant and must never be hidden. Resolved history fills the rest of
+        the INTENT_SCOPE_LIMIT window with the newest operations, and `truncated` says older
+        resolved ones were left out. Resolved history is never an error.
+        """
         stream = self._stream(who, args)
         all_writers = include_all or (
             stream is not None
             and stream["writer"] == who["principal"]
             and stream["incarnation"] == self.s.incarnation
         )
-        rows = self.db.execute(
+        scope = (
             "SELECT * FROM operation_intents WHERE tenant=? AND project=? AND task=? AND stream=?"
             + ("" if all_writers else " AND principal=?")
-            + " ORDER BY created,id LIMIT 33",
-            self._scope(who, args) if all_writers else (*self._scope(who, args), who["principal"]),
+        )
+        bound = (
+            self._scope(who, args) if all_writers else (*self._scope(who, args), who["principal"])
+        )
+        # Open means the outcome is unknown or not yet reconciled in this incarnation.
+        pending = "(state IN ('intent_recorded','dispatching','unknown') OR COALESCE(reconciled_incarnation,incarnation)<>?)"
+        rows = self.db.execute(
+            scope + " AND " + pending + " ORDER BY created,id",
+            (*bound, self.s.incarnation),
         ).fetchall()
-        if len(rows) > 32:
-            raise LocalError("operation_limit")
+        room = max(INTENT_SCOPE_LIMIT - len(rows), 0)
+        newest = self.db.execute(
+            scope + " AND NOT " + pending + " ORDER BY created DESC,id DESC LIMIT ?",
+            (*bound, self.s.incarnation, room + 1),
+        ).fetchall()
+        truncated = len(newest) > room
+        rows = sorted([*rows, *newest[:room]], key=lambda row: (row["created"], row["id"]))
         result, deps = [], []
         for row in rows:
             evidence = json.loads(row["evidence"])
@@ -641,7 +661,7 @@ class Working:
             )
             if not evidence_available:
                 result[-1]["result_hash"] = None
-        return result, deps
+        return result, deps, truncated
 
     def _resume(
         self,
@@ -714,6 +734,7 @@ class Working:
             checkpoint=None,
             summary=None,
             operations=[],
+            operations_truncated=False,
             context_binding={
                 "store": self.s.store_id,
                 "tenant": who["tenant"],
@@ -728,7 +749,9 @@ class Working:
             base.update(status="blocked", reason=mandatory["reason"])
             deps = []
         else:
-            operations, operation_deps = self._operations(who, args, at, include_all=True)
+            operations, operation_deps, operations_truncated = self._operations(
+                who, args, at, include_all=True
+            )
             deps.extend(operation_deps)
             base.update(
                 checkpoint={
@@ -741,6 +764,7 @@ class Working:
                     "state": body,
                 },
                 operations=operations,
+                operations_truncated=operations_truncated,
                 constraints=[self.r._claim(i) for i in mandatory["items"]],
                 summary=self.latest_summary(who, row["id"], at),
             )
