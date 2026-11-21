@@ -966,6 +966,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `temporal_requirement_failed` | A claim's validity window does not cover the requested time. |
 
+## tenant
+
+| Code | What to do |
+| --- | --- |
+| `tenant_required` | Pass the shared tenant name or set `MEMORYKING_TENANT`. |
+
 ## tokenizer
 
 | Code | What to do |

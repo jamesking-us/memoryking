@@ -4,7 +4,7 @@ This guide takes you from an installed package to an agent that remembers, with 
 
 ## 1. Install
 
-Use Python 3.12; the reference patch is recorded in [`.python-version`](../.python-version). The local service is exercised on macOS. Linux containers are exercised separately; Windows is not a supported local target yet.
+Use Python 3.12 (3.13 also works for the core install); the reference patch is recorded in [`.python-version`](../.python-version). The local service is exercised on macOS. Linux containers are exercised separately; Windows is not a supported local target yet.
 
 ```sh
 python3.12 -m venv .venv
@@ -156,7 +156,7 @@ For multiple machines or tenants, use the [shared deployment](deployment.md#shar
 
 | Symptom | First check |
 | --- | --- |
-| Python version rejected | Use Python 3.12 and create a fresh virtual environment. |
+| Python version rejected | Use Python 3.12 or 3.13 and create a fresh virtual environment. |
 | An unrelated Python package is imported | Run commands with `env -u PYTHONPATH -u PYTHONHOME` before `.venv/bin/python`. |
 | Service refuses a directory | Check that data/control are disjoint, owner-private paths and no other daemon owns them. |
 | Login code rejected | Obtain a fresh code in a new output file; use the printed origin exactly. |

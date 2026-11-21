@@ -24,6 +24,7 @@ def main():
     out = ROOT / "tmp/checks"
     out.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+    env["MEMORYKING_PYTHON"] = sys.executable  # the JavaScript client tests start real services
     commands = [
         [sys.executable, "tools/generate_contracts.py", "--check"],
         [sys.executable, "tools/generate_error_codes.py", "--check"],
@@ -39,7 +40,7 @@ def main():
             sys.executable,
             "tools/evidence_recall.py",
             "--data",
-            "fixtures/evaluation/longmemeval-sample.json",
+            "fixtures/evaluation/longmemeval-regression-sample.json",
             "--gate",
             "--output",
             "tmp/checks/evidence-recall.json",
@@ -50,6 +51,13 @@ def main():
             "--gate",
             "--output",
             "tmp/checks/retrieval-benchmark.json",
+        ],
+        [
+            sys.executable,
+            "tools/stale_facts_benchmark.py",
+            "--gate",
+            "--output",
+            "tmp/checks/stale-facts.json",
         ],
     ]
     if os.environ.get("MEMORYKING_REQUIRE_POSTGRES") == "1":

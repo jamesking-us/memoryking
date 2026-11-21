@@ -76,6 +76,7 @@ HINTS: dict[str, str] = {
     "socket_required": "Pass `--socket PATH` or use `--profile NAME`.",
     "credential_required_path": "Pass `--credential FILE` or use `--profile NAME`.",
     "project_required": "Pass `--project NAME` or set `MEMORYKING_PROJECT`.",
+    "tenant_required": "Pass the shared tenant name or set `MEMORYKING_TENANT`.",
     # Capacity and timing
     "queue_full": "The tenant has 1,000 unfinished jobs; the daemon drains them between requests, so retry shortly or run a worker.",
     "concurrency_limit": "Four job leases are already live; finish or let them expire before claiming more.",

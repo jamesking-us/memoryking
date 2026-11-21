@@ -683,6 +683,116 @@ class CaptureCommandTests(OperatorCommandTests):
         )
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
+    def test_project_defaults_from_the_environment_for_capture_recall_and_summarize(self):
+        base = {k: v for k, v in os.environ.items() if k != "MEMORYKING_PROJECT"}
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+
+        def run(*args, project="demo"):
+            env = {**base, "MEMORYKING_PROJECT": project} if project else base
+            return subprocess.run(
+                [sys.executable, "-m", "memoryking", *args, *common],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+        saved = run("capture", "--text", "The deadline moved to Friday")
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        recalled = run("recall", "--query", "deadline")
+        self.assertEqual(recalled.returncode, 0, recalled.stderr)
+        self.assertIn("deadline moved to Friday", recalled.stdout)
+        # summarize reaches the store (this task has no checkpoint) instead of asking for a project.
+        unsaved = run("summarize", "--task", "none")
+        self.assertNotEqual(unsaved.returncode, 0)
+        self.assertNotIn("project_required", unsaved.stderr)
+        self.assertIn("project_required", run("summarize", "--task", "none", project="").stderr)
+        for command in (("capture", "--text", "x"), ("recall", "--query", "x")):
+            missing = run(*command, project="")
+            self.assertEqual(missing.returncode, 2, missing.stdout)
+            self.assertIn("project_required", missing.stderr)
+        # An explicit flag wins over the environment.
+        other = run("recall", "--query", "deadline", "--project", "elsewhere")
+        self.assertNotIn("deadline moved to Friday", other.stdout)
+
+    def test_save_progress_and_resume_commands_match_the_lean_tools(self):
+        env = {
+            **os.environ,
+            "MEMORYKING_SOCKET": str(self.server.path),
+            "MEMORYKING_CREDENTIAL": str(self.credential),
+            "MEMORYKING_PROJECT": "demo",
+        }
+
+        def run(*args, expect=0):
+            proc = subprocess.run(
+                [sys.executable, "-m", "memoryking", *args],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
+            return proc
+
+        saved = json.loads(
+            run(
+                "save-progress",
+                "--task",
+                "cli-task",
+                "--objective",
+                "Fix the retry deadline",
+                "--state",
+                "Investigating",
+                "--next",
+                "Run the regression",
+                "--next",
+                "Update the changelog",
+                "--finding",
+                "Backoff exceeds the deadline",
+                "--blocker",
+                "Need a full regression result",
+                "--failed",
+                "Raise every timeout => Still failed",
+            ).stdout
+        )
+        self.assertEqual(saved["revision"], 1)
+        text = run("resume", "--task", "cli-task").stdout
+        self.assertIn("# Resume: Fix the retry deadline", text)
+        self.assertIn("Update the changelog", text)
+        self.assertIn("Raise every timeout", text)
+        self.assertIn("Still failed", text)
+        self.assertIn("Need a full regression result", text)
+        # A section left out carries over; the revision moves on.
+        second = json.loads(
+            run(
+                "save-progress",
+                "--task",
+                "cli-task",
+                "--objective",
+                "Fix the retry deadline",
+                "--state",
+                "Regression passes",
+            ).stdout
+        )
+        self.assertEqual(second["revision"], 2)
+        again = run("resume", "--task", "cli-task").stdout
+        self.assertIn("Regression passes", again)
+        self.assertIn("Update the changelog", again)
+        packet = json.loads(run("resume", "--task", "cli-task", "--json").stdout)
+        self.assertEqual(packet["format"], "text")
+        # Malformed --failed is refused by the parser.
+        bad = run(
+            "save-progress",
+            "--task",
+            "t",
+            "--objective",
+            "o",
+            "--state",
+            "s",
+            "--failed",
+            "no arrow",
+            expect=2,
+        )
+        self.assertIn("action => outcome", bad.stderr)
+
     def test_pytest_plugin_records_failures_only_when_configured(self):
         from memoryking import pytest_plugin
 

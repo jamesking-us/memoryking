@@ -24,6 +24,7 @@ from memoryking.contracts.validation import (
 )
 from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError
+from memoryking.memory_api import MemoryMethods
 
 CATALOG = json.loads(Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text())
 TOOL_VALIDATORS = {
@@ -86,7 +87,7 @@ def default_tokenizer() -> str:
 BINDING_FIELDS = ("store", "tenant", "principal", "project", "incarnation")
 
 
-class LocalClient:
+class LocalClient(MemoryMethods):
     """One project and identity/history per instance. Recreate explicitly after a context change.
 
     Ordinary memory calls cannot remove data retained by a consuming host. The separate
@@ -110,6 +111,15 @@ class LocalClient:
         self.namespace = namespace
         self.last_context = self._request(self._credential(), "context", {"project": project})
         self.binding = tuple(self.last_context[key] for key in BINDING_FIELDS)
+
+    def __enter__(self) -> LocalClient:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Nothing to release: each request opens and closes its own connection."""
 
     def _credential(self) -> str:
         private_file(self.credential_file)
