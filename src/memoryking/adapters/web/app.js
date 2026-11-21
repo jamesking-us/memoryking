@@ -7,6 +7,20 @@ const CAPACITY_LABELS = {
     rendered_bytes: ["Retained bytes", "Artifact bodies held for replay"],
     operation_intents: ["Open operations", "Released when an operation resolves"],
     processing_usage: ["Usage attempts", "Pruned after 30 days"],
+    checkpoints: [
+        "Live checkpoints",
+        "Old revisions of ordinary streams are retired",
+    ],
+    checkpoint_bytes: ["Checkpoint bytes", "Bodies of live checkpoints"],
+    handoffs: [
+        "Live handoffs",
+        "Cancelled, superseded and expired ones do not count",
+    ],
+    handoff_views: ["Handoff views", "Count while their briefing is retained"],
+    experience_records: [
+        "Experience records",
+        "Superseded revisions do not count",
+    ],
 };
 function renderComparison(before, after, beforeId, afterId) {
     // What changed between two briefings: references added, dropped or kept,
@@ -147,7 +161,7 @@ function renderCapacity(capacity) {
         const [title, note] = CAPACITY_LABELS[name] ?? [name, ""];
         const item = el("div", "", value.warning ? "capacity-item warning" : "capacity-item");
         item.append(el("p", title, "eyebrow"));
-        const shown = name === "rendered_bytes"
+        const shown = name === "rendered_bytes" || name === "checkpoint_bytes"
             ? `${(value.used / 1048576).toFixed(1)} / ${Math.round(value.limit / 1048576)} MiB`
             : `${value.used.toLocaleString()} / ${value.limit.toLocaleString()}`;
         item.append(el("strong", shown));

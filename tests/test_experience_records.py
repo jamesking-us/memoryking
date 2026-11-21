@@ -14,7 +14,7 @@ class RecordCases:
     run_r = ProcedureCases.run_r
     brief_args = ProcedureCases.brief_args
 
-    def outcome(self, version=0, **changes):
+    def outcome(self, version=0, key="run", **changes):
         body = {
             "task": "task",
             "run": "run",
@@ -32,7 +32,7 @@ class RecordCases:
         }
         return self.run_e(
             "outcome",
-            {"project": "p", "logical_key": "run", "expected_revision": version, "body": body},
+            {"project": "p", "logical_key": key, "expected_revision": version, "body": body},
         )
 
     def feedback(self, brief=None, version=0, **changes):
@@ -53,6 +53,40 @@ class RecordCases:
                 **changes,
             },
         )
+
+    def tenant_id(self):
+        return self.store.db.execute("SELECT tenant FROM tenants").fetchone()[0]
+
+    def fabricate_records(self, keys, revisions, prefix="fab"):
+        """Insert `keys` feedback records of `revisions` revisions each (direct rows, not saves)."""
+        tenant = self.tenant_id()
+        position = self.store.db.execute(
+            "SELECT min(position) FROM events WHERE tenant=?", (tenant,)
+        ).fetchone()[0]
+        with self.store.transaction():
+            for number in range(keys):
+                for revision in range(1, revisions + 1):
+                    self.store.db.execute(
+                        "INSERT INTO experience_records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            tenant,
+                            f"exp_{prefix}{number}_{revision}",
+                            "p",
+                            "owner",
+                            self.store.incarnation,
+                            "feedback",
+                            f"{prefix}{number}",
+                            revision,
+                            "{}",
+                            "h" * 64,
+                            "[]",
+                            "null",
+                            position,
+                        ),
+                    )
+
+    def experience_capacity(self):
+        return self.store.status(self.owner, "p")["capacity"]["experience_records"]
 
     def records(self, kind, credential=None):
         return self.run_e("records", {"project": "p", "kind": kind}, credential)
@@ -155,6 +189,42 @@ class RecordCases:
             ).fetchone()[0],
             1,
         )
+
+    def test_superseded_revisions_do_not_count_and_old_ones_are_released(self):
+        for version in range(12):
+            self.outcome(version)
+        self.assertEqual(self.experience_capacity()["used"], 1)
+        count = "SELECT count(*),min(revision),max(revision) FROM experience_records"
+        self.assertEqual(tuple(self.store.db.execute(count).fetchone()), (12, 1, 12))
+        self.store.expire_results()
+        self.assertEqual(tuple(self.store.db.execute(count).fetchone()), (8, 5, 12))
+        # The consumed revision numbers stay consumed.
+        with self.assertRaisesRegex(LocalError, "experience_revision_conflict"):
+            self.outcome(0)
+        self.assertEqual(self.outcome(12)["revision"], 13)
+
+    def test_only_live_records_count_toward_the_bound(self):
+        self.fabricate_records(6000, 2)  # 12,000 rows, past the old 10,000 refusal point
+        self.assertEqual(self.experience_capacity()["used"], 6000)
+        self.assertEqual(self.outcome()["revision"], 1)
+        self.fabricate_records(3999, 1, prefix="more")
+        full = self.experience_capacity()
+        self.assertEqual((full["used"], full["limit"], full["warning"]), (10000, 10000, True))
+        with self.assertRaisesRegex(LocalError, "experience_capacity"):
+            self.outcome(key="another")
+        # A new revision of a record that still has its body adds nothing, so it fits.
+        self.assertEqual(self.outcome(1)["revision"], 2)
+        self.assertEqual(self.experience_capacity()["used"], 10000)
+
+    def test_a_purged_record_frees_its_slot_but_keeps_its_revision_number(self):
+        self.outcome(result="success", acceptance_evidence=[self.span], readers=["owner"])
+        self.assertEqual(self.experience_capacity()["used"], 1)
+        self.store.purge(self.owner, self.obs["observation"])
+        self.assertEqual(self.experience_capacity()["used"], 0)
+        self.store.expire_results()
+        # The tombstone of the latest revision stays, so revision 1 cannot be handed out again.
+        with self.assertRaisesRegex(LocalError, "experience_revision_conflict"):
+            self.outcome(0)
 
 
 class LocalRecordTests(RecordCases, unittest.TestCase):

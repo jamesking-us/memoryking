@@ -260,9 +260,13 @@ reuse(
 reuse(
     NativeFixture,
     test_working.WorkingTests,
-    "scope command save resume assign intent transition operations summarize long_history",
+    "scope command save resume assign intent transition operations summarize long_history tenant_id fabricate_checkpoints checkpoint_capacity",
 )
-reuse(NativeFixture, test_handoff.HandoffTests, "prepare view ack")
+reuse(
+    NativeFixture,
+    test_handoff.HandoffTests,
+    "prepare view ack fabricate_handoffs handoff_capacity",
+)
 
 
 class PostgresKnowledgeParity(NativeFixture):
