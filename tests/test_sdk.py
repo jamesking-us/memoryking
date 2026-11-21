@@ -22,6 +22,16 @@ from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 
 
+def envelope(reply):
+    """A lean reply's machine envelope; a briefing's Markdown is put back as `text`."""
+    value = dict(reply["structuredContent"]) if "structuredContent" in reply else None
+    if value is None:
+        return json.loads(reply["content"][0]["text"])
+    if value.get("format") == "text":
+        value["text"] = reply["content"][0]["text"]
+    return value
+
+
 def rpc(identifier, method, params=None):
     result = {"jsonrpc": "2.0", "id": identifier, "method": method}
     if params is not None:
@@ -123,6 +133,8 @@ class SDKTests(unittest.TestCase):
                 str(self.credential),
                 "--project",
                 "p",
+                "--profile",
+                "full",
             ],
             input=b"".join(canonical_bytes(frame) + b"\n" for frame in frames),
             capture_output=True,
@@ -131,7 +143,7 @@ class SDKTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         result = json.loads(run.stdout.splitlines()[-1])["result"]
         self.assertFalse(result["isError"])
-        record = json.loads(result["content"][0]["text"])
+        record = envelope(result)
         self.assertEqual(record["kind"], "outcome")
         latest = self.client.experience(
             {
@@ -273,12 +285,16 @@ class SDKTests(unittest.TestCase):
                 "confirm",
                 "correct",
                 "forget",
+                "fetch",
+                "feedback",
+                "recent",
             ],
         )
-        # Nine flat tools: the original five stayed under 8 KiB; propose, confirm, correct
-        # and forget add about 2.7 KB, so the ceiling is 10 KiB (still a few hundred tokens
-        # per tool, no oneOf).
-        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 10240)
+        # Flat tools, no oneOf. The tools a bridge serves by default stay under 10 KiB; the
+        # catalog file also lists `confirm`, which is served only with chat review, and
+        # fetch, feedback and recent brought it past that line, so its ceiling is 11 KiB.
+        self.assertLess(len(json.dumps(lean.tools(), separators=(",", ":"))), 10240)
+        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 11264)
         for tool in lean.TOOLS:
             self.assertNotIn("oneOf", json.dumps(tool["inputSchema"]))
         first = lean.call(
@@ -378,7 +394,7 @@ class SDKTests(unittest.TestCase):
         }
         for number in (10, 11, 12):
             self.assertFalse(replies[number]["isError"], replies[number])
-        payload = {n: json.loads(replies[n]["content"][0]["text"]) for n in (10, 11, 12)}
+        payload = {n: envelope(replies[n]) for n in (10, 11, 12)}
         self.assertEqual(payload[11]["revision"], 2)
         text = payload[12]["text"]
         state = self.client.tool(
@@ -494,15 +510,15 @@ class SDKTests(unittest.TestCase):
         # succeeds, again over the unresolved stream.
         self.assertFalse(first["isError"], first)
         self.assertFalse(second["isError"], second)
-        self.assertEqual(json.loads(second["content"][0]["text"])["revision"], 2)
-        text = json.loads(recalled["content"][0]["text"])
+        self.assertEqual(envelope(second)["revision"], 2)
+        text = envelope(recalled)
         self.assertEqual(text["status"], "blocked")
         self.assertEqual(text["reason"], "applicability_unknown")
         self.assertEqual(text["unbound_fields"], ["environment"])
         self.assertIn("**Blocked:** applicability_unknown. Decide, do not truncate.", text["text"])
         self.assertIn("Missing binding fields: `environment`", text["text"])
         self.assertNotIn("Never touch production", text["text"])
-        note = json.loads(resumed["content"][0]["text"])
+        note = envelope(resumed)
         self.assertEqual(note["status"], "blocked")
         self.assertIn("Missing binding fields: `environment`", note["text"])
         self.assertIn("Mandatory constraints: unresolved", note["text"])
@@ -523,15 +539,15 @@ class SDKTests(unittest.TestCase):
         for name, (saved, recalled, resumed) in sessions.items():
             with self.subTest(name):
                 self.assertFalse(saved["isError"], saved)
-                brief = json.loads(recalled["content"][0]["text"])
+                brief = envelope(recalled)
                 self.assertNotEqual(brief["status"], "blocked", brief["text"])
                 self.assertIn("Never touch production data", brief["text"])
-                note = json.loads(resumed["content"][0]["text"])
+                note = envelope(resumed)
                 self.assertEqual(note["status"], "ready")
                 self.assertIn("Never touch production data", note["text"])
         # A binding that rules the constraint out is just as good: the answer is known.
         (_, dev, _) = self.lean_bridge(calls, "--binding", "environment=dev")
-        self.assertNotEqual(json.loads(dev["content"][0]["text"])["status"], "blocked")
+        self.assertNotEqual(envelope(dev)["status"], "blocked")
         # Keys come from the selector vocabulary; anything else is refused at start.
         run = subprocess.run(
             [
@@ -562,6 +578,8 @@ class SDKTests(unittest.TestCase):
             self.assertNotIn("binding", tool["inputSchema"]["properties"])
 
     def test_lean_bridge_lists_its_tools_over_stdio(self):
+        from memoryking import lean
+
         frames = [
             initialize(),
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -592,10 +610,15 @@ class SDKTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         replies = [json.loads(line) for line in run.stdout.splitlines()]
         listed = next(r for r in replies if r.get("id") == 2)["result"]["tools"]
-        self.assertEqual(len(listed), 9)
+        # `confirm` is served only when the operator enabled chat review.
+        self.assertEqual(
+            sorted(t["name"] for t in listed),
+            sorted(t["name"] for t in lean.tools() if t["name"] != "confirm"),
+        )
+        self.assertEqual(len(listed), 11)
         recalled = next(r for r in replies if r.get("id") == 4)["result"]
         self.assertFalse(recalled["isError"])
-        self.assertIn("from the lean bridge", json.loads(recalled["content"][0]["text"])["text"])
+        self.assertIn("from the lean bridge", envelope(recalled)["text"])
 
     def test_bridge_binds_incarnation_when_a_tool_call_omits_it(self):
         result = self.client.tool(
@@ -739,6 +762,8 @@ class SDKTests(unittest.TestCase):
                 str(self.credential),
                 "--project",
                 "p",
+                "--profile",
+                "full",
             ],
             input=b"".join(canonical_bytes(m) + b"\n" for m in messages),
             capture_output=True,
@@ -784,7 +809,7 @@ class SDKTests(unittest.TestCase):
         self.assertNotIn(self.owner, run.stdout.decode())
 
     def test_stdio_bad_frames_notifications_and_schema_errors_are_safe(self):
-        bridge = StdioBridge(self.client)
+        bridge = StdioBridge(self.client, "full")
         raw = (
             b'{"jsonrpc":"2.0","id":1,"id":2,"method":"ping"}\n' + b"x" * (INPUT_LIMIT + 1) + b"\n"
         )
@@ -807,7 +832,12 @@ class SDKTests(unittest.TestCase):
         self.assertEqual(len(responses), 5)
         self.assertEqual(responses[0]["error"]["code"], -32700)
         self.assertEqual(responses[1]["error"]["code"], -32600)
-        self.assertEqual(responses[3]["error"]["code"], -32602)
+        # A bad argument is a tool result marked as an error that names the field, not a
+        # protocol error; the one after it (a stale incarnation) is also a result.
+        refused = responses[3]["result"]
+        self.assertTrue(refused["isError"])
+        self.assertEqual("invalid_tool_arguments", refused["structuredContent"]["error"])
+        self.assertTrue(refused["structuredContent"]["path"].startswith("$"))
         self.assertTrue(responses[4]["result"]["isError"])
         self.assertNotIn("Traceback", result.getvalue().decode())
 
@@ -855,7 +885,7 @@ class SDKTests(unittest.TestCase):
         self.fails("transport_unavailable", self.client.context)
 
     def test_stdio_withholds_a_delayed_successful_tool_payload(self):
-        bridge = StdioBridge(self.client)
+        bridge = StdioBridge(self.client, "full")
         bridge.handle(initialize())
         bridge.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
         incoming = io.BytesIO(

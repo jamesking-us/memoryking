@@ -1,16 +1,22 @@
-"""The lean MCP profile: five flat tools for any host that launches stdio servers.
+"""The lean MCP profile: flat tools for any host that launches stdio servers.
 
 Each tool maps onto the full catalog through the bound client, so authorization,
 receipts, idempotency and budgets are exactly those of the full profile. The schemas are
 small and have no `oneOf`, so a model learns them in a few hundred tokens.
+
+`call` returns the full profile's envelope unchanged; `present` turns it into what a model
+should read (the Markdown briefing, or a one-line confirmation with an id) plus the
+envelope for machines.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from typing import Any
 
+from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 
@@ -318,6 +324,94 @@ TOOLS += [
     },
 ]
 
+TOOLS += [
+    {
+        "name": "fetch",
+        "description": (
+            "Read the exact text behind a citation: pass an id from a briefing's Sources "
+            "(obs_... or a claim id), and a byte range to read part of a long record. "
+            "Receipted like a briefing."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "reference": {**IDENTIFIER, "description": "Id from a Sources line."},
+                "start_byte": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65536,
+                    "description": "First byte. Default 0.",
+                },
+                "end_byte": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65536,
+                    "description": "End byte. Default 16384.",
+                },
+            },
+            "required": ["reference"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "feedback",
+        "description": (
+            "Say whether a recalled item helped, after you used it: it tunes later "
+            "briefings and shows in memory health. Pass the receipt id from the briefing's "
+            "status line and the item's id or tag (g1)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "receipt": {**IDENTIFIER, "description": "rcpt_... id from the briefing."},
+                "item": {**IDENTIFIER, "description": "Id from Sources, or a tag such as g1."},
+                "rating": {"enum": ["helpful", "not_helpful", "harmful"]},
+                "comment": {**TEXT, "maxLength": 2048},
+                "task": {**IDENTIFIER, "description": "The task id the briefing was for, if any."},
+            },
+            "required": ["receipt", "item", "rating"],
+            "additionalProperties": False,
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    },
+    {
+        "name": "recent",
+        "description": (
+            "List the newest memories you may read in this project, with ids, so you can "
+            "correct, forget or fetch one."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "description": "How many. Default 5.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
+]
+
+# `confirm` records a user's decision through the agent, which only works when the operator
+# started the bridge with chat review; without it the tool is left out of the catalog.
+CHAT_REVIEW_TOOLS = {"confirm"}
+
+
+def tools(chat_review: bool = False) -> list[dict[str, Any]]:
+    """The catalog a bridge serves: every tool, minus `confirm` unless chat review is on."""
+    return [t for t in TOOLS if chat_review or t["name"] not in CHAT_REVIEW_TOOLS]
+
+
 CATALOG: dict[str, Any] = {"protocol_version": "2025-11-25", "transport": "stdio", "tools": TOOLS}
 
 
@@ -469,6 +563,123 @@ def _confirm(client: LocalClient, arguments: dict[str, Any]) -> dict[str, Any]:
     return {"proposal": done["revision"], "state": done["state"]}
 
 
+FETCH_SPAN = 16384  # the most one fetch returns
+
+
+def _size(client: LocalClient, reference: str) -> int:
+    """The record's size in bytes as the caller may read it (never beyond)."""
+    observation = reference.startswith("obs_")
+    found = client.inspection(
+        {
+            "version": 1,
+            "incarnation": client.binding[-1],
+            "action": "catalog",
+            "args": {
+                "project": client.project,
+                "id": reference,
+                "limit": 1,
+                **({} if observation else {"kind": "claims"}),
+            },
+        }
+    )["items"]
+    if not found:
+        raise LocalError("unavailable")
+    item = found[0]
+    return int(item["bytes"] if "bytes" in item else len(str(item.get("text", "")).encode()))
+
+
+def _fetch(client: LocalClient, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Open one cited record; a range past the end is cut to the end, not refused."""
+    reference = arguments["reference"]
+    start = arguments.get("start_byte", 0)
+    size = _size(client, reference)
+    end = min(arguments.get("end_byte", start + FETCH_SPAN), size, start + FETCH_SPAN)
+    if end <= start:
+        raise LocalError("invalid_range")
+    return client.tool(
+        "memory_fetch",
+        {
+            "action": "fetch",
+            "args": {
+                "reference": reference,
+                "kind": "observation" if reference.startswith("obs_") else "revision",
+                "start_byte": start,
+                "end_byte": end,
+            },
+        },
+    )
+
+
+RATINGS = {
+    "helpful": ("used", "helpful"),
+    "not_helpful": ("read", "irrelevant"),
+    "harmful": ("used", "harmful"),
+}
+TAG = re.compile(r"^[gc][0-9]{1,3}$")
+
+
+def _feedback(client: LocalClient, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Rate one item of a briefing the caller received, tied to that briefing's receipt."""
+    receipt, item = arguments["receipt"], arguments["item"]
+    if TAG.match(item):
+        # `g1` means the first guidance item of that briefing; the retained briefing says which.
+        packet = client.tool("memory_fetch", {"action": "replay", "args": {"receipt": receipt}})
+        found = next((s for s in packet.get("sources", []) if s.get("ref") == item), None)
+        if found is None:
+            raise LocalError("feedback_reference_not_retrieved")
+        item = found["id"]
+    use, usefulness = RATINGS[arguments["rating"]]
+    task, run = arguments.get("task", "general"), "main"
+    body = {
+        "receipt": receipt,
+        "reference": item,
+        "task": task,
+        "run": run,
+        "use": use,
+        "usefulness": usefulness,
+        "comment": arguments.get("comment"),
+        "readers": [client.binding[2]],
+    }
+    key = "fb-" + _digest(receipt, item, task, arguments["rating"], arguments.get("comment"))
+    expected = 0
+    for _ in range(2):
+        try:
+            return client.tool(
+                "memory_feedback",
+                {
+                    "action": "feedback",
+                    "key": key + f"-{expected}",
+                    "args": {**body, "expected_revision": expected},
+                },
+            )
+        except LocalError as exc:
+            if exc.code != "experience_revision_conflict" or expected:
+                raise
+            # This item was rated before in this task: revise that vote.
+            expected = _feedback_revision(client, task, run, item)
+    raise LocalError("experience_revision_conflict")
+
+
+def _feedback_revision(client: LocalClient, task: str, run: str, item: str) -> int:
+    listing = client.experience(
+        {
+            "version": 1,
+            "incarnation": client.binding[-1],
+            "action": "records",
+            "args": {"project": client.project, "kind": "feedback"},
+        }
+    )
+    revisions = [
+        entry["revision"]
+        for entry in listing.get("items", [])
+        if entry["actor"] == client.binding[2]
+        and entry["body"].get("reference") == item
+        and entry["body"].get("task") == task
+        and entry["body"].get("run") == run
+    ]
+    return max(revisions, default=0)
+
+
 def call(
     client: LocalClient,
     name: str,
@@ -482,6 +693,19 @@ def call(
     cannot set it, and `confirm` refuses without it."""
     if name == "propose":
         return _propose(client, arguments)
+    if name == "fetch":
+        return _fetch(client, arguments)
+    if name == "recent":
+        return client.inspection(
+            {
+                "version": 1,
+                "incarnation": client.binding[-1],
+                "action": "catalog",
+                "args": {"project": client.project, "limit": arguments.get("limit", 5)},
+            }
+        )
+    if name == "feedback":
+        return _feedback(client, arguments)
     if name == "confirm":
         if not chat_review:
             raise LocalError("chat_review_disabled")
@@ -641,3 +865,92 @@ def call(
             },
         )
     raise LocalError("unknown_tool")
+
+
+# --- What a model reads ------------------------------------------------------------------
+
+EXCERPT = 160
+
+
+def _line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def present(
+    name: str, result: dict[str, Any], *, replayed: bool = False
+) -> tuple[str, dict[str, Any] | None]:
+    """The text a model reads and the envelope for machines (`structuredContent`).
+
+    A briefing or a resume is its own Markdown, with the envelope (receipt, status, usage,
+    warnings, sources) beside it, not repeated inside it. A write is one line with an id and
+    a `replayed` flag. Anything else keeps the envelope as its text."""
+    if name in {"recall", "resume"} and isinstance(result.get("text"), str):
+        return result["text"], {k: v for k, v in result.items() if k != "text"}
+    if name in {"remember", "correct"} and "observation" in result:
+        ident = result["observation"]
+        verb = "correction" if name == "correct" else "memory"
+        line = (
+            f"Already saved as {ident}; the same text from the same source today replays."
+            if replayed
+            else f"Saved {verb} as {ident}."
+        )
+        return line, {"id": ident, "replayed": replayed, **result}
+    if name == "save_progress" and "checkpoint" in result:
+        ident, replayed = result["checkpoint"], bool(result.get("replayed"))
+        line = (
+            f"Progress {ident} was already saved (revision {result.get('revision')})."
+            if replayed
+            else f"Saved progress as {ident}, revision {result.get('revision')}."
+        )
+        return line, {"id": ident, "replayed": replayed, **result}
+    if name == "fetch" and isinstance(result.get("excerpt"), str):
+        head = (
+            f"{result.get('reference')} bytes {result.get('start_byte')}-{result.get('end_byte')}"
+            f" of {result.get('source_bytes')}"
+        )
+        return head + "\n\n" + result["excerpt"], result
+    if name == "feedback" and "record" in result:
+        return f"Recorded feedback {result['record']} (revision {result.get('revision')}).", result
+    if name == "recent" and "items" in result:
+        rows = [
+            {
+                "id": item["id"],
+                "source": item.get("source"),
+                "recorded_ms": item.get("recorded_ms"),
+                "bytes": item.get("bytes"),
+                "excerpt": _line(str(item.get("text", "")))[:EXCERPT],
+            }
+            for item in result["items"]
+        ]
+        lines = [f"- {row['id']} ({row['source']}): {row['excerpt']}" for row in rows]
+        return (
+            "\n".join(lines) if lines else "No memories yet in this project.",
+            {"items": rows},
+        )
+    return canonical_bytes(result).decode(), None  # the text is already the envelope
+
+
+def invoke(
+    client: LocalClient, name: str, arguments: dict[str, Any], *, chat_review: bool = False
+) -> tuple[str, dict[str, Any] | None]:
+    """`call` and `present` together, with the one fact `present` cannot see: whether a
+    `remember` was a replay (the observation was recorded before this call began)."""
+    started = int(time.time() * 1000)
+    result = call(client, name, arguments, chat_review=chat_review)
+    replayed = False
+    if name in {"remember", "correct"} and "observation" in result:
+        found = client.inspection(
+            {
+                "version": 1,
+                "incarnation": client.binding[-1],
+                "action": "catalog",
+                "args": {
+                    "project": client.project,
+                    "id": result["observation"],
+                    "limit": 1,
+                    "text": False,
+                },
+            }
+        )["items"]
+        replayed = bool(found) and found[0]["recorded_ms"] < started - 5
+    return present(name, result, replayed=replayed)

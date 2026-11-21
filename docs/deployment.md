@@ -170,7 +170,7 @@ Adapters make one HTTPS request per dispatch with certificate verification, no r
 The shared profile is a Python service backed by PostgreSQL 18.6. It exposes:
 
 - JSON operations: `POST /v1/tenants/{tenant}/operations`.
-- MCP: `/v1/tenants/{tenant}/projects/{project}/mcp`.
+- MCP: `/v1/tenants/{tenant}/projects/{project}/mcp` (lean tools; add `?profile=full` for the full catalog).
 - Optional browser dashboard for one configured tenant, with separate cookie sessions.
 
 Use separate `mk_migration`, `mk_runtime`, `mk_worker` and `mk_backup` roles. Provision them with `memoryking.shared provision-roles`, migrate with the migration DSN, then initialize each tenant. Credentials and DSNs are private files. Remote PostgreSQL DSNs must use `sslmode=verify-full`; local private Unix sockets are also supported.

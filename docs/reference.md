@@ -12,8 +12,8 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 | pytest plugin | `pytest -p memoryking.pytest_plugin` | Records failing tests as observations when the environment names a store. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
-| MCP stdio | `python -m memoryking.adapters.stdio` | Nine model-facing memory tools; daemon must already run. |
-| Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp` | Authenticated Streamable HTTP transport. |
+| MCP stdio | `memoryking mcp` / `python -m memoryking.adapters.stdio` | The lean tool set by default, or the nine full tools with `--profile full`; starts the daemon when the store profile allows it. |
+| Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp[?profile=full]` | Authenticated Streamable HTTP transport; lean by default. |
 | Reference agent | `python -m memoryking.reference_agent --help` | Create-file/readback task harness, checkpoint/recovery, the local recording provider or a policy adapter. |
 | Provider adapters | `memoryking.providers.adapter(policy, name, model)` | Anthropic, OpenAI-compatible and Vertex AI dispatch for `AuthorizedConversation`, built from the daemon's egress policy. |
 | Repository worker | `python -m memoryking.repository_worker --help` | One bounded passive repository validation job. |

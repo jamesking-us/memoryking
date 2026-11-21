@@ -35,8 +35,8 @@ class SetupTests(unittest.TestCase):
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         self.env.pop("PYTHONPATH", None)
+        self.addCleanup(self.temp.cleanup)  # runs last: the daemon is stopped first
         self.addCleanup(self.stop)
-        self.addCleanup(self.temp.cleanup)
 
     def stop(self):
         self.mk("--profile", "default", "stop", check=False)

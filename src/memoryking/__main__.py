@@ -18,7 +18,7 @@ from memoryking import __version__, daemon, profiles, session_bindings
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
-from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
+from memoryking.adapters.local_store import CAPABILITIES, SCHEMA_VERSION, LocalStore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, SystemClock
@@ -1404,6 +1404,17 @@ def main() -> int:
                     "project": args.project,
                     "capabilities": sorted(set(args.capabilities.split(","))),
                 }
+                unknown = sorted(set(grant["capabilities"]) - (CAPABILITIES - {"admin"}))
+                if unknown:
+                    # Say which name is wrong and which exist, not a bare invalid_request.
+                    raise LocalError(
+                        "invalid_capabilities",
+                        detail={
+                            "path": "--capabilities",
+                            "problem": "unknown capability " + ", ".join(unknown[:4]),
+                            "expected": "any of " + ", ".join(sorted(CAPABILITIES - {"admin"})),
+                        },
+                    )
                 if args.rotate:
                     grant["rotate"] = True
                 if args.expires:

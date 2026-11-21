@@ -501,7 +501,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `invalid_secret_file` | The secret file is missing, empty, not private, or not valid text; recreate it with mode 0600. |
 | `invalid_shared_url` | Use `https://host[:port]` with no path, query, fragment or embedded credentials. |
 | `invalid_token` | The token is malformed, signed by another store, or too long; obtain a fresh credential from this store. |
-| `invalid_tool_arguments` | The tool arguments do not match the catalog schema; compare with the tool's description. |
+| `invalid_tool_arguments` | A tool argument is wrong: `path`, `problem` and `expected` in this reply name the field; fix it and call again. |
 | `invalid_transition` | That lifecycle transition is not allowed from the current state. |
 | `invalid_usage` | Usage figures must be consistent non-negative integers. |
 
@@ -1011,6 +1011,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `unknown_profile` | The MCP profile is `lean` (the default) or `full`; select it with `?profile=` on the endpoint URL. |
 | `unknown_tool` | No tool with that name; call tools/list for the catalog. |
 
 ## unrelated

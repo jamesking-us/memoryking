@@ -25,13 +25,14 @@ from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.contracts.problems import explain
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure, summarize, timings, trace, tracing
 
 WIRE_LIMIT = 262144
 # Public fields a refusal may carry beside `error` and `hint`.
-REPLY_DETAIL = ("required_capability", "path", "expected", "missing")
+REPLY_DETAIL = ("required_capability", "path", "problem", "expected", "missing")
 
 
 def refusal(exc: LocalError) -> bytes:
@@ -97,8 +98,9 @@ class StoreOperations:
         return action if isinstance(action, str) and action.isidentifier() else "-"
 
     def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
-        if not VALIDATOR.is_valid(request):
-            raise LocalError("invalid_request")
+        found = explain(VALIDATOR, request)
+        if found is not None:
+            raise LocalError("invalid_request", detail=found)
         op, args, credential = request["operation"], request["args"], request["credential"]
         store = self.store
         if op == "experience":
