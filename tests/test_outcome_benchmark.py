@@ -1,4 +1,4 @@
-"""The task-outcome benchmark's own tests: no model, no network, both arms offline."""
+"""The task-outcome benchmark's own tests: no model, no network, every arm offline."""
 
 import argparse
 import importlib.util
@@ -28,8 +28,11 @@ AGENT = f"{sys.executable} {STUB} {{workdir}} {{prompt_file}} --usage-file {{usa
 AGENT_MCP = AGENT + " --mcp-config {mcp_config}"
 
 
+AGENT_SETUP = AGENT_MCP + " --settings {settings}"
+
+
 def agent_for(arm):
-    return AGENT_MCP if arm == "mcp" else AGENT
+    return {"mcp": AGENT_MCP, "setup": AGENT_SETUP}.get(arm, AGENT)
 
 
 CLEAN = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
@@ -161,7 +164,7 @@ class PrepareTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
-    """The whole flow with the stub agent, in all four arms."""
+    """The whole flow with the stub agent, in all five arms."""
 
     TASKS = ("legacy-rounding", "alert-sink", "wrong-total", "staging-collector")
 
@@ -196,10 +199,12 @@ class PipelineTests(unittest.TestCase):
                 if arm in ob.MEMORY_ARMS:
                     store, between = data["store"], data["store_at_between"]
                     self.assertGreaterEqual(store["observations_captured"], 3)
-                    self.assertEqual(store["briefings_served"], 1)
                     self.assertGreater(between["observations_captured"], 0)
-                    self.assertEqual(between["briefings_served"], 0)
                     self.assertEqual(between["checkpoints_saved"], 1)
+                    # Arm setup's start hook also briefs the empty store in session 1.
+                    first = 1 if arm == "setup" else 0
+                    self.assertEqual(between["briefings_served"], first)
+                    self.assertEqual(store["briefings_served"], first + 1)
                 else:
                     self.assertIsNone(data["store"])
                     self.assertEqual(data["notes_left"]["left"], arm == "notes")
@@ -211,15 +216,16 @@ class PipelineTests(unittest.TestCase):
                     )
                     self.assertIsNone(state["daemon_pid"])
                     self.assertFalse(Path(state["store_root"]).exists())
-            text = ob.cmd_report(argparse.Namespace(results=str(results), json=False))
+            text = ob.cmd_report(argparse.Namespace(results=str(results), json=False, rep=True))
+            self.assertIn("### Over repetitions", text)
             for label in ob.ARM_LABELS.values():
                 self.assertIn(label, text)
             agg = ob.aggregate(ob.load_results(results))
             n = len(self.TASKS)
             self.assertEqual(agg["arms"]["off"]["successes"], 0)
-            for arm in ("notes", "on", "mcp"):
+            for arm in ("notes", "on", "mcp", "setup"):
                 self.assertEqual(agg["arms"][arm]["successes"], n)
-            self.assertEqual(len(agg["pairs"]), 6)
+            self.assertEqual(len(agg["pairs"]), 10)
             off_vs_on = next(p for p in agg["pairs"] if (p["a"], p["b"]) == ("off", "on"))
             self.assertEqual(off_vs_on["only_b"], n)
             self.assertAlmostEqual(off_vs_on["p_value"], 2 * 0.5**4)
@@ -391,6 +397,69 @@ class ArmTests(unittest.TestCase):
                     workdir=str(off_dir), n=1, agent_command="true {mcp_config}", timeout=30
                 )
             )
+
+    def test_setup_arm_is_what_memoryking_setup_installs_and_the_prompt_says_nothing(self):
+        off_dir, off_out, _ = self.prepare("off")
+        workdir, out, state = self.prepare("setup")
+        self.assertEqual(listing(workdir), listing(off_dir))
+        bench = ob.bench_dir(workdir)
+        # The prompts are the off arm's: the agent is not told about memory.
+        self.assertEqual(self.prompts(out), self.prompts(off_out))
+        self.assertEqual(out["settings"], str(bench / "settings.json"))
+        self.assertEqual(out["mcp_config"], str(bench / "mcp.json"))
+        for name in ("settings.json", "mcp.json"):
+            self.assertEqual(oct((bench / name).stat().st_mode & 0o777), "0o600")
+        # The bridge entry is setup's: lean profile, always loaded, the one agent credential.
+        server = json.loads((bench / "mcp.json").read_text())["mcpServers"]["memoryking"]
+        self.assertTrue(server["alwaysLoad"])
+        self.assertEqual(server["type"], "stdio")
+        self.assertEqual(server["args"][:3], ["-m", "memoryking", "mcp"])
+        self.assertEqual(server["args"][server["args"].index("--profile") + 1], "lean")
+        # The hooks are setup's: three events, same credential, the tools named at start.
+        hooks = json.loads((bench / "settings.json").read_text())["hooks"]
+        self.assertEqual(sorted(hooks), ["PreCompact", "SessionEnd", "SessionStart"])
+        commands = {e: hooks[e][0]["hooks"][0]["command"] for e in hooks}
+        credential = server["args"][server["args"].index("--credential") + 1]
+        for event, command in commands.items():
+            self.assertIn(json.dumps(credential), command, event)
+            self.assertIn("--host claude", command, event)
+            self.assertNotIn("--profile outcomes", command, event)  # no profile in the host's home
+        self.assertIn("--tools mcp", commands["SessionStart"])
+        self.assertNotIn("--tools", commands["SessionEnd"])
+        # No memoryking command or variable for the agent, exactly like the mcp arm.
+        self.assertEqual(ob.agent_env(state)["PATH"], ob.path_without_memoryking())
+        # Both placeholders are required, and only this arm has {settings}.
+        for command in ("true", "true {mcp_config}", "true {settings}"):
+            with self.assertRaises(ob.BenchmarkError, msg=command):
+                ob.cmd_session(
+                    argparse.Namespace(workdir=str(workdir), n=1, agent_command=command, timeout=30)
+                )
+        mcp_dir, _, _ = self.prepare("mcp")
+        with self.assertRaises(ob.BenchmarkError):
+            ob.cmd_session(
+                argparse.Namespace(
+                    workdir=str(mcp_dir),
+                    n=1,
+                    agent_command="true {mcp_config} {settings}",
+                    timeout=30,
+                )
+            )
+
+    def test_the_setup_arm_carries_every_tasks_knowledge_through_hooks_alone(self):
+        # The stub never recalls or saves what it learned: the start hook's briefing in
+        # session 2 is all it has, and it must hold each task's carried facts.
+        for task in ob.all_task_ids():
+            workdir, _, _ = self.prepare("setup", task)
+            for n in (1, 2):
+                done = ob.cmd_session(
+                    argparse.Namespace(
+                        workdir=str(workdir), n=n, agent_command=AGENT_SETUP, timeout=120
+                    )
+                )
+                self.assertEqual(done["exit_code"], 0, (task, n))
+            context = (ob.bench_dir(workdir) / "context2.md").read_text()
+            self.assertIn("mcp__memoryking__remember", context)
+            self.assertTrue(ob.cmd_check(argparse.Namespace(workdir=str(workdir)))["passed"], task)
 
     def test_the_stub_really_speaks_mcp_to_the_bridge(self):
         workdir, _, _ = self.prepare("mcp", "staging-collector")
@@ -653,6 +722,52 @@ class ReportTests(unittest.TestCase):
         self.assertIn("0.0625", text)
         self.assertIn("Ten tasks can only show a large effect", text)
         self.assertIn("n/a", text)
+
+    def test_repetitions_are_aggregated_by_task_as_well_as_by_run(self):
+        rows = []
+        # Task t0 always passes with "on" and never with "off"; t1 passes in 2 of 3 reps in
+        # both; t2 passes only with "off".
+        table = {
+            ("on", "t0"): [1, 1, 1],
+            ("off", "t0"): [0, 0, 0],
+            ("on", "t1"): [1, 1, 0],
+            ("off", "t1"): [1, 0, 1],
+            ("on", "t2"): [0, 0, 0],
+            ("off", "t2"): [1, 1, 1],
+        }
+        for (arm, task), passed in table.items():
+            for rep, ok in enumerate(passed, 1):
+                rows.append(self.row(task, "decision", arm, bool(ok), rep=rep))
+        rep = ob.rep_aggregate(rows)
+        on = rep["arms"]["on"]
+        self.assertEqual((on["runs"], on["successes"], on["repetitions"]), (9, 5, [1, 2, 3]))
+        self.assertAlmostEqual(on["task_mean_rate"], (1 + 2 / 3 + 0) / 3)
+        self.assertEqual((on["tasks_always_passed"], on["tasks_never_passed"]), (1, 1))
+        # Resampling tasks gives a wider interval than treating the nine runs as independent.
+        wide = on["task_bootstrap95"][1] - on["task_bootstrap95"][0]
+        self.assertGreater(wide, on["wilson95"][1] - on["wilson95"][0] - 1e-9)
+        self.assertEqual(rep, ob.rep_aggregate(rows))  # deterministic
+        (pair,) = rep["pairs"]
+        self.assertEqual(pair["by_run"]["pairs"], 9)
+        self.assertEqual((pair["by_run"]["only_a"], pair["by_run"]["only_b"]), (4, 4))
+        self.assertEqual(
+            (pair["by_task"]["a_higher"], pair["by_task"]["b_higher"], pair["by_task"]["tied"]),
+            (1, 1, 1),
+        )
+        self.assertEqual(pair["by_task"]["p_value"], 1.0)
+        text = ob.render_rep_markdown(rep)
+        self.assertIn("Task-resampled 95%", text)
+        self.assertIn("Off (nothing) vs Memory CLI (on)", text)
+        with tempfile.TemporaryDirectory(prefix="mk-obr-") as tmp:
+            for i, row in enumerate(rows):
+                (Path(tmp) / f"r{i}.json").write_text(json.dumps(row))
+            out = cli("report", "--results", tmp, "--rep")
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertIn("### Over repetitions", out.stdout)
+            plain = cli("report", "--results", tmp)
+            self.assertNotIn("Over repetitions", plain.stdout)
+            data = json.loads(cli("report", "--results", tmp, "--json", "--rep").stdout)
+            self.assertIn("by_rep", data)
 
     def test_median_differs_from_mean(self):
         rows = [

@@ -9,12 +9,19 @@ agent never sees, and behaves like an agent that works faithfully:
   commands, arm `mcp` by speaking MCP over stdio to the bridge named in `--mcp-config`
   (initialize, tools/list, tools/call remember and save_progress), arm `notes` by writing
   NOTES.md, arm `off` not at all.
+* Arm `setup` is an agent that never decides to save or look anything up: the host's
+  hooks do it. The stub runs the hook commands in the settings file `--settings` names, as
+  a host does (event JSON on stdin): session start (its output is what the model would be
+  given), then, after writing a transcript of the session in Claude Code's JSONL shape,
+  session end; it also lists the bridge's tools and saves a progress note through it. In
+  session 2 the briefing the start hook printed is all it has.
 * Session 2 asks for what it needs: `memoryking recall` and `resume`, the MCP tools
   `recall` and `resume`, or a read of NOTES.md. When the answer holds the facts the task
   says must carry over, it applies the reference solution; otherwise (arm `off`, or nothing
   useful recalled) it applies the plausible wrong one.
 
-    stub_agent.py WORKDIR PROMPT_FILE [--usage-file F] [--mcp-config F] [--force solve|fail]
+    stub_agent.py WORKDIR PROMPT_FILE [--usage-file F] [--mcp-config F] [--settings F]
+                  [--force solve|fail]
 
 `--force solve` or `--force fail` skips the memory and decides the outcome directly, which
 is how the tests exercise the report.
@@ -51,6 +58,61 @@ def overlay(source: Path, workdir: Path) -> None:
                 shutil.rmtree(target)
             elif target.exists():
                 target.unlink()
+
+
+def run_hooks(settings: Path, event: str, payload: dict, matching: str | None = None) -> str:
+    """Run the commands a host settings file names for `event`, as a host does: through a
+    shell, the event as JSON on standard input, its own environment. Returns their stdout."""
+    groups = json.loads(settings.read_text()).get("hooks", {}).get(event, [])
+    env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+    printed = []
+    for group in groups:
+        matcher = group.get("matcher")
+        if matcher and matching and not re.fullmatch(matcher, matching):
+            continue
+        for hook in group["hooks"]:
+            proc = subprocess.run(
+                hook["command"],
+                shell=True,
+                input=json.dumps({"hook_event_name": event, **payload}),
+                capture_output=True,
+                text=True,
+                timeout=hook.get("timeout", 30),
+                env=env,
+            )
+            if proc.returncode != 0:
+                raise SystemExit(f"hook {event} failed: {proc.stderr.strip()[:200]}")
+            printed.append(proc.stdout)
+    return "".join(printed)
+
+
+def transcript_lines(prompt: str, closing: str) -> str:
+    """A session as Claude Code writes it: the prompt, one tool call, the closing message."""
+    lines = [
+        {"type": "user", "message": {"role": "user", "content": prompt}},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "I'll start by looking at the repository."},
+                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "README.md"}],
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": closing}]},
+        },
+    ]
+    return "".join(json.dumps(line) + "\n" for line in lines)
 
 
 def memory(*args: str) -> str:
@@ -129,6 +191,7 @@ def main() -> int:
     parser.add_argument("prompt_file")
     parser.add_argument("--usage-file")
     parser.add_argument("--mcp-config")
+    parser.add_argument("--settings")
     parser.add_argument("--force", choices=("solve", "fail"))
     args = parser.parse_args()
     workdir = Path(args.workdir).resolve()
@@ -143,13 +206,54 @@ def main() -> int:
         raise SystemExit("MEMORY.md does not match the arm")
     if (workdir / "NOTES.md").is_file() != (arm == "notes") and session == 1:
         raise SystemExit("NOTES.md does not match the arm")
-    if bool(args.mcp_config) != (arm == "mcp"):
+    if bool(args.mcp_config) != (arm in ("mcp", "setup")):
         raise SystemExit("--mcp-config does not match the arm")
+    if bool(args.settings) != (arm == "setup"):
+        raise SystemExit("--settings does not match the arm")
     assert prompt.read_text().strip(), "empty prompt"
     progress = f"Progress: first part of the work is done in the repository ({meta['title']})."
     task = "stub-" + state["task"]
 
-    if session == 1:
+    bench = workdir.parent / (workdir.name + ".bench")
+    if arm == "setup":
+        settings = Path(args.settings)
+        host = {"session_id": f"stub-s{session}", "cwd": str(workdir)}
+        started = run_hooks(
+            settings, "SessionStart", {**host, "source": "startup", "prompt_id": "p"}, "startup"
+        )
+        (bench / f"context{session}.md").write_text(started)
+        assert "mcp__memoryking__remember" in started, "the start hook did not name the tools"
+        bridge = McpBridge(Path(args.mcp_config))
+        listed = {t["name"]: t for t in bridge.request("tools/list", {})["tools"]}
+        for needed in ("remember", "recall", "save_progress", "resume"):
+            assert listed[needed]["_meta"]["anthropic/alwaysLoad"] is True, needed
+        if session == 1:
+            overlay(task_dir / "reference" / "s1", workdir)
+            closing = " ".join([progress, *stub["learn"]])
+            transcript = bench / "transcript1.jsonl"
+            transcript.write_text(
+                transcript_lines(prompt.read_text().strip(), closing)
+            )
+            bridge.call("remember", {"text": progress, "source": "progress"})
+            bridge.call(
+                "save_progress",
+                {"task": task, "objective": meta["title"], "current_state": progress},
+            )
+            bridge.close()
+            run_hooks(
+                settings,
+                "SessionEnd",
+                {**host, "transcript_path": str(transcript), "reason": "other"},
+            )
+        else:
+            bridge.close()
+            informed = (
+                args.force == "solve"
+                if args.force
+                else all(m.casefold() in started.casefold() for m in stub["must_recall"])
+            )
+            overlay(task_dir / ("reference" if informed else "reference_wrong") / "s2", workdir)
+    elif session == 1:
         overlay(task_dir / "reference" / "s1", workdir)
         if arm == "on":
             for note in stub["learn"]:

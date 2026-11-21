@@ -3,22 +3,24 @@
 
 Each task (benchmarks/outcomes/tasks/ID) has two sessions run by two separate agent
 instances that share only the working directory and, in the memory arms, a MemoryKing
-store. Four arms: `off` (nothing), `notes` (a NOTES.md the agent may use), `on` (the
-MemoryKing CLI plus MEMORY.md) and `mcp` (the lean MCP bridge as tools). This tool
+store. Five arms: `off` (nothing), `notes` (a NOTES.md the agent may use), `on` (the
+MemoryKing CLI plus MEMORY.md), `mcp` (the lean MCP bridge as tools) and `setup` (what
+`memoryking setup claude-code` installs: session hooks plus the lean bridge, no mention in
+the prompt). This tool
 prepares the working directory, runs the between-step and the hidden check, records
 results and aggregates them. It never calls a model: the agent is whatever command you
 hand it (`--agent-command`), and the bundled stub agent solves tasks deterministically
 for offline tests. See benchmarks/outcomes/RUNNING.md.
 
-    outcome_benchmark.py prepare --task ID --arm off|notes|on|mcp --workdir DIR
+    outcome_benchmark.py prepare --task ID --arm off|notes|on|mcp|setup --workdir DIR
     outcome_benchmark.py session --workdir DIR --n 1|2 --agent-command "CMD {workdir} {prompt_file}"
     outcome_benchmark.py record  --workdir DIR --n 1|2 --seconds S [--input-tokens N ...]
     outcome_benchmark.py between --workdir DIR
     outcome_benchmark.py check   --workdir DIR
     outcome_benchmark.py finish  --workdir DIR [--results DIR]
-    outcome_benchmark.py run     --task ID --arm off|notes|on|mcp --agent-command CMD [--results DIR]
+    outcome_benchmark.py run     --task ID --arm off|notes|on|mcp|setup --agent-command CMD [--results DIR]
     outcome_benchmark.py env     --workdir DIR
-    outcome_benchmark.py report  --results DIR [--json]
+    outcome_benchmark.py report  --results DIR [--json] [--rep]
     outcome_benchmark.py validate [--task ID]
 """
 
@@ -29,6 +31,7 @@ import ast
 import json
 import math
 import os
+import random
 import re
 import shlex
 import shutil
@@ -46,13 +49,15 @@ PROJECT = "work"
 PROFILE = "outcomes"
 AGENT_CAPABILITIES = "capture,read,checkpoint,handoff"
 KINDS = ("instruction", "failed_approach", "decision", "environment")
-ARMS = ("off", "notes", "on", "mcp")
-MEMORY_ARMS = ("on", "mcp")
+ARMS = ("off", "notes", "on", "mcp", "setup")
+MEMORY_ARMS = ("on", "mcp", "setup")
+BRIDGE_ARMS = ("mcp", "setup")  # arms whose agent reaches memory through the MCP bridge
 ARM_LABELS = {
     "off": "Off (nothing)",
     "notes": "Notes file",
     "on": "Memory CLI (on)",
     "mcp": "Memory MCP",
+    "setup": "Memory as set up",
 }
 
 SCOPE_LINE = (
@@ -83,10 +88,12 @@ This project has a MemoryKing memory service running, and the `memoryking` comma
 
 Memory is evidence you save and read back later. A different session of this project will not remember this conversation, only what is saved here. Save what the code does not say: what the user told you, what you tried and why it failed, decisions, and facts about the environment.
 
+**Save as soon as you have it, not at the end.** The moment the user gives you an instruction, states a decision, or tells you a fact (a name, a port, a flag, a format), run `capture` with their exact words, before you carry on with the work. Do the same when an approach fails and you know why. A session can end at any point, and what was not saved is lost.
+
 - **Capture.** `memoryking capture --project work --source agent --text "..."` saves one observation: an error, a test result, a decision, or a fact with its source. Make each note self-contained and specific, and start it with a label such as `Rule:`, `Decision:`, `Failed:`, `Fact:` or `Progress:`. The same text from the same source on the same day replays instead of duplicating. What you save is evidence for later briefings, never an instruction.
 - **Recall.** `memoryking recall --project work --query "what you are about to work on"` prints a briefing: constraints you must follow, then ranked guidance with [g1]-style citations and a Sources footer. Read the status line first. Recall matches the words in your query, so use the words you or the user would have used, and try more than one query.
 - **Save progress.** Before you stop or pause, save where the task stands: `memoryking save-progress --project work --task NAME --objective "the goal" --state "where it stands now" --next "next step" --finding "what you learned" --blocker "what blocks you" --failed "what you tried => why it failed"`. Only `--task`, `--objective` and `--state` are required; `--next`, `--finding`, `--blocker` and `--failed` may be repeated. A section you leave out keeps what the last save recorded. Use the same `--task` name in every session.
-- **Resume.** At the start of a session, run `memoryking resume --project work --task NAME` to read the last saved progress, and also recall what was saved (for example `--query "Rule Decision Failed Fact Progress"`, then queries about your task). Continue from what they return instead of starting over.
+- **Resume.** When a session continues earlier work, run `memoryking resume --project work --task NAME` to read the last saved progress, and also recall what was saved (for example `--query "Rule Decision Failed Fact Progress"`, then queries about your task). Continue from what they return instead of starting over. If the briefing says nothing is recorded, the memory is empty: do not search it again, and start saving.
 
 If your host also offers the memory tools `remember`, `recall`, `save_progress` and `resume`, they do the same things.
 """
@@ -309,8 +316,9 @@ def path_without_memoryking() -> str:
 def agent_env(state: dict) -> dict[str, str | None]:
     """Environment changes an agent process needs; a None value means unset it.
 
-    Arm `on` gets the configured `memoryking` command. Arm `mcp` gets none: no
-    `memoryking` on PATH and no MemoryKing variables, so the tools are the only way in.
+    Arm `on` gets the configured `memoryking` command. Arms `mcp` and `setup` get none: no
+    `memoryking` on PATH and no MemoryKing variables, so the bridge (and, in `setup`, the
+    hooks, whose commands carry their own paths) is the only way in.
     """
     if state["arm"] == "on":
         wrapper = bench_dir(Path(state["workdir"])) / "bin"
@@ -320,7 +328,7 @@ def agent_env(state: dict) -> dict[str, str | None]:
             "MEMORYKING_PROFILE": PROFILE,
             "MEMORYKING_PROJECT": PROJECT,
         }
-    if state["arm"] == "mcp":
+    if state["arm"] in BRIDGE_ARMS:
         env: dict[str, str | None] = {"PATH": path_without_memoryking()}
         env.update({k: None for k in os.environ if k.startswith("MEMORYKING_")})
         return env
@@ -344,24 +352,52 @@ def env_lines(state: dict) -> str:
     )
 
 
+def bridge_args(state: dict) -> list[str]:
+    return [
+        "--socket",
+        str(Path(state["data"]) / "service.sock"),
+        "--credential",
+        state["agent_credential"],
+        "--project",
+        PROJECT,
+        "--profile",
+        "lean",
+    ]
+
+
+def setup_files(state: dict, workdir: Path) -> tuple[dict, dict]:
+    """What `memoryking setup claude-code` installs for a user, as files for a headless host.
+
+    Built by the same code as the command: the hook entries from `host_hooks.install` (session
+    start with the note naming the tools, pre-compact, session end; one agent credential) and
+    the bridge entry from `setup_host.mcp_entry` (lean profile, `alwaysLoad`). Real setup
+    names the store by profile and writes the user's settings file; here the commands carry
+    the socket and credential paths, because each benchmark session gets a fresh home
+    directory and the host's own settings stay out of the way. Returns (settings, mcp)."""
+    from memoryking import host_hooks, setup_host
+
+    installed = host_hooks.install(
+        host="claude",
+        scope="user",
+        project=PROJECT,
+        cwd=workdir,
+        home=bench_dir(workdir) / "unused-home",
+        socket=Path(state["data"]) / "service.sock",
+        credential=Path(state["agent_credential"]),
+        tools="mcp",
+        write=False,
+    )
+    command = [sys.executable, "-m", "memoryking", "mcp", *bridge_args(state)]
+    return installed["config"], {"mcpServers": {"memoryking": setup_host.mcp_entry(command)}}
+
+
 def mcp_config(state: dict) -> dict:
     """The standard `mcpServers` document for the lean stdio bridge, as a host reads it."""
     return {
         "mcpServers": {
             "memoryking": {
                 "command": sys.executable,
-                "args": [
-                    "-m",
-                    "memoryking.adapters.stdio",
-                    "--socket",
-                    str(Path(state["data"]) / "service.sock"),
-                    "--credential",
-                    state["agent_credential"],
-                    "--project",
-                    PROJECT,
-                    "--profile",
-                    "lean",
-                ],
+                "args": ["-m", "memoryking.adapters.stdio", *bridge_args(state)],
             }
         }
     }
@@ -409,10 +445,18 @@ def cmd_prepare(args) -> dict:
         except BaseException:
             stop_daemon(state)
             raise
-    if args.arm == "mcp":
+    if args.arm in BRIDGE_ARMS:
         # Outside the workdir, so the agent finds the credential path only through its host.
         config = bench / "mcp.json"
-        config.write_text(json.dumps(mcp_config(state), indent=2))
+        if args.arm == "setup":
+            settings, document = setup_files(state, workdir)
+            host_settings = bench / "settings.json"
+            host_settings.write_text(json.dumps(settings, indent=2))
+            host_settings.chmod(0o600)
+            state["settings"] = str(host_settings)
+        else:
+            document = mcp_config(state)
+        config.write_text(json.dumps(document, indent=2))
         config.chmod(0o600)
         state["mcp_config"] = str(config)
     # What the directory held when the agent started, to tell later which notes it left.
@@ -426,8 +470,10 @@ def cmd_prepare(args) -> dict:
         "session2_prompt": str(bench / "session2.prompt.md"),
         "env_file": str(bench / "env.sh"),
     }
-    if args.arm == "mcp":
+    if args.arm in BRIDGE_ARMS:
         out["mcp_config"] = state["mcp_config"]
+    if args.arm == "setup":
+        out["settings"] = state["settings"]
     return out
 
 
@@ -439,7 +485,7 @@ def record_session(state: dict, n: int, **fields) -> None:
     entry.update({k: v for k, v in fields.items() if v is not None})
 
 
-PLACEHOLDERS = ("workdir", "prompt_file", "usage_file", "session", "mcp_config")
+PLACEHOLDERS = ("workdir", "prompt_file", "usage_file", "session", "mcp_config", "settings")
 USAGE_KEYS = ("input_tokens", "output_tokens", "cost_usd", "duration_seconds")
 
 
@@ -538,16 +584,22 @@ def cmd_session(args) -> dict:
     if usage_jq and not shutil.which("jq"):
         raise BenchmarkError("--usage-jq needs the `jq` command, which is not installed")
     mcp = state.get("mcp_config")
+    settings = state.get("settings")
     if "{mcp_config}" in args.agent_command and not mcp:
-        raise BenchmarkError("{mcp_config} exists only in arm mcp")
-    if state["arm"] == "mcp" and "{mcp_config}" not in args.agent_command:
-        raise BenchmarkError("arm mcp needs {mcp_config} in the agent command")
+        raise BenchmarkError("{mcp_config} exists only in arms mcp and setup")
+    if state["arm"] in BRIDGE_ARMS and "{mcp_config}" not in args.agent_command:
+        raise BenchmarkError(f"arm {state['arm']} needs {{mcp_config}} in the agent command")
+    if "{settings}" in args.agent_command and not settings:
+        raise BenchmarkError("{settings} exists only in arm setup")
+    if state["arm"] == "setup" and "{settings}" not in args.agent_command:
+        raise BenchmarkError("arm setup needs {settings} in the agent command")
     values = {
         "workdir": str(workdir),
         "prompt_file": str(prompt),
         "usage_file": str(usage),
         "session": str(args.n),
         "mcp_config": mcp or "",
+        "settings": settings or "",
     }
     argv = fill_placeholders(args.agent_command, values)
     stdout_path = bench / f"agent{args.n}.stdout"
@@ -1108,6 +1160,126 @@ def aggregate(rows: list[dict]) -> dict:
     }
 
 
+BOOTSTRAP_RESAMPLES = 2000
+BOOTSTRAP_SEED = 20261121
+
+
+def _task_rates(rows: list[dict], arm: str) -> dict[str, float]:
+    """Per task, the share of this arm's repetitions that passed."""
+    runs: dict[str, list[bool]] = {}
+    for row in rows:
+        if row["arm"] == arm:
+            runs.setdefault(row["task"], []).append(bool(row["passed"]))
+    return {task: sum(values) / len(values) for task, values in runs.items()}
+
+
+def task_bootstrap(rates: list[float]) -> tuple[float, float]:
+    """95% percentile interval for the mean of per-task pass rates, resampling tasks.
+
+    Repetitions of one task are not independent runs, so the interval resamples whole tasks
+    (with a fixed seed, so the same results give the same interval)."""
+    if not rates:
+        return (0.0, 1.0)
+    rng = random.Random(BOOTSTRAP_SEED)
+    n = len(rates)
+    means = sorted(
+        sum(rates[rng.randrange(n)] for _ in range(n)) / n for _ in range(BOOTSTRAP_RESAMPLES)
+    )
+    return (means[int(0.025 * BOOTSTRAP_RESAMPLES)], means[int(0.975 * BOOTSTRAP_RESAMPLES) - 1])
+
+
+def rep_aggregate(rows: list[dict]) -> dict:
+    """The results over repetitions: per arm, the pass rate over all runs with a Wilson interval
+    (as if runs were independent) and the rate of the per-task means with a task-resampling
+    interval (as if only tasks were); per pair of arms, the exact paired test over
+    task-by-repetition pairs and over tasks (the tasks where one arm's pass rate is higher)."""
+    present = [arm for arm in ARMS if any(r["arm"] == arm for r in rows)]
+    arms: dict[str, dict] = {}
+    for arm in present:
+        subset = [r for r in rows if r["arm"] == arm]
+        wins = sum(1 for r in subset if r["passed"])
+        rates = _task_rates(rows, arm)
+        values = list(rates.values())
+        arms[arm] = {
+            "repetitions": sorted({r.get("rep", 1) for r in subset}),
+            "runs": len(subset),
+            "successes": wins,
+            "rate": wins / len(subset),
+            "wilson95": list(wilson(wins, len(subset))),
+            "tasks": len(rates),
+            "task_mean_rate": sum(values) / len(values),
+            "task_bootstrap95": list(task_bootstrap(values)),
+            "tasks_always_passed": sum(1 for v in values if v == 1),
+            "tasks_never_passed": sum(1 for v in values if v == 0),
+        }
+    pairs = []
+    for i in range(len(present)):
+        for j in range(i + 1, len(present)):
+            a, b = present[i], present[j]
+            ra, rb = _task_rates(rows, a), _task_rates(rows, b)
+            shared = sorted(set(ra) & set(rb))
+            only_a = sum(1 for t in shared if ra[t] > rb[t])
+            only_b = sum(1 for t in shared if rb[t] > ra[t])
+            pairs.append(
+                {
+                    "a": a,
+                    "b": b,
+                    "by_run": paired(rows, a, b),
+                    "by_task": {
+                        "tasks": len(shared),
+                        "a_higher": only_a,
+                        "b_higher": only_b,
+                        "tied": len(shared) - only_a - only_b,
+                        "p_value": exact_sign_test(only_a, only_b),
+                    },
+                }
+            )
+    return {"arm_order": present, "arms": arms, "pairs": pairs}
+
+
+def render_rep_markdown(rep: dict) -> str:
+    label = ARM_LABELS
+    out = [
+        "### Over repetitions",
+        "",
+        "Success rate per arm. The Wilson interval treats every run as independent; the task "
+        "interval resamples whole tasks (the mean of each task's pass rate), which is the "
+        "honest one when a task is repeated, so read that one.",
+        "",
+        "| Arm | Repetitions | Runs | Successes | Rate | Wilson 95% | Mean of task rates | "
+        "Task-resampled 95% | Always / never passed |",
+        "| --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- |",
+    ]
+    for arm in rep["arm_order"]:
+        a = rep["arms"][arm]
+        out.append(
+            f"| {label[arm]} | {', '.join(str(n) for n in a['repetitions'])} | {a['runs']} | "
+            f"{a['successes']} | {_pct(a['rate'])} | {_pct(a['wilson95'][0])} to "
+            f"{_pct(a['wilson95'][1])} | {_pct(a['task_mean_rate'])} | "
+            f"{_pct(a['task_bootstrap95'][0])} to {_pct(a['task_bootstrap95'][1])} | "
+            f"{a['tasks_always_passed']} / {a['tasks_never_passed']} of {a['tasks']} tasks |"
+        )
+    if rep["pairs"]:
+        out += [
+            "",
+            "Paired tests (exact, two-sided). By run: task-by-repetition pairs, where exactly one "
+            "arm passed; repetitions of one task are correlated, so this p-value is too small. "
+            "By task: tasks where one arm's pass rate is higher (ties dropped).",
+            "",
+            "| Arms | Run pairs | Only first | Only second | p by run | Tasks | First higher | "
+            "Second higher | Tied | p by task |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+        for p in rep["pairs"]:
+            r, t = p["by_run"], p["by_task"]
+            out.append(
+                f"| {label[p['a']]} vs {label[p['b']]} | {r['pairs']} | {r['only_a']} | "
+                f"{r['only_b']} | {r['p_value']:.4f} | {t['tasks']} | {t['a_higher']} | "
+                f"{t['b_higher']} | {t['tied']} | {t['p_value']:.4f} |"
+            )
+    return "\n".join(out) + "\n"
+
+
 def _pct(value):
     return "n/a" if value is None else f"{100 * value:.0f}%"
 
@@ -1220,7 +1392,10 @@ def cmd_report(args):
     if not rows:
         raise BenchmarkError(f"no result files in {args.results}")
     agg = aggregate(rows)
-    return json.dumps(agg, indent=2, sort_keys=True) if args.json else render_markdown(agg)
+    rep = rep_aggregate(rows) if getattr(args, "rep", False) else None
+    if args.json:
+        return json.dumps({**agg, **({"by_rep": rep} if rep else {})}, indent=2, sort_keys=True)
+    return render_markdown(agg) + ("\n" + render_rep_markdown(rep) if rep else "")
 
 
 # ----------------------------------------------------------------------------- main
@@ -1240,8 +1415,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--agent-command",
             required=True,
-            help="placeholders: {workdir} {prompt_file} {usage_file} {session} and, in arm mcp, "
-            "{mcp_config}",
+            help="placeholders: {workdir} {prompt_file} {usage_file} {session}; {mcp_config} in "
+            "arms mcp and setup; {settings} in arm setup",
         )
         p.add_argument(
             "--timeout", type=int, default=3600, help="wall-clock limit per session, in seconds"
@@ -1290,6 +1465,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("report")
     p.add_argument("--results", required=True)
     p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--rep",
+        action="store_true",
+        help="also aggregate over repetitions: success rate per arm with an interval that "
+        "treats tasks (not runs) as the independent units, and paired tests over "
+        "task-by-repetition pairs and over tasks",
+    )
     p = add("validate")
     p.add_argument("--task")
     return parser

@@ -41,7 +41,8 @@ START_HEADINGS = {
     "pinned": "Pinned",
     "last_checkpoint": "Where the last session left off",
     "recent_decision": "Recent decisions",
-    "user_decision": "Recent decisions",
+    "user_decision": "What you were told recently",
+    "last_session": "How the last session ended",
     "user_memory": "From your own user memory",
 }
 ENVELOPE_FIELDS = (

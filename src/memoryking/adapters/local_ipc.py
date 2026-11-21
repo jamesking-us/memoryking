@@ -300,7 +300,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         Draining and housekeeping are independent: a failure in one never skips the other
         or ends the thread. A fenced or unhealthy store reports its state on the next
         request; anything else is logged."""
-        for action in (self.store.drain, self.store.housekeeping):
+        for action in (self.store.drain, self.store.housekeeping, self.store.flush_anchor):
             try:
                 action()
             except LocalError:

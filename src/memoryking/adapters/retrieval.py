@@ -6,8 +6,10 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
@@ -25,7 +27,7 @@ from memoryking.adapters.local_store import (
 from memoryking.adapters.token_count import counter
 from memoryking.application import lexical_index
 from memoryking.application.retention import index_receipt
-from memoryking.application.store_core import StoreCore
+from memoryking.application.store_core import StoreCore, Visibility
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.anchors import anchors_in
 from memoryking.domain.briefing import (
@@ -77,6 +79,23 @@ VALIDATOR = Draft202012Validator(
 )
 
 
+class _Inference(Exception):
+    """Control flow, never an error: the briefing needs a model's answer and must not wait for
+    it inside the transaction. `execute` abandons the attempt (rolling back everything, nothing
+    was persisted or released), runs `compute` with no gate and no store lock held, and starts a
+    fresh attempt that finds the answer in its memo."""
+
+    def __init__(self, key: tuple[Any, ...], compute: Callable[[], Any]):
+        super().__init__("model inference outside the transaction")
+        self.key, self.compute = key, compute
+
+
+# Attempts that may wait for a model before it is run inside the transaction as before.
+INFERENCE_ATTEMPTS = 3
+# Whole-briefing retries after PostgreSQL picks this transaction as a deadlock victim.
+DEADLOCK_ATTEMPTS = 3
+
+
 MAX_MS = 9007199254740991
 
 
@@ -91,6 +110,9 @@ def search_text(query: str, understanding: Understanding | None) -> str:
 class Retrieval:
     def __init__(self, store: StoreCore):
         self.s, self.db, self.k = store, store.db, Knowledge(store)
+        # Model answers computed outside the transaction for this call; None runs a model
+        # inline (callers that are not `execute`, and the last attempt).
+        self.models: dict[tuple[Any, ...], Any] | None = None
         if not hasattr(store, "retrieval_cache"):
             store.retrieval_cache = {}
 
@@ -99,9 +121,41 @@ class Retrieval:
             raise LocalError("invalid_request")
         if command["incarnation"] != self.s.incarnation:
             raise LocalError("history_changed")
+        memo: dict[tuple[Any, ...], Any] = {}
+        waited = deadlocks = 0
+        while True:
+            # The last attempt runs models inline, so the loop always ends in a release.
+            self.models = memo if waited < INFERENCE_ATTEMPTS else None
+            try:
+                return self._execute(credential, command)
+            except _Inference as need:
+                waited += 1
+                try:
+                    memo[need.key] = need.compute()
+                except LocalError as exc:
+                    memo[need.key] = exc
+            except Exception as exc:
+                # A victim of PostgreSQL's deadlock detector wrote nothing and released nothing.
+                if getattr(exc, "sqlstate", None) != "40P01" or deadlocks >= DEADLOCK_ATTEMPTS:
+                    raise
+                deadlocks += 1
+            finally:
+                self.models = None
+
+    @contextmanager
+    def _visibility(self) -> Iterator[None]:
+        self.s.visibility = Visibility()
+        try:
+            yield
+        finally:
+            self.s.visibility = None
+
+    def _execute(self, credential: str, command: dict[str, Any]) -> Released:
         action, args = command["action"], command["args"]
         access_id = uid("rcpt")
-        with self.s.transaction() as decision:
+        # The memo lives inside the transaction (the store lock or the tenant gate is held),
+        # so another request's briefing can never see this one's answers.
+        with self.s.transaction() as decision, self._visibility():
             at = decision.evaluated_ms
             who = self.s._auth(credential, "read", args["project"], at)
             self._expire(at, who["tenant"])
@@ -203,18 +257,29 @@ class Retrieval:
         ).fetchone()
         if row is None:
             return args
-        try:
-            batch = embedder.embed([args["query"]])
-        except Exception:  # a model failure degrades to lexical retrieval, never a refusal
+        key = ("embed", embedder.fingerprint, args["query"])
+        if self.models is not None and key not in self.models:
+            raise _Inference(key, lambda: self._embed(embedder, args["query"]))
+        vector = (
+            self.models[key] if self.models is not None else self._embed(embedder, args["query"])
+        )
+        if vector is None:  # a model failure degrades to lexical retrieval, never a refusal
             return args
         return {
             **args,
             "dense": {
                 "fingerprint": embedder.fingerprint,
                 "query_hash": canonical_hash(args["query"]),
-                "vector": batch.vectors[0],
+                "vector": vector,
             },
         }
+
+    @staticmethod
+    def _embed(embedder: Any, query: str) -> list[int] | None:
+        try:
+            return cast("list[int]", embedder.embed([query]).vectors[0])
+        except Exception:
+            return None
 
     @staticmethod
     def renderer(args: dict[str, Any]) -> Callable[[dict[str, Any]], str] | None:
@@ -1166,12 +1231,10 @@ class Retrieval:
         corrected, retiring = Corrections(self.s).screen(
             who, list(dict.fromkeys([*ids[:256], *dense_scores])), recorded, at
         )
-        for observation in dict.fromkeys([*ids[:256], *dense_scores]):
-            if observation in corrected:
-                continue
-            row = self.db.execute(
-                "SELECT * FROM observations WHERE tenant=? AND id=?", (who["tenant"], observation)
-            ).fetchone()
+        considered = [o for o in dict.fromkeys([*ids[:256], *dense_scores]) if o not in corrected]
+        rows = self.s.observation_rows(who["tenant"], considered)
+        for observation in considered:
+            row = rows.get(observation)
             if row is None or not self.s._visible(who, row, at):
                 continue
             if window and not (
@@ -1358,8 +1421,20 @@ class Retrieval:
                 or reference
                 for _, reference, group in head
             ]
+            scoring = ("rerank", reranker.fingerprint, args["query"], tuple(texts))
+            if head and self.models is not None and scoring not in self.models:
+                # Scored with no gate or lock held; the next attempt decides afresh and finds
+                # the scores here only if it ranks the same window (a pure function of text).
+                raise _Inference(scoring, lambda: reranker.score(args["query"], texts))
             try:
-                scores = reranker.score(args["query"], texts) if head else []
+                if not head:
+                    scores = []
+                elif self.models is not None:
+                    scores = self.models[scoring]
+                    if isinstance(scores, LocalError):
+                        raise scores
+                else:
+                    scores = reranker.score(args["query"], texts)
             except LocalError as exc:
                 rerank_trace.update(state="failed_fused_order_kept", error=exc.code)
             else:

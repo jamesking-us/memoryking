@@ -176,6 +176,12 @@ def parser() -> argparse.ArgumentParser:
                 default=32,
                 help="Requests in flight at once (1 to 1,024); more are refused as service_busy",
             )
+            item.add_argument(
+                "--anchor-interval-ms",
+                type=int,
+                default=0,
+                help="Opt in to less anchor durability for throughput: the commit serial and clock high-water mark of a request that moved no position are written at most this many ms late (default 0: every committing request is anchored before release). A rollback that discards only receipts from that window is then not detected, and a clock that went back by less than the window across a restart is not refused",
+            )
             item.add_argument("--dashboard-tenant")
             item.add_argument("--log-level", default="warning", choices=LEVELS)
             item.add_argument(
@@ -348,6 +354,9 @@ def run(args: Any) -> dict[str, Any]:
                 audience=args.audience,
                 instance_id=args.instance_id,
             )
+            if not 0 <= args.anchor_interval_ms <= 60_000:
+                raise LocalError("invalid_anchor_interval")
+            service.anchor_interval_ms = args.anchor_interval_ms
             if args.egress_policy is not None:
                 from memoryking.adapters.egress_policy import EgressPolicy
 
