@@ -258,7 +258,10 @@ def session_start(
     binding: list[str] | None = None,
     **where: Any,
 ) -> str:
-    """Cited Markdown for the model: the task's resume packet first, then a briefing."""
+    """Cited Markdown for the model: the task's resume packet first, then a briefing.
+
+    With a `query` the briefing searches for it; without one it is the query-free session
+    start (constraints, pins, the task's last checkpoint, recent decisions)."""
     socket, token, project = hooks.connection(**where)
     points = session_bindings.resolve(
         binding, profile=where.get("profile"), config=where.get("config")
@@ -267,7 +270,10 @@ def session_start(
     if task:
         context = request(socket, token, "context", {"project": project})
         # The agent's own latest checkpoint first, then the hooks' (a separate stream).
-        for stream, share in ((task, budget), (hook_task(task), budget // 2)):
+        streams: tuple[tuple[str, int], ...] = ((task, budget), (hook_task(task), budget // 2))
+        if not query:
+            streams = streams[1:]  # the query-free start already carries the agent's own
+        for stream, share in streams:
             try:
                 packet = request(
                     socket,
@@ -295,18 +301,21 @@ def session_start(
             except LocalError as exc:
                 if exc.code != "checkpoint_unavailable":
                     raise
-    packet = hooks.recall(
-        query or task or project,
-        budget=budget,
-        text=True,
-        task=task,
-        binding=binding,
-        socket=socket,
-        credential=Path(where["credential"]) if where.get("credential") else None,
-        project=project,
-        profile=where.get("profile"),
-        config=where.get("config"),
-    )
+    common: dict[str, Any] = {
+        "task": task,
+        "binding": binding,
+        "socket": socket,
+        "credential": Path(where["credential"]) if where.get("credential") else None,
+        "project": project,
+        "profile": where.get("profile"),
+        "config": where.get("config"),
+    }
+    # Without a query there is nothing to search for, so the briefing is the query-free
+    # start: constraints, pins, the task's last checkpoint and recent decisions.
+    if query:
+        packet = hooks.recall(query, budget=budget, text=True, **common)
+    else:
+        packet = hooks.start(budget=budget, text=True, **common)
     parts.append(str(packet.get("text", "")).rstrip())
     return "\n\n".join(p for p in parts if p) + "\n"
 

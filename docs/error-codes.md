@@ -88,6 +88,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `budget_insufficient` | The required content does not fit the token budget; raise max_output_tokens or narrow scope. |
 
+## chat
+
+| Code | What to do |
+| --- | --- |
+| `chat_review_disabled` | Confirming in chat is off for this bridge; ask the user to run `memoryking review accept` or start the bridge with --allow-chat-review. |
+
 ## checkpoint
 
 | Code | What to do |

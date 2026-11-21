@@ -158,7 +158,7 @@ class PostgresStore(StoreCore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "11":
+            if version is None or version[0] != "12":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException as exc:

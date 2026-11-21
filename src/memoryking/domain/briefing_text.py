@@ -18,6 +18,12 @@ WARNING_NOTES = {
     "optional_coverage_uncalibrated": "Optional guidance coverage is not calibrated.",
     "procedures_require_current_query": "Procedures are withheld from an as-of or historical briefing.",
 }
+START_HEADINGS = {
+    "pinned": "Pinned",
+    "last_checkpoint": "Where the last session left off",
+    "recent_decision": "Recent decisions",
+    "user_decision": "Recent decisions",
+}
 ENVELOPE_FIELDS = (
     "version",
     "status",
@@ -74,6 +80,8 @@ def _missing_fields(packet: dict[str, Any]) -> str:
 
 def _qualifier(item: dict[str, Any]) -> str:
     parts = [str(item[k]) for k in ("authority", "assurance", "selection_reason") if item.get(k)]
+    if item.get("retirement_requested"):
+        parts.append("retirement requested")
     return f" _({'; '.join(parts)})_" if parts else ""
 
 
@@ -113,14 +121,29 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
             sources.append(line)
             entries.append(entry)
     guidance = packet.get("guidance", [])
+    start = packet.get("mode") == "start"
     if guidance:
-        lines.extend(["", "## Guidance"])
+        lines.extend(["", "## Session start" if start else "## Guidance"])
+        heading = None
         for number, item in enumerate(guidance, 1):
             tag = f"g{number}"
+            if start and item.get("selection_reason") != heading:
+                heading = item.get("selection_reason")
+                lines.extend(["", f"### {START_HEADINGS.get(str(heading), str(heading))}"])
             lines.append(f"{number}. **[{tag}]** {item.get('text', '')}{_qualifier(item)}")
             line, entry = _item_source(tag, item)
             sources.append(line)
             entries.append(entry)
+    elif start and not packet.get("reason"):
+        lines.extend(
+            [
+                "",
+                "## Session start",
+                "",
+                "Nothing is recorded for this project yet under current permissions: no"
+                " constraints, pinned items, checkpoint for the task, or recent decisions.",
+            ]
+        )
     elif not packet.get("reason"):
         lines.extend(["", "## Guidance", "", "No relevant memory under current permissions."])
     conflicts = packet.get("conflicts", [])
