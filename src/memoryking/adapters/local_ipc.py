@@ -21,6 +21,7 @@ from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.adapters.user_scope import UserScope
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.application.store_core import StoreCore
@@ -140,6 +141,8 @@ class StoreOperations:
             return store.status(credential, **args)
         if op == "grants":
             return {"items": store.grants(credential)}
+        if op == "user":
+            return UserScope(store).execute(credential, args)
         if op == "claim":
             return {"job": store.claim(credential, **args)}
         if op == "finish":
@@ -151,7 +154,7 @@ class StoreOperations:
         elif op == "purge":
             store.purge(credential, **args)
         elif op == "reindex":
-            store.reindex(credential)
+            return {"ok": True, "lexical": store.reindex(credential)}
         return {"ok": True}
 
 

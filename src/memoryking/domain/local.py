@@ -49,6 +49,29 @@ class Decision:
             raise LocalError("clock_untrusted")
 
 
+USER_PREFIX = "_user_"
+# The capabilities an agent that acts for a user may hold in that user's scope. Reviewing and
+# deciding policy for the scope stay with the user (and the owner's own credential).
+USER_AGENT_CAPABILITIES = frozenset({"capture", "read", "export"})
+# What the user's own principal may hold in their scope; never `admin`.
+USER_OWNER_CAPABILITIES = frozenset(
+    {"capture", "read", "export", "review", "policy", "attest", "task_constraint"}
+)
+
+
+def is_user_project(project: str) -> bool:
+    """A user scope is the reserved project `_user_<principal>`: memory about one user."""
+    return project.startswith(USER_PREFIX)
+
+
+def user_project(principal: str) -> str:
+    return USER_PREFIX + principal
+
+
+def project_owner(project: str) -> str:
+    return project[len(USER_PREFIX) :]
+
+
 def temporal_valid(at: int, start: int | None, end: int | None) -> bool:
     """All grant, constraint and verification intervals use [start, end)."""
     return (start is None or at >= start) and (end is None or at < end)

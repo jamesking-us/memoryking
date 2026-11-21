@@ -7,7 +7,7 @@ from typing import Any
 
 from memoryking.adapters.local_store import identifier
 from memoryking.application.store_core import StoreCore
-from memoryking.domain.local import temporal_valid
+from memoryking.domain.local import is_user_project, temporal_valid
 
 
 def visible_projects(store: StoreCore, credential: str, at: int) -> list[dict[str, Any]]:
@@ -40,7 +40,11 @@ def visible_projects(store: StoreCore, credential: str, at: int) -> list[dict[st
     def tally(statement: str, field: str) -> None:
         for row in db.execute(statement, (tenant,)).fetchall():
             project = row[0]
-            if project is None or (not everything and project not in readable):
+            # A `*` grant lists every project but never a user scope, which only its own
+            # grants (the user's, and their agents') can list.
+            if project is None or (
+                project not in readable and (not everything or is_user_project(project))
+            ):
                 continue
             counts.setdefault(project, {})[field] = int(row[1])
 
@@ -78,6 +82,7 @@ def visible_projects(store: StoreCore, credential: str, at: int) -> list[dict[st
                 "tasks": entry.get("tasks", 0),
                 "receipts": entry.get("receipts", 0),
                 "last_activity_ms": entry.get("last_activity_ms"),
+                **({"scope": "user"} if is_user_project(project) else {}),
             }
         )
     return items

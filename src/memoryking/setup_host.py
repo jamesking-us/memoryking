@@ -251,6 +251,8 @@ def ensure_credential(
         "project": args.project,
         "capabilities": sorted(NEEDED),
     }
+    # Link the agent to the issuing owner's user memory, so it can use the user scope.
+    grant["for_user"] = "@self"
     if args.expires:
         grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
     owner = Path(profile["credential"]).read_text().strip()

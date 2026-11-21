@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.token_count import counter
-from memoryking.domain.briefing import pack
-from memoryking.domain.local import Decision, LocalError
+from memoryking.domain.briefing import budget_scope, pack
+from memoryking.domain.local import Decision, LocalError, is_user_project
 from memoryking.domain.selectors import bindings
 
 if TYPE_CHECKING:
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 DECISION_SOURCE = re.compile(r"^(decision|instruction|user)([-_].*)?$")
 RECENT_DAYS = 14
 RECENT_LIMIT = 5
+USER_LIMIT = 8  # accepted claims from the user's own scope shown at start
 EXCERPT_BYTES = 800
 DAY_MS = 86_400_000
 MAX_INT = 9_007_199_254_740_991
@@ -163,6 +164,18 @@ def start(
                     entry = _episode(retrieval, found[0], "pinned")
                     entry["retirement_requested"] = found[1] or None
                     groups.append([{k_: v for k_, v in entry.items() if v is not None}])
+        # 1b. What the user's own memory says is standing: their accepted claims, newest
+        # first, labelled as coming from that memory (constraints are already above).
+        mine = sorted(
+            (i for i in accepted.values() if is_user_project(i.get("project", ""))),
+            key=lambda i: -i["created_position"],
+        )
+        for item in mine[:USER_LIMIT]:
+            if item["revision"] not in seen:
+                seen.add(item["revision"])
+                claim = retrieval._claim(item)
+                claim["selection_reason"] = "user_memory"
+                groups.append([claim])
         # 2. The agent's latest checkpoint for the named task.
         if args.get("task"):
             from memoryking.adapters.working import Working
@@ -225,7 +238,9 @@ def start(
             base["warnings"].append("optional_eligibility_incomplete")
         if knowledge.get("conflicts"):
             base["warnings"].append("optional_conflict_possible")
-    raw, used, selected, omitted = pack(base, groups, count, args["max_output_tokens"])
+    raw, used, selected, omitted = pack(
+        base, groups, count, args["max_output_tokens"], retrieval.renderer(args)
+    )
     output = json.loads(raw)
     rendered = output["constraints"] + [i for i in selected if i["authority"] != "agent_checkpoint"]
     deps = retrieval._dependencies(rendered)
@@ -245,9 +260,7 @@ def start(
         "recent_limit": limit,
         "status": output["status"],
         "minimum_required_tokens": output.get("minimum_required_tokens"),
-        "budget_count_scope": "failure_envelope"
-        if output["status"] == "budget_insufficient"
-        else "context",
+        "budget_count_scope": budget_scope(output),
         "usage": {**output["usage"], "output_tokens": used, "serialized_bytes": len(raw)},
         "coverage": output["coverage"],
         "selected": [

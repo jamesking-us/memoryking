@@ -23,7 +23,7 @@ from memoryking.contracts.validation import (
     validate_working,
 )
 from memoryking.domain.checkpoint import complete
-from memoryking.domain.local import LocalError
+from memoryking.domain.local import LocalError, is_user_project
 from memoryking.memory_api import MemoryMethods
 
 CATALOG = json.loads(Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text())
@@ -80,7 +80,7 @@ def default_tokenizer() -> str:
             encoding()
             _TOKENIZER.append("cl100k_base")
         except LocalError:
-            _TOKENIZER.append("utf8-byte-estimate-v1")
+            _TOKENIZER.append("chars-estimate-v1")
     return _TOKENIZER[0]
 
 
@@ -229,12 +229,27 @@ class LocalClient(MemoryMethods):
         credential, _ = self._current()
         self._request(credential, "purge", {"observation": observation})
 
+    def user(self, action: str = "scope", **arguments: Any) -> dict[str, Any]:
+        """The user scope this identity acts for: `scope`, `show`, `ensure` or `purge`."""
+        credential, _ = self._current()
+        return self._request(credential, "user", {"action": action, **arguments})
+
+    def user_project(self) -> str:
+        """The reserved project holding memory about the user this identity acts for."""
+        found = getattr(self, "_user_project", None)
+        if found is None:
+            found = self._user_project = self.user("scope")["project"]
+        return str(found)
+
     def capture(self, key: str, observation: dict[str, Any]) -> dict[str, Any]:
-        if observation.get("project") != self.project:
+        project = observation.get("project")
+        if project != self.project and not (
+            isinstance(project, str) and is_user_project(project) and project == self.user_project()
+        ):
             raise LocalError("scope_mismatch")
         credential, _ = self._current()
         namespace = self._request(
-            credential, "namespace", {"project": self.project, "name": self.namespace}
+            credential, "namespace", {"project": project, "name": self.namespace}
         )["namespace"]
         return self._request(
             credential, "capture", {"namespace": namespace, "key": key, "request": observation}

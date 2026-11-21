@@ -161,6 +161,6 @@ For multiple machines or tenants, use the [shared deployment](deployment.md#shar
 | Service refuses a directory | Check that data/control are disjoint, owner-private paths and no other daemon owns them. |
 | Login code rejected | Obtain a fresh code in a new output file; use the printed origin exactly. |
 | Dashboard has no tasks | Connect the correct project and ensure the agent has saved checkpoints. |
-| Exact tokenizer unavailable | Install the optional tokenizer lock or explicitly use `utf8-byte-estimate-v1`. |
+| Exact tokenizer unavailable | Install the optional tokenizer lock or use the default `chars-estimate-v1` estimate. |
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)

@@ -987,7 +987,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `tokenizer_integrity_failure` | The bundled vocabulary file is corrupt; reinstall the package. |
-| `tokenizer_unavailable` | Install the tokenizers lock for exact counts, or request `utf8-byte-estimate-v1`. |
+| `tokenizer_unavailable` | Install the tokenizers lock for exact counts, or request `chars-estimate-v1`. |
 | `tokenizer_version_unsupported` | The installed tiktoken version differs from the pinned one; install the tokenizers lock. |
 
 ## tool
@@ -1060,6 +1060,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `usage_cohort_limit` | The usage cohort is full; start a new cohort. |
 | `usage_record_invalid` | The usage record is malformed. |
 | `usage_retention_limit` | 100,000 usage attempts are retained; expired rows are pruned automatically, otherwise wait for retention to pass. |
+
+## user
+
+| Code | What to do |
+| --- | --- |
+| `user_evidence_scope` | A user-scope claim may cite only that scope's own observations, and a project claim may not cite them; capture the fact in the claim's own scope. |
+| `user_link_conflict` | An agent acts for one user. End its link to the other user first (`credential revoke <agent> --project _user_<name>`). |
 
 ## vault
 
