@@ -477,6 +477,39 @@ class HostHookTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalError, "hook_config_invalid"):
             host_hooks.install(host="codex", **common)
 
+    def test_install_writes_bindings_into_each_command_and_stays_idempotent(self):
+        cwd, home = self.root / "repo", self.root / "home"
+        cwd.mkdir()
+        common = {
+            "scope": "project",
+            "project": "demo",
+            "cwd": cwd,
+            "home": home,
+            "profile": "home",
+            "task": "retry-fix",
+        }
+        path = cwd / ".claude/settings.json"
+        plain = host_hooks.install(host="claude", **common)
+        pairs = ["role=implement", "environment=prod"]
+        bound = host_hooks.install(host="claude", binding=pairs, **common)
+        self.assertNotEqual(plain["config"], bound["config"])
+        written = path.read_text()
+        for groups in json.loads(written)["hooks"].values():
+            self.assertEqual(len(groups), 1)  # replaced, never duplicated
+            command = groups[0]["hooks"][0]["command"]
+            self.assertTrue(
+                command.endswith('--binding "environment=prod" --binding "role=implement"'),
+                command,
+            )
+        # The same arguments, in any order, change nothing.
+        host_hooks.install(host="claude", binding=pairs[::-1], **common)
+        host_hooks.install(host="claude", binding=pairs, **common)
+        self.assertEqual(path.read_text(), written)
+        with self.assertRaisesRegex(LocalError, "invalid_binding"):
+            host_hooks.install(host="claude", binding=["colour=blue"], **common)
+        removed = host_hooks.install(host="claude", binding=pairs, remove=True, **common)
+        self.assertNotIn("hooks", removed["config"])
+
     def test_hook_checkpoint_is_readable_by_an_ordinary_resume(self):
         event = host_hooks.read_event(
             json.dumps(
@@ -645,3 +678,50 @@ class HookBindingTests(unittest.TestCase):
         by_flag = run("recall", *connected, "--query", "retry", "--binding", "environment=prod")
         self.assertIn("Never touch production data", by_flag)
         self.assertIn("Missing binding fields", run("recall", *connected, "--query", "retry"))
+
+    def test_installed_command_resolves_the_constraint_like_the_bridge(self):
+        cwd = self.root / "repo"
+        cwd.mkdir()
+        install = [
+            sys.executable,
+            "-m",
+            "memoryking",
+            "hooks",
+            "install",
+            "--host",
+            "claude",
+            "--project",
+            "p",
+            "--socket",
+            str(self.server.path),
+            "--credential",
+            str(self.credential),
+            "--task",
+            "retry-fix",
+            "--query",
+            "retry",
+            "--cwd",
+            str(cwd),
+        ]
+
+        def installed(*extra):
+            done = subprocess.run([*install, *extra], capture_output=True, text=True, env=self.env)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            config = json.loads((cwd / ".claude/settings.json").read_text())
+            return config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+
+        def start(command):
+            done = subprocess.run(
+                command, shell=True, input="{}", capture_output=True, text=True, env=self.env
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return done.stdout
+
+        self.assertIn("Missing binding fields: `environment`", start(installed()))
+        command = installed("--binding", "environment=prod")
+        self.assertIn('--binding "environment=prod"', command)
+        text = start(command)
+        self.assertNotIn("Blocked", text)
+        self.assertIn("Never touch production data", text)
+        self.assertIn("OWN-STATE", text)
+        self.assertEqual(installed("--binding", "environment=prod"), command)
