@@ -542,7 +542,9 @@ class SharedHTTPTests(unittest.TestCase):
                         self.assertFalse(brief.is_error)
                         self.assertTrue(brief.content[0].text.startswith("# Briefing: lean memory"))
                         self.assertIsNone(brief.structured_content)
-                        self.assertRegex(brief.content[0].text, r"\n\n\[receipt rcpt_\w+; status \w+")
+                        self.assertRegex(
+                            brief.content[0].text, r"\n\n\[receipt rcpt_\w+; status \w+"
+                        )
                         bad = await session.call_tool("recall", {})
                         self.assertTrue(bad.is_error)
                         self.assertEqual("$.query", bad.structured_content["path"])

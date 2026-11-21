@@ -213,7 +213,7 @@ class ReplyShapeTests(BridgeCase):
             ("fetch", {"reference": ident}),
             ("forget", {"memory": ident, "why": "old"}),
         ]
-        for (name, _), reply in zip(calls, self.bridge(calls)):
+        for (name, _), reply in zip(calls, self.bridge(calls), strict=True):
             self.assertFalse(reply["isError"], (name, reply))
             self.assertNotIn("structuredContent", reply, name)
             self.assertEqual(["text"], [part["type"] for part in reply["content"]], name)
@@ -241,7 +241,9 @@ class ReplyShapeTests(BridgeCase):
         self.assertLess(len(text), 80)
         self.assertRegex(again["content"][0]["text"], r"^Already saved as obs_[0-9a-f]+;")
         self.assertIn(envelope(first)["observation"], again["content"][0]["text"])
-        self.assertRegex(saved["content"][0]["text"], r"^Saved progress as ckpt_[0-9a-f]+, revision 1\.$")
+        self.assertRegex(
+            saved["content"][0]["text"], r"^Saved progress as ckpt_[0-9a-f]+, revision 1\.$"
+        )
         # The second save starts from revision 1, so it is a new revision, not a replay.
         self.assertRegex(resaved["content"][0]["text"], r"revision 2\.$")
         self.assertNotIn("already", resaved["content"][0]["text"])

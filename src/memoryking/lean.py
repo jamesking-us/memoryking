@@ -941,7 +941,7 @@ def present(name: str, result: dict[str, Any], *, replayed: bool = False) -> str
     and warnings; a write is one line with an id. Machine consumers use the full profile.
     Anything not listed keeps the envelope as its text."""
     if name in {"recall", "resume"} and isinstance(result.get("text"), str):
-        return result["text"].rstrip("\n") + "\n\n" + _trailer(result)
+        return str(result["text"]).rstrip("\n") + "\n\n" + _trailer(result)
     if name in {"remember", "correct"} and "observation" in result:
         ident = result["observation"]
         verb = "correction" if name == "correct" else "memory"
@@ -962,7 +962,7 @@ def present(name: str, result: dict[str, Any], *, replayed: bool = False) -> str
             f"{result.get('reference')} bytes {result.get('start_byte')}-{result.get('end_byte')}"
             f" of {result.get('source_bytes')}"
         )
-        return head + "\n\n" + result["excerpt"]
+        return head + "\n\n" + str(result["excerpt"])
     if name == "feedback" and "record" in result:
         return f"Recorded feedback {result['record']} (revision {result.get('revision')})."
     if name == "recent" and "items" in result:
@@ -974,7 +974,9 @@ def present(name: str, result: dict[str, Any], *, replayed: bool = False) -> str
     if name == "propose" and "proposal" in result:
         return f"Filed proposal {result['proposal']}. {result['note']}"
     if name == "confirm" and "proposal" in result:
-        return f"Recorded the user's decision: proposal {result['proposal']} is now {result['state']}."
+        return (
+            f"Recorded the user's decision: proposal {result['proposal']} is now {result['state']}."
+        )
     if name == "forget" and "observation" in result:
         return (
             f"Asked to forget {result['observation']} (request {result.get('request')}, "

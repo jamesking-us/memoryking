@@ -22,13 +22,15 @@ from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 
-
 LEAN_LINES = (
     (r"(?:Saved (?:memory|correction) as|Already saved as) (obs_\w+)", ("observation",)),
     (r"Saved progress as (ckpt_\w+), revision (\d+)\.", ("checkpoint", "revision")),
     (r"Filed proposal (rev_\w+)\.", ("proposal",)),
     (r"Recorded the user's decision: proposal (rev_\w+) is now (\w+)\.", ("proposal", "state")),
-    (r"Asked to forget (obs_\w+) \(request (ret_\w+), (\w+)\)\.", ("observation", "request", "state")),
+    (
+        r"Asked to forget (obs_\w+) \(request (ret_\w+), (\w+)\)\.",
+        ("observation", "request", "state"),
+    ),
     (r"Handoff (hnd_\w+) (?:was already )?prepared", ("handle",)),
 )
 
@@ -48,7 +50,9 @@ def envelope(reply):
         return {"text": body, "receipt": found[1], "status": found[2], "trailer": trailer}
     for pattern, keys in LEAN_LINES:
         if found := re.match(pattern, text):
-            return {k: int(v) if v.isdigit() else v for k, v in zip(keys, found.groups())}
+            return {
+                k: int(v) if v.isdigit() else v for k, v in zip(keys, found.groups(), strict=True)
+            }
     return json.loads(text)
 
 
