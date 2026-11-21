@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -22,14 +23,33 @@ from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 
 
+LEAN_LINES = (
+    (r"(?:Saved (?:memory|correction) as|Already saved as) (obs_\w+)", ("observation",)),
+    (r"Saved progress as (ckpt_\w+), revision (\d+)\.", ("checkpoint", "revision")),
+    (r"Filed proposal (rev_\w+)\.", ("proposal",)),
+    (r"Recorded the user's decision: proposal (rev_\w+) is now (\w+)\.", ("proposal", "state")),
+    (r"Asked to forget (obs_\w+) \(request (ret_\w+), (\w+)\)\.", ("observation", "request", "state")),
+    (r"Handoff (hnd_\w+) (?:was already )?prepared", ("handle",)),
+)
+
+
 def envelope(reply):
-    """A lean reply's machine envelope; a briefing's Markdown is put back as `text`."""
-    value = dict(reply["structuredContent"]) if "structuredContent" in reply else None
-    if value is None:
-        return json.loads(reply["content"][0]["text"])
-    if value.get("format") == "text":
-        value["text"] = reply["content"][0]["text"]
-    return value
+    """What a lean reply says, as a dict. A lean reply is its text alone: a briefing's
+    Markdown (as `text`) with the receipt and status from its trailer line, or a one-line
+    confirmation whose ids are read back. An error keeps its body; a full-profile reply is
+    its JSON text."""
+    if "structuredContent" in reply:
+        return dict(reply["structuredContent"])
+    text = reply["content"][0]["text"]
+    if text.startswith(("# Briefing", "# Resume")):
+        body, _, trailer = text.rpartition("\n\n")
+        found = re.match(r"\[receipt (rcpt_\w+); status (\w+)", trailer)
+        assert found, trailer
+        return {"text": body, "receipt": found[1], "status": found[2], "trailer": trailer}
+    for pattern, keys in LEAN_LINES:
+        if found := re.match(pattern, text):
+            return {k: int(v) if v.isdigit() else v for k, v in zip(keys, found.groups())}
+    return json.loads(text)
 
 
 def rpc(identifier, method, params=None):
@@ -513,8 +533,6 @@ class SDKTests(unittest.TestCase):
         self.assertEqual(envelope(second)["revision"], 2)
         text = envelope(recalled)
         self.assertEqual(text["status"], "blocked")
-        self.assertEqual(text["reason"], "applicability_unknown")
-        self.assertEqual(text["unbound_fields"], ["environment"])
         self.assertIn("**Blocked:** applicability_unknown. Decide, do not truncate.", text["text"])
         self.assertIn("Missing binding fields: `environment`", text["text"])
         self.assertNotIn("Never touch production", text["text"])

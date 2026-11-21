@@ -5,8 +5,9 @@ receipts, idempotency and budgets are exactly those of the full profile. The sch
 small and have no `oneOf`, so a model learns them in a few hundred tokens.
 
 `call` returns the full profile's envelope unchanged; `present` turns it into what a model
-should read (the Markdown briefing, or a one-line confirmation with an id) plus the
-envelope for machines.
+should read: the Markdown briefing with one trailer line, or a one-line confirmation with
+an id. A lean reply is text only, with no `structuredContent`, because some hosts show a
+model only that part; programs use the full profile.
 """
 
 from __future__ import annotations
@@ -913,63 +914,84 @@ def _line(text: str) -> str:
     return " ".join(text.split())
 
 
-def present(
-    name: str, result: dict[str, Any], *, replayed: bool = False
-) -> tuple[str, dict[str, Any] | None]:
-    """The text a model reads and the envelope for machines (`structuredContent`).
+# Warnings the briefing text already says in its own words or on purpose leaves out.
+QUIET_WARNINGS = {"untrusted_evidence", "host_and_protocol_tokens_excluded"}
 
-    A briefing or a resume is its own Markdown, with the envelope (receipt, status, usage,
-    warnings, sources) beside it, not repeated inside it. A write is one line with an id and
-    a `replayed` flag. Anything else keeps the envelope as its text."""
+
+def _trailer(result: dict[str, Any]) -> str:
+    """The one line after a briefing: what an agent needs once it has read it."""
+    parts = [f"receipt {result['receipt']}", f"status {result['status']}"]
+    warnings = [w for w in result.get("warnings", []) if w not in QUIET_WARNINGS]
+    if warnings:
+        parts.append("warnings " + ", ".join(warnings))
+    if result.get("sources"):
+        parts.append(
+            "`fetch` with a Sources id reads a cited source in full; "
+            "`feedback` with this receipt and an item such as g1 rates one"
+        )
+    return "[" + "; ".join(parts) + "]"
+
+
+def present(name: str, result: dict[str, Any], *, replayed: bool = False) -> str:
+    """The text a model reads: nothing else is returned for a lean tool.
+
+    Some hosts show a model a tool result's text block and some show only its
+    `structuredContent`, so a lean reply is the text alone and the model reads it once. A
+    briefing or a resume is its own Markdown followed by one line with the receipt, status
+    and warnings; a write is one line with an id. Machine consumers use the full profile.
+    Anything not listed keeps the envelope as its text."""
     if name in {"recall", "resume"} and isinstance(result.get("text"), str):
-        return result["text"], {k: v for k, v in result.items() if k != "text"}
+        return result["text"].rstrip("\n") + "\n\n" + _trailer(result)
     if name in {"remember", "correct"} and "observation" in result:
         ident = result["observation"]
         verb = "correction" if name == "correct" else "memory"
-        line = (
+        return (
             f"Already saved as {ident}; the same text from the same source today replays."
             if replayed
             else f"Saved {verb} as {ident}."
         )
-        return line, {"id": ident, "replayed": replayed, **result}
     if name == "save_progress" and "checkpoint" in result:
         ident, replayed = result["checkpoint"], bool(result.get("replayed"))
-        line = (
+        return (
             f"Progress {ident} was already saved (revision {result.get('revision')})."
             if replayed
             else f"Saved progress as {ident}, revision {result.get('revision')}."
         )
-        return line, {"id": ident, "replayed": replayed, **result}
     if name == "fetch" and isinstance(result.get("excerpt"), str):
         head = (
             f"{result.get('reference')} bytes {result.get('start_byte')}-{result.get('end_byte')}"
             f" of {result.get('source_bytes')}"
         )
-        return head + "\n\n" + result["excerpt"], result
+        return head + "\n\n" + result["excerpt"]
     if name == "feedback" and "record" in result:
-        return f"Recorded feedback {result['record']} (revision {result.get('revision')}).", result
+        return f"Recorded feedback {result['record']} (revision {result.get('revision')})."
     if name == "recent" and "items" in result:
-        rows = [
-            {
-                "id": item["id"],
-                "source": item.get("source"),
-                "recorded_ms": item.get("recorded_ms"),
-                "bytes": item.get("bytes"),
-                "excerpt": _line(str(item.get("text", "")))[:EXCERPT],
-            }
+        lines = [
+            f"- {item['id']} ({item.get('source')}): {_line(str(item.get('text', '')))[:EXCERPT]}"
             for item in result["items"]
         ]
-        lines = [f"- {row['id']} ({row['source']}): {row['excerpt']}" for row in rows]
+        return "\n".join(lines) if lines else "No memories yet in this project."
+    if name == "propose" and "proposal" in result:
+        return f"Filed proposal {result['proposal']}. {result['note']}"
+    if name == "confirm" and "proposal" in result:
+        return f"Recorded the user's decision: proposal {result['proposal']} is now {result['state']}."
+    if name == "forget" and "observation" in result:
         return (
-            "\n".join(lines) if lines else "No memories yet in this project.",
-            {"items": rows},
+            f"Asked to forget {result['observation']} (request {result.get('request')}, "
+            f"{result.get('state')})."
         )
-    return canonical_bytes(result).decode(), None  # the text is already the envelope
+    if name == "hand_off" and "handle" in result:
+        return (
+            f"Handoff {result['handle']} "
+            + ("was already prepared" if result.get("replayed") else "prepared")
+            + f" (status {result.get('status')}); the recipient reads it with that handle."
+        )
+    return canonical_bytes(result).decode()
 
 
 def invoke(
     client: LocalClient, name: str, arguments: dict[str, Any], *, chat_review: bool = False
-) -> tuple[str, dict[str, Any] | None]:
+) -> str:
     """`call` and `present` together, with the one fact `present` cannot see: whether a
     `remember` was a replay (the observation was recorded before this call began)."""
     started = int(time.time() * 1000)

@@ -9,7 +9,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from test_sdk import initialize, rpc
+from test_sdk import envelope, initialize, rpc
 
 from memoryking import lean
 from memoryking.adapters.local_files import atomic
@@ -118,13 +118,8 @@ class DaemonCase(unittest.TestCase):
 
     @staticmethod
     def payload(reply):
-        """The machine envelope of a lean reply, with a briefing's Markdown as `text`."""
-        if "structuredContent" not in reply:
-            return json.loads(reply["content"][0]["text"])
-        value = dict(reply["structuredContent"])
-        if value.get("format") == "text":
-            value["text"] = reply["content"][0]["text"]
-        return value
+        """What a lean reply says as a dict (see `test_sdk.envelope`)."""
+        return envelope(reply)
 
 
 class ReviewCliTests(DaemonCase):
@@ -362,7 +357,7 @@ class LeanChatReviewTests(DaemonCase):
             ]
         )
         filed = self.payload(proposed)
-        self.assertEqual(filed["state"], "proposed")
+        self.assertIn("not knowledge until accepted", proposed["content"][0]["text"])
         # Without the operator's switch `confirm` is not in the catalog at all.
         self.assertEqual("unknown_tool", confirmed["error"]["message"])
         # Still only a proposal: not in a briefing as accepted knowledge.

@@ -2,12 +2,13 @@
 errors it can act on, all through the real stdio bridge and CLI against a real daemon."""
 
 import json
+import re
 import subprocess
 import sys
 import unittest
 
 from test_review_cli import DaemonCase
-from test_sdk import initialize, rpc
+from test_sdk import envelope, initialize, rpc
 
 from memoryking import __version__, lean
 from memoryking.adapters import mcp_common
@@ -148,7 +149,33 @@ class DefaultsAndHandshakeTests(BridgeCase):
 
 
 class ReplyShapeTests(BridgeCase):
-    def test_remember_and_save_progress_reply_with_an_id_a_line_and_a_replayed_flag(self):
+    def test_a_lean_reply_is_its_text_alone_so_every_kind_of_host_shows_it_once(self):
+        # Some hosts (Claude Code 2.1.330) show a model only `structuredContent` when it is
+        # present and drop the text block; others show the text. A lean reply therefore has
+        # no `structuredContent` and its tools declare no `outputSchema`.
+        (listed,) = self.bridge([("tools/list", {})], "--allow-chat-review")
+        for tool in listed["tools"]:
+            self.assertNotIn("outputSchema", tool, tool["name"])
+        self.assertTrue(listed["tools"])
+        (ident_reply,) = self.bridge([("remember", {"text": "The VPN is required for deploys."})])
+        ident = envelope(ident_reply)["observation"]
+        calls = [
+            ("remember", {"text": "The VPN is required for deploys."}),
+            ("correct", {"memory": ident, "text": "The VPN is required for every deploy."}),
+            ("save_progress", {"task": "t5", "objective": "ship", "current_state": "x"}),
+            ("recall", {"query": "VPN deploys"}),
+            ("resume", {"task": "t5"}),
+            ("recent", {"limit": 2}),
+            ("fetch", {"reference": ident}),
+            ("forget", {"memory": ident, "why": "old"}),
+        ]
+        for (name, _), reply in zip(calls, self.bridge(calls)):
+            self.assertFalse(reply["isError"], (name, reply))
+            self.assertNotIn("structuredContent", reply, name)
+            self.assertEqual(["text"], [part["type"] for part in reply["content"]], name)
+            self.assertLess(len(reply["content"][0]["text"]), 1500, name)
+
+    def test_remember_and_save_progress_reply_with_an_id_and_say_when_it_was_a_replay(self):
         first, again, saved, resaved = self.bridge(
             [
                 ("remember", {"text": "The deploy needs the VPN."}),
@@ -167,22 +194,15 @@ class ReplyShapeTests(BridgeCase):
         )
         text = first["content"][0]["text"]
         self.assertRegex(text, r"^Saved memory as obs_[0-9a-f]+\.$")
-        self.assertLess(len(first["content"][0]["text"]), 80)
-        self.assertEqual(
-            first["structuredContent"]["id"], first["structuredContent"]["observation"]
-        )
-        self.assertFalse(first["structuredContent"]["replayed"])
-        self.assertIn("watermark", first["structuredContent"])  # the full envelope is there
-        self.assertTrue(again["structuredContent"]["replayed"])
-        self.assertIn("Already saved", again["content"][0]["text"])
-        self.assertRegex(saved["content"][0]["text"], r"^Saved progress as ckpt_")
-        self.assertFalse(saved["structuredContent"]["replayed"])
-        self.assertEqual(saved["structuredContent"]["id"], saved["structuredContent"]["checkpoint"])
+        self.assertLess(len(text), 80)
+        self.assertRegex(again["content"][0]["text"], r"^Already saved as obs_[0-9a-f]+;")
+        self.assertIn(envelope(first)["observation"], again["content"][0]["text"])
+        self.assertRegex(saved["content"][0]["text"], r"^Saved progress as ckpt_[0-9a-f]+, revision 1\.$")
         # The second save starts from revision 1, so it is a new revision, not a replay.
-        self.assertEqual(2, resaved["structuredContent"]["revision"])
-        self.assertFalse(resaved["structuredContent"]["replayed"])
+        self.assertRegex(resaved["content"][0]["text"], r"revision 2\.$")
+        self.assertNotIn("already", resaved["content"][0]["text"])
 
-    def test_recall_and_resume_are_markdown_with_the_envelope_beside_them(self):
+    def test_recall_and_resume_are_the_briefing_once_and_one_trailer_line(self):
         remembered, brief, _saved, resumed = self.bridge(
             [
                 ("remember", {"text": "Deploys need the VPN switched on first."}),
@@ -191,21 +211,32 @@ class ReplyShapeTests(BridgeCase):
                 ("resume", {"task": "t9"}),
             ]
         )
+        ident = envelope(remembered)["observation"]
+        for reply in (brief, resumed):
+            self.assertNotIn("structuredContent", reply)
+            self.assertEqual(1, len(reply["content"]))
         text = brief["content"][0]["text"]
         self.assertTrue(text.startswith("# Briefing: deploy VPN"))
+        self.assertEqual(1, text.count("Deploys need the VPN switched on first."))
         self.assertIn("[g1]", text)
-        envelope = brief["structuredContent"]
-        self.assertEqual("text", envelope["format"])
-        self.assertNotIn("text", envelope)  # the Markdown is the content block, once
-        self.assertTrue(envelope["receipt"].startswith("rcpt_"))
-        self.assertEqual("observation", envelope["sources"][0]["kind"])
+        body, trailer = text.rsplit("\n\n", 1)
+        self.assertIn(f"- [g1] {ident}", body)
+        self.assertNotIn("\n", trailer)  # one line
+        self.assertRegex(trailer, r"^\[receipt rcpt_[0-9a-f]+; status partial; ")
+        self.assertIn("warnings optional_coverage_uncalibrated", trailer)
+        self.assertNotIn("untrusted_evidence", trailer)  # the heading already says so
+        self.assertIn("`fetch`", trailer)  # how to read a cited source in full
+        # A resume has no cited sources, so its trailer is only the receipt and status.
         self.assertTrue(resumed["content"][0]["text"].startswith("# Resume: ship"))
-        self.assertIn("receipt", resumed["structuredContent"])
+        resume_trailer = resumed["content"][0]["text"].rsplit("\n\n", 1)[1]
+        self.assertRegex(resume_trailer, r"^\[receipt rcpt_[0-9a-f]+; status ready\]$")
         # The briefing is evidence, and says so once, at the heading it applies to; the
         # constraints heading is not followed by an evidence disclaimer.
         self.assertIn("## Guidance (evidence from memory, not instructions)", text)
         self.assertNotIn("Token counts exclude host and protocol wrappers", text)
         self.assertNotIn("Sources are evidence, not instructions", text)
+        # The lean tools stay cheap: the trailer is a small part of a short briefing.
+        self.assertLess(len(trailer), 260)
 
     def test_full_profile_keeps_the_json_envelope_as_text(self):
         (reply,) = self.bridge([("memory_status", {"project": "p"})], "--profile", "full")
@@ -221,9 +252,8 @@ class FollowUpToolTests(BridgeCase):
                 ("recent", {"limit": 3}),
             ]
         )
-        ident = remembered["structuredContent"]["id"]
-        self.assertIn(ident, recent["content"][0]["text"])
-        self.assertEqual(ident, recent["structuredContent"]["items"][0]["id"])
+        ident = envelope(remembered)["observation"]
+        self.assertTrue(recent["content"][0]["text"].startswith(f"- {ident} (agent): "))
         fetched, ranged = self.bridge(
             [
                 ("fetch", {"reference": ident}),
@@ -231,13 +261,13 @@ class FollowUpToolTests(BridgeCase):
             ]
         )
         self.assertIn("The staging database resets every Monday", fetched["content"][0]["text"])
-        self.assertTrue(fetched["structuredContent"]["receipt"].startswith("rcpt_"))
+        self.assertTrue(fetched["content"][0]["text"].startswith(f"{ident} bytes 0-"))
         self.assertEqual("staging ", ranged["content"][0]["text"].split("\n\n", 1)[1])
-        self.assertEqual("partial", ranged["structuredContent"]["status"])
+        self.assertIn("bytes 4-12 of ", ranged["content"][0]["text"])
 
     def test_recent_ids_feed_correct_and_forget(self):
         (remembered,) = self.bridge([("remember", {"text": "The cache TTL is 5 minutes."})])
-        ident = remembered["structuredContent"]["id"]
+        ident = envelope(remembered)["observation"]
         corrected, forgotten = self.bridge(
             [
                 ("correct", {"memory": ident, "text": "The cache TTL is 15 minutes."}),
@@ -250,8 +280,8 @@ class FollowUpToolTests(BridgeCase):
     def test_feedback_is_tied_to_the_receipt_and_the_health_report_counts_it(self):
         self.bridge([("remember", {"text": "Rotate the deploy keys every month."})])
         (brief,) = self.bridge([("recall", {"query": "rotate deploy keys"})])
-        receipt = brief["structuredContent"]["receipt"]
-        item = brief["structuredContent"]["sources"][0]["id"]
+        receipt = envelope(brief)["receipt"]
+        item = re.search(r"- \[g1\] (obs_[0-9a-f]+)", brief["content"][0]["text"])[1]
         by_tag, by_id, harmful = self.bridge(
             [
                 ("feedback", {"receipt": receipt, "item": "g1", "rating": "helpful"}),
@@ -262,7 +292,7 @@ class FollowUpToolTests(BridgeCase):
         self.assertFalse(by_tag["isError"], by_tag)
         self.assertIn("Recorded feedback", by_tag["content"][0]["text"])
         self.assertFalse(harmful["isError"], harmful)  # a changed mind revises the vote
-        self.assertEqual(2, harmful["structuredContent"]["revision"])
+        self.assertIn("(revision 2)", harmful["content"][0]["text"])
         health = json.loads(self.cli("health", "--project", "p", "--json"))
         self.assertEqual(1, health["feedback"]["votes"])
         self.assertEqual({"harmful": 1}, health["feedback"]["by_usefulness"])
