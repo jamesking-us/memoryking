@@ -37,9 +37,16 @@ class Knowledge:
         if command["incarnation"] != self.s.incarnation:
             raise LocalError("history_changed")
         action, args = command["action"], command["args"]
+        if action == "consolidate_prepare":
+            from memoryking.adapters.consolidation import Consolidation
+
+            return Consolidation(self).prepare(credential, command)
         cap = {
             "propose": "capture",
             "draft": "capture",
+            "consolidate_prepare": "capture",
+            "consolidate_admit": "capture",
+            "unreviewed_tier": "review",
             "review": "review",
             "attest": "attest",
             "promote": "review",
@@ -63,6 +70,8 @@ class Knowledge:
                     args["project"],
                     at,
                 )
+            if action == "unreviewed_tier":
+                self.s._auth(credential, "admin", "*", at)
             if action == "promote":
                 self.s._auth(credential, "capture", args["project"], at)
                 source = self._revision(who["tenant"], args["revision"])
@@ -71,6 +80,8 @@ class Knowledge:
             mutation = action in {
                 "propose",
                 "draft",
+                "consolidate_admit",
+                "unreviewed_tier",
                 "review",
                 "attest",
                 "promote",
@@ -114,6 +125,17 @@ class Knowledge:
                 from memoryking.adapters.proposals import Proposals
 
                 result = Proposals(self).draft(credential, who, args, at)
+            elif action == "consolidate_admit":
+                from memoryking.adapters.consolidation import Consolidation
+
+                result = Consolidation(self).admit(credential, who, args, at)
+            elif action in {"unreviewed_tier", "unreviewed_tier_show"}:
+                from memoryking.adapters.unreviewed import Unreviewed
+
+                tier = Unreviewed(self.s)
+                result = (
+                    tier.set(who, args, at) if action == "unreviewed_tier" else tier.show(who, args)
+                )
             elif action == "promote":
                 result = self.promote(credential, who, args, at)
             elif action == "review":

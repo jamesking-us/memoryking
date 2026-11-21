@@ -1110,6 +1110,10 @@ class StoreCore:
             from memoryking.adapters.trust import Trust
 
             Trust(self).apply_policy(action, at)
+        elif kind == "unreviewed_tier":
+            from memoryking.adapters.unreviewed import Unreviewed
+
+            Unreviewed(self).apply_policy(action, at)
         elif kind in {"pin", "retirement"}:
             from memoryking.adapters.corrections import Corrections
 
