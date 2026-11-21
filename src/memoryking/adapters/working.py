@@ -21,6 +21,7 @@ from memoryking.adapters.token_count import counter
 from memoryking.application.retention import (
     CHECKPOINT_BYTES_LIMIT,
     CHECKPOINT_LIMIT,
+    index_receipt,
     live_checkpoints,
     release_checkpoints,
 )
@@ -192,7 +193,7 @@ class Working:
                 credential, "checkpoint" if action in MUTATIONS else "read", args["project"], at
             )
             self.s._auth(credential, "read", args["project"], at)
-            self.r._expire(at)
+            self.r._expire(at, who["tenant"])
             if action == "save" and args["readers"] is None:
                 # Null keeps the stream's current audience; a first save is the writer's.
                 args = {**args, "readers": self._current_readers(who, args)}
@@ -279,6 +280,7 @@ class Working:
                     json.dumps([d["id"] for d in deps if d["kind"] == "observation"]),
                 ),
             )
+            index_receipt(self.db, who["tenant"], receipt)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, receipt)
@@ -309,7 +311,7 @@ class Working:
         total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
         if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
             # Release at write time: old revisions of ordinary streams stop counting.
-            release_checkpoints(self.db, who["tenant"])
+            release_checkpoints(self.db, self.s.dialect, who["tenant"])
             total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
             if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
                 raise LocalError("checkpoint_capacity")

@@ -14,5 +14,5 @@ CREATE INDEX IF NOT EXISTS consolidation_runs_frontier ON consolidation_runs(ten
 CREATE TABLE IF NOT EXISTS unreviewed_tier (
  tenant TEXT NOT NULL REFERENCES tenants, project TEXT NOT NULL, enabled INTEGER NOT NULL,
  decided_by TEXT NOT NULL, decided INTEGER NOT NULL, PRIMARY KEY(tenant,project));
-PRAGMA user_version=19;
+PRAGMA user_version=20;
 COMMIT;

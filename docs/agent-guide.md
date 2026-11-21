@@ -55,11 +55,93 @@ context = client.context()
 
 Use a scoped agent credential for real integrations; the owner credential is for initial setup. The client binds store, tenant, principal, project and history. It refuses to silently move to a different context after restore or identity change.
 
-Client methods include `capture`, `retrieval`, `working`, `handoff`, `repository`, `embedding`, `processing` and `experience`. Requests use versioned JSON schemas, not free-form option dictionaries. See the [API reference](reference.md#interfaces) and executable examples for full request bodies.
+Besides the everyday methods in [Using the client libraries](#using-the-client-libraries), client methods include `capture`, `retrieval`, `working`, `handoff`, `repository`, `embedding`, `processing` and `experience`. Requests use versioned JSON schemas, not free-form option dictionaries. See the [API reference](reference.md#interfaces) and executable examples for full request bodies.
 
 For capture, keep a stable key and stable source-event identity for the same event. Changed bytes with the same identity produce a conflict. Save the exact request before dispatch; do not create a new identity merely to make an uncertain retry succeed. After a history change, reconcile first. The client captures in a named namespace (`namespace="sdk"` by default) that is deterministic for the principal, so the same key from any process replays the same result or reports `idempotency_conflict`; pass a different `namespace` to keep two integrations' keys apart.
 
 `SharedClient` in `memoryking.shared_sdk` provides the shared HTTP transport with tenant/project binding and verified TLS. It rejects redirects and does not automatically retry mutations.
+
+## Using the client libraries
+
+Three clients cover the everyday five operations, with the same names and meaning as the [lean MCP tools](#lean-profile-for-any-host): `remember`, `recall`, `save_progress` (`saveProgress` in TypeScript), `resume` and `hand_off` (`handOff`). Each call goes through the same authorization, receipts, idempotency and budgets as the tool of that name. In Python the method and the tool share one implementation; the TypeScript client follows the same steps over the shared service's MCP endpoint, and its tests run against a real service.
+
+### Python
+
+`LocalClient` (Unix socket) and `SharedClient` (HTTPS) both have the methods. Results are small frozen dataclasses (`Remembered`, `Briefing`, `Progress`, `Resumed`, `HandOff`); the service's whole reply is `.raw`. Bad arguments raise `LocalError` with code `invalid_tool_arguments` before any request, and every `LocalError` carries a `hint`.
+
+```python
+from memoryking.client import MemoryKing
+
+with MemoryKing.connect() as memory:  # profile or MEMORYKING_* variables, like the CLI
+    memory.remember("Raising every timeout exceeded the total retry deadline.", source="pytest")
+    briefing = memory.recall("timeouts", budget=4000)  # as_of=..., rerank=True, format="json"
+    print(briefing.status, briefing.text)
+    memory.save_progress("retry-fix", "Fix the retry deadline", "Investigating",
+                         next_actions=["Run the regression"], share_with=["reviewer"])
+    print(memory.resume("retry-fix").text)
+    memory.hand_off("retry-fix", "reviewer")
+```
+
+`connect()` reads `MEMORYKING_PROFILE`, or `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL`, with `MEMORYKING_PROJECT` and `MEMORYKING_BINDINGS`, exactly as the command line does. With `MEMORYKING_URL` (or `url=`), `MEMORYKING_TENANT` and `MEMORYKING_CREDENTIAL` it returns a `SharedClient`; `MEMORYKING_CA_FILE` names a private certificate authority. The context manager holds no connection; it exists so code can scope a client the same way for every transport.
+
+The async clients, `AsyncLocalClient` and `AsyncSharedClient` (or `await MemoryKing.aconnect()`), have the same five methods as coroutines and use only the standard library. They run the synchronous client on worker threads with `asyncio.to_thread`: the client's current-context checks, defaults, idempotency keys and checkpoint merging are one synchronous code path shared by both transports, and Python's standard library has no async HTTPS client, so a native async copy would duplicate security-relevant logic. The event loop never blocks and calls from different tasks run concurrently. Cancelling a task does not cancel a request already sent, so a cancelled write may still have been applied; retry it with the same `event` (for `remember`) or read the task's `revision` first.
+
+```python
+async with await MemoryKing.aconnect() as memory:
+    briefing = await memory.recall("timeouts")
+```
+
+Run [the executable example](../examples/client_python.py) with `.venv/bin/python examples/client_python.py`.
+
+### TypeScript
+
+`@memoryking/client` lives in `packages/client`, a second workspace package beside the contracts, because the npm workspace already builds every package together and the client needs the contracts' generated types. It is ready to publish (Apache-2.0, `files`, README) but is not published yet; the contracts package stays private. It needs Node 22, has no runtime dependencies and is an ES module.
+
+```ts
+import { MemoryKing, MemoryKingError } from "@memoryking/client";
+
+const memory = MemoryKing.connect(); // MEMORYKING_URL, _TENANT, _PROJECT, _CREDENTIAL (a file path)
+await memory.remember("Raising every timeout exceeded the total retry deadline.");
+const briefing = await memory.recall("timeouts", { budget: 4000 });
+await memory.saveProgress("retry-fix", "Fix the retry deadline", "Investigating", {
+  nextActions: ["Run the regression"],
+  shareWith: ["reviewer"],
+});
+const note = await memory.resume("retry-fix");
+try {
+  await memory.handOff("retry-fix", "reviewer");
+} catch (error) {
+  if (error instanceof MemoryKingError) console.error(error.code, error.hint);
+}
+```
+
+`MemoryKing` talks to the shared service over HTTPS (plain `http` only to loopback with `loopbackHttp: true`). Failures throw `MemoryKingError` carrying the service's `code` and `hint`. A private certificate authority is trusted through Node's `NODE_EXTRA_CA_CERTS`.
+
+The local daemon's loopback agent endpoint (`POST /api/v1/retrieval`, see [Dashboard agent endpoint](reference.md#dashboard-agent-endpoint)) serves retrieval commands only. `MemoryKingLocal` therefore has `recall` and nothing else, and needs the dashboard port and the store's history id (`History` in `memoryking status`). A local program that writes uses the Python client or the stdio MCP bridge, or the shared service. The [TypeScript example](../examples/client_typescript.mjs) recalls from a real local daemon; run it with `npm run build` then `.venv/bin/python examples/client_typescript.py`. The write operations are exercised by `tests/js/client.test.mjs` against a real shared service when PostgreSQL is available (`MEMORYKING_PG_BIN`); without it that test is skipped.
+
+## Using MemoryKing from agent frameworks
+
+Each adapter is a thin translation between a framework's interface and the [client methods](#using-the-client-libraries): the tools run `memoryking.lean.call`, the code the lean MCP tools run, so authorization, receipts, idempotency and budgets are unchanged and nothing is copied. A refusal comes back to the model as text (`{"error": code, "hint": ...}`), not as an exception that ends the run. The adapters live in `memoryking.integrations`; the framework is imported only when you call them, and MemoryKing does not install any of them. Install the framework in your own environment. MemoryKing declares no extras for them, because a hash-pinned lock of each framework's dependency tree is not maintained here.
+
+| Framework | Tested version | The adapter provides | It deliberately does not |
+| --- | --- | --- | --- |
+| Any provider, your own loop (`memoryking.integrations.function_calling`) | none needed | `FunctionTools(client)`: the tool definitions in the Chat Completions or Responses shape, and `call(name, arguments_json)` returning the text a model should see. | Run the loop, pick a provider or retry. |
+| Claude Agent SDK (`memoryking.integrations.claude_agent_sdk`) | `claude-agent-sdk` 0.2.187 | `mcp_server_config` (the lean bridge for `mcp_servers`), `sdk_server` and `sdk_tools` (the same tools in-process), `session_context` (a briefing for the system prompt), `pre_compact_hook` and `hooks` (save before a compaction), `session_start_hook`. | Drive a live Claude Code session in its tests. `session_start_hook` is registered under `SessionStart`, which the SDK's typed hook events do not list; it has been called directly, not by a live session, so use `session_context` in the system prompt for a dependable load. Hooks need the local socket, so a `SharedClient` is refused. |
+| OpenAI Agents SDK (`memoryking.integrations.openai_agents`) | `openai-agents` 0.25.0 | `tools(client)`: `FunctionTool` objects for `Agent(tools=...)`. | A `Session`. The session protocol stores a conversation and requires `pop_item` and `clear_session`; MemoryKing is not a transcript store, keeps observations as evidence and never deletes on request. Keep the SDK's session for the conversation and use `resume` and `recall` for what should outlive it. |
+| LangChain and LangGraph (`memoryking.integrations.langchain`) | `langchain-core` 1.8.4, `langgraph` 1.2.24 | `tools(client)`: `StructuredTool` objects. `MemoryKingStore`: a `BaseStore` where `put` is a capture (the key and value saved as one observation, so a changed value is a new version), `search((project,), query=...)` is a briefing returned as one `SearchItem`, `delete(namespace, memory_id)` is a retirement request. | `get`, `list_namespaces`, TTLs, filters, offsets, a query-less search and a search narrower than the project raise `NotImplementedError`. Namespaces are `(project, *labels)`; the labels become the observation's source and may use only letters, digits, `_` and `-`. `delete` takes the id of a memory from a briefing's sources, not the key you put, and an admin decides. |
+| LlamaIndex (`memoryking.integrations.llama_index`) | `llama-index-core` 0.14.26 | `tools(client)`: `FunctionTool` objects. `MemoryKingBlock`: a memory block that briefs the latest user message into the prompt. | Write. The block's `put` does nothing, because ejected messages are a transcript; an agent saves what matters with `remember` or `save_progress`. It briefs from what was saved; it is not a retriever over documents. |
+
+Every adapter was exercised against the real framework classes and a real temporary store and daemon, with no model and no provider key: the Claude Agent SDK tools and hooks by calling them as the SDK does, the lean bridge command over MCP stdio, the OpenAI Agents tools inside the SDK's own `Runner` loop with its scripted test model, the LangChain tools inside a LangGraph `ToolNode`, and the LlamaIndex block inside `Memory`. No live model session was run, so how a particular model uses the tools is not tested here. The tests are in `tests/integrations/` and skip when a framework is missing; run them in a scratch environment that has the frameworks installed with `python -m unittest discover -s tests/integrations`. The function-calling helper's tests are part of the main suite. Each framework has an example in [`examples/integrations`](../examples/integrations) that needs no model; `with_function_calling.py` needs only MemoryKing, and each example's comments show where a real model plugs in.
+
+```python
+from agents import Agent
+
+from memoryking.client import MemoryKing
+from memoryking.integrations import openai_agents
+
+memory = MemoryKing.connect()
+agent = Agent(name="engineer", tools=openai_agents.tools(memory))
+```
 
 ## MCP integration
 
@@ -188,7 +270,8 @@ Before stopping, an agent should capture its findings, save its checkpoint, then
 MemoryKing never reads a conversation on its own, but it is easy to feed from the places where evidence appears. Every route below uses the ordinary authorized capture with a deterministic event id derived from the project, the observed day and the full text, so re-running a hook replays instead of duplicating while the same text on another day or in another project is a new observation, and all of them work whatever model drives the agent.
 
 - **From any model, on any host:** the `remember` tool in the lean profile, or `memory_capture` in the full one. This is the one path that needs no shell access.
-- **From a shell:** `memoryking --profile home capture --project demo --source git --event "commit-$(git rev-parse HEAD)" --text "$(git log -1 --format=%s)"`, or pipe text on stdin. `memoryking recall --project demo --query "retry deadline"` prints the cited Markdown briefing. Connection details also come from `MEMORYKING_PROFILE`, or `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL`, with `MEMORYKING_PROJECT`.
+- **From a shell:** `memoryking --profile home capture --project demo --source git --event "commit-$(git rev-parse HEAD)" --text "$(git log -1 --format=%s)"`, or pipe text on stdin. `memoryking recall --project demo --query "retry deadline"` prints the cited Markdown briefing. Connection details also come from `MEMORYKING_PROFILE`, or `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL`, with `MEMORYKING_PROJECT` as the default for `--project` in `capture`, `recall`, `summarize`, `save-progress` and `resume`.
+- **Checkpoints from a shell:** a shell-only agent can save and read task progress with the same code as the lean `save_progress` and `resume` tools: `memoryking save-progress --task fix-retry --objective "Fix the retry deadline" --state "Backoff exceeds the deadline" --next "Run the regression" --next "Update the changelog" --finding "Raising every timeout hides it" --blocker "Need a full regression run" --failed "Raise every timeout => still failed"`, then `memoryking resume --task fix-retry`. Only `--task`, `--objective` and `--state` are required; `--next`, `--finding`, `--blocker`, `--constraint`, `--failed "action => outcome"` and `--share-with` repeat. A section left out keeps what the last save recorded, as in the tool; `--json` prints the structured result.
 - **From pytest:** `pytest -p memoryking.pytest_plugin` with those environment variables set records each failing test's id and report tail under source `pytest`. Without the variables it stays silent, and a capture error never fails the run.
 - **From git:** a `post-commit` hook that runs the capture command above records each commit as an observation.
 - **From Claude Code:** a `PostToolUse` hook on `Bash` that pipes the tool's output into `memoryking capture --source claude-code` when the command was a test or build. Codex and other hosts with shell hooks use the same command; hosts without hooks rely on the model calling `remember`.
@@ -240,7 +323,7 @@ Every stage above is deterministic and needs no model. The one place a model may
 
 ## Measuring recall without a judge
 
-`tools/evidence_recall.py --data longmemeval_oracle.json --output report.json` records LongMemEval's sessions at their own dates, asks each question at its date through a real briefing, and scores whether the cited observations come from the labelled evidence sessions and answer turns. No answer is generated or judged, so the figure measures the memory layer alone and is not comparable to answer-accuracy leaderboards. Download the data separately (it is not committed); the check runs the same harness on a small committed sample as a gate.
+`tools/evidence_recall.py --data longmemeval_oracle.json --output report.json` records LongMemEval's sessions at their own dates, asks each question at its date through a real briefing, and scores whether the cited observations come from the labelled evidence sessions and answer turns. No answer is generated or judged, so the figure measures the memory layer alone and is not comparable to answer-accuracy leaderboards. Download the data separately (it is not committed); the check runs the same harness on a committed 72-question sample as a gate. The tool also reports recall at 5 and 10, with `--no-pool` for the per-question setting other systems publish, and compares a change with an earlier report (`--compare`); the [reference](reference.md#retrieval-quality-gate) gives the definitions and the measured figures, and also covers the stale-versus-current and scale benchmarks.
 
 ## Briefings as of a moment
 

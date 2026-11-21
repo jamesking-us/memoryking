@@ -347,8 +347,8 @@ class LocalMigrationTests(unittest.TestCase):
         self.store.db.execute("PRAGMA user_version=15")
         self.store.close()
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(19, SCHEMA_VERSION)
-        self.assertEqual(19, self.store.db.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(20, SCHEMA_VERSION)
+        self.assertEqual(20, self.store.db.execute("PRAGMA user_version").fetchone()[0])
         status = self.store.status(self.owner, "q")["lexical"]
         self.assertEqual("legacy", status["state"])
         self.assertEqual("lexical-v1", status["configuration"])
@@ -358,7 +358,7 @@ class LocalMigrationTests(unittest.TestCase):
         import sqlite3
 
         with sqlite3.connect(f"file:{self.data / 'store.sqlite'}?mode=ro", uri=True) as db:
-            found = lexical_findings(db, 16)
+            found = lexical_findings(db, 19)
         self.assertEqual([(tenant, "legacy", 3)], found)
         self.store = LocalStore(self.data, self.control)
         self.store.reindex(self.owner)

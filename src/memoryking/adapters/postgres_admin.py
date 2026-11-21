@@ -97,6 +97,30 @@ def enable_vector(admin: Any, roles: Roles | None = None) -> None:
             )
 
 
+# The shared schema version this build serves. A service accepts a database at exactly this
+# version, or one version ahead when that migration is listed as additive: it only adds tables,
+# columns or indexes that this build ignores, and nothing this build writes is read differently
+# by the newer one. Rolling upgrade order for an additive migration: migrate the database, then
+# restart services one at a time. Any other migration needs stop, migrate, start.
+SCHEMA_VERSION = 15
+# Migration 13 -> 14 is not listed: the newer service finds receipts to delete on purge through
+# a join table the older one does not fill, so a mixed fleet could leave a receipt behind.
+ADDITIVE_MIGRATIONS: frozenset[int] = frozenset()
+
+
+def schema_compatible(found: int) -> bool:
+    return found == SCHEMA_VERSION or (found == SCHEMA_VERSION + 1 and found in ADDITIVE_MIGRATIONS)
+
+
+def schema_refusal(found: str) -> LocalError:
+    """The refusal names both versions: what the database has and what this service needs."""
+    return LocalError(
+        "schema_unsupported",
+        f"The database is at schema {found[:8]} and this service needs {SCHEMA_VERSION}. "
+        "Stop the service, run migrate with this release, then start it.",
+    )
+
+
 def migrate(connection: Any, roles: Roles | None = None) -> None:
     """Apply supported migrations transactionally as the separate owner, offline."""
     roles = roles or Roles()
@@ -125,6 +149,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             "12",
             "13",
             "14",
+            "15",
         }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
@@ -174,9 +199,29 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             connection.execute("UPDATE shared_meta SET value='13' WHERE key='schema'")
         if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"}:
             connection.execute(
-                Path(__file__).with_name("postgres_consolidation_schema.sql").read_text()
+                Path(__file__).with_name("postgres_retention_schema.sql").read_text()
             )
             connection.execute("UPDATE shared_meta SET value='14' WHERE key='schema'")
+        if version[0] in {
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+        }:
+            connection.execute(
+                Path(__file__).with_name("postgres_consolidation_schema.sql").read_text()
+            )
+            connection.execute("UPDATE shared_meta SET value='15' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [
@@ -225,7 +270,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
                     sql.Identifier(table), sql.Identifier(roles.worker)
                 )
             )
-        for table in ("receipts", "tenant_meta"):
+        for table in ("receipts", "receipt_observations", "tenant_meta"):
             connection.execute(
                 sql.SQL("REVOKE INSERT,UPDATE,DELETE ON {} FROM {}").format(
                     sql.Identifier(table), sql.Identifier(roles.worker)
@@ -233,6 +278,11 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             )
         connection.execute(
             sql.SQL("GRANT INSERT ON receipts TO {}").format(sql.Identifier(roles.worker))
+        )
+        connection.execute(
+            sql.SQL("GRANT INSERT ON receipt_observations TO {}").format(
+                sql.Identifier(roles.worker)
+            )
         )
         connection.execute(
             sql.SQL("REVOKE EXECUTE ON FUNCTION next_commit_serial(text,bigint) FROM {}").format(

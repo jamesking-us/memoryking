@@ -7,7 +7,7 @@ name = "memoryking"
 version = "0.1.0"
 description = "MemoryKing local memory, checkpoint and recovery service"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "James King" }]
@@ -19,6 +19,7 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Libraries",
 ]
 
@@ -63,5 +64,15 @@ strict = true
 files = ["src/memoryking"]
 
 [[tool.mypy.overrides]]
-module = ["jsonschema", "jsonschema.*"]
+module = [
+  "jsonschema",
+  "jsonschema.*",
+  # Optional framework adapters import these lazily; they are not installed for this check.
+  "claude_agent_sdk",
+  "mcp.types",
+  "agents",
+  "langchain_core.*",
+  "langgraph.*",
+  "llama_index.*",
+]
 ignore_missing_imports = true

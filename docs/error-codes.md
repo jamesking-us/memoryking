@@ -482,12 +482,14 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `invalid_binding` | Binding values are strings of at most 256 bytes over known fields. |
 | `invalid_capabilities` | Capabilities must be a non-empty list of known names without admin; see the deployment guide. |
 | `invalid_checkpoint` | The checkpoint body does not match the contract; start from the fixture shape. |
+| `invalid_concurrency` | Concurrency limits are whole numbers: workers 1 to 256, waiters 0 to 1,024, shared requests 1 to 1,024. |
 | `invalid_constraint` | Constraints need a rule key, value and effect. |
 | `invalid_content_type` | Send `Content-Type: application/json`. |
 | `invalid_dashboard_configuration` | The dashboard port must be between 0 and 65535. |
 | `invalid_delegation` | A delegation must narrow an existing grant with a bounded ttl_ms; check the caller's own capabilities. |
 | `invalid_duration` | Use a number followed by m, h or d, for example `45m`, `12h` or `30d`. |
 | `invalid_evidence_span` | An evidence span needs an observation, byte range and content hash that match the text. |
+| `invalid_health_configuration` | The health port must be a whole number from 0 to 65535; 0 chooses a free port. |
 | `invalid_identifier` | Identifiers are 1 to 96 ASCII letters, digits, `_` or `-`. |
 | `invalid_interval` | The interval's start must precede its end. |
 | `invalid_operation_id` | Operation ids are identifiers of at most 96 characters. |
@@ -958,6 +960,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `temporal_requirement_failed` | A claim's validity window does not cover the requested time. |
+
+## tenant
+
+| Code | What to do |
+| --- | --- |
+| `tenant_required` | Pass the shared tenant name or set `MEMORYKING_TENANT`. |
 
 ## tokenizer
 
