@@ -1691,6 +1691,39 @@ class StoreCore:
             "UPDATE jobs SET incarnation=?,generation=?,fence=fence+1,attempts=0,lease_until=0,available=0,purge_epoch=?,state=CASE WHEN observation IS NULL OR observation IN (SELECT id FROM observations WHERE tenant=? AND position>? AND position<=? AND deleted=1) THEN 'noop' ELSE 'pending' END WHERE tenant=? AND position>? AND position<=? AND generation<>?",
             (self.incarnation, generation, epoch, tenant, low, high, tenant, low, high, generation),
         )
+        # Finished jobs behind the frontier are deleted (see retention), so the rebuild creates the
+        # missing ones in this range: one per event position, pending while its observation is live.
+        last = low
+        while True:
+            missing = self.db.execute(
+                "SELECT e.position,o.id AS observation,o.deleted,o.revision,o.principal FROM events e"
+                " LEFT JOIN jobs j ON j.tenant=e.tenant AND j.position=e.position"
+                " LEFT JOIN observations o ON o.tenant=e.tenant AND o.position=e.position"
+                " WHERE e.tenant=? AND e.position>? AND e.position<=? AND j.id IS NULL"
+                " ORDER BY e.position LIMIT 5000",
+                (tenant, last, high),
+            ).fetchall()
+            if not missing:
+                break
+            for row in missing:
+                live = row["observation"] is not None and not row["deleted"]
+                self.db.execute(
+                    "INSERT INTO jobs(tenant,id,position,observation,incarnation,generation,state,fence,purge_epoch,revision,principal) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        tenant,
+                        uid("job"),
+                        row["position"],
+                        row["observation"],
+                        self.incarnation,
+                        generation,
+                        "pending" if live else "noop",
+                        1,
+                        epoch,
+                        row["revision"] or 1,
+                        row["principal"] or "system",
+                    ),
+                )
+            last = missing[-1]["position"]
 
     def _reset_projections(self, tenant: str) -> None:
         self.db.execute("DELETE FROM projection_items WHERE tenant=?", (tenant,))
