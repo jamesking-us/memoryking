@@ -166,6 +166,15 @@ def lease_holder(control_path: Path, instance_id: str | None) -> str:
     return hashlib.sha256(b"memoryking-lease:" + material).hexdigest()
 
 
+class Visibility:
+    """Per-transaction answers `_visible` would otherwise recompute for every candidate."""
+
+    def __init__(self) -> None:
+        self.checked: set[str] = set()  # observation ids whose hold state was fetched in bulk
+        self.held: set[str] = set()
+        self.projects: dict[tuple[str, str, str, int], bool] = {}  # read grant per project
+
+
 class StoreCore:
     """What every backend shares; the attributes below are supplied by the backend."""
 
@@ -208,6 +217,14 @@ class StoreCore:
 
     dashboard: Any = None
 
+    # 0 anchors every committing transaction before release; see `_expose_locked`.
+    anchor_interval_ms: int = 0
+
+    # Held by one briefing's transaction, never across transactions: what a transaction has
+    # already established about holds and a principal's read grant per project. A policy
+    # change takes the exclusive gate, so neither can move while a briefing holds the gate.
+    visibility: Visibility | None = None
+
     def __enter__(self) -> Self:
         return self
 
@@ -226,6 +243,9 @@ class StoreCore:
     def _expose(self) -> None:
         """A backend durably exposes committed evidence before releasing bytes."""
         raise NotImplementedError
+
+    def flush_anchor(self, *, force: bool = False) -> None:
+        """Write anchor state `_expose` left for later; a backend that has none does nothing."""
 
     def gc(self) -> int:
         """A backend removes unreferenced blobs and expired results in its own way."""
@@ -469,8 +489,8 @@ class StoreCore:
     def _blob(self, tenant: str, content: bytes) -> str:
         digest = hashlib.sha256(content).hexdigest()
         directory = self.root / "blobs" / identifier(tenant)
+        # Creating the directory syncs its parent; an existing one has nothing new to sync.
         private_dir(directory, create=True)
-        sync_dir(directory.parent)
         path = locate(directory, digest)
         if not path.exists():
             if not path.parent.exists():
@@ -642,26 +662,65 @@ class StoreCore:
     def _visible(self, who: dict[str, Any], row: Row, at: int) -> bool:
         if row["deleted"]:
             return False
+        memo = self.visibility
         # A held capture is on nobody's reading list until an admin releases it.
-        if (
-            self.db.execute(
-                "SELECT 1 FROM observation_holds WHERE tenant=? AND id=? AND state='held'",
-                (row["tenant"], row["id"]),
-            ).fetchone()
-            is not None
-        ):
-            return False
-        try:
-            self._subject_auth(
-                self._token("credential", tenant=who["tenant"], principal=who["principal"]),
-                "read",
-                row["project"],
-                at,
+        if memo is not None and row["id"] in memo.checked:
+            held = row["id"] in memo.held
+        else:
+            held = (
+                self.db.execute(
+                    "SELECT 1 FROM observation_holds WHERE tenant=? AND id=? AND state='held'",
+                    (row["tenant"], row["id"]),
+                ).fetchone()
+                is not None
             )
-        except LocalError:
+        if held:
+            return False
+        key = (who["tenant"], who["principal"], row["project"], at)
+        allowed = None if memo is None else memo.projects.get(key)
+        if allowed is None:
+            try:
+                self._subject_auth(
+                    self._token("credential", tenant=who["tenant"], principal=who["principal"]),
+                    "read",
+                    row["project"],
+                    at,
+                )
+                allowed = True
+            except LocalError:
+                allowed = False
+            if memo is not None:
+                memo.projects[key] = allowed
+        if not allowed:
             return False
         readers = json.loads(row["readers"])
         return readers is None or who["principal"] in readers
+
+    def observation_rows(self, tenant: str, ids: list[str]) -> dict[str, Row]:
+        """The rows of these observations and, when a briefing keeps a visibility memo, which
+        of them are held: one `IN` query per hundred ids each, however many candidates."""
+        rows: dict[str, Row] = {}
+        memo = self.visibility
+        for start in range(0, len(ids), 100):
+            chunk = ids[start : start + 100]
+            marks = ",".join("?" for _ in chunk)
+            for row in self.db.execute(
+                "SELECT * FROM observations WHERE tenant=? AND id IN (" + marks + ")",
+                (tenant, *chunk),
+            ).fetchall():
+                rows[row["id"]] = row
+            if memo is not None:
+                memo.checked.update(chunk)
+                memo.held.update(
+                    held[0]
+                    for held in self.db.execute(
+                        "SELECT id FROM observation_holds WHERE tenant=? AND state='held' AND id IN ("
+                        + marks
+                        + ")",
+                        (tenant, *chunk),
+                    ).fetchall()
+                )
+        return rows
 
     def read(
         self,
@@ -1537,8 +1596,8 @@ class StoreCore:
             if not rows or any(row[0] not in {"complete", "noop"} for row in rows):
                 break
             frontier += 1
-        self.db.execute("UPDATE projections SET frontier=? WHERE tenant=?", (frontier, tenant))
         if frontier != projection["frontier"]:
+            self.db.execute("UPDATE projections SET frontier=? WHERE tenant=?", (frontier, tenant))
             release_jobs(self.db, tenant, chunk=4096, budget_s=0.05)
 
     def _context_details(

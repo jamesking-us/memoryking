@@ -46,6 +46,7 @@ class SharedService:
         self.metrics = Metrics()
 
     egress_policy: Any | None = None
+    anchor_interval_ms: int = 0
 
     def warm(self) -> None:
         """Verify every tenant's control journal once, so no request pays for a cold start.
@@ -322,6 +323,8 @@ class SharedService:
         credential: str,
         *,
         release_only: bool = False,
+        append: bool = False,
+        replay_pending: bool = False,
         request_deadline: float | None = None,
     ) -> PostgresStore:
         store = PostgresStore(
@@ -332,10 +335,13 @@ class SharedService:
             credential,
             audience=self.audience,
             release_only=release_only,
+            append=append,
+            replay_pending=replay_pending,
             request_deadline=request_deadline,
             instance_id=self.instance_id,
         )
         store.egress_policy = self.egress_policy
+        store.anchor_interval_ms = self.anchor_interval_ms
         # One set of counters for the process: a store is built per request.
         store.counters = self.metrics
         return store
@@ -383,10 +389,25 @@ class SharedService:
                 raise LocalError("dashboard_disabled")
             result: dict[str, Any] = self.dashboard.issue(tenant, credential)
             return result
-        # Domain writes and stateful permit/lease/CAS operations stay exclusive.
-        release_only = request["operation"] in {"read", "export", "context", "status", "namespace"}
+        # Domain writes and stateful permit/lease/CAS operations stay exclusive. A briefing only
+        # writes the receipt and artifact it releases, so it shares the gate with other
+        # briefings, and a capture appends under the same shared gate; policy changes, purges and
+        # restores still take the gate exclusively and wait for both.
+        briefing = request["operation"] == "retrieval"
+        release_only = briefing or request["operation"] in {
+            "read",
+            "export",
+            "context",
+            "status",
+            "namespace",
+        }
         with self.store(
-            tenant, credential, release_only=release_only, request_deadline=deadline
+            tenant,
+            credential,
+            release_only=release_only,
+            append=request["operation"] == "capture",
+            replay_pending=briefing,
+            request_deadline=deadline,
         ) as store:
             try:
                 outcome = StoreOperations(store).execute(value)
