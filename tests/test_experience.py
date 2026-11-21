@@ -125,6 +125,67 @@ class ProcedureCases:
         self.assertEqual(self.query_p()["items"], [])
         self.assertEqual(self.query_p(diagnostic=True)["items"][0]["reason"], "suspended_by_review")
 
+    def test_reviewer_listing_pages_but_the_briefing_path_stays_bounded(self):
+        from unittest.mock import patch
+
+        with patch("memoryking.adapters.experience.LIMIT", 3):
+            first = self.propose_p()
+            drafts = [first["revision"]]
+            for n in range(1, 7):
+                drafts.append(
+                    self.propose_p(
+                        n,
+                        procedure_changes={"steps": [f"Inspect the evidence, variant {n}"]},
+                    )["revision"]
+                )
+            seen, pages, before = [], 0, None
+            while True:
+                page = self.query_p(
+                    diagnostic=True, **({} if before is None else {"before_position": before})
+                )
+                self.assertIn(page["status"], {"complete", "partial"})
+                self.assertLessEqual(len(page["items"]), 3)
+                seen = [i["revision"] for i in page["items"]] + seen
+                pages += 1
+                if not page["truncated"]:
+                    self.assertIsNone(page["next_before_position"])
+                    break
+                before = page["next_before_position"]
+            self.assertEqual((seen, pages), (drafts, 3))
+            # Active-procedure resolution is not a listing: it still blocks rather than drop any.
+            blocked = self.query_p()
+            self.assertEqual(
+                (blocked["status"], blocked["reason"]),
+                ("blocked", "procedure_resolution_incomplete"),
+            )
+
+    def test_reviewer_can_list_procedures_among_hundreds_of_revisions(self):
+        drafts = []
+        for n in range(300):
+            drafts.append(
+                self.propose_p(
+                    n, procedure_changes={"steps": [f"Inspect the evidence, variant {n}"]}
+                )["revision"]
+            )
+        # Procedure bodies are large, so a page is also cut to fit the response limit.
+        seen, pages, before = [], 0, None
+        while True:
+            page = self.query_p(
+                diagnostic=True, **({} if before is None else {"before_position": before})
+            )
+            self.assertLessEqual(len(page["items"]), 256)
+            self.assertTrue(page["items"])
+            revisions = [i["revision"] for i in page["items"]]
+            self.assertEqual(revisions[-1], drafts[300 - len(seen) - 1])
+            seen = revisions + seen
+            pages += 1
+            if not page["truncated"]:
+                self.assertIsNone(page["next_before_position"])
+                break
+            before = page["next_before_position"]
+        self.assertEqual(seen, drafts)
+        self.assertGreater(pages, 1)
+
     def test_restore_requires_fresh_activation_and_expiry_denies_replay(self):
         from recovery_helpers import backup_fixture, restore_fixture
         from test_local_store import FakeClock
