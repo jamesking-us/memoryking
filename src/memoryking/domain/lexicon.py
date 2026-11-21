@@ -122,9 +122,7 @@ _STEP3 = (
     ("ful", ""),
     ("ness", ""),
 )
-_STEP4 = (
-    "al ance ence er ic able ible ant ement ment ent ou ism ate iti ous ive ize".split()
-)
+_STEP4 = "al ance ence er ic able ible ant ement ment ent ou ism ate iti ous ive ize".split()
 
 
 def _replace(word: str, rules: tuple[tuple[str, str], ...]) -> str:
@@ -197,16 +195,19 @@ def stem(token: str) -> str | None:
 # --- Analysis -----------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=131072)
+def _chunk_tokens(chunk: str) -> tuple[tuple[str, str | None], ...]:
+    exact = "_" in chunk or _DIGIT.search(chunk) is not None
+    return tuple((part, None if exact else stem(part)) for part in chunk.split("_") if part)
+
+
 def analyze(text: str) -> list[tuple[str, str | None]]:
     """(token, stem) in text order. The stem is None for words that are matched exactly:
     stop words, short or non-ASCII words, and any word with a digit or joined by an
     underscore (identifiers such as retry_charge or PAY-142 keep their exact tokens)."""
     result: list[tuple[str, str | None]] = []
     for chunk in _CHUNK.findall(text.casefold()):
-        exact = "_" in chunk or _DIGIT.search(chunk) is not None
-        for part in chunk.split("_"):
-            if part:
-                result.append((part, None if exact else stem(part)))
+        result.extend(_chunk_tokens(chunk))
     return result
 
 

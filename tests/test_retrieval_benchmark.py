@@ -32,6 +32,8 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(benchmark.gate(report, thresholds), [], report)
         self.assertEqual(report["recall_mean"], 1.0)
         self.assertEqual(report["mrr"], 1.0)
+        for metric in ("word_form_recall", "rare_first_rate", "crowded_recall", "newer_first_rate"):
+            self.assertEqual(report[metric], 1.0, metric)
         self.assertEqual(
             benchmark.gate({**report, "recall_mean": 0.5}, thresholds),
             ["recall_mean 0.5 below 0.95"],

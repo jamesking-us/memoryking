@@ -19,6 +19,8 @@ from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.domain.local import LocalError, SystemClock
 
+LATER_TABLES = {"credential_generations", "lexical_state", "lexical_projects", "lexical_terms"}
+
 
 class PostgresCredentialTests(unittest.TestCase):
     clock_factory = SystemClock
@@ -137,9 +139,7 @@ class PostgresCredentialTests(unittest.TestCase):
         manifest = controller.verify_document(archive / "manifest")
         digests = (archive / "blob-index").read_bytes().decode().splitlines()
         tables = {
-            name: meta
-            for name, meta in manifest["tables"].items()
-            if name != "credential_generations"
+            name: meta for name, meta in manifest["tables"].items() if name not in LATER_TABLES
         }
         for schema in (7, 6):
             legacy = dict(manifest)

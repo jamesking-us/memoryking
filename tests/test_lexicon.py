@@ -62,7 +62,9 @@ class StemmerTests(unittest.TestCase):
 
 class IndexTextTests(unittest.TestCase):
     def test_tokens_keep_order_then_marked_stems(self):
-        text = index_text("The retries double-charged payments.retry_charge() src/app/main.py PAY-142")
+        text = index_text(
+            "The retries double-charged payments.retry_charge() src/app/main.py PAY-142"
+        )
         words = text.split()
         self.assertEqual(
             ["the", "retries", "double", "charged", "payments", "retry", "charge"],
@@ -73,7 +75,9 @@ class IndexTextTests(unittest.TestCase):
         self.assertIn(STEM_MARK + "retri", words)
         self.assertIn(STEM_MARK + "payment", words)
         # an identifier's parts are exact only: no stem token for "charge"
-        self.assertNotIn(STEM_MARK + "charg", [w for w in words if w.startswith(STEM_MARK)][:0] or [])
+        self.assertNotIn(
+            STEM_MARK + "charg", [w for w in words if w.startswith(STEM_MARK)][:0] or []
+        )
         self.assertEqual(plain_text(text).split(), words[: len(plain_text(text).split())])
 
     def test_statistics_view_is_reversible_from_the_stored_text(self):
@@ -88,12 +92,18 @@ class IndexTextTests(unittest.TestCase):
 
 class ScoreTests(unittest.TestCase):
     def corpus(self, documents=1000, **df):
-        return Corpus(documents, documents * 20, {STEM_MARK + k if k.isalpha() else k: v for k, v in df.items()})
+        return Corpus(
+            documents,
+            documents * 20,
+            {STEM_MARK + k if k.isalpha() else k: v for k, v in df.items()},
+        )
 
     def test_forms_meet_and_exact_beats_stem(self):
         terms = query_terms("retry charge customer")
         corpus = self.corpus(10)
-        forms = score(terms, "The retries double-charged several customers during checkout.", corpus)
+        forms = score(
+            terms, "The retries double-charged several customers during checkout.", corpus
+        )
         self.assertGreater(forms, 0)
         exact = score(terms, "retry charge customer", corpus)
         self.assertGreater(exact, forms)
@@ -102,7 +112,9 @@ class ScoreTests(unittest.TestCase):
     def test_a_rare_term_outweighs_common_ones(self):
         terms = query_terms("deploy config zukatori")
         corpus = Corpus(
-            1000, 20000, {STEM_MARK + "deploi": 400, STEM_MARK + "config": 500, STEM_MARK + "zukatori": 1}
+            1000,
+            20000,
+            {STEM_MARK + "deploi": 400, STEM_MARK + "config": 500, STEM_MARK + "zukatori": 1},
         )
         common = score(terms, "deploy config was rolled out", corpus)
         rare = score(terms, "the zukatori flag was unset", corpus)

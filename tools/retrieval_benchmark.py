@@ -3,6 +3,12 @@
 The corpus is generated from a seed: every query is built to have a known relevant set
 (documents sharing most of its distinctive terms) and distractors (documents sharing one
 term). Recall, precision, reciprocal rank, briefing tokens and latency are reported.
+
+Four further labelled cases, each in its own project of the same store, measure what the
+ranking rewrite targets: word forms (an inflected note must be found by the base words),
+term rarity (the note with the one distinctive word must outrank notes with only common
+words), crowding (the only note with every term among hundreds of newer single-term notes)
+and tie order (a newer correction comes before the stale fact it replaces).
 `--gate` compares the result with the thresholds in fixtures/evaluation/retrieval-gate.json
 and exits non-zero when any threshold is missed, so ranking changes are measured rather
 than assumed. Synthetic text only: this is a regression gate, not a quality claim.
@@ -29,6 +35,29 @@ from memoryking.adapters.retrieval import Retrieval  # noqa: E402
 GATE = ROOT / "fixtures/evaluation/retrieval-gate.json"
 COMMON = "service request retry timeout cache deploy release config test build log".split()
 SYLLABLES = "ka to ri mu ne so fa li do ve zu pa qi ro ba te".split()
+FORM_PAIRS = [
+    ("retry", "retries"),
+    ("charge", "charging"),
+    ("deploy", "deployed"),
+    ("customer", "customers"),
+    ("migrate", "migrating"),
+    ("cache", "cached"),
+    ("index", "indexes"),
+    ("restart", "restarted"),
+    ("fail", "failing"),
+    ("timeout", "timeouts"),
+    ("route", "routing"),
+    ("token", "tokens"),
+    ("limit", "limited"),
+    ("alert", "alerts"),
+    ("backup", "backups"),
+    ("rollback", "rollbacks"),
+    ("schedule", "scheduled"),
+    ("upload", "uploading"),
+    ("expire", "expired"),
+    ("rotate", "rotated"),
+]
+WINDOW = 256  # the candidate budget the crowding case must overflow
 
 
 def word(rng: random.Random) -> str:
@@ -70,7 +99,109 @@ def corpus(
     return docs, labelled
 
 
-def run(seed: int, documents: int, queries: int, top_k: int) -> dict[str, Any]:
+def labelled_cases(
+    store: Any, credential: str, namespace: str, brief: Any, seed: int, crowded: int
+) -> dict[str, float]:
+    """Word forms, rarity, crowding and tie order; each metric is a fraction of its cases."""
+    rng = random.Random(seed + 1)
+    clock = [10_000_000]
+
+    def capture(project: str, key: str, text: str, observed: int | None = None) -> str:
+        clock[0] += 1
+        if clock[0] % 200 == 0:
+            while store.drain():  # the daemon does this between requests; a bulk load must too
+                pass
+        return str(
+            store.capture(
+                credential,
+                namespace,
+                key,
+                {
+                    "version": 1,
+                    "project": project,
+                    "source": "benchmark",
+                    "source_event": key,
+                    "text": text,
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": observed or clock[0],
+                },
+            )["observation"]
+        )
+
+    while store.drain():
+        pass
+    neutral = "alpha bravo delta echo gamma kilo lima mike oscar papa romeo sierra".split()
+
+    def filler(count: int, avoid: tuple[str, ...] = ()) -> str:
+        return " ".join(rng.choice([w for w in neutral if w not in avoid]) for _ in range(count))
+
+    # Word forms: the note holds inflected forms, the query the base words.
+    combinations = [(a, b) for a in range(len(FORM_PAIRS)) for b in range(a + 1, len(FORM_PAIRS))]
+    rng.shuffle(combinations)
+    forms: list[tuple[str, str]] = []
+    for number, (a, b) in enumerate(combinations[:30]):
+        (a_base, a_form), (b_base, b_form) = FORM_PAIRS[a], FORM_PAIRS[b]
+        target = capture("forms", f"f{number}", f"{a_form} {b_form} {filler(6)}")
+        capture("forms", f"fd{number}", f"{a_form} {filler(8)}")
+        forms.append((f"{a_base} {b_base}", target))
+    for number in range(60):
+        capture("forms", f"fn{number}", filler(10))
+    # Rarity: two common words plus one rare word; the rare-word note must come first.
+    common = "service request cache deploy release config".split()
+    for number in range(150):
+        capture("rarity", f"rn{number}", " ".join(rng.sample(common, 4)) + " " + filler(4))
+    rarity: list[tuple[str, str]] = []
+    for number in range(20):
+        c1, c2 = rng.sample(common, 2)
+        rare = word(rng) + str(number)
+        for copy in range(3):
+            capture("rarity", f"rc{number}-{copy}", f"{c1} {c2} {filler(6)}")
+        target = capture("rarity", f"rr{number}", f"{rare} {filler(6)}")
+        rarity.append((f"{c1} {c2} {rare}", target))
+    # Crowding: the one note with all three terms is oldest; every term has hundreds of newer
+    # single-term notes, more than one candidate window holds.
+    crowd: list[tuple[str, str]] = []
+    for number in range(crowded):
+        terms = [word(rng) + f"c{number}{i}" for i in range(3)]
+        target = capture("crowded", f"ct{number}", f"Decision: {' '.join(terms)} stay together.")
+        for term in terms:
+            for copy in range(WINDOW + 2):
+                capture("crowded", f"cx{number}{term}{copy}", f"Routine note {copy} about {term}.")
+        crowd.append((" ".join(terms), target))
+    # Ties: a stale fact and its newer correction say the same thing with different numbers.
+    ties: list[tuple[str, str, str]] = []
+    for number in range(20):
+        thing = word(rng) + f"t{number}"
+        stale = capture(
+            "ties", f"ts{number}", f"The {thing} limit is thirty requests.", 1_000 + number
+        )
+        fresh = capture(
+            "ties", f"tf{number}", f"The {thing} limit is sixty requests.", 2_000 + number
+        )
+        ties.append((f"{thing} limit", fresh, stale))
+
+    def hit_rate(cases: list[tuple[str, str]], project: str, top_k: int = 8) -> float:
+        found = [target in brief(query, project)[0][:top_k] for query, target in cases]
+        return round(sum(found) / len(found), 4) if found else 1.0
+
+    rare_first = [brief(query, "rarity")[0][:1] == [target] for query, target in rarity]
+    newer_first = []
+    for query, fresh, stale in ties:
+        returned = brief(query, "ties")[0]
+        newer_first.append(
+            fresh in returned
+            and (stale not in returned or returned.index(fresh) < returned.index(stale))
+        )
+    return {
+        "word_form_recall": hit_rate(forms, "forms", 3),
+        "rare_first_rate": round(sum(rare_first) / len(rare_first), 4),
+        "crowded_recall": hit_rate(crowd, "crowded", 3),
+        "newer_first_rate": round(sum(newer_first) / len(newer_first), 4),
+    }
+
+
+def run(seed: int, documents: int, queries: int, top_k: int, crowded: int = 1) -> dict[str, Any]:
     docs, labelled = corpus(seed, documents, queries)
     recalls: list[float] = []
     precisions: list[float] = []
@@ -103,13 +234,13 @@ def run(seed: int, documents: int, queries: int, top_k: int) -> dict[str, Any]:
                 ids.append(result["observation"])
             retrieval = Retrieval(store)
 
-            def brief(query: str) -> tuple[list[str], int, float]:
+            def brief(query: str, project: str = "bench") -> tuple[list[str], int, float]:
                 command = {
                     "version": 1,
                     "incarnation": store.incarnation,
                     "action": "brief",
                     "args": {
-                        "project": "bench",
+                        "project": project,
                         "query": query,
                         "bindings": [{}],
                         "max_output_tokens": 6000,
@@ -142,6 +273,7 @@ def run(seed: int, documents: int, queries: int, top_k: int) -> dict[str, Any]:
                 # documents must still be found.
                 returned_common, _, _ = brief(item["query"] + " " + item["common"])
                 window_recalls.append(len(relevant & set(returned_common)) / len(relevant))
+            extra = labelled_cases(store, credential, namespace, brief, seed, crowded)
     return {
         "seed": seed,
         "documents": len(docs),
@@ -152,6 +284,7 @@ def run(seed: int, documents: int, queries: int, top_k: int) -> dict[str, Any]:
         "mrr": round(statistics.fmean(reciprocal), 4),
         "window_recall_mean": round(statistics.fmean(window_recalls), 4),
         "tokens_mean": round(statistics.fmean(tokens), 1),
+        **extra,
         "latency_ms_p50": round(statistics.median(latencies), 2),
         "latency_ms_p95": round(sorted(latencies)[int(len(latencies) * 0.95) - 1], 2),
     }
@@ -175,9 +308,12 @@ def main() -> int:
     parser.add_argument("--documents", type=int, default=400)
     parser.add_argument("--queries", type=int, default=200)
     parser.add_argument("--top-k", type=int, default=8)
+    parser.add_argument(
+        "--crowded", type=int, default=2, help="Crowding cases (each captures about 800 notes)"
+    )
     parser.add_argument("--gate", action="store_true", help="Fail when a threshold is missed")
     args = parser.parse_args()
-    report = run(args.seed, args.documents, args.queries, args.top_k)
+    report = run(args.seed, args.documents, args.queries, args.top_k, args.crowded)
     report["gate"] = json.loads(GATE.read_text()) if GATE.exists() else {}
     report["failures"] = gate(report, report["gate"]) if args.gate else []
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -110,7 +110,19 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             connection.execute(Path(__file__).with_name("postgres_schema.sql").read_text())
             connection.execute("INSERT INTO shared_meta VALUES ('schema','1')")
         version = connection.execute("SELECT value FROM shared_meta WHERE key='schema'").fetchone()
-        if version is None or version[0] not in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}:
+        if version is None or version[0] not in {
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11",
+        }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
             connection.execute(Path(__file__).with_name("postgres_optional_schema.sql").read_text())
@@ -144,6 +156,9 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
                 Path(__file__).with_name("postgres_credential_schema.sql").read_text()
             )
             connection.execute("UPDATE shared_meta SET value='10' WHERE key='schema'")
+        if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}:
+            connection.execute(Path(__file__).with_name("postgres_lexical_schema.sql").read_text())
+            connection.execute("UPDATE shared_meta SET value='11' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [

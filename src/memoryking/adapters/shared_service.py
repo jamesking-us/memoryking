@@ -39,6 +39,7 @@ class SharedService:
             self._housekeeping[tenant] = now
         try:
             store.expire_results()
+            store.rebuild_lexical(wall_ms=2000)  # finishes an unfinished lexical rebuild in batches
         except LocalError:
             pass
         except Exception as exc:
