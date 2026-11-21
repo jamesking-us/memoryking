@@ -148,6 +148,50 @@ class DefaultsAndHandshakeTests(BridgeCase):
         self.assertLess(size, 50_000)  # it was 84,664 bytes before unused definitions went
 
 
+class CaptureInputTests(BridgeCase):
+    """A command-line agent saves text that a shell would mangle or a host would refuse
+    (quotes, brackets, parentheses, `$`): from standard input or from a file."""
+
+    TEXT = (
+        'Rule: the payload is {"schema_version": 4, "points": [...]} (a dict, not a string); '
+        "use $HOME, `ticks` and 'quotes'; batches of 50 (not 100).\nSecond line."
+    )
+
+    def saved(self, *args, stdin=None):
+        out = self.cli("capture", "--project", "p", *args, stdin=stdin)
+        return json.loads(out)["observation"]
+
+    def test_capture_reads_the_text_from_stdin_or_a_file_verbatim(self):
+        path = self.base / "note.txt"
+        path.write_text(self.TEXT, encoding="utf-8")
+        ids = [
+            self.saved("--source", "from-stdin", stdin=self.TEXT),
+            self.saved("--source", "from-file", "--file", str(path)),
+            self.saved("--source", "from-dash", "--file", "-", stdin=self.TEXT),
+        ]
+        replies = self.bridge([("fetch", {"reference": ident}) for ident in ids])
+        for reply in replies:
+            self.assertFalse(reply["isError"], reply)
+            self.assertEqual(self.TEXT, reply["content"][0]["text"].split("\n\n", 1)[1])
+        # The briefing gives the literal back exactly.
+        (brief,) = self.bridge([("recall", {"query": "payload schema_version points"})])
+        self.assertIn('{"schema_version": 4, "points": [...]}', brief["content"][0]["text"])
+
+    def test_capture_refuses_two_sources_of_text_and_a_missing_file(self):
+        path = self.base / "note.txt"
+        path.write_text("x", encoding="utf-8")
+        refused = self.cli(
+            "capture", "--project", "p", "--text", "a", "--file", str(path), expect=2
+        )
+        self.assertEqual("invalid_request", json.loads(refused)["error"])
+        missing = self.cli(
+            "capture", "--project", "p", "--file", str(self.base / "none.txt"), expect=2
+        )
+        self.assertEqual("local_io_or_configuration_error", json.loads(missing)["error"])
+        empty = self.cli("capture", "--project", "p", stdin="  \n", expect=2)
+        self.assertEqual("invalid_request", json.loads(empty)["error"])
+
+
 class ReplyShapeTests(BridgeCase):
     def test_a_lean_reply_is_its_text_alone_so_every_kind_of_host_shows_it_once(self):
         # Some hosts (Claude Code 2.1.330) show a model only `structuredContent` when it is
