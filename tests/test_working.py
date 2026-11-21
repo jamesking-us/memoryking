@@ -506,6 +506,38 @@ class WorkingTests(unittest.TestCase):
         body["acceptance"] *= 2
         self.fails("duplicate_criterion", lambda: self.save(body))
 
+    def test_unknown_constraint_applicability_still_returns_the_callers_own_checkpoint(self):
+        self.save()
+        self.constraint(
+            "Never touch production data",
+            selector={
+                "selector_version": "1",
+                "any_of": [{"all_of": [{"field": "environment", "op": "eq", "value": "prod"}]}],
+            },
+        )
+        packet = self.resume()
+        self.assertEqual(packet["status"], "blocked")
+        self.assertEqual(packet["reason"], "applicability_unknown")
+        self.assertEqual(packet["unbound_fields"], ["environment"])
+        self.assertEqual(packet["checkpoint"]["revision"], 1)
+        self.assertEqual(packet["constraints"], [])
+        self.assertNotIn("Never touch production", json.dumps(packet))
+        text = self.resume(format="text")
+        self.assertEqual(text["status"], "blocked")
+        self.assertIn("Missing binding fields: `environment`", text["text"])
+        self.assertIn("Mandatory constraints: unresolved", text["text"])
+        self.assertIn(checkpoint()["objective"], text["text"])
+        # Bound, the same stream resumes ready with the constraint resolved.
+        ready = self.resume(bindings=[{"environment": "prod"}])
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["constraints"][0]["text"], "Never touch production data")
+        self.assertNotIn("unbound_fields", ready)
+        # Other consumers of the same state still get no checkpoint from a blocked read.
+        summary = self.summarize(key="blocked-summary")
+        self.assertNotIn("Never touch production", json.dumps(summary))
+        # And a save over the unresolved stream is an ordinary revision.
+        self.assertEqual(self.save(revision=1, key="second")["revision"], 2)
+
     def test_hidden_policy_blocks_and_expiry_uses_persisted_instant(self):
         reader = self.store.grant(self.owner, "reader", "p", ["read"])
         self.save(readers=["owner", "reader"])

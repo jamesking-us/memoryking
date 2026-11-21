@@ -8,6 +8,9 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import test_knowledge as knowledge_helpers
 
 from memoryking import host_hooks
 from memoryking.adapters.local_ipc import Server, request
@@ -515,3 +518,130 @@ class HostHookTests(unittest.TestCase):
         self.assertIn("scoped per request", state["current_state"])
         self.assertEqual(state["references"][0]["kind"], "observation")
         self.assertIn("defaulted:next_actions", state["capture"]["gaps"])
+
+
+class HookBindingTests(unittest.TestCase):
+    """Hooks and the CLI carry session bindings, so a scoped constraint does not lock them out."""
+
+    run_k = knowledge_helpers.KnowledgeTests.run_k
+    body = knowledge_helpers.KnowledgeTests.body
+    propose = knowledge_helpers.KnowledgeTests.propose
+    review = knowledge_helpers.KnowledgeTests.review
+
+    def setUp(self):
+        knowledge_helpers.KnowledgeTests.setUp(self)
+        self.credential = self.control / "owner.credential"
+        self.server = Server(self.store)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.where = {"socket": self.server.path, "credential": self.credential, "project": "p"}
+        self.review(
+            self.propose(
+                self.body(
+                    "Never touch production data",
+                    kind="constraint",
+                    authority="project",
+                    rule_key="prod",
+                    effect="prohibit",
+                    rule_value="write",
+                    selector=knowledge_helpers.sel(knowledge_helpers.eq("environment", "prod")),
+                ),
+                key="prod-rule",
+            )
+        )
+        token = self.credential.read_text().strip()
+        context = request(self.server.path, token, "context", {"project": "p"})
+        request(
+            self.server.path,
+            token,
+            "working",
+            {
+                "command": {
+                    "version": 1,
+                    "incarnation": context["incarnation"],
+                    "action": "save",
+                    "key": "own-checkpoint",
+                    "args": {
+                        "project": "p",
+                        "task": "retry-fix",
+                        "run": None,
+                        "readers": None,
+                        "expected_revision": None,
+                        "checkpoint": complete(
+                            {"objective": "Own objective", "current_state": "OWN-STATE"}, 0
+                        ),
+                    },
+                }
+            },
+        )
+        self.env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"PYTHONPATH", "PYTHONHOME"} and not k.startswith("MEMORYKING_")
+        }
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.thread.join(timeout=5)
+        self.server.server_close()
+        knowledge_helpers.KnowledgeTests.tearDown(self)
+
+    def test_session_start_names_the_missing_field_and_still_resumes_own_state(self):
+        with patch.dict(os.environ, self.env, clear=True):
+            text = host_hooks.session_start({}, query="retry", task="retry-fix", **self.where)
+        self.assertIn("# Resume: Own objective", text)
+        self.assertIn("OWN-STATE", text)
+        self.assertIn("Missing binding fields: `environment`", text)
+        self.assertIn("# Briefing: retry", text)
+        self.assertNotIn("Never touch production", text)
+
+    def test_memoryking_bindings_environment_resolves_the_constraint(self):
+        with patch.dict(os.environ, {**self.env, "MEMORYKING_BINDINGS": "environment=prod"}):
+            text = host_hooks.session_start({}, query="retry", task="retry-fix", **self.where)
+        self.assertNotIn("Blocked", text)
+        self.assertIn("Never touch production data", text)
+        self.assertIn("OWN-STATE", text)
+        # An explicit binding wins over the environment, key by key.
+        with patch.dict(os.environ, {**self.env, "MEMORYKING_BINDINGS": "environment=prod"}):
+            text = host_hooks.session_start(
+                {}, query="retry", binding=["environment=dev"], **self.where
+            )
+        self.assertNotIn("Never touch production data", text)
+        self.assertNotIn("Blocked", text)
+
+    def test_cli_hook_and_recall_accept_the_environment_variable_and_flag(self):
+        connected = [
+            "--project",
+            "p",
+            "--socket",
+            str(self.server.path),
+            "--credential",
+            str(self.credential),
+        ]
+
+        def run(*args, env=None):
+            done = subprocess.run(
+                [sys.executable, "-m", "memoryking", *args],
+                input="{}",
+                capture_output=True,
+                text=True,
+                env={**self.env, **(env or {})},
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return done.stdout
+
+        blocked = run("hook", "session-start", *connected, "--query", "retry")
+        self.assertIn("Missing binding fields: `environment`", blocked)
+        by_env = run(
+            "hook",
+            "session-start",
+            *connected,
+            "--query",
+            "retry",
+            env={"MEMORYKING_BINDINGS": "environment=prod"},
+        )
+        self.assertIn("Never touch production data", by_env)
+        self.assertNotIn("Blocked", by_env)
+        by_flag = run("recall", *connected, "--query", "retry", "--binding", "environment=prod")
+        self.assertIn("Never touch production data", by_flag)
+        self.assertIn("Missing binding fields", run("recall", *connected, "--query", "retry"))

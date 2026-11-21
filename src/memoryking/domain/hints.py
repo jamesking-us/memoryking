@@ -159,7 +159,7 @@ HINTS: dict[str, str] = {
     "feedback_reference_not_retrieved": "Feedback must reference an item delivered in a briefing to this principal.",
     "feedback_scope_mismatch": "Feedback must match the task and run of the referenced briefing.",
     "feedback_use_required": "State whether the memory was used and how useful it was.",
-    "applicability_unknown": "Supply bindings for the fields the policy's selectors depend on.",
+    "applicability_unknown": "Set the binding fields the reply names: --binding key=value, MEMORYKING_BINDINGS or a profile (full profile: bindings per call).",
     "essential_context_unavailable": "A mandatory constraint is not readable by this principal; ask its owner for access.",
     "constraint_resolution_incomplete": "Not all mandatory constraints could be resolved; the result is blocked, not truncated.",
     "constraint_conflict": "Mandatory constraints conflict; a reviewer must resolve them.",

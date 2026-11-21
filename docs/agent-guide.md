@@ -103,6 +103,22 @@ Lean `save_progress` merges: a section you leave out (`next_actions`, `hard_cons
 
 A resume is `incomplete` with `reason: recovery_reconciliation_required` only for real recovery gaps: an operation whose outcome is unknown or that needs reconciliation, a required or stored artifact that is unavailable, dirty repository state without its artifacts, or any non-`defaulted:` gap the writer recorded in `capture.gaps`. Sections nobody wrote (`defaulted:<section>`) do not block; the packet lists them as `unrecorded_sections` and the Markdown shows them under "Never written down".
 
+### Session bindings: telling the tools where you work
+
+A constraint can apply only to an environment, role, task stage, repository, path or commit. To know whether it applies, the service needs those facts; when a field the constraint depends on is missing, its applicability is unknown, and an unknown essential constraint blocks a briefing rather than being dropped. The lean tools take no bindings, so you state them once per session instead of on every call:
+
+| Where | Form |
+| --- | --- |
+| Flag | `--binding environment=prod`, repeatable, on the stdio bridge and on `memoryking recall`, `memoryking summarize` and `memoryking hook`. |
+| Environment | `MEMORYKING_BINDINGS="environment=prod,role=implement"`: comma-separated `key=value` pairs, or a JSON object (`{"path": "src/a,b.py"}`) when a value contains a comma. |
+| Profile | `memoryking profile add work --store ... --control ... --binding environment=prod`, or `bindings = { environment = "prod" }` in `~/.memoryking/config.toml`; `--profile work` (or `MEMORYKING_PROFILE`, and `--store-profile` on the bridge) applies it. |
+
+Sources merge key by key: the profile first, then `MEMORYKING_BINDINGS`, then flags. Keys are the selector fields and nothing else: `repository_id`, `component_id`, `symbol_id`, `environment`, `task_stage`, `role`, `path`, `commit` and `snapshot_id`; anything else is refused as `invalid_binding`. Dependency versions are a map and are supplied per call through the full profile. The lean tool schemas are unchanged, because bindings are session configuration, not something the model should guess. In an MCP host set them on the bridge command, for example `claude mcp add memoryking -- /absolute/path/.venv/bin/python -m memoryking.adapters.stdio --socket ... --credential ... --project demo --profile lean --binding environment=prod`; for Codex add `"--binding", "environment=prod"` to `args`; for any other stdio host add the same two arguments, or put `MEMORYKING_BINDINGS` in the server's environment block. The host runs the bridge, so state the environment it really works in.
+
+When applicability is still unknown, the reply says so and names the field. A blocked briefing says "Blocked: applicability_unknown. Decide, do not truncate. Missing binding fields: environment.", and the packet carries the same names in `unbound_fields`. Only field names are given, never a constraint's text or values, and a constraint you are not allowed to read contributes nothing (that case is `essential_policy_unavailable`). Bind the field, or answer with a binding that rules the constraint out (`environment=dev`), and ask again.
+
+Your own working state does not depend on that. A resume whose only problem is unresolved constraint applicability still returns the checkpoint you are authorized to read, with `status: "blocked"`, `reason: "applicability_unknown"`, `unbound_fields`, and no constraints; the Markdown shows your saved state under a note that mandatory constraints are unresolved, so do not assume none apply. Lean `save_progress` therefore keeps working and merges as usual. The packet is still blocked, so a harness or `AuthorizedConversation` refuses to feed it to a model, and hand-offs, summaries and adapter resumes get no checkpoint from it. Every other blocked reason (an unresolved conflict, a purged or unreadable essential policy, required reconciliation, changed history, a missing grant) still withholds the checkpoint: those mean the constraints cannot be trusted to be complete, not just that a field is missing.
+
 The bridge is a plain stdio MCP server, so any host that launches one works the same way. Where the configuration lives differs by host:
 
 | Host | Where to configure | Shape |
@@ -218,7 +234,7 @@ Claude Code, Codex and Grok all run command hooks at the same three moments, and
 | Before the transcript is compacted | `PreCompact` | `pre-compact` captures the tail of the transcript (user turns, assistant text and tool errors from the JSONL, bounded to 16 KiB) plus any compaction instructions as an observation under source `<host>-compact`, and with `--task` saves a minimal checkpoint that references it. The checkpoint holds the newest 2,000 characters of the tail and goes to its own stream, `<task>--mkhook`, so it never replaces a checkpoint the agent saved on `<task>`; each hook has its own retry key, so pre-compact followed by session-end both succeed. |
 | Session end | `SessionEnd` | `session-end` captures the host's last assistant message when it is given, else the transcript tail, under source `<host>-session`. |
 
-The installer merges into the host's own file and leaves every other hook alone: `.claude/settings.json` for Claude Code, `.codex/hooks.json` for Codex and `.grok/hooks/memoryking.json` for Grok, under the project directory or, with `--scope user`, under your home directory. `--print` shows the merged file without writing it and `--remove` takes MemoryKing's entries out again. Commands are written with absolute paths and the profile (or `--socket` and `--credential`) spelled out, because hosts run hooks without your shell's environment. Running the installer twice is a no-op.
+The installer merges into the host's own file and leaves every other hook alone: `.claude/settings.json` for Claude Code, `.codex/hooks.json` for Codex and `.grok/hooks/memoryking.json` for Grok, under the project directory or, with `--scope user`, under your home directory. `--print` shows the merged file without writing it and `--remove` takes MemoryKing's entries out again. Commands are written with absolute paths and the profile (or `--socket` and `--credential`) spelled out, because hosts run hooks without your shell's environment; a profile's `bindings` therefore reach the hooks, while `MEMORYKING_BINDINGS` does only if the host passes its environment through (otherwise add `--binding environment=prod` to the hook command). Running the installer twice is a no-op.
 
 What the hooks read and scrub. Tool-call inputs (a file body passed to a write tool, a command) and successful tool results are never read; failed tool results are. Before anything is stored, the hooks replace common secret shapes with `[REDACTED]` and add a line with the count to the capture: private-key blocks, `sk-` and `rk-` keys, Stripe-style `sk_live_` keys, AWS access key ids, GitHub, Slack and Google API tokens, JWTs, bearer tokens, and the value in `password=`, `secret:`, `api_key=`, `access_key=` or `*_token=` assignments. This is a safety net, not a guarantee: a secret in another shape, split across lines, encoded, or written in prose is stored as written, and a harmless value can be replaced. Keep secrets out of transcripts, and use `trust` rules to hold sources you do not trust. Everything is deterministic; no model is called.
 
@@ -254,7 +270,7 @@ The default method is `extractive-v1`: a deterministic paragraph built from the 
 
 ## What the host must do
 
-1. Supply accurate project/task identity and applicability bindings.
+1. Supply accurate project/task identity and applicability bindings (for the lean tools and hooks, once per session; see session bindings).
 2. Save useful observations and checkpoints; MemoryKing does not scrape the conversation automatically.
 3. Inspect briefing/resume status. `blocked`, `budget_insufficient`, `incomplete` and unavailable results require a decision, not silent truncation or permission bypass.
 4. Treat source text and proposed lessons as untrusted evidence.

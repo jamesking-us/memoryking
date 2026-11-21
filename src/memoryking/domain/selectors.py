@@ -17,6 +17,8 @@ from memoryking.domain.local import LocalError
 Truth = Literal["true", "false", "unknown"]
 Relation = Literal["proven", "disproven", "indeterminate"]
 FIELDS = {"repository_id", "component_id", "symbol_id", "environment", "task_stage", "role"}
+# Keys a binding may carry. `dependencies` is a map; every other key is one string.
+BINDING_KEYS = FIELDS | {"path", "commit", "dependencies", "snapshot_id"}
 Selector = dict[str, Any]
 Atom = dict[str, Any]
 
@@ -286,7 +288,11 @@ def evaluate(
     selector: Selector,
     binding: dict[str, Any],
     ancestry: Callable[[str, str, str], Truth] | None = None,
+    unbound: set[str] | None = None,
 ) -> Truth:
+    """Three-valued truth. When `unbound` is given and the result is unknown, it receives the
+    names of the binding fields whose absence made it so (names only, never values)."""
+
     def atom(a: Atom) -> Truth:
         op = a["op"]
         if op == "any":
@@ -329,14 +335,26 @@ def evaluate(
         return "true" if matches else "false"
 
     normalized = canonical(selector)
-    return _truth(
-        [_truth([atom(a) for a in c["all_of"]], conjunction=True) for c in normalized["any_of"]],
-        conjunction=False,
-    )
+    names: set[str] = set()
+    clauses: list[Truth] = []
+    for c in normalized["any_of"]:
+        truths = [atom(a) for a in c["all_of"]]
+        clause = _truth(truths, conjunction=True)
+        if clause == "unknown":
+            names.update(
+                "dependencies" if a["op"] == "version_in" else a["field"]
+                for a, t in zip(c["all_of"], truths, strict=True)
+                if t == "unknown"
+            )
+        clauses.append(clause)
+    result = _truth(clauses, conjunction=False)
+    if unbound is not None and result == "unknown":
+        unbound.update(names)
+    return result
 
 
 def bindings(value: Any) -> list[dict[str, Any]]:
-    allowed = FIELDS | {"path", "commit", "dependencies", "snapshot_id"}
+    allowed = BINDING_KEYS
     if not isinstance(value, list) or not 1 <= len(value) <= 256:
         raise LocalError("binding_coverage_incomplete")
     if any(not isinstance(b, dict) or not set(b) <= allowed for b in value):

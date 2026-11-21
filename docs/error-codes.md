@@ -20,7 +20,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `applicability_unknown` | Supply bindings for the fields the policy's selectors depend on. |
+| `applicability_unknown` | Set the binding fields the reply names: --binding key=value, MEMORYKING_BINDINGS or a profile (full profile: bindings per call). |
 
 ## artifact
 

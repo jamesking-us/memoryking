@@ -570,6 +570,7 @@ class Knowledge:
         recorded: int,
         who: dict[str, Any] | None = None,
         at: int | None = None,
+        unbound: set[str] | None = None,
     ) -> selectors.Truth:
         if not temporal_valid(valid, body["valid_start"], body["valid_end"]):
             return "false"
@@ -585,13 +586,19 @@ class Knowledge:
             if who is not None
             else None
         )
-        match = selectors.evaluate(body["selector"], binding, ancestry)
+        match = selectors.evaluate(body["selector"], binding, ancestry, unbound)
         if match != "false" and who is not None and at is not None:
             code = repo.eligibility(who, row, binding, at)
             if code == "false":
                 return "false"
             if code == "unknown":
                 match = "unknown"
+                if unbound is not None:
+                    unbound.update(
+                        k
+                        for k in ("snapshot_id", "repository_id", "commit", "environment")
+                        if not (isinstance(binding.get(k), str) and binding[k])
+                    )
         if match == "false":
             return match
         for edge in self.db.execute(
@@ -599,7 +606,7 @@ class Knowledge:
             (row["tenant"], row["id"], recorded),
         ):
             if temporal_valid(valid, edge["valid_start"], edge["valid_end"]):
-                mask = selectors.evaluate(json.loads(edge["selector"]), binding, ancestry)
+                mask = selectors.evaluate(json.loads(edge["selector"]), binding, ancestry, unbound)
                 if mask == "true":
                     return "false"
                 if mask == "unknown":
@@ -679,6 +686,9 @@ class Knowledge:
             }
         items: list[dict[str, Any]] = []
         unknown, unavailable = False, False
+        # Names of the binding fields (and call arguments) whose absence left a readable
+        # constraint's applicability unknown. Names only: never a constraint's text or values.
+        unbound: set[str] = set()
         matches_by_binding: list[list[dict[str, Any]]] = [[] for _ in points]
         evaluation_work = 0
         for row in rows:
@@ -697,6 +707,12 @@ class Knowledge:
                     body[k] is not None and args.get(k) is None for k in ("task", "run")
                 ):
                     unknown = True
+                    if self._available(who, row, at):
+                        unbound.update(
+                            k
+                            for k in ("task", "run")
+                            if body[k] is not None and args.get(k) is None
+                        )
                 continue
             if not body["executable"]:
                 if args.get("diagnostic", False) and self._available(who, row, at):
@@ -724,11 +740,16 @@ class Knowledge:
             )
             if evaluation_work > 65536:
                 return {"status": "blocked", "reason": "selector_limit_exceeded", "items": []}
-            matches = [self._eligible(row, body, b, valid, recorded, who, at) for b in points]
+            row_unbound: set[str] = set()
+            matches = [
+                self._eligible(row, body, b, valid, recorded, who, at, row_unbound) for b in points
+            ]
             if all(m == "false" for m in matches):
                 continue
             if "unknown" in matches:
                 unknown = True
+                if constraints and self._available(who, row, at):
+                    unbound |= row_unbound
                 # Never emit a partially validated code claim as current guidance
                 # over a declared multi-path/snapshot scope.
                 if (
@@ -822,4 +843,5 @@ class Knowledge:
             "authority": "complete_registry" if constraints else "knowledge_inspection",
             "truncated": listing and truncated,
             "next_before_position": rows[0]["created"] if listing and truncated else None,
+            "unbound_fields": sorted(unbound) if reason == "applicability_unknown" else [],
         }

@@ -239,7 +239,7 @@ class Working:
                 raw, deps = resume(self, who, args, decision, receipt)
                 result = json.loads(raw)
             else:
-                raw, deps = self._resume(who, args, decision, receipt)
+                raw, deps = self._resume(who, args, decision, receipt, own_state=True)
                 result = json.loads(raw)
             if action in MUTATIONS and old is None and not action.startswith("operation_"):
                 self.db.execute(
@@ -672,7 +672,12 @@ class Working:
         *,
         extras: dict[str, Any] | None = None,
         retain: bool = True,
+        own_state: bool = False,
     ) -> tuple[bytes, list[dict[str, str]]]:
+        """`own_state` is set only for the caller reading its own stream (action `resume`): when
+        the sole blocker is that mandatory-constraint applicability is unknown, the checkpoint the
+        caller is already authorized to read is returned beside the blocked status, with no
+        constraints. Every other consumer (handoff, adapter, summaries) still gets nothing."""
         at = decision.evaluated_ms
         row = self._checkpoint(who, args, at)
         body = json.loads(row["body"])
@@ -747,7 +752,20 @@ class Working:
         )
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
-            deps = []
+            if mandatory.get("unbound_fields"):
+                base["unbound_fields"] = mandatory["unbound_fields"]
+            if own_state and mandatory["reason"] == "applicability_unknown":
+                base["checkpoint"] = {
+                    "id": row["id"],
+                    "revision": row["revision"],
+                    "writer": row["writer"],
+                    "created_ms": row["created"],
+                    "body_hash": row["body_hash"],
+                    "compiler_revision": "checkpoint-v1",
+                    "state": body,
+                }
+            else:
+                deps = []
         else:
             operations, operation_deps, operations_truncated = self._operations(
                 who, args, at, include_all=True

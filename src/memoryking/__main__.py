@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__, profiles
+from memoryking import __version__, profiles, session_bindings
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
@@ -83,13 +83,30 @@ SUMMARY_INSTRUCTION = (
 )
 
 
+BINDING_HELP = (
+    "Where this session works, such as environment=prod; repeatable. Also "
+    "MEMORYKING_BINDINGS and the named profile's bindings"
+)
+
+
+def add_binding(parser: Any) -> None:
+    parser.add_argument(
+        "--binding", action="append", default=[], metavar="KEY=VALUE", help=BINDING_HELP
+    )
+
+
 def summarize(args: Any) -> dict[str, Any]:
     """Extractive by default; with --provider, a policy adapter writes it through the audited path."""
     import uuid
 
     from memoryking.sdk import LocalClient
 
-    client = LocalClient(args.socket, args.credential, args.project)
+    client = LocalClient(
+        args.socket,
+        args.credential,
+        args.project,
+        bindings=session_bindings.resolve(args.binding, profile=args.profile, config=args.config),
+    )
     incarnation = client.context()["incarnation"]
     source, text, permit = "extractive", None, None
     if args.provider:
@@ -111,7 +128,7 @@ def summarize(args: Any) -> dict[str, Any]:
                     "task": args.task,
                     "run": args.run,
                     "checkpoint": None,
-                    "bindings": [{}],
+                    "bindings": client.bindings,
                     "max_output_tokens": 6000,
                     "tokenizer": "utf8-byte-estimate-v1",
                     "format": "text",
@@ -492,6 +509,9 @@ def main() -> int:
     adder.add_argument("--backup-dir", type=Path)
     adder.add_argument("--backup-every", help="Such as 12h or 1d")
     adder.add_argument("--backup-keep", type=int)
+    adder.add_argument(
+        "--binding", action="append", default=[], metavar="KEY=VALUE", help=BINDING_HELP
+    )
     prof_commands.add_parser("list")
     prof_commands.add_parser("remove").add_argument("name")
     for name in ("init", "serve", "backup", "restore", "gc", "control-checkpoint"):
@@ -600,6 +620,7 @@ def main() -> int:
     summ.add_argument("--provider", help="Write the summary with this policy adapter")
     summ.add_argument("--model", help="A model the policy allows for that provider")
     summ.add_argument("--json", action="store_true")
+    add_binding(summ)
     audit = commands.add_parser(
         "egress-audit",
         help="List what left this store for a model provider, and whether it arrived",
@@ -663,6 +684,7 @@ def main() -> int:
         help="Let the daemon's local cross-encoder reorder the top candidates (needs serve --reranker-model)",
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
+    add_binding(rec)
     dr = commands.add_parser(
         "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
     )
@@ -738,6 +760,7 @@ def main() -> int:
     hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
     hk.add_argument("--query", help="Briefing query at session start; default: task or project")
     hk.add_argument("--budget", type=int, default=6000)
+    add_binding(hk)
     hk.add_argument(
         "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
     )
@@ -788,6 +811,8 @@ def main() -> int:
                 for field in ("dashboard_port", "backup_every", "backup_keep"):
                     if getattr(args, field) is not None:
                         values[field] = getattr(args, field)
+                if args.binding:
+                    values["bindings"] = session_bindings.parse_pairs(args.binding)
                 path = profiles.save(args.name, values, args.config)
                 print(json.dumps({"profile": args.name, "config": str(path)}))
             elif args.profile_command == "remove":
@@ -908,9 +933,12 @@ def main() -> int:
                 as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
                 salience=args.salience,
                 rerank=args.rerank,
+                binding=args.binding,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
+                profile=args.profile,
+                config=args.config,
             )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(packet) + b"\n")
@@ -932,7 +960,12 @@ def main() -> int:
                 if args.kind == "session-start":
                     sys.stdout.write(
                         host_hooks.session_start(
-                            payload, query=args.query, task=args.task, budget=args.budget, **where
+                            payload,
+                            query=args.query,
+                            task=args.task,
+                            budget=args.budget,
+                            binding=args.binding,
+                            **where,
                         )
                     )
                 else:

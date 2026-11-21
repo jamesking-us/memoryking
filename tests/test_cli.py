@@ -365,6 +365,15 @@ class ProfileTests(OperatorCommandTests):
         self.assertEqual(run.returncode, expect, run.stdout + run.stderr)
         return run.stdout
 
+    def test_profile_keeps_session_bindings_and_refuses_unknown_keys(self):
+        base = ["profile", "add", "scoped", "--store", str(self.store_dir)]
+        base += ["--control", str(self.control_dir)]
+        self.cli(*base, "--binding", "environment=prod", "--binding", "role=implement")
+        self.assertIn(
+            "bindings = {'environment': 'prod', 'role': 'implement'}", self.cli("profile", "list")
+        )
+        self.cli(*base, "--binding", "colour=blue", expect=2)
+
     def test_profile_fills_paths_and_explicit_flags_still_win(self):
         self.cli(
             "profile",

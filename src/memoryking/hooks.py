@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from memoryking import profiles
+from memoryking import profiles, session_bindings
 from memoryking.adapters.local_files import private_file
 from memoryking.adapters.local_ipc import request
 from memoryking.domain.local import LocalError
@@ -140,15 +140,22 @@ def recall(
     as_of: int | None = None,
     salience: bool = False,
     rerank: bool = False,
+    binding: list[str] | None = None,
     **where: Any,
 ) -> dict[str, Any]:
-    """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms."""
+    """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms.
+
+    `binding` is a list of `key=value` strings; with none, `MEMORYKING_BINDINGS` and the
+    named profile's `bindings` apply (see `session_bindings`)."""
     socket, token, project = connection(**where)
+    points = session_bindings.resolve(
+        binding, profile=where.get("profile"), config=where.get("config")
+    )
     context = request(socket, token, "context", {"project": project})
     args: dict[str, Any] = {
         "project": project,
         "query": query,
-        "bindings": [{}],
+        "bindings": points,
         "max_output_tokens": budget,
         "tokenizer": "utf8-byte-estimate-v1",
     }

@@ -374,7 +374,9 @@ def call(client: LocalClient, name: str, arguments: dict[str, Any]) -> dict[str,
                 },
             },
         )
-        if not latest.get("checkpoint"):
+        # A blocked resume can still carry the caller's own checkpoint; a handoff needs
+        # the constraints resolved, so it keeps refusing as before.
+        if not latest.get("checkpoint") or latest.get("status") == "blocked":
             raise LocalError("checkpoint_unavailable")
         return client.tool(
             "memory_handoff",

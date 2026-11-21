@@ -386,6 +386,55 @@ class KnowledgeTests(unittest.TestCase):
         self.assertEqual(self.constraints()["reason"], "applicability_unknown")
         self.assertEqual(self.constraints(task="other")["status"], "complete")
 
+    def test_unknown_applicability_names_only_the_unbound_fields(self):
+        scoped = self.propose(
+            self.body(
+                "Never deploy on Fridays",
+                kind="constraint",
+                authority="project",
+                rule_key="freeze",
+                effect="prohibit",
+                rule_value="deploy",
+                selector=sel(eq("environment", "prod"), eq("role", "implement")),
+            ),
+            key="scoped",
+        )
+        self.review(scoped)
+        blocked = self.constraints()
+        self.assertEqual(blocked["reason"], "applicability_unknown")
+        self.assertEqual(blocked["unbound_fields"], ["environment", "role"])
+        self.assertNotIn("Fridays", json.dumps(blocked))
+        # Only the missing field is named once the other is bound.
+        partial = self.constraints(bindings=[{"role": "implement"}])
+        self.assertEqual(partial["unbound_fields"], ["environment"])
+        # A field that decides the clause false is not missing.
+        elsewhere = self.constraints(bindings=[{"environment": "dev"}])
+        self.assertEqual(elsewhere["status"], "complete")
+        self.assertEqual(elsewhere["unbound_fields"], [])
+        complete = self.constraints(bindings=[{"environment": "prod", "role": "implement"}])
+        self.assertEqual(complete["status"], "complete")
+        self.assertEqual(len(complete["items"]), 1)
+        # A constraint the caller may not read never contributes a field name.
+        hidden = self.propose(
+            self.body(
+                "Owner only",
+                kind="constraint",
+                authority="project",
+                rule_key="hidden",
+                effect="require",
+                rule_value="x",
+                readers=["owner"],
+                selector=sel(eq("component_id", "secret-component")),
+            ),
+            key="hidden",
+        )
+        self.review(hidden)
+        reader = self.store.grant(self.owner, "reader", "p", ["read"])
+        denied = self.constraints(reader)
+        self.assertEqual(denied["reason"], "essential_policy_unavailable")
+        self.assertEqual(denied.get("unbound_fields", []), [])
+        self.assertNotIn("component_id", json.dumps(denied))
+
     def test_policy_selector_unknown_and_explicit_absence(self):
         c = self.propose(
             self.body(
