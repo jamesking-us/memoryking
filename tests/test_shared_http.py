@@ -465,7 +465,7 @@ class SharedHTTPTests(unittest.TestCase):
         from mcp.client.streamable_http import streamable_http_client
 
         async def exercise():
-            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp?profile=full"
             async with httpx2.AsyncClient(
                 headers={"Authorization": "Bearer " + self.credential}, timeout=10
             ) as http:
@@ -507,7 +507,124 @@ class SharedHTTPTests(unittest.TestCase):
 
         anyio.run(exercise)
 
-    def test_an_mcp_tool_call_makes_one_context_decision(self):
+    def test_lean_is_the_default_profile_over_http_mcp_with_a_markdown_reply(self):
+        import anyio
+        import httpx2
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        async def exercise():
+            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+            async with httpx2.AsyncClient(
+                headers={"Authorization": "Bearer " + self.credential}, timeout=10
+            ) as http:
+                async with streamable_http_client(
+                    endpoint, http_client=http, terminate_on_close=False
+                ) as (read, write):
+                    async with ClientSession(read, write, read_timeout_seconds=10) as session:
+                        initialized = await session.initialize()
+                        self.assertIn("recall", initialized.instructions)
+                        self.assertEqual(
+                            __import__("memoryking").__version__, initialized.server_info.version
+                        )
+                        listed = await session.list_tools()
+                        names = {tool.name for tool in listed.tools}
+                        self.assertIn("recall", names)
+                        self.assertNotIn("memory_brief", names)
+                        self.assertNotIn("confirm", names)  # chat review is not served here
+                        saved = await session.call_tool("remember", {"text": "http lean memory"})
+                        self.assertFalse(saved.is_error)
+                        self.assertTrue(saved.content[0].text.startswith("Saved memory as obs_"))
+                        self.assertFalse(saved.structured_content["replayed"])
+                        again = await session.call_tool("remember", {"text": "http lean memory"})
+                        self.assertTrue(again.structured_content["replayed"])
+                        brief = await session.call_tool("recall", {"query": "lean memory"})
+                        self.assertFalse(brief.is_error)
+                        self.assertTrue(brief.content[0].text.startswith("# Briefing: lean memory"))
+                        self.assertIn("receipt", brief.structured_content)
+                        self.assertNotIn("text", brief.structured_content)
+                        bad = await session.call_tool("recall", {})
+                        self.assertTrue(bad.is_error)
+                        self.assertEqual("$.query", bad.structured_content["path"])
+                        self.assertEqual(["query"], bad.structured_content["missing"])
+
+        anyio.run(exercise)
+
+    def test_unknown_profile_is_refused_and_older_protocol_revisions_are_accepted(self):
+        endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+        body = canonical_bytes({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+
+        def send(version, query=""):
+            request = urllib.request.Request(
+                endpoint + query,
+                body,
+                headers={
+                    "Authorization": "Bearer " + self.credential,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                    "MCP-Protocol-Version": version,
+                },
+            )
+            try:
+                response = urllib.request.urlopen(request, timeout=5)
+            except urllib.error.HTTPError as exc:
+                response = exc
+            with response:
+                return response.status, response.read()
+
+        from memoryking.adapters.mcp_common import HANDSHAKE_VERSIONS
+
+        for version in HANDSHAKE_VERSIONS:
+            self.assertEqual(200, send(version)[0], version)
+        self.assertEqual(
+            "unknown_profile", json.loads(send("2025-11-25", "?profile=x")[1])["error"]
+        )
+
+    def test_the_stateless_2026_07_28_revision_lists_and_calls_tools(self):
+        """The pinned library serves the per-request-envelope revision; so does the endpoint."""
+        endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+        envelope = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"},
+        }
+
+        def send(method, params, name=None):
+            body = canonical_bytes(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": {**params, "_meta": envelope},
+                }
+            )
+            headers = {
+                "Authorization": "Bearer " + self.credential,
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": method,
+            }
+            if name:
+                headers["Mcp-Name"] = name
+            request = urllib.request.Request(endpoint, body, headers=headers)
+            try:
+                response = urllib.request.urlopen(request, timeout=5)
+            except urllib.error.HTTPError as exc:
+                response = exc
+            with response:
+                return response.status, json.loads(response.read())
+
+        status, listed = send("tools/list", {})
+        self.assertEqual(200, status, listed)
+        self.assertIn("recall", {t["name"] for t in listed["result"]["tools"]})
+        status, called = send(
+            "tools/call", {"name": "remember", "arguments": {"text": "stateless call"}}, "remember"
+        )
+        self.assertEqual(200, status, called)
+        self.assertTrue(called["result"]["content"][0]["text"].startswith("Saved memory as"))
+
+    def test_an_mcp_tool_call_makes_one_context_decision_in_both_profiles(self):
         import anyio
         import httpx2
         import mcp_types as types
@@ -521,8 +638,8 @@ class SharedHTTPTests(unittest.TestCase):
 
         seen = {}
 
-        async def exercise():
-            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+        async def exercise(profile, status_call, brief_call):
+            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp?profile={profile}"
             async with httpx2.AsyncClient(
                 headers={"Authorization": "Bearer " + self.credential}, timeout=10
             ) as http:
@@ -543,22 +660,25 @@ class SharedHTTPTests(unittest.TestCase):
                             await session.list_tools()
                             return types.CallToolResult(content=[])
 
-                        seen["list"] = await spent(listing)
-                        seen["status"] = await spent(
-                            lambda: session.call_tool("memory_status", {"project": "demo"})
-                        )
-                        seen["brief"] = await spent(
-                            lambda: session.call_tool(
-                                "memory_brief", {"action": "brief", "args": {"query": "durable"}}
+                        seen[profile] = {"list": await spent(listing)}
+                        if status_call:
+                            seen[profile]["status"] = await spent(
+                                lambda: session.call_tool(*status_call)
                             )
-                        )
+                        seen[profile]["brief"] = await spent(lambda: session.call_tool(*brief_call))
 
-        anyio.run(exercise)
+        anyio.run(exercise, "lean", None, ("recall", {"query": "durable"}))
+        anyio.run(
+            exercise,
+            "full",
+            ("memory_status", {"project": "demo"}),
+            ("memory_brief", {"action": "brief", "args": {"query": "durable"}}),
+        )
         # The request's own context decision (what a listing costs) serves the tool: a status
-        # call adds nothing to it and a briefing adds its own receipt. Before, each tool call
-        # made two or three further context decisions.
-        self.assertEqual(seen["list"], seen["status"])
-        self.assertEqual(seen["list"] + 1, seen["brief"])
+        # call adds nothing to it and a briefing adds only its own receipt.
+        for profile, counts in seen.items():
+            self.assertEqual(counts["list"] + 1, counts["brief"], profile)
+        self.assertEqual(seen["full"]["list"], seen["full"]["status"])
 
     def test_delegation_expiry_and_no_self_escalation(self):
         from memoryking.adapters.postgres_store import PostgresStore

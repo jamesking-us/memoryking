@@ -87,6 +87,8 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | Option | Default / meaning |
 | --- | --- |
 | `--profile NAME`, `--config FILE` | Fill omitted `--store`, `--control`, `--socket`, `--credential` and `--dashboard-port` from a named profile in `~/.memoryking/config.toml` (`MEMORYKING_PROFILE`, `MEMORYKING_CONFIG`). The file holds paths and, optionally, session `bindings` (see the agent guide), never secrets. `profile add NAME --store ... --control ...`, `profile list` and `profile remove NAME` maintain it. Explicit flags always win. |
+| `setup HOST --project P [--principal NAME] [--data-dir DIR] [--scope user\|project] [--task T] [--expires D] [--dashboard-port N] [--no-hooks] [--dry-run] [--remove]` | Connects a host in one idempotent run; HOST is `claude-code`, `codex` or `generic`. Creates a store and the profiles `default` (owner) and `default-agent` when none exist, starts the daemon, issues one agent credential (`capture`, `read`, `checkpoint`, `handoff`; no expiry unless `--expires`), registers the lean MCP bridge (a marked block in `~/.codex/config.toml` for Codex; for Claude Code and any other host the command is printed, because their MCP file format is not documented here) and installs the session hooks as the same principal. `--profile NAME` (before the command) names the store profile instead of `default`. Files it edits are recorded so `--remove` restores them byte for byte. The default location is `~/.memoryking/NAME`, refused when the socket path would exceed 100 bytes. |
+| `profile add --autostart`, `stop` | A profile with `autostart = true` lets the CLI and the stdio bridge start the daemon in the background when its socket is not listening (one starter at a time, a lock file in the store directory; log in `daemon.log` there; `daemon.pid` while it runs). `memoryking --profile NAME stop` asks it to shut down cleanly. `status` shows whether it runs and starts on demand. Without autostart a missing daemon is `transport_unavailable` with the command to start it. |
 | `--store`, `--control` | Required paths for initialization, serving and offline maintenance. Neither may contain the other. |
 | `init --tenant`, `--principal` | `main` and `owner`; IDs are 1–96 ASCII letters, digits, `_` or `-`. |
 | `serve --dashboard-port` | Dashboard disabled unless set. `0` chooses a free port; otherwise 0–65535. Always loopback. |
@@ -172,7 +174,7 @@ Adapters make one HTTPS request per dispatch with certificate verification, no r
 The shared profile is a Python service backed by PostgreSQL 18.6. It exposes:
 
 - JSON operations: `POST /v1/tenants/{tenant}/operations`.
-- MCP: `/v1/tenants/{tenant}/projects/{project}/mcp`.
+- MCP: `/v1/tenants/{tenant}/projects/{project}/mcp` (lean tools; add `?profile=full` for the full catalog).
 - Optional browser dashboard for one configured tenant, with separate cookie sessions.
 - `GET /healthz` (liveness) and `GET /readyz` (readiness), described under [Operating the shared service](#operating-the-shared-service).
 - `GET /v1/tenants/{tenant}/metrics`, Prometheus text behind that tenant's admin credential.

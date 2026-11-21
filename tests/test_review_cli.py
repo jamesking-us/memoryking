@@ -110,13 +110,21 @@ class DaemonCase(unittest.TestCase):
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         replies = {
-            r["id"]: r["result"] for r in map(json.loads, run.stdout.splitlines()) if "id" in r
+            r["id"]: r.get("result", r)
+            for r in map(json.loads, run.stdout.splitlines())
+            if "id" in r
         }
         return [replies[10 + n] for n in range(len(calls))]
 
     @staticmethod
     def payload(reply):
-        return json.loads(reply["content"][0]["text"])
+        """The machine envelope of a lean reply, with a briefing's Markdown as `text`."""
+        if "structuredContent" not in reply:
+            return json.loads(reply["content"][0]["text"])
+        value = dict(reply["structuredContent"])
+        if value.get("format") == "text":
+            value["text"] = reply["content"][0]["text"]
+        return value
 
 
 class ReviewCliTests(DaemonCase):
@@ -355,8 +363,8 @@ class LeanChatReviewTests(DaemonCase):
         )
         filed = self.payload(proposed)
         self.assertEqual(filed["state"], "proposed")
-        self.assertTrue(confirmed["isError"])
-        self.assertEqual(self.payload(confirmed)["error"], "chat_review_disabled")
+        # Without the operator's switch `confirm` is not in the catalog at all.
+        self.assertEqual("unknown_tool", confirmed["error"]["message"])
         # Still only a proposal: not in a briefing as accepted knowledge.
         recalled = self.cli("recall", "--project", "p", "--query", "export stalls disk")
         self.assertNotIn("accepted_knowledge", recalled)

@@ -1,0 +1,414 @@
+"""The MCP surface a model meets: lean by default, Markdown replies, follow-up tools and
+errors it can act on, all through the real stdio bridge and CLI against a real daemon."""
+
+import json
+import subprocess
+import sys
+import unittest
+
+from test_review_cli import DaemonCase
+from test_sdk import initialize, rpc
+
+from memoryking import __version__, lean
+from memoryking.adapters import mcp_common
+from memoryking.contracts.canonical import canonical_bytes
+
+SECRET = "sk-" + "A1b2C3d4" * 6
+
+
+def used_definitions(node, defs, found=None):
+    """The $defs a schema node uses, following references."""
+    found = set() if found is None else found
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str):
+            name = ref.removeprefix("#/$defs/")
+            if name not in found:
+                found.add(name)
+                used_definitions(defs[name], defs, found)
+        for value in node.values():
+            used_definitions(value, defs, found)
+    elif isinstance(node, list):
+        for value in node:
+            used_definitions(value, defs, found)
+    return found
+
+
+class BridgeCase(DaemonCase):
+    def frames(self, calls, version="2025-11-25"):
+        first = initialize()
+        first["params"]["protocolVersion"] = version
+        frames = [first, {"jsonrpc": "2.0", "method": "notifications/initialized"}]
+        for number, (name, arguments) in enumerate(calls):
+            if name == "tools/list":
+                frames.append(rpc(10 + number, "tools/list"))
+            else:
+                frames.append(
+                    rpc(10 + number, "tools/call", {"name": name, "arguments": arguments})
+                )
+        return frames
+
+    def bridge(self, calls, *extra, credential=None, version="2025-11-25", raw=False):
+        """Run the real bridge; the replies in order (results, or the whole reply on error)."""
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(credential or self.owner_file),
+                "--project",
+                "p",
+                *extra,
+            ],
+            input=b"".join(canonical_bytes(f) + b"\n" for f in self.frames(calls, version)),
+            capture_output=True,
+            timeout=60,
+            env=self.env,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        lines = [json.loads(line) for line in run.stdout.splitlines()]
+        if raw:
+            return lines
+        by_id = {r["id"]: r for r in lines if "id" in r}
+        return [by_id[10 + n].get("result", by_id[10 + n]) for n in range(len(calls))]
+
+
+class DefaultsAndHandshakeTests(BridgeCase):
+    def test_lean_is_the_default_and_full_is_a_choice(self):
+        (listed,) = self.bridge([("tools/list", {})])
+        names = {t["name"] for t in listed["tools"]}
+        self.assertEqual(names, {t["name"] for t in lean.tools()})
+        self.assertNotIn("confirm", names)
+        (listed,) = self.bridge([("tools/list", {})], "--profile", "full")
+        self.assertIn("memory_brief", {t["name"] for t in listed["tools"]})
+        (listed,) = self.bridge([("tools/list", {})], "--allow-chat-review")
+        self.assertIn("confirm", {t["name"] for t in listed["tools"]})
+
+    def test_every_handshake_revision_of_the_pinned_library_is_accepted_and_echoed(self):
+        from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
+
+        self.assertEqual(tuple(HANDSHAKE_PROTOCOL_VERSIONS), mcp_common.HANDSHAKE_VERSIONS)
+        for version in mcp_common.HANDSHAKE_VERSIONS:
+            lines = self.bridge([("recent", {})], version=version, raw=True)
+            self.assertEqual(version, lines[0]["result"]["protocolVersion"])
+            reply = next(r for r in lines if r.get("id") == 10)["result"]
+            self.assertFalse(reply["isError"], version)
+        # A revision this bridge does not speak is answered with the newest it does.
+        lines = self.bridge([], version="2099-01-01", raw=True)
+        self.assertEqual("2025-11-25", lines[0]["result"]["protocolVersion"])
+
+    def test_server_info_and_instructions_say_what_to_do(self):
+        lines = self.bridge([], raw=True)
+        result = lines[0]["result"]
+        self.assertEqual(__version__, result["serverInfo"]["version"])
+        said = result["instructions"]
+        for word in ("recall", "remember", "save_progress", "resume"):
+            self.assertIn(word, said)
+        self.assertLess(said.count("."), 7)  # three or four sentences, not boilerplate
+
+    def test_the_full_catalog_has_no_unused_definitions_and_describes_every_call_field(self):
+        catalog = json.loads(json.dumps(mcp_common.CATALOG))
+        for tool in catalog["tools"]:
+            schema = tool["inputSchema"]
+            body = {k: v for k, v in schema.items() if k != "$defs"}
+            refs = used_definitions(body, schema.get("$defs", {}))
+            self.assertEqual(refs, set(schema.get("$defs", {})), tool["name"])
+            for branch in schema.get("oneOf") or [schema]:
+                for field, value in branch["properties"].items():
+                    self.assertIn("description", value, (tool["name"], field))
+                args = branch["properties"].get("args")
+                if args and "$ref" in args:
+                    target = schema["$defs"][args["$ref"].removeprefix("#/$defs/")]
+                    for field, value in target["properties"].items():
+                        self.assertIn("description", value, (tool["name"], "args", field))
+        size = len(canonical_bytes(mcp_common.CATALOG).decode())
+        self.assertLess(size, 50_000)  # it was 84,664 bytes before unused definitions went
+
+
+class ReplyShapeTests(BridgeCase):
+    def test_remember_and_save_progress_reply_with_an_id_a_line_and_a_replayed_flag(self):
+        first, again, saved, resaved = self.bridge(
+            [
+                ("remember", {"text": "The deploy needs the VPN."}),
+                ("remember", {"text": "The deploy needs the VPN."}),
+                (
+                    "save_progress",
+                    {"task": "t1", "objective": "ship", "current_state": "half done"},
+                ),
+                (
+                    "save_progress",
+                    {"task": "t1", "objective": "ship", "current_state": "half done"},
+                ),
+            ],
+            "--profile",
+            "lean",
+        )
+        text = first["content"][0]["text"]
+        self.assertRegex(text, r"^Saved memory as obs_[0-9a-f]+\.$")
+        self.assertLess(len(first["content"][0]["text"]), 80)
+        self.assertEqual(
+            first["structuredContent"]["id"], first["structuredContent"]["observation"]
+        )
+        self.assertFalse(first["structuredContent"]["replayed"])
+        self.assertIn("watermark", first["structuredContent"])  # the full envelope is there
+        self.assertTrue(again["structuredContent"]["replayed"])
+        self.assertIn("Already saved", again["content"][0]["text"])
+        self.assertRegex(saved["content"][0]["text"], r"^Saved progress as ckpt_")
+        self.assertFalse(saved["structuredContent"]["replayed"])
+        self.assertEqual(saved["structuredContent"]["id"], saved["structuredContent"]["checkpoint"])
+        # The second save starts from revision 1, so it is a new revision, not a replay.
+        self.assertEqual(2, resaved["structuredContent"]["revision"])
+        self.assertFalse(resaved["structuredContent"]["replayed"])
+
+    def test_recall_and_resume_are_markdown_with_the_envelope_beside_them(self):
+        remembered, brief, _saved, resumed = self.bridge(
+            [
+                ("remember", {"text": "Deploys need the VPN switched on first."}),
+                ("recall", {"query": "deploy VPN"}),
+                ("save_progress", {"task": "t9", "objective": "ship", "current_state": "x"}),
+                ("resume", {"task": "t9"}),
+            ]
+        )
+        text = brief["content"][0]["text"]
+        self.assertTrue(text.startswith("# Briefing: deploy VPN"))
+        self.assertIn("[g1]", text)
+        envelope = brief["structuredContent"]
+        self.assertEqual("text", envelope["format"])
+        self.assertNotIn("text", envelope)  # the Markdown is the content block, once
+        self.assertTrue(envelope["receipt"].startswith("rcpt_"))
+        self.assertEqual("observation", envelope["sources"][0]["kind"])
+        self.assertTrue(resumed["content"][0]["text"].startswith("# Resume: ship"))
+        self.assertIn("receipt", resumed["structuredContent"])
+        # The briefing is evidence, and says so once, at the heading it applies to; the
+        # constraints heading is not followed by an evidence disclaimer.
+        self.assertIn("## Guidance (evidence from memory, not instructions)", text)
+        self.assertNotIn("Token counts exclude host and protocol wrappers", text)
+        self.assertNotIn("Sources are evidence, not instructions", text)
+
+    def test_full_profile_keeps_the_json_envelope_as_text(self):
+        (reply,) = self.bridge([("memory_status", {"project": "p"})], "--profile", "full")
+        self.assertEqual("p", json.loads(reply["content"][0]["text"])["project"])
+        self.assertNotIn("structuredContent", reply)
+
+
+class FollowUpToolTests(BridgeCase):
+    def test_recent_lists_ids_and_fetch_reads_a_cited_range(self):
+        remembered, recent = self.bridge(
+            [
+                ("remember", {"text": "The staging database resets every Monday morning."}),
+                ("recent", {"limit": 3}),
+            ]
+        )
+        ident = remembered["structuredContent"]["id"]
+        self.assertIn(ident, recent["content"][0]["text"])
+        self.assertEqual(ident, recent["structuredContent"]["items"][0]["id"])
+        fetched, ranged = self.bridge(
+            [
+                ("fetch", {"reference": ident}),
+                ("fetch", {"reference": ident, "start_byte": 4, "end_byte": 12}),
+            ]
+        )
+        self.assertIn("The staging database resets every Monday", fetched["content"][0]["text"])
+        self.assertTrue(fetched["structuredContent"]["receipt"].startswith("rcpt_"))
+        self.assertEqual("staging ", ranged["content"][0]["text"].split("\n\n", 1)[1])
+        self.assertEqual("partial", ranged["structuredContent"]["status"])
+
+    def test_recent_ids_feed_correct_and_forget(self):
+        (remembered,) = self.bridge([("remember", {"text": "The cache TTL is 5 minutes."})])
+        ident = remembered["structuredContent"]["id"]
+        corrected, forgotten = self.bridge(
+            [
+                ("correct", {"memory": ident, "text": "The cache TTL is 15 minutes."}),
+                ("forget", {"memory": ident, "why": "superseded"}),
+            ]
+        )
+        self.assertIn("Saved correction", corrected["content"][0]["text"])
+        self.assertFalse(forgotten["isError"])
+
+    def test_feedback_is_tied_to_the_receipt_and_the_health_report_counts_it(self):
+        self.bridge([("remember", {"text": "Rotate the deploy keys every month."})])
+        (brief,) = self.bridge([("recall", {"query": "rotate deploy keys"})])
+        receipt = brief["structuredContent"]["receipt"]
+        item = brief["structuredContent"]["sources"][0]["id"]
+        by_tag, by_id, harmful = self.bridge(
+            [
+                ("feedback", {"receipt": receipt, "item": "g1", "rating": "helpful"}),
+                ("feedback", {"receipt": receipt, "item": item, "rating": "helpful"}),
+                ("feedback", {"receipt": receipt, "item": "g1", "rating": "harmful"}),
+            ]
+        )
+        self.assertFalse(by_tag["isError"], by_tag)
+        self.assertIn("Recorded feedback", by_tag["content"][0]["text"])
+        self.assertFalse(harmful["isError"], harmful)  # a changed mind revises the vote
+        self.assertEqual(2, harmful["structuredContent"]["revision"])
+        health = json.loads(self.cli("health", "--project", "p", "--json"))
+        self.assertEqual(1, health["feedback"]["votes"])
+        self.assertEqual({"harmful": 1}, health["feedback"]["by_usefulness"])
+        # A receipt the caller did not receive is refused, and says why.
+        (bogus,) = self.bridge(
+            [("feedback", {"receipt": "rcpt_nope", "item": item, "rating": "helpful"})]
+        )
+        self.assertTrue(bogus["isError"])
+        (wrong_item,) = self.bridge(
+            [("feedback", {"receipt": receipt, "item": "g9", "rating": "helpful"})]
+        )
+        self.assertEqual(
+            "feedback_reference_not_retrieved", wrong_item["structuredContent"]["error"]
+        )
+
+
+class RecoverableErrorTests(BridgeCase):
+    def failure(self, name, arguments, *extra, credential=None):
+        (reply,) = self.bridge([(name, arguments)], *extra, credential=credential)
+        self.assertTrue(reply["isError"], reply)
+        body = reply["structuredContent"]
+        self.assertEqual(body, json.loads(reply["content"][0]["text"]))
+        return body
+
+    def test_each_argument_mistake_names_the_path_and_what_was_expected(self):
+        missing = self.failure("recall", {})
+        self.assertEqual("invalid_tool_arguments", missing["error"])
+        self.assertEqual("$.query", missing["path"])
+        self.assertEqual(["query"], missing["missing"])
+        self.assertIn("missing required field `query`", missing["problem"])
+        self.assertIn("string", missing["expected"])
+
+        extra = self.failure("remember", {"text": "x", "colour": "red"})
+        self.assertEqual("$.colour", extra["path"])
+        self.assertIn("unknown property", extra["problem"])
+        self.assertIn("text", extra["expected"])  # lists the properties that are allowed
+
+        bad_task = self.failure("resume", {"task": "not a valid id!"})
+        self.assertEqual("$.task", bad_task["path"])
+        self.assertIn("letters, digits", bad_task["expected"])
+
+        bad_enum = self.failure("remember", {"text": "x", "classification": "secret"})
+        self.assertEqual("$.classification", bad_enum["path"])
+        self.assertIn("'restricted'", bad_enum["expected"])
+
+        wrong_type = self.failure("recall", {"query": "x", "budget": "lots"})
+        self.assertEqual("$.budget", wrong_type["path"])
+        self.assertIn("integer", wrong_type["expected"])
+
+        nested = self.failure(
+            "save_progress",
+            {
+                "task": "t",
+                "objective": "o",
+                "current_state": "s",
+                "failed_attempts": [{"action": "a"}],
+            },
+        )
+        self.assertEqual("$.failed_attempts[0].outcome", nested["path"])
+
+    def test_the_offending_value_is_never_echoed(self):
+        leaked = self.failure("resume", {"task": SECRET + " has spaces"})
+        self.assertNotIn(SECRET, json.dumps(leaked))
+        huge = self.failure("remember", {"text": "y" * 70000})
+        self.assertLess(len(json.dumps(huge)), 1500)
+        self.assertNotIn("yyyy", json.dumps(huge))
+        odd_name = self.failure("remember", {"text": "x", SECRET: 1})
+        self.assertNotIn(SECRET, json.dumps(odd_name))
+
+    def test_full_profile_calls_with_a_missing_nullable_field_are_completed_not_refused(self):
+        self.bridge([("save_progress", {"task": "t3", "objective": "o", "current_state": "s"})])
+        for name, arguments in (
+            # `run`, `revision` and `cursor` are nullable; leaving them out means "none"
+            ("memory_resume", {"action": "resume", "args": {"task": "t3"}}),
+            ("memory_plan", {"action": "plan_list", "args": {"limit": 5}}),
+            ("memory_plan", {"action": "plan_get", "args": {"task": "t3"}}),
+        ):
+            (reply,) = self.bridge([(name, arguments)], "--profile", "full")
+            body = reply.get("structuredContent") or json.loads(reply["content"][0]["text"])
+            self.assertNotEqual("invalid_tool_arguments", body.get("error"), (name, body))
+        bad = self.failure(
+            "memory_resume",
+            {"action": "resume", "args": {"task": "t3", "extra": 1}},
+            "--profile",
+            "full",
+        )
+        self.assertEqual("invalid_tool_arguments", bad["error"])
+        self.assertTrue(bad["path"].startswith("$"))
+
+    def test_a_denial_names_the_capability_the_operation_needs(self):
+        reader = self.credential("reader", ["read"])
+        saved = self.failure(
+            "save_progress",
+            {"task": "t", "objective": "o", "current_state": "s"},
+            credential=reader,
+        )
+        self.assertEqual("denied", saved["error"])
+        self.assertEqual("checkpoint", saved["required_capability"])
+        remembered = self.failure("remember", {"text": "x"}, credential=reader)
+        self.assertEqual("capture", remembered["required_capability"])
+        # Nothing but the code, the fixed hint and the capability: no project, principal,
+        # grant or record is named.
+        self.assertEqual({"error", "hint", "required_capability"}, set(remembered))
+
+    def test_a_bridge_started_with_a_credential_that_cannot_read_says_what_is_missing(self):
+        elsewhere = self.credential("elsewhere", ["read", "capture"], project="other")
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(elsewhere),
+                "--project",
+                "p",
+            ],
+            input=b"",
+            capture_output=True,
+            timeout=30,
+            env=self.env,
+        )
+        self.assertEqual(1, run.returncode)
+        body = json.loads(run.stderr)
+        self.assertEqual("denied", body["error"])
+        self.assertEqual("read", body["required_capability"])
+
+    def test_a_denial_over_the_socket_and_the_cli_names_the_capability(self):
+        reader = self.credential("reader2", ["read"])
+        stderr = self.cli("capture", "--project", "p", "--text", "x", credential=reader, expect=2)
+        body = json.loads(stderr)
+        self.assertEqual("denied", body["error"])
+        self.assertEqual("capture", body["required_capability"])
+
+    def test_issuing_an_unknown_capability_says_which_names_exist(self):
+        stderr = self.cli(
+            "credential",
+            "issue",
+            "bot",
+            "--project",
+            "p",
+            "--capabilities",
+            "capture,feedback",
+            "--output",
+            str(self.base / "bot.credential"),
+            expect=2,
+        )
+        body = json.loads(stderr)
+        self.assertEqual("invalid_capabilities", body["error"])
+        self.assertIn("feedback", body["problem"])
+        self.assertIn("checkpoint", body["expected"])
+        self.assertNotIn("admin", body["expected"])
+
+    def test_a_rejected_cli_request_names_the_failing_field(self):
+        stderr = self.cli(
+            "request",
+            stdin=json.dumps({"operation": "status", "args": {"watermark": "w"}}),
+            expect=2,
+        )
+        body = json.loads(stderr)
+        self.assertEqual("invalid_request", body["error"])
+        self.assertTrue(body["path"].startswith("$"))
+        self.assertIn("problem", body)
+
+
+if __name__ == "__main__":
+    unittest.main()

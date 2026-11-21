@@ -315,7 +315,9 @@ class StoreCore:
             and temporal_valid(at, row["starts"], row["expires"])
             for row in rows
         ):
-            raise LocalError("denied")
+            # Which capability an operation needs is public (the reference lists it); naming
+            # it tells the caller nothing about what the store holds.
+            raise LocalError("denied", detail={"required_capability": capability})
         # After the grant check, so a principal without a current grant is refused exactly as
         # before; only a credential that would otherwise be accepted learns it was replaced.
         generation = identity.get("generation", 0)
@@ -362,8 +364,14 @@ class StoreCore:
         return who
 
     def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
-        """Internal intersection check; never an alternate transport credential entry point."""
-        return self._auth(token, capability, project, at)
+        """Internal intersection check; never an alternate transport credential entry point.
+
+        The subject may be another principal, so a refusal never says which capability they
+        lack."""
+        try:
+            return self._auth(token, capability, project, at)
+        except LocalError as exc:
+            raise LocalError(exc.code) from None
 
     def namespace(self, credential: str, project: str, name: str | None = None) -> str:
         """A capture namespace token.
