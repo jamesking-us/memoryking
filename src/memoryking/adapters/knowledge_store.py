@@ -71,7 +71,11 @@ class Knowledge:
                     at,
                 )
             if action == "unreviewed_tier":
-                self.s._auth(credential, "admin", "*", at)
+                if is_user_project(args["project"]):
+                    # The user decides this for their own scope.
+                    self.s.user_authority(credential, args["project"], at)
+                else:
+                    self.s._auth(credential, "admin", "*", at)
             if action == "promote":
                 self.s._auth(credential, "capture", args["project"], at)
                 source = self._revision(who["tenant"], args["revision"])

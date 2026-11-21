@@ -193,6 +193,8 @@ A briefing or session start in project P for an agent acting for U adds U's scop
 
 The scope keeps its own evidence. A claim in a user scope may cite only that scope's observations, and a project claim may not cite them (`user_evidence_scope`), so project facts and secrets cannot flow into memory that follows the user, nor the reverse. Purging a user scope retires its claims, and accepted constraints are deprecated with them so no tombstone blocks the user's agents afterwards. PostgreSQL's row-level security is per tenant, so within a tenant the privacy rule is this application check, applied in SQL on both backends.
 
+The opt-in unreviewed tier can be switched on for a user scope by its user (`memoryking unreviewed on --project _user_NAME`), where it labels drafts when briefing that scope directly; drafts from a user scope are not yet carried into other projects' briefings, which would need the tier's query to read the caller's scope as the accepted-claim query does.
+
 The Markdown vault and the memory-tool adapter show the scope as a `user` folder (`vault export --scope user`, `/memories/user`), the dashboard lists it for its owner as "Your own memory", and `status` reports counts only.
 
 ## Source trust

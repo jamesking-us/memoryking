@@ -266,6 +266,11 @@ class UserScopeDaemonTests(unittest.TestCase):
         plain = MemoryTool.for_session(LocalClient(self.server.path, loose, "p"))
         self.assertNotIn("/memories/user", plain.execute({"command": "view", "path": "/memories"}))
 
+    def test_the_user_switches_the_unreviewed_tier_on_for_their_own_scope(self):
+        out = json.loads(self.cli("unreviewed", "on", "--project", USER, "--json"))
+        self.assertTrue(out["enabled"])
+        self.cli("unreviewed", "on", "--project", USER, credential=self.agent, expect=2)
+
     def test_a_credential_with_no_user_link_writes_no_user_memory(self):
         loose = self.base / "loose.credential"
         self.cli_issue("loose", loose, "--no-user")
