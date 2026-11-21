@@ -72,7 +72,7 @@ def activity(
     days = max(1, min(days, 365))
     tenant, since = who["tenant"], at - days * DAY_MS
     rows = store.db.execute(
-        "SELECT e.kind,e.actor,e.at_ms,"
+        "SELECT e.kind,e.actor,e.on_behalf_of,e.at_ms,"
         " o.project AS observation_project, f.project AS claim_project,"
         " c.project AS checkpoint_project, h.project AS handoff_project"
         " FROM events e"
@@ -110,6 +110,10 @@ def activity(
         item = entry(row["actor"])
         family = _family(row["kind"])
         item["events"][family] = item["events"].get(family, 0) + 1
+        if row["on_behalf_of"]:
+            # The actor is the delegation's issuer; this counts what it did for each subject.
+            acted_for = item.setdefault("acted_for", {})
+            acted_for[row["on_behalf_of"]] = acted_for.get(row["on_behalf_of"], 0) + 1
         item["last_seen_ms"] = max(item["last_seen_ms"] or 0, row["at_ms"])
     for row in store.db.execute(
         "SELECT principal,count(*) AS n,max(created) AS last FROM rendered_artifacts WHERE tenant=? AND project=? AND created>=? GROUP BY principal",

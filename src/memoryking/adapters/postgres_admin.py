@@ -102,8 +102,8 @@ def enable_vector(admin: Any, roles: Roles | None = None) -> None:
 # columns or indexes that this build ignores, and nothing this build writes is read differently
 # by the newer one. Rolling upgrade order for an additive migration: migrate the database, then
 # restart services one at a time. Any other migration needs stop, migrate, start.
-SCHEMA_VERSION = 13
-# Migration 12 -> 13 is not listed: the newer service finds receipts to delete on purge through
+SCHEMA_VERSION = 14
+# Migration 13 -> 14 is not listed: the newer service finds receipts to delete on purge through
 # a join table the older one does not fill, so a mixed fleet could leave a receipt behind.
 ADDITIVE_MIGRATIONS: frozenset[int] = frozenset()
 
@@ -148,6 +148,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             "11",
             "12",
             "13",
+            "14",
         }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
@@ -192,9 +193,14 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             connection.execute("UPDATE shared_meta SET value='12' WHERE key='schema'")
         if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"}:
             connection.execute(
-                Path(__file__).with_name("postgres_retention_schema.sql").read_text()
+                Path(__file__).with_name("postgres_operations_schema.sql").read_text()
             )
             connection.execute("UPDATE shared_meta SET value='13' WHERE key='schema'")
+        if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"}:
+            connection.execute(
+                Path(__file__).with_name("postgres_retention_schema.sql").read_text()
+            )
+            connection.execute("UPDATE shared_meta SET value='14' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [
@@ -322,6 +328,8 @@ def initialize_tenant(
         "frontiers": {},
         "journal_sequence": 0,
         "journal_head": "0" * 64,
+        "operations_sequence": 0,
+        "operations_head": "0" * 64,
         "last_utc": 0,
         "commit_serial": 0,
     }
@@ -335,6 +343,7 @@ def initialize_tenant(
             ("store", store),
             ("incarnation", incarnation),
             ("journal", "0"),
+            ("operations", "0"),
             ("commit_serial", "0"),
         ):
             connection.execute("INSERT INTO tenant_meta VALUES (%s,%s,%s)", (tenant, key, value))

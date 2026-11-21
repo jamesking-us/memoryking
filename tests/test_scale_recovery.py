@@ -85,7 +85,10 @@ def fabricate(store, count, *, jobs=False, shared_blob=None):
             )
         )
     store.db.execute("BEGIN IMMEDIATE")
-    store.db.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?,?)", events)
+    store.db.executemany(
+        "INSERT INTO events(tenant,position,event_id,kind,subject,origin,at_ms,actor) VALUES (?,?,?,?,?,?,?,?)",
+        events,
+    )
     store.db.executemany(
         "INSERT INTO observations(tenant,id,project,principal,source,source_event,payload_hash,"
         "blob,readers,position,origin,classification,observed_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",

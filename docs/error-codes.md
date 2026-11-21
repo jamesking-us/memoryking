@@ -146,6 +146,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `control_busy` | Another process holds the control lock; wait or stop it. |
+| `control_lease_held` | Another instance holds this tenant (a copied control tree or a different --instance-id); it lapses 60 s after its last renewal. Stop it, or give every process one --instance-id. |
 | `control_must_be_independent` | Store and control directories may not contain each other. |
 | `control_required` | Pass `--control PATH` or use `--profile NAME`. |
 

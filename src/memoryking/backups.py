@@ -95,6 +95,8 @@ class Policy:
         try:
             manifest = store.backup(target, previous=earlier[-1][1] if earlier else None)
             removed = prune(self.directory, self.keep)
+            # Operation history that the oldest retained backup already holds may now go.
+            store.compact_operations(self.directory)
             event(
                 "backup",
                 "complete",

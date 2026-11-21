@@ -908,7 +908,9 @@ class Working:
             if self.db.execute(
                 "SELECT 1 FROM operation_intents WHERE tenant=? AND id=?",
                 (who["tenant"], args["operation"]),
-            ).fetchone():
+            ).fetchone() or self.s.control.operations.consumed(who["tenant"], args["operation"]):
+                # Also an identity whose log segment was compacted away: the consumed-identity
+                # index outlives compaction and a restore to an older backup.
                 raise LocalError("operation_identity_consumed")
             # Resolved intents keep their consumed identity but release capacity.
             if (

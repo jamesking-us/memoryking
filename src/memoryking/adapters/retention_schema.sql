@@ -21,5 +21,5 @@ CREATE INDEX IF NOT EXISTS receipt_observations_observation ON receipt_observati
 INSERT INTO receipt_observations(tenant,receipt,observation)
  SELECT DISTINCT r.tenant,r.id,j.value FROM receipts r, json_each(r.observation_ids) j
  WHERE r.observation_ids<>'[]' ON CONFLICT DO NOTHING;
-PRAGMA user_version=18;
+PRAGMA user_version=19;
 COMMIT;

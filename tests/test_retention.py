@@ -325,7 +325,7 @@ class LocalRetentionTests(RetentionCases, unittest.TestCase):
             )
             self.assertIn("USING", plan, name)
 
-    def test_a_schema_17_store_migrates_and_fills_the_receipt_join(self):
+    def test_a_schema_18_store_migrates_and_fills_the_receipt_join(self):
         from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
 
         self.run_r()
@@ -339,11 +339,11 @@ class LocalRetentionTests(RetentionCases, unittest.TestCase):
             "evidence_spans_observation",
         ):
             self.store.db.execute(f"DROP INDEX {index}")
-        self.store.db.execute("PRAGMA user_version=17")
+        self.store.db.execute("PRAGMA user_version=18")
         self.store.close()
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(18, SCHEMA_VERSION)
-        self.assertEqual(18, self.store.db.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(19, SCHEMA_VERSION)
+        self.assertEqual(19, self.store.db.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(before, self.count("receipt_observations"))
         names = {
             r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='index'")
@@ -367,7 +367,7 @@ class PostgresRetentionTests(RetentionCases, pg.NativeFixture):
             who = self.store._auth(self.owner, "read", "p", decision.evaluated_ms)
             return Execution(self.store).snapshot(who, "p", decision.evaluated_ms)
 
-    def test_a_schema_12_database_migrates_and_fills_the_receipt_join(self):
+    def test_a_schema_13_database_migrates_and_fills_the_receipt_join(self):
         import psycopg
 
         from memoryking.adapters.postgres_admin import migrate
@@ -379,12 +379,12 @@ class PostgresRetentionTests(RetentionCases, pg.NativeFixture):
             with db.transaction():
                 db.execute("SET LOCAL search_path=memoryking,pg_catalog")
                 db.execute("DROP TABLE receipt_observations")
-                db.execute("UPDATE shared_meta SET value='12' WHERE key='schema'")
+                db.execute("UPDATE shared_meta SET value='13' WHERE key='schema'")
             migrate(db)
             version = db.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()[0]
-        self.assertEqual("13", version)
+        self.assertEqual("14", version)
         self.assertEqual(before, self.count("receipt_observations"))
         # Row-level security is forced again after the copy.
         with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as db:

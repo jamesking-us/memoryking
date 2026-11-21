@@ -22,9 +22,16 @@ from memoryking.observability_metrics import Gauge, Metrics, render
 
 class SharedService:
     def __init__(
-        self, pool: Any, root: Path, control: Path, *, audience: str = "memoryking-shared"
+        self,
+        pool: Any,
+        root: Path,
+        control: Path,
+        *,
+        audience: str = "memoryking-shared",
+        instance_id: str | None = None,
     ):
         self.pool, self.root, self.control, self.audience = pool, root, control, audience
+        self.instance_id = instance_id
         self.dashboard: Any = None
         # Retention runs on a thread of its own (`start_housekeeping`), never inside a request.
         # `_housekeeping` is the wall time of each tenant's last successful pass.
@@ -309,6 +316,7 @@ class SharedService:
             audience=self.audience,
             release_only=release_only,
             request_deadline=request_deadline,
+            instance_id=self.instance_id,
         )
         store.egress_policy = self.egress_policy
         # One set of counters for the process: a store is built per request.
