@@ -91,6 +91,8 @@ Each observation is embedded as one unit, its first 512 tokens. That is not yet 
 | Conversation | 128 messages per conversation through `AuthorizedConversation` (a dispatch carries up to 127, leaving room for the reply); the request as a whole stays within 96 KiB, or the provider's smaller `max_request_bytes`. |
 | Egress audit | One record per consumed permit for a remote provider, retained 30 days, 64 per listing page; a reply is admitted only up to 64 KiB of text and a provider response up to 1 MiB. |
 | Session summaries | Extractive summaries are at most 1,200 characters from the checkpoint plus the 16 newest visible observations since it; provider-written ones at most 4,096 characters. Retained 30 days; the idle scan runs at most once a minute and derives up to 32 per pass. |
+| Quote | One quote per observation per briefing, at most 4,096 bytes (only observations over 4,096 bytes are split into passages, at query time; an observation of more than six passages also scores by its best passage when that beats its whole text): the whole observation when it fits, else its best passage with adjacent passages that score at least three quarters as well, with exact byte offsets (`excerpt_start_byte`, `excerpt_end_byte`, `source_bytes`) that `fetch` returns exactly (a fetch range is at most 16,384 bytes). Passages (`passages-v1`) are about 1,000 characters, at most 1,200 (1,500 with a joined last piece), cut after sentence ends and paragraph ends, never inside a code or path line. |
+| One answer per fact | Collapsed duplicates and superseded versions are named in the kept item: `also_recorded_in` and `supersedes` (`count` and at most 16 `references`), `evidence_not_repeated` on an accepted claim; the receipt depends on every one of them. Observation items carry `recorded_ms`, the time the store recorded them. |
 | Briefing | Full response must fit requested budget; essentials are not silently truncated. A useful result can still be blocked or insufficient. `format: "text"` returns a cited Markdown rendering in an envelope with the same receipt; the token count is of the rendered text. |
 | Authorization | Five-second evaluation-to-commit/first-byte deadline, with UTC and monotonic checks. |
 | Idempotency | Replay bodies retained for 30 days; expired/deleted results do not free a consumed identity. |
@@ -110,7 +112,7 @@ Ranking (`lexical-v2`) reads an index of the text's words plus their stems and t
 
 ### Retrieval quality gate
 
-`tools/retrieval_benchmark.py --gate` builds a deterministic synthetic corpus (400 documents, 200 labelled queries by default), runs real briefings and reports recall, precision, reciprocal rank, recall when a common word widens the candidate set, briefing tokens and latency. Four further labelled cases each have their own project in the same store: `word_form_recall` (a note with inflected forms is found by the base words), `rare_first_rate` (the note with the one distinctive word outranks notes with two common words), `crowded_recall` (the only note holding all three terms, oldest, among more than 256 newer single-term notes per term) and `newer_first_rate` (a correction comes before the stale fact when scores are equal). The thresholds in `fixtures/evaluation/retrieval-gate.json` fail the check when a ranking change regresses them. The corpus is synthetic, so the gate guards against regressions; it is not evidence of real-task retrieval quality.
+`tools/retrieval_benchmark.py --gate` builds a deterministic synthetic corpus (400 documents, 200 labelled queries by default), runs real briefings and reports recall, precision, reciprocal rank, recall when a common word widens the candidate set, briefing tokens and latency. Seven further labelled cases each have their own project in the same store: `long_document_quote_rate` (the answer is one sentence in the middle of a 20-30 KB observation among short notes: the observation must be found, its quote must contain the sentence, and `fetch` of the quote's byte range must return exactly the quote), `duplicates_collapsed_rate` (five near-identical notes come back as one item naming the other four) and `newest_version_rate` (three versions of one file come back as the newest naming the older two), `word_form_recall` (a note with inflected forms is found by the base words), `rare_first_rate` (the note with the one distinctive word outranks notes with two common words), `crowded_recall` (the only note holding all three terms, oldest, among more than 256 newer single-term notes per term) and `newer_first_rate` (a correction comes before the stale fact when scores are equal). The thresholds in `fixtures/evaluation/retrieval-gate.json` fail the check when a ranking change regresses them. The corpus is synthetic, so the gate guards against regressions; it is not evidence of real-task retrieval quality.
 
 Four tools measure the memory layer, none calls a model and none is a claim about real tasks. [CONTRIBUTING.md](../CONTRIBUTING.md#measuring-a-change) says which to run for which change.
 
@@ -311,7 +313,7 @@ The local dashboard port also serves `POST /api/v1/retrieval` for an agent on th
 
 `tools/outcome_benchmark.py` measures whether a coding agent finishes multi-session tasks better with MemoryKing than without. The ten tasks in `benchmarks/outcomes/tasks/` each have a small Python project, two prompts written as a user would write them, and a hidden check. Session 1 does part of the work and learns something the repository does not record: an instruction ("never edit `legacy/`", "use this retry helper"), a failed approach and the reason, a decision between two designs, or an environment fact (a port, a flag name, a data format). A task's between-step may delete the slow script or sample data that showed it. Session 2, a separate agent instance, must finish; the hidden check fails on the untouched repository, fails after session 1 alone, and passes only when the carried knowledge was used.
 
-There are four arms, identical except for one closing sentence in the prompts:
+There are five arms; the first four are identical except for one closing sentence in the prompts, and the fifth has none:
 
 | Arm | The agent has |
 | --- | --- |
@@ -319,21 +321,73 @@ There are four arms, identical except for one closing sentence in the prompts:
 | `notes` | a short `NOTES.md` in the working directory, the plain-file baseline |
 | `on` (the CLI arm) | a private store, a daemon, a credential limited to `capture`, `read`, `checkpoint` and `handoff`, the configured `memoryking` command and a `MEMORY.md` that explains `capture`, `recall`, `save-progress` and `resume` |
 | `mcp` | the same store and credential, reached only as the lean MCP tools (`remember`, `recall`, `save_progress`, `resume`) through a standard `mcpServers` configuration written outside the working directory; no `memoryking` command and no `MEMORY.md` |
+| `setup` | what `memoryking setup claude-code` installs for a user: the session hooks (start briefing with the note naming the tools, pre-compact, session end) and the lean bridge with `alwaysLoad`, under one agent credential, as a host settings file and an MCP configuration in `<DIR>.bench/` for the runner to pass to the host explicitly. The prompt says nothing about memory: the question is whether memory is used without the agent being told how. Added after the first run; run with a real agent in the second run |
 
 | Command | Does |
 | --- | --- |
-| `prepare --task ID --arm off\|notes\|on\|mcp --workdir DIR` | Copies only the fixture to `DIR` and writes the prompts beside it; adds `NOTES.md`, or for `on` and `mcp` initialises the store, starts the daemon and issues the credential (and writes `MEMORY.md` or the MCP configuration). |
-| `session`, `record` | Run an agent command for one session, or record figures from your own runner. The command template takes `{workdir}`, `{prompt_file}`, `{session}`, `{usage_file}` and, in arm `mcp`, `{mcp_config}`; the tool sets the working directory and the arm's environment, enforces `--timeout`, saves standard output under `<DIR>.bench/` and reads tokens, cost and duration from a usage file, from `--usage-jq`, or from the last JSON object printed. |
+| `prepare --task ID --arm off\|notes\|on\|mcp\|setup --workdir DIR` | Copies only the fixture to `DIR` and writes the prompts beside it; adds `NOTES.md`, or for `on`, `mcp` and `setup` initialises the store, starts the daemon and issues the credential (and writes `MEMORY.md`, the MCP configuration, or for `setup` the MCP configuration and the host settings with the hooks). |
+| `session`, `record` | Run an agent command for one session, or record figures from your own runner. The command template takes `{workdir}`, `{prompt_file}`, `{session}`, `{usage_file}`, `{mcp_config}` (arms `mcp` and `setup`) and `{settings}` (arm `setup`); the tool sets the working directory and the arm's environment, enforces `--timeout`, saves standard output under `<DIR>.bench/` and reads tokens, cost and duration from a usage file, from `--usage-jq`, or from the last JSON object printed. |
 | `between --workdir DIR` | Runs the task's between-step; the store and daemon stay up. Records which notes session 1 left on disk and the store's statistics after session 1. |
 | `check --workdir DIR` | Runs the hidden check and prints JSON. |
 | `finish --workdir DIR` | Stops the daemon, records the store's counts (observations captured, briefings served, deliveries, checkpoints saved) and writes the result file. |
 | `run --task ID --arm A --agent-command CMD` | All of the above for one task and arm in one invocation, for an agent that is a single command. |
-| `report --results DIR` | For any number of arms: success rate per arm, task and knowledge kind; tokens, cost and wall time as mean and median per run; an exact paired McNemar test for every pair of arms with a plain-words reading; how many memory-arm runs wrote in session 1 and read in session 2 (from the store's own counts); how many `off` and `notes` runs left notes on disk. |
+| `report --results DIR [--rep]` | For any number of arms: success rate per arm, task and knowledge kind; tokens, cost and wall time as mean and median per run; an exact paired McNemar test for every pair of arms with a plain-words reading; how many memory-arm runs wrote in session 1 and read in session 2 (from the store's own counts); how many `off` and `notes` runs left notes on disk. With `--rep`, also the results over repetitions: the pass rate per arm with an interval that resamples tasks (repetitions of one task are not independent runs) beside the run-based Wilson interval, and paired tests over task-by-repetition pairs and over tasks. |
 | `validate` | Without a model, shows each task's four expected outcomes (untouched, after session 1, reference solution, plausible wrong solution). |
 
 A run "left notes on disk" when session 1 added a non-code file (or edited a non-code one such as `NOTES.md`), or changed a Python file only by adding comments or docstrings; the heuristic and its limits are in `RUNNING.md`.
 
-The tool never calls a model unless the person running it supplies an agent command. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically, using the CLI, the MCP bridge over stdio or a notes file as the arm requires, so the pipeline is tested offline in all four arms; its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality until the real run has been made and reported. The exact run protocol, including a worked example of driving a headless agent CLI, is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
+The tool never calls a model unless the person running it supplies an agent command. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically, using the CLI, the MCP bridge over stdio or a notes file as the arm requires, so the pipeline is tested offline in all five arms (in arm `setup` it runs the installed hook commands as a host does, from a transcript it writes in Claude Code's JSONL shape, and the start briefing printed for session 2 is all it has); its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality. The exact run protocol, including a worked example of driving a headless agent CLI, is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
+
+#### What the runs show
+
+##### First run (before the P4-9 changes)
+
+One repetition of all ten tasks in all four arms was run with the Claude Code CLI (model `sonnet`, at most 60 turns and 15 minutes per session, a new empty home directory for every session). Full setup, per-run table and the report output are in [`benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5.md`](../benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5.md).
+
+| Arm | Passed | Mean tokens per run | Mean seconds per run |
+| --- | ---: | ---: | ---: |
+| `off` | 6 of 10 | 244,391 | 42 |
+| `notes` | 7 of 10 | 243,255 | 56 |
+| `on` (CLI) | 9 of 10 | 286,438 | 53 |
+| `mcp` | 4 of 10 | 230,150 | 44 |
+
+Exact paired tests (two-sided, no correction for six comparisons): `off` against `notes` p = 1.0; `off` against `on` p = 0.25; `off` against `mcp` p = 0.5; `notes` against `on` p = 0.625; `notes` against `mcp` p = 0.375; `on` against `mcp` p = 0.0625. None of these is distinguishable from chance. In particular, a plain notes file did as well as MemoryKing within what this run can tell (7 against 9 passes). On the four tasks where session 2 really needed what session 1 learned, `off` passed none, `notes` and `on` three each, and `mcp` none; the other six tasks were passed by the agent without memory, so they did not separate the arms.
+
+How memory was used decides how to read the memory arms. In arm `on`, 7 of 10 runs saved something in session 1 and 5 received a briefing with content in session 2. In arm `mcp`, the agent saved nothing in any run and only 3 runs looked something up (and found nothing): this arm measured an agent that did not use the memory tools, not memory that failed to help. In the `notes` arm 8 of 10 runs left notes; in the `off` arm none did.
+
+The limits are one repetition, ten synthetic tasks, one model and one host with runs in parallel (timings are noisy), so only large effects could be seen and none was. It is not evidence of real-task quality.
+
+##### What the product changed in response
+
+The result above stays as measured. It was taken on code from before the latest MCP-surface work (server instructions that say when to recall and remember, lean as the default profile, Markdown replies), with no hooks installed, although the intended setup (`memoryking setup claude-code`) installs hooks that load and save memory without the model choosing to. Reading the 80 sessions showed two causes: Claude Code lists an MCP server's tools by name only and loads a schema when the model fetches it, and none of the ten `mcp` session-1 agents did (three session-2 agents fetched `recall` and found an empty store); and in arm `on` one agent recalled from an empty store, did the work and never saved what it had been told. Afterwards the product was changed so that saving and loading do not depend on the model deciding to fetch a tool:
+
+- The lean tools `remember`, `recall`, `save_progress` and `resume` carry `_meta` `anthropic/alwaysLoad` (the other tools a search hint), `memoryking setup claude-code` registers the bridge with `alwaysLoad`, and each tool's name and first sentence, and the server instructions, say when to call it (save as soon as there is something to save).
+- The session-start hook prints a short note naming the tools in the host's vocabulary and when to save, then a briefing that now includes the user's own recent words (the hooks capture the user's turns verbatim as their own observation, `user-<host>`, which the start briefing shows up to 2,400 bytes at a time), how the last captured session ended, and recent observations of the user's own scope. Before this, a hook capture was invisible to the start briefing, because only sources named `decision`, `instruction` or `user` were listed there: replaying a recorded-shape session through the hooks and starting a second session showed "nothing is recorded" for all four knowledge kinds, and shows each kind's facts now (`tests/test_hook_replay.py`, synthetic transcripts modelled on Claude Code's; no real transcript is committed).
+- The `MEMORY.md` note for command-line agents says to save an instruction or decision the moment it is given and not to recall from an empty store.
+- The benchmark gained the `setup` arm and `report --rep`; `RUNNING.md` shows how to pass the settings and MCP files to a headless host.
+
+##### Second run (after the P4-9 changes)
+
+Five arms, ten tasks and three repetitions (150 runs, 300 sessions) with the same agent, model, limits and isolation, on one commit, run by the same harness. Arm `setup` installs what `memoryking setup claude-code` installs (hooks and the lean bridge with `alwaysLoad`) and its prompt does not mention memory. Setup, the isolation probe, the per-run table and the report output are in [`benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5-2954501.md`](../benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5-2954501.md).
+
+| Arm | Passed, all 10 tasks (of 30) | Passed, the 4 knowledge tasks (of 12) | Mean tokens per run | Mean seconds per run |
+| --- | ---: | ---: | ---: | ---: |
+| `off` | 16 | 0 | 227,189 | 55 |
+| `notes` | 26 | 11 | 281,082 | 54 |
+| `on` (CLI) | 25 | 9 | 285,822 | 57 |
+| `mcp` | 14 | 0 | 282,438 | 61 |
+| `setup` | 27 | 10 | 336,058 | 64 |
+
+What the numbers show:
+
+- The mechanism works as installed. In the first ten `setup` runs the session-start hook fired and its briefing was injected in 10 of 10 first and 10 of 10 second sessions, the memory tools were in the tool list from the start with no search step, 10 of 10 first sessions saved something (7 by a tool call, all 10 by the session-end hook, which completed in every session), and 9 of 10 second-session start texts held the carried knowledge.
+- Memory as installed beat no memory on the tasks that need carried knowledge: 10 of 12 against 0 of 12 (the knowledge tasks are `alert-sink`, `job-states`, `partner-feed`, `staging-collector`). Over all ten tasks `setup` passed 27 of 30 against 16 of 30 for `off`; by task it was higher on 5 tasks and lower on none (exact p = 0.0625), and the by-run p of 0.001 is too small because repetitions of a task are correlated.
+- A notes file did as well: `notes` passed 26 of 30 and 11 of 12, `setup` 27 of 30 and 10 of 12. `setup` against `notes` p = 1.0, `setup` against `on` p = 0.69, `notes` against `off` p = 0.013 by run and 0.375 by task. This run does not show that MemoryKing beats a notes file the agent is told to keep.
+- The MCP-only arm passed 0 of 12 knowledge tasks although the agent saved in 23 of 30 runs: in this CLI version the model is shown a tool result's `structuredContent` and not its text block, so a lean `recall` or `resume` reply (briefing as text, envelope as `structuredContent`) reaches the model as a JSON envelope with no briefing. The hooks hide the defect in arm `setup`. This is a defect in the product's reply shape for this host, found by the run and not yet fixed.
+- `setup` used about 109,000 more tokens per run than `off` and was slower on average; there is no saving to report.
+- Several failures in every arm that carried the right facts (for example `staging-collector`, where the agent passed a JSON string where the check wants a dict) are the agent's design choices, not lost memory.
+
+Limits: ten synthetic tasks, one model, one host and version, one machine with four runs in parallel, three repetitions (which add pairs, not independent tasks), a knowledge-task split made after the first run, and `fetch` not allowed in the benchmark's tool list. Ten tasks can show only a large effect, nothing was corrected for ten comparisons, and none of this is evidence of real-task quality or production performance.
 
 ## Plan tracking contracts
 

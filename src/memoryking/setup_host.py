@@ -59,6 +59,18 @@ def launcher() -> list[str]:
     return [sys.executable, "-m", "memoryking"]
 
 
+def mcp_entry(command: list[str]) -> dict[str, Any]:
+    """The bridge as a Claude Code `mcpServers` entry. `alwaysLoad` keeps the memory tools in
+    every prompt: the host otherwise lists an MCP server's tools by name only and loads a
+    schema when the model searches for it (an option of the CLI's own MCP configuration)."""
+    return {
+        "type": "stdio",
+        "command": command[0],
+        "args": command[1:],
+        "alwaysLoad": True,
+    }
+
+
 def bridge_command(agent_profile: str, project: str, bindings: list[str]) -> list[str]:
     command = [
         *launcher(),
@@ -280,6 +292,7 @@ def hook_changes(args: Any, agent_profile: str, home: Path, cwd: Path) -> tuple[
         binding=args.binding,
         write=False,
         launcher=launcher_parts(),
+        tools="mcp",
     )
     return Path(result["path"]), json.dumps(result["config"], indent=2) + "\n"
 
@@ -371,7 +384,7 @@ def register(args: Any, files: Files, home: Path, command: list[str]) -> tuple[s
         return f"{outcome} {path} (lean profile)", []
     if args.host == "claude-code":
         return "run the command below (MemoryKing does not edit Claude Code's MCP file)", [
-            "claude mcp add memoryking -- " + shlex.join(command)
+            "claude mcp add-json memoryking " + shlex.quote(json.dumps(mcp_entry(command)))
         ]
     return "printed below, for any MCP host", [
         "command: " + shlex.join(command),

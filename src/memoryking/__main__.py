@@ -1183,6 +1183,12 @@ def main() -> int:
                 "context may reach; without it only the local recorder is accepted",
             )
             cmd.add_argument(
+                "--anchor-interval-ms",
+                type=int,
+                default=0,
+                help="Opt in to less anchor durability for throughput: the commit serial and clock high-water mark of a request that moved no position are written at most this many ms late (default 0: every committing request is anchored before release). A rollback that discards only receipts from that window is then not detected, and a clock that went back by less than the window across a restart is not refused",
+            )
+            cmd.add_argument(
                 "--workers",
                 type=int,
                 help="Requests served at once (default 8; 1 to 256)",
@@ -1698,6 +1704,12 @@ def main() -> int:
         "--query", help="Briefing query at session start; default: the query-free session start"
     )
     hk.add_argument("--budget", type=int, default=6000)
+    hk.add_argument(
+        "--tools",
+        choices=("mcp", "cli"),
+        help="How the agent reaches memory; the session-start note then names the tools to "
+        "save with (hooks installed by `memoryking setup` pass mcp)",
+    )
     add_binding(hk)
     hk.add_argument(
         "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
@@ -1712,6 +1724,11 @@ def main() -> int:
     inst.add_argument("--credential", type=Path)
     inst.add_argument("--task", help="Task the hooks resume and checkpoint")
     inst.add_argument("--query", help="Fixed briefing query for session start")
+    inst.add_argument(
+        "--tools",
+        choices=("mcp", "cli"),
+        help="How the agent reaches memory; the session-start note names the tools to save with",
+    )
     inst.add_argument("--cwd", type=Path, help="Project directory; default: current")
     add_binding(inst)
     inst.add_argument("--print", action="store_true", help="Show the merged config, write nothing")
@@ -1959,6 +1976,8 @@ def main() -> int:
                             task=args.task,
                             budget=args.budget,
                             binding=args.binding,
+                            tools=args.tools,
+                            host=args.host,
                             **where,
                         )
                     )
@@ -1987,6 +2006,7 @@ def main() -> int:
                 credential=args.credential if args.profile is None else None,
                 task=args.task,
                 query=args.query,
+                tools=args.tools,
                 binding=args.binding,
                 remove=args.remove,
                 write=not args.print,
@@ -2363,6 +2383,9 @@ def main() -> int:
                         from memoryking.adapters.egress_policy import EgressPolicy
 
                         store.egress_policy = EgressPolicy.load(args.egress_policy)
+                    if not 0 <= args.anchor_interval_ms <= 60_000:
+                        raise LocalError("invalid_anchor_interval")
+                    store.anchor_interval_ms = args.anchor_interval_ms
                     store.summary_idle_ms = (
                         0 if args.summary_idle in {"0", "off"} else duration_ms(args.summary_idle)
                     )

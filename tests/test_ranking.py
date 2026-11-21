@@ -52,7 +52,9 @@ class RankingCases:
                 "project": "p",
                 "source": "test",
                 "source_event": "extra",
-                "text": self.raw,
+                # a second note that says nearly, but not exactly, the same (a briefing shows
+                # identical or near-identical notes once)
+                "text": self.raw.replace("30", "45"),
                 "readers": None,
                 "classification": "internal",
                 "observed_at_ms": 2,

@@ -379,6 +379,8 @@ class PostgresRetentionTests(RetentionCases, pg.NativeFixture):
             with db.transaction():
                 db.execute("SET LOCAL search_path=memoryking,pg_catalog")
                 db.execute("DROP TABLE receipt_observations")
+                # Schema 15 created these; a real schema 13 database has neither.
+                db.execute("DROP TABLE consolidation_runs, unreviewed_tier")
                 db.execute("UPDATE shared_meta SET value='13' WHERE key='schema'")
             migrate(db)
             version = db.execute(

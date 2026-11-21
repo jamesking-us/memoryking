@@ -138,6 +138,22 @@ class UserScopeDaemonTests(unittest.TestCase):
         # What the CLI printed for `capture`: the new observation id.
         return json.loads(text)["observation"]
 
+    def test_the_session_start_briefing_shows_the_users_newest_own_observations(self):
+        from memoryking import host_hooks
+
+        self.cli(
+            "capture", "--scope", "user", "--project", "p", "--source", "chat",
+            "--text", "Write every commit message in French.", credential=self.agent,
+        )  # fmt: skip
+        where = {"socket": self.server.path, "project": "p"}
+        shown = host_hooks.session_start({"host": "claude"}, credential=self.agent, **where)
+        self.assertIn("Write every commit message in French.", shown)
+        self.assertIn("From your own user memory", shown)
+        # An agent that acts for another user, and one with no link, never see it.
+        for stranger in (self.other,):
+            seen = host_hooks.session_start({"host": "claude"}, credential=stranger, **where)
+            self.assertNotIn("commit message in French", seen)
+
     def test_agents_write_the_users_memory_and_every_project_reads_it(self):
         saved = json.loads(
             self.cli(

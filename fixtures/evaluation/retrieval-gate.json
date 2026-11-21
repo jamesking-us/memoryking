@@ -1,5 +1,5 @@
 {
-  "purpose": "Release gate for tools/retrieval_benchmark.py on its deterministic synthetic corpus and its four labelled cases (word forms, rarity, crowding, tie order); a regression guard, not a quality claim.",
+  "purpose": "Release gate for tools/retrieval_benchmark.py on its deterministic synthetic corpus and its labelled cases (word forms, rarity, crowding, tie order, long documents, duplicates, versions); a regression guard, not a quality claim.",
   "minimum": {
     "recall_mean": 0.95,
     "precision_mean": 0.5,
@@ -8,7 +8,10 @@
     "word_form_recall": 0.95,
     "rare_first_rate": 0.9,
     "crowded_recall": 1.0,
-    "newer_first_rate": 1.0
+    "newer_first_rate": 1.0,
+    "long_document_quote_rate": 1.0,
+    "duplicates_collapsed_rate": 1.0,
+    "newest_version_rate": 1.0
   },
   "maximum": {
     "tokens_mean": 6000

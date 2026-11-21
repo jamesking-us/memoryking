@@ -290,11 +290,11 @@ class SDKTests(unittest.TestCase):
                 "recent",
             ],
         )
-        # Flat tools, no oneOf. fetch, feedback, recent and the user `scope` argument brought
-        # the served tools to about 10.7 KB (ceiling 11 KiB); the catalog file also lists
-        # `confirm`, served only with chat review (ceiling 12 KiB).
-        self.assertLess(len(json.dumps(lean.tools(), separators=(",", ":"))), 11264)
-        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 12288)
+        # Flat tools, no oneOf. The served tools are about 11.6 KB (ceiling 12 KiB), including
+        # the "when to call me" first sentences and the host `_meta` keys; the catalog file
+        # also lists `confirm`, served only with chat review (ceiling 13 KiB).
+        self.assertLess(len(json.dumps(lean.tools(), separators=(",", ":"))), 12288)
+        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 13312)
         for tool in lean.TOOLS:
             self.assertNotIn("oneOf", json.dumps(tool["inputSchema"]))
         first = lean.call(

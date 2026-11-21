@@ -1,7 +1,7 @@
 """Briefings and resume packets as cited Markdown.
 
 A text packet is the JSON packet rendered for a model to read: constraints first, then
-guidance with `[g1]`-style citations that resolve in a Sources footer. The envelope keeps
+guidance (accepted knowledge, then unreviewed observations) with `[g1]`-style citations that resolve in a Sources footer. The envelope keeps
 the receipt, status, usage and warnings so replay, receipts and budgets work unchanged;
 the exact bytes retained for replay are the envelope, not the loose text.
 """
@@ -41,7 +41,8 @@ START_HEADINGS = {
     "pinned": "Pinned",
     "last_checkpoint": "Where the last session left off",
     "recent_decision": "Recent decisions",
-    "user_decision": "Recent decisions",
+    "user_decision": "What you were told recently",
+    "last_session": "How the last session ended",
     "user_memory": "From your own user memory",
 }
 ENVELOPE_FIELDS = (
@@ -121,13 +122,34 @@ def _omitted(packet: dict[str, Any]) -> str:
     )
 
 
-def _qualifier(item: dict[str, Any]) -> str:
+def _qualifier(item: dict[str, Any], notes: list[str] | None = None) -> str:
     parts = [str(item["authority"])] if item.get("authority") else []
     if item.get("scope") == "user":
         parts.append("from your own user memory")
+    parts.extend(notes or [])
     if item.get("retirement_requested"):
         parts.append("retirement requested")
     return f" _({'; '.join(parts)})_" if parts else ""
+
+
+def _list(found: Any) -> str:
+    references = ", ".join(found.get("references", []))
+    more = found.get("count", 0) - len(found.get("references", []))
+    return references + (f" and {more} more" if more > 0 else "")
+
+
+def _notes(item: dict[str, Any]) -> list[str]:
+    """What the item says about records it stands for, and when it was recorded."""
+    notes = []
+    if isinstance(item.get("recorded_ms"), int):
+        notes.append(f"recorded {_stamp(item['recorded_ms'])}")
+    if isinstance(item.get("also_recorded_in"), dict):
+        notes.append(f"also recorded in {_list(item['also_recorded_in'])}")
+    if isinstance(item.get("supersedes"), dict):
+        notes.append(f"supersedes earlier versions {_list(item['supersedes'])}")
+    if isinstance(item.get("evidence_not_repeated"), dict):
+        notes.append(f"cited observations not repeated: {_list(item['evidence_not_repeated'])}")
+    return notes
 
 
 def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
@@ -171,17 +193,41 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     guidance = [i for i in guidance if i.get("authority") != "drafted_unreviewed"]
     start = packet.get("mode") == "start"
     if guidance:
-        lines.extend(["", f"## {'Session start' if start else 'Guidance'} ({EVIDENCE_NOTE})"])
-        heading = None
-        for number, item in enumerate(guidance, 1):
-            tag = f"g{number}"
-            if start and item.get("selection_reason") != heading:
-                heading = item.get("selection_reason")
-                lines.extend(["", f"### {START_HEADINGS.get(str(heading), str(heading))}"])
-            lines.append(f"{number}. **[{tag}]** {item.get('text', '')}{_qualifier(item)}")
-            line, entry = _item_source(tag, item)
-            sources.append(line)
-            entries.append(entry)
+        if start:
+            lines.extend(["", f"## Session start ({EVIDENCE_NOTE})"])
+            heading = None
+            for number, item in enumerate(guidance, 1):
+                tag = f"g{number}"
+                if item.get("selection_reason") != heading:
+                    heading = item.get("selection_reason")
+                    lines.extend(["", f"### {START_HEADINGS.get(str(heading), str(heading))}"])
+                lines.append(f"{number}. **[{tag}]** {item.get('text', '')}{_qualifier(item)}")
+                line, entry = _item_source(tag, item)
+                sources.append(line)
+                entries.append(entry)
+        else:
+            # Reviewed knowledge and raw observations are different things: accepted
+            # knowledge was decided on, observations are what an actor reported.
+            accepted = [i for i in guidance if i.get("authority") != "observed_episode"]
+            unreviewed = [i for i in guidance if i.get("authority") == "observed_episode"]
+            number = 0
+            for heading, items in (
+                ("Accepted knowledge", accepted),
+                ("Unreviewed observations", unreviewed),
+            ):
+                if not items:
+                    continue
+                lines.extend(["", f"## {heading} ({EVIDENCE_NOTE})"])
+                for item in items:
+                    number += 1
+                    tag = f"g{number}"
+                    lines.append(
+                        f"{number}. **[{tag}]** {item.get('text', '')}"
+                        f"{_qualifier(item, _notes(item))}"
+                    )
+                    line, entry = _item_source(tag, item)
+                    sources.append(line)
+                    entries.append(entry)
         if _omitted(packet):
             lines.extend(["", f"_{_omitted(packet)}_"])
     elif _omitted(packet) and not packet.get("reason"):

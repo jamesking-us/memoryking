@@ -333,3 +333,16 @@ def score(terms: list[Term], text: str, corpus: Corpus) -> int:
     if total <= 0 or ceiling <= 0:
         return 0
     return max(1, min(1_000_000, int(1_000_000 * total / ceiling)))
+
+
+RESCUE_PASSAGES = 6  # an observation of more passages than this is a long capture
+RESCUE_SCALE = 1.0  # a passage score is on the same scale as a whole-text score
+
+
+def rescued(score: int, passage_scores: list[int]) -> int:
+    """Long-document rescue: an observation of more than RESCUE_PASSAGES passages scores as
+    the larger of its whole-text score and its best passage's score times RESCUE_SCALE;
+    shorter ones score exactly as the whole text does."""
+    if len(passage_scores) <= RESCUE_PASSAGES:
+        return score
+    return max(score, int(max(passage_scores) * RESCUE_SCALE))

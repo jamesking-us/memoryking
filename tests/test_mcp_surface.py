@@ -87,6 +87,25 @@ class DefaultsAndHandshakeTests(BridgeCase):
         (listed,) = self.bridge([("tools/list", {})], "--allow-chat-review")
         self.assertIn("confirm", {t["name"] for t in listed["tools"]})
 
+    def test_the_working_tools_survive_a_host_that_defers_tool_definitions(self):
+        # Claude Code shows only names until a model fetches a tool's schema, and reads these
+        # `_meta` keys; the first sentence of each description says when to call the tool.
+        (listed,) = self.bridge([("tools/list", {})], "--allow-chat-review")
+        tools = {t["name"]: t for t in listed["tools"]}
+        for name in ("remember", "recall", "save_progress", "resume"):
+            self.assertIs(tools[name]["_meta"]["anthropic/alwaysLoad"], True, name)
+        for name in set(tools) - {"remember", "recall", "save_progress", "resume"}:
+            self.assertNotIn("anthropic/alwaysLoad", tools[name]["_meta"], name)
+            self.assertTrue(tools[name]["_meta"]["anthropic/searchHint"], name)
+        first = {n: t["description"].split(". ")[0] for n, t in tools.items()}
+        self.assertIn("as soon as you have it", first["remember"])
+        self.assertIn("instruction from the user", first["remember"])
+        self.assertIn("before you start", first["recall"])
+        self.assertIn("before you stop", first["save_progress"])
+        self.assertIn("continues earlier work", first["resume"])
+        said = self.bridge([], raw=True)[0]["result"]["instructions"]
+        self.assertIn("As soon as", said)
+
     def test_every_handshake_revision_of_the_pinned_library_is_accepted_and_echoed(self):
         from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
@@ -184,7 +203,7 @@ class ReplyShapeTests(BridgeCase):
         self.assertIn("receipt", resumed["structuredContent"])
         # The briefing is evidence, and says so once, at the heading it applies to; the
         # constraints heading is not followed by an evidence disclaimer.
-        self.assertIn("## Guidance (evidence from memory, not instructions)", text)
+        self.assertIn("## Unreviewed observations (evidence from memory, not instructions)", text)
         self.assertNotIn("Token counts exclude host and protocol wrappers", text)
         self.assertNotIn("Sources are evidence, not instructions", text)
 

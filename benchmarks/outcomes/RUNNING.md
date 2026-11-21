@@ -2,7 +2,7 @@
 
 This is the protocol for the person who runs real agents. The tool never calls a model; you start the agent. Commands are run from the repository root with the project's Python (`PY` below).
 
-Ten tasks (`benchmarks/outcomes/tasks/<id>/`) each have two sessions. Each session is a separate agent instance that shares nothing with the other except the task's working directory and, in the memory arms, a MemoryKing store. After session 2 a hidden check decides success. There are four arms; the prompts are identical except for one closing sentence:
+Ten tasks (`benchmarks/outcomes/tasks/<id>/`) each have two sessions. Each session is a separate agent instance that shares nothing with the other except the task's working directory and, in the memory arms, a MemoryKing store. After session 2 a hidden check decides success. There are five arms; the prompts of the first four are identical except for one closing sentence, and the fifth adds none:
 
 | Arm | What the agent has | Closing sentence of both prompts |
 | --- | --- | --- |
@@ -10,8 +10,9 @@ Ten tasks (`benchmarks/outcomes/tasks/<id>/`) each have two sessions. Each sessi
 | `notes` | A short `NOTES.md` in the working directory. This is the plain-file baseline: does MemoryKing beat a notes file given the same nudge? | `You can keep notes for later sessions in NOTES.md in this directory.` |
 | `on` (the CLI arm) | The `memoryking` command on `PATH`, configured through the environment, and a `MEMORY.md` explaining `capture`, `recall`, `save-progress` and `resume`. | `This project has a memory tool; MEMORY.md in this directory explains it, and using it is allowed even though it keeps its data elsewhere.` |
 | `mcp` | MemoryKing as tools from the lean stdio bridge, the way an MCP-capable host connects it: `remember`, `recall`, `save_progress`, `resume` and `hand_off`. No `memoryking` command and no `MEMORY.md`. `prepare` writes a standard `{"mcpServers": {...}}` configuration to `<workdir>.bench/mcp.json`, outside the working directory. | `This project has memory tools available (remember, recall, save_progress, resume); using them is allowed.` |
+| `setup` | MemoryKing as `memoryking setup claude-code` installs it for a user: the session hooks (a start briefing that names the tools, pre-compact, session end) and the lean bridge with `alwaysLoad`, under one agent credential. `prepare` writes the host settings with the hooks to `<workdir>.bench/settings.json` and the MCP configuration to `<workdir>.bench/mcp.json`, outside the working directory, for the runner to pass to the host explicitly. No `memoryking` command, no `MEMORY.md`. | none: the agent is not told about memory; the hooks and the server's instructions are the only mention. This arm asks whether memory is used without the agent being told how. |
 
-The `on` and `mcp` arms get a private store, a daemon and a credential limited to `capture`, `read`, `checkpoint` and `handoff`. Give every arm the same task, model and settings, and randomize the order of arms and tasks.
+The `on`, `mcp` and `setup` arms get a private store, a daemon and a credential limited to `capture`, `read`, `checkpoint` and `handoff`. Give every arm the same task, model and settings, and randomize the order of arms and tasks.
 
 ## Rules for the run
 
@@ -26,7 +27,7 @@ The `on` and `mcp` arms get a private store, a daemon and a credential limited t
 ```sh
 PY=$PWD/.venv/bin/python           # the project's Python, as an absolute path
 TASK=legacy-rounding               # any directory name under benchmarks/outcomes/tasks/
-ARM=on                             # off, notes, on or mcp
+ARM=on                             # off, notes, on, mcp or setup
 W=/tmp/mk-outcomes/work/$TASK-$ARM # a path that does not exist yet
 RESULTS=/tmp/mk-outcomes/results
 
@@ -61,7 +62,7 @@ This project has a memory tool; MEMORY.md in this directory explains it, and usi
 
 `env` prints `export` lines for `PATH`, `MEMORYKING_CONFIG`, `MEMORYKING_PROFILE` and `MEMORYKING_PROJECT` (so the commands need no `--project`), and nothing in the `off` and `notes` arms. The credential has the `capture`, `read`, `checkpoint` and `handoff` capabilities and nothing administrative. Do not also register the MCP bridge in this arm: the arms differ in how the agent reaches memory.
 
-**Arm `mcp`.** Register the server in `$W.bench/mcp.json` with the host, and nothing else, and make sure no `memoryking` command is on the agent's `PATH`. `env` prints a `PATH` without any directory that holds a `memoryking` command and `unset` lines for any `MEMORYKING_*` variables in your shell. The file has this shape (absolute paths; the credential is a scoped private file):
+**Arms `mcp` and `setup`.** Register the server in `$W.bench/mcp.json` with the host, and nothing else, and make sure no `memoryking` command is on the agent's `PATH`. `env` prints a `PATH` without any directory that holds a `memoryking` command and `unset` lines for any `MEMORYKING_*` variables in your shell. The file has this shape (absolute paths; the credential is a scoped private file):
 
 ```json
 {"mcpServers": {"memoryking": {"command": "/abs/path/python", "args": [
@@ -71,7 +72,9 @@ This project has a memory tool; MEMORY.md in this directory explains it, and usi
   "--project", "work", "--profile", "lean"]}}}
 ```
 
-Set every `on` run and every `mcp` run up the same way.
+In arm `setup` the file's entry is the one `memoryking setup claude-code` prints (`type`, `command`, `args`, `alwaysLoad: true`), and `settings.json` holds the hook entries `memoryking setup claude-code` would write to the user's settings file, built by the same code (`host_hooks.install`, `setup_host.mcp_entry`). Real setup names the store by profile; here the commands carry the socket and credential paths, because each session gets a fresh home directory. The hooks and the bridge use the same agent credential.
+
+Set every `on`, `mcp` and `setup` run up the same way.
 
 When session 1 ends, record what it cost (any of these may be left out and the report then shows `n/a`):
 
@@ -115,7 +118,8 @@ The command is split like a shell would and run without a shell. Placeholders:
 | `{workdir}` | The task's working directory, which is also the command's current directory. |
 | `{prompt_file}` | `session1.prompt.md` or `session2.prompt.md` in `<workdir>.bench/`. |
 | `{session}` | 1 or 2. |
-| `{mcp_config}` | Arm `mcp` only: the path of `mcp.json`. The tool refuses an `mcp` run whose command lacks it, and any other arm whose command has it. |
+| `{mcp_config}` | Arms `mcp` and `setup`: the path of `mcp.json`. The tool refuses a run of those arms whose command lacks it, and any other arm whose command has it. |
+| `{settings}` | Arm `setup` only: the path of `settings.json`, the host settings with the hooks. Required in that arm and refused in the others. |
 | `{usage_file}` | A file the command may write usage figures to (below). |
 
 `--prompt-stdin` also feeds the prompt file on the command's standard input, for agent commands that read the prompt there. Other braces (for example in a JSON argument) are left alone.
@@ -137,31 +141,44 @@ For every session the tool sets the working directory and the arm's environment 
 
 A missing key is left out and the report shows `n/a`. Use `session --workdir $W --n 1 --agent-command ...` to run one session at a time and `record` to enter figures by hand.
 
-### Worked example: a headless coding-agent CLI
+### Worked example: Claude Code in headless mode
 
-This sketches how one would drive a headless agent CLI with `run`. It names no model and no budget and nothing here has been run. `agent-cli` and its flags are illustrative: take the real ones from your agent's own help and verify each before relying on it. The isolation requirements are those under "Rules for the run".
+This is the shape used for the first real run (Claude Code CLI 2.1.330, `claude -p`), extended for the `setup` arm. Flags and their behaviour were checked against `claude --help` and the CLI's own configuration schema; take any change from your own version's help. The isolation requirements are those under "Rules for the run".
 
 ```sh
 cat > /tmp/mk-outcomes/run-agent.sh <<'SH'
 #!/bin/sh
-# usage: run-agent.sh WORKDIR PROMPT_FILE [MCP_CONFIG]
+# usage: run-agent.sh WORKDIR PROMPT_FILE [MCP_CONFIG [SETTINGS]]
 set -eu
-workdir=$1; prompt=$2; mcp=${3:-}
-# A fresh host profile for this session only: no saved sessions, no auto-memory, no
-# user-level memory file survives from the other session.
-HOME=$(mktemp -d /tmp/mk-host-XXXXXX); export HOME
-trap 'rm -rf "$HOME"' EXIT
+workdir=$1; prompt=$2; mcp=${3:-}; settings=${4:-}
+# A fresh host profile for this session only: no saved sessions, no auto-memory, no user-level
+# memory file survives from the other session. The hooks carry their own paths, so they do not
+# need the old HOME.
+H=$(mktemp -d /tmp/mk-host-XXXXXX)
+trap 'rm -rf "$H"' EXIT
 cd "$workdir"
-# Least-permissive, non-interactive permissions: read and edit inside the working
-# directory and run its tests; nothing is ever asked of a person.
-set -- --print --output-format json --permission-mode dontAsk \
-       --allowed-tools "Read,Edit,Write,Glob,Grep,Bash(python -m unittest:*)"
+# Scrubbed environment: PATH, proxy and certificate settings, the arm's MEMORYKING_* variables
+# (none in arms mcp and setup) and the new HOME.
+envargs="HOME=$H PATH=$PATH TMPDIR=/tmp LANG=C.UTF-8 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1"
+for v in $(env | sed -n -E 's/^((MEMORYKING_[A-Z_]*|[Hh][Tt][Tt][Pp][Ss]?_[Pp][Rr][Oo][Xx][Yy]|[Nn][Oo]_[Pp][Rr][Oo][Xx][Yy]|SSL_CERT_FILE|NODE_EXTRA_CA_CERTS|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|ANTHROPIC_BASE_URL))=.*/\1/p'); do
+  eval "val=\${$v}"; envargs="$envargs $v=$val"
+done
+tools="Bash(python -m unittest:*),Bash(python3 -m unittest:*),Bash(python:*),Bash(python3:*)"
+# --setting-sources "" turns user, project and local settings off; settings passed with
+# --settings stay on (the CLI always adds its flag and policy sources). --strict-mcp-config
+# loads only the servers of --mcp-config.
+set -- -p --model sonnet --output-format stream-json --verbose --include-hook-events \
+  --max-turns 60 --permission-mode acceptEdits --permission-prompts none \
+  --setting-sources "" --disable-slash-commands --strict-mcp-config
 if [ -n "$mcp" ]; then
-  # Arm mcp: the benchmark's configuration only, plus the four memory tools.
-  set -- "$@" --mcp-config "$mcp" --strict-mcp-config \
-       --allowed-tools "mcp__memoryking__remember,mcp__memoryking__recall,mcp__memoryking__save_progress,mcp__memoryking__resume"
+  tools="$tools,mcp__memoryking__remember,mcp__memoryking__recall,mcp__memoryking__save_progress,mcp__memoryking__resume,mcp__memoryking__hand_off"
+  set -- "$@" --mcp-config "$mcp"
+elif [ -n "${MEMORYKING_CONFIG:-}" ]; then
+  tools="$tools,Bash(memoryking:*)"
 fi
-exec agent-cli "$@" "$(cat "$prompt")"
+[ -n "$settings" ] && set -- "$@" --settings "$settings"
+# shellcheck disable=SC2086
+env -i $envargs claude "$@" --allowed-tools "$tools" -- "$(cat "$prompt")"
 SH
 chmod +x /tmp/mk-outcomes/run-agent.sh
 
@@ -170,19 +187,26 @@ JQ='{input_tokens: (.usage.input_tokens + (.usage.cache_read_input_tokens // 0)
      output_tokens: .usage.output_tokens, cost_usd: .total_cost_usd,
      duration_seconds: (.duration_ms / 1000)}'
 
-$PY tools/outcome_benchmark.py run --task $TASK --arm mcp --results $RESULTS --timeout 1800 \
-  --usage-jq "$JQ" \
-  --agent-command "/tmp/mk-outcomes/run-agent.sh {workdir} {prompt_file} {mcp_config}"
+# Arm setup: both files, three repetitions (repeat for each task and rep, in random order).
+$PY tools/outcome_benchmark.py run --task $TASK --arm setup --rep 1 --results $RESULTS \
+  --timeout 900 --usage-jq "$JQ" \
+  --agent-command "/tmp/mk-outcomes/run-agent.sh {workdir} {prompt_file} {mcp_config} {settings}"
 ```
 
-For the other arms drop `{mcp_config}` from the command. In arm `on`, also allow the `memoryking` command (for example `Bash(memoryking:*)`) and nothing else new; arms `off` and `notes` need no extra permission, since `NOTES.md` is an ordinary file in the working directory. Before the first real run, check each of these against the agent's documentation and a short throwaway session:
+For arm `mcp` drop `{settings}`; for the others drop both placeholders. In arm `on`, the wrapper allows `Bash(memoryking:*)` when the environment has `MEMORYKING_CONFIG`. The hook commands are run by the host itself, so no tool permission is needed for them.
 
-- **Fresh instance per session.** Every call of the wrapper starts a new process with a new `HOME`; never use a resume or continue option.
-- **The host's own memory is off or wiped.** A throwaway `HOME` removes saved sessions and user-level memory files. Also turn off any auto-memory setting the host has, and make sure the working directory holds no host memory file (such as `CLAUDE.md` or `AGENTS.md`) that the fixture did not put there. Do this identically in every arm.
-- **Only the benchmark's MCP configuration in arm `mcp`.** Use the host's "only this configuration" option so servers from user or project settings are not loaded, and confirm in a test session which tools the agent reports. In the other arms no MCP server should be configured at all, so `off`, `notes` and `on` do not get memory tools from the host's own settings.
-- **Least-permissive tool permissions, non-interactive.** Allow only what a task needs (read, edit and write inside the working directory, running its tests) and, in arm `mcp`, the four memory tools; deny everything else rather than letting the agent prompt. The prompts tell the agent to stay inside the working directory; enforce it with a sandbox or the host's file-access setting where it has one. The same permissions in every arm apart from the memory access that defines the arm.
-- **No access to this repository.** Keep the repository checkout, `check.py` and `reference/` out of anything the agent can read.
+What this relies on, and how each part is known:
+
+- **MCP tools are loaded lazily by default.** The first run's transcripts show the memory tools listed by name only, and the model fetching a schema with its tool-search tool before the first call. The server option `alwaysLoad: true` (in an `--mcp-config` entry) keeps all of a server's tools in the prompt, and a tool's `_meta` `anthropic/alwaysLoad` does the same for that tool; both are in the CLI's own configuration schema and tool loader. The `setup` arm's configuration sets the first, and the bridge sets the second.
+- **`--settings` still applies with `--setting-sources ""`.** The CLI's settings loader always adds the flag and policy sources to whatever `--setting-sources` allows. Confirm in the first stream of a `setup` run: with `--include-hook-events` the stream records each hook's start and result, and `memoryking` hook commands should appear for `SessionStart` at the beginning and `SessionEnd` at the end. A `setup` run whose stream shows no hook events is a driver fault, not an agent result: stop and look before running more.
+- **A `SessionStart` hook's output reaches the model.** Documented for the CLI and consistent with its code; the transcript of a `setup` run should contain the briefing text beginning "MemoryKing is this project's memory". Verify once.
+- **`SessionEnd` hooks run when a headless session shuts down**, with the timeout of the hook entry (10 seconds as installed; the CLI's own default is 1.5 seconds). Verify by the store's counts after session 1: `between` records observations captured, and arm `setup` should show at least the two hook captures (`claude-session` and `user-claude`). A session killed by `--timeout` may leave none; that is real behaviour, count it as such.
+- **Fresh instance per session, the host's own memory off, least-permissive tools, no access to this repository**: as for every arm. Use a throwaway two-session probe once (a made-up codeword in session 1, asked for in session 2) to confirm that nothing but the arm's own mechanism carries it; in arm `setup` the codeword is expected to carry through the hooks, so run the probe in arm `off` to confirm the isolation.
 - **Usage keys.** Confirm the `--usage-jq` filter on one real result; a filter that matches nothing records `n/a`, not an error.
+
+Observed in the second run (CLI 2.1.330): with `--include-hook-events` the stream shows the start hook and its output but not the session-end hook, which runs after the result line; add `--debug-file` to read its completion (`SessionEnd ... completed with status 0`) and confirm by the captures in the store. The tools of the `setup` and `mcp` allowed-tools list should include `mcp__memoryking__fetch` if you want a `recall` followed by a `fetch` to work; the second run left it out.
+
+Run each task and arm at least three times (`--rep 1`, `--rep 2`, `--rep 3`) and read the result with `report --rep`.
 
 ## Reporting
 
@@ -196,10 +220,11 @@ The report takes any number of arms and shows:
 - success rate with a 95% interval per arm, per task and per knowledge kind;
 - tokens, cost and wall time per arm as mean and median per run, both sessions summed, and `n/a` where the runner did not record them (a run missing a figure is left out of that figure);
 - for each pair of arms, an exact paired comparison (a two-sided McNemar test, which is a binomial sign test on the tasks where exactly one of the two arms passed) with its p-value and a reading in plain words;
-- for the `on` and `mcp` arms, how many runs actually used memory: something written in session 1 (observations or checkpoints in the store's own statistics at `between`) and something read in session 2 (briefings or deliveries that grew between `between` and `finish`). A run where the agent never touched memory is an `off` run in practice, so look at these counts before reading the success rates;
-- for `off` and `notes`, how many runs left notes on disk during session 1.
+- for the `on`, `mcp` and `setup` arms, how many runs actually used memory: something written in session 1 (observations or checkpoints in the store's own statistics at `between`) and something read in session 2 (briefings or deliveries that grew between `between` and `finish`). A run where the agent never touched memory is an `off` run in practice, so look at these counts before reading the success rates;
+- for `off` and `notes`, how many runs left notes on disk during session 1;
+- with `--rep`, the results over repetitions: the pass rate per arm with an interval that resamples tasks (repetitions of one task are not independent runs; the Wilson interval beside it treats every run as independent and is too narrow), and paired tests over task-by-repetition pairs (too small a p-value for the same reason) and over tasks (each task counts once; ties dropped).
 
-Ten tasks can only show a large effect: between two arms, six wins for one and none for the other is the smallest result that reaches p < 0.05. Repeating tasks adds pairs but not independent tasks; say so. With four arms there are six pairs and nothing corrects for looking at all of them.
+Ten tasks can only show a large effect: between two arms, six wins for one and none for the other is the smallest result that reaches p < 0.05. Repeating tasks adds pairs but not independent tasks; say so. With five arms there are ten pairs and nothing corrects for looking at all of them.
 
 ### Notes left on disk
 

@@ -118,7 +118,7 @@ models = ["grok-4"]
         self.capture("b", "The payments/retry.py cap of three attempts caused a page last week.")
         self.cli("draft-proposals", "--project", "p", "--no-procedures")
         ask = ("recall", "--project", "p", "--query", "payments retry attempts")
-        self.assertNotIn("Unreviewed", self.cli(*ask))
+        self.assertNotIn("Unreviewed, drafted", self.cli(*ask))
         self.assertIn("off", self.cli("unreviewed", "show", "--project", "p"))
         reviewer = self.credential("rev", ["read", "review", "capture"])
         refused = self.cli("unreviewed", "on", "--project", "p", credential=reviewer, expect=2)
@@ -132,7 +132,7 @@ models = ["grok-4"]
             json.loads(self.cli("unreviewed", "show", "--project", "p", "--json"))["enabled"], True
         )
         self.cli("unreviewed", "off", "--project", "p")
-        self.assertNotIn("Unreviewed", self.cli(*ask))
+        self.assertNotIn("Unreviewed, drafted", self.cli(*ask))
 
 
 if __name__ == "__main__":
