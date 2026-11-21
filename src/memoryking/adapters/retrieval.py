@@ -11,6 +11,7 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
+from memoryking.adapters.blobs import blob_path
 from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.dense_search import search as dense_search
 from memoryking.adapters.knowledge_store import Knowledge
@@ -23,6 +24,7 @@ from memoryking.adapters.local_store import (
 )
 from memoryking.adapters.token_count import counter
 from memoryking.application import lexical_index
+from memoryking.application.retention import index_receipt
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.anchors import anchors_in
@@ -83,7 +85,7 @@ class Retrieval:
         with self.s.transaction() as decision:
             at = decision.evaluated_ms
             who = self.s._auth(credential, "read", args["project"], at)
-            self._expire(at)
+            self._expire(at, who["tenant"])
             predecessor = None
             if action == "rerun":
                 previous = self.db.execute(
@@ -161,6 +163,7 @@ class Retrieval:
                     json.dumps([d["id"] for d in deps if d["kind"] == "observation"]),
                 ),
             )
+            index_receipt(self.db, who["tenant"], access_id)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, access_id)
@@ -248,10 +251,11 @@ class Retrieval:
             )
             evicted += 1
 
-    def _expire(self, at: int) -> None:
+    def _expire(self, at: int, tenant: str) -> None:
+        # The tenant predicate lets the partial index over retained rows answer it.
         self.db.execute(
-            "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?",
-            (at,),
+            "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND state='retained' AND expires<=?",
+            (tenant, at),
         )
 
     def _artifact(self, who: dict[str, Any], project: str, receipt: str, at: int) -> sqlite3.Row:
@@ -482,10 +486,13 @@ class Retrieval:
             # (the last event recorded by that wall time) and the claim validity time.
             if "recorded_position" in args or "valid_ms" in args:
                 raise LocalError("invalid_request")
-            frontier = self.db.execute(
-                "SELECT coalesce(max(position),0) FROM events WHERE tenant=? AND at_ms<=?",
+            # Event times never decrease with position (the clock refuses to go back), so
+            # the last event at or before the instant is the newest one the index finds.
+            latest = self.db.execute(
+                "SELECT position FROM events WHERE tenant=? AND at_ms<=? ORDER BY at_ms DESC,position DESC LIMIT 1",
                 (tenant, args["as_of_ms"]),
-            ).fetchone()[0]
+            ).fetchone()
+            frontier = 0 if latest is None else latest[0]
             args = {**args, "recorded_position": int(frontier), "valid_ms": args["as_of_ms"]}
         ranking: dict[str, Any] = (
             ranking_override
@@ -579,6 +586,7 @@ class Retrieval:
             # Long queries are searched on their leading terms; the cut is disclosed.
             diag["query_terms_truncated"] = QUERY_TERM_LIMIT
         groups: list[list[dict[str, Any]]] = []
+        drafted: list[list[dict[str, Any]]] = []
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
             if mandatory.get("unbound_fields"):
@@ -620,6 +628,19 @@ class Retrieval:
                 evaluation=ranking_override is not None,
                 lexical_current=lexical_current,
             )
+            if (
+                "recorded_position" not in args
+                and "valid_ms" not in args
+                and args.get("freshness", "any") != "attested"
+            ):
+                # Off unless an admin turned the project's tier on; then unreviewed drafts
+                # follow the accepted guidance in a section of their own.
+                from memoryking.adapters.unreviewed import Unreviewed
+
+                drafted = Unreviewed(self.s).groups(who, args, at, recorded)
+                if drafted:
+                    groups = [*groups, *drafted]
+                    base["warnings"].append("unreviewed_drafts_included")
             for stage in trace:
                 if stage.get("stage") == "rerank_v1" and "model" in stage:
                     diag["model_fingerprints"].append(stage["model"])
@@ -650,6 +671,7 @@ class Retrieval:
                 and knowledge["status"] == "complete"
                 and not missing
                 and "dense" not in args
+                and not drafted
             ):
                 base["status"] = "no_relevant_memory"
                 base["coverage"]["optional"] = "no_literal_overlap"
@@ -1372,7 +1394,7 @@ class Retrieval:
         return result
 
     def _blob(self, row: sqlite3.Row) -> bytes:
-        path = self.s.root / "blobs" / row["tenant"] / row["blob"]
+        path = blob_path(self.s.root, row["tenant"], row["blob"])
         private_file(path)
         raw: bytes = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != row["blob"]:

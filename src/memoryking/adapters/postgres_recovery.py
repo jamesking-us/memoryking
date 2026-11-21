@@ -1,8 +1,12 @@
 """Explicit single-tenant native PostgreSQL backup/restore with independent fencing.
 
 Backups stream native relational rows into a signed, checksummed portable archive.
-Maintenance fences new requests before long copying; no five-second release gate
-is held across backup I/O. Control identity/journal/anchor are never backed up here.
+The tenant is fenced only while the database snapshot is established (the exclusive gate
+means no write is in flight, and the repeatable-read transaction sees everything committed
+before it). Rows are then dumped and blob files copied from that snapshot while requests run:
+blobs are immutable and named by their hash, so no fence is needed to copy them. With
+`previous` (an earlier archive of this tenant), a blob that archive holds is hard-linked
+after its copy hashes correctly. Control identity/journal/anchor are never backed up here.
 """
 
 from __future__ import annotations
@@ -14,11 +18,13 @@ import os
 import re
 import secrets
 import threading
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Callable
 
 from psycopg import sql
 
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.local_files import (
     Ownership,
     atomic,
@@ -93,7 +99,10 @@ TABLES_V8 = TABLES_V6 + ("credential_generations",)
 # Schema 9 archives add the lexical statistics and the state of the lexical index.
 TABLES_V9 = TABLES_V8 + ("lexical_state", "lexical_projects", "lexical_terms")
 # Schema 10 archives add supersession links, retirement requests and pins.
-TABLES = TABLES_V9 + ("supersessions", "retirement_requests", "pins")
+TABLES_V10 = TABLES_V9 + ("supersessions", "retirement_requests", "pins")
+# Schema 12 archives add the consolidation runs and the unreviewed-tier policy (schema 11
+# archives hold the same tables as schema 10; they added the operations log's own files).
+TABLES = TABLES_V10 + ("consolidation_runs", "unreviewed_tier")
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
@@ -180,7 +189,12 @@ def pending_journal(pool: Any, control: Path, tenant: str) -> dict[str, Any]:
 
 
 def backup(
-    store: PostgresStore, backup_connection: Any, destination: Path, *, roles: Roles | None = None
+    store: PostgresStore,
+    backup_connection: Any,
+    destination: Path,
+    *,
+    roles: Roles | None = None,
+    previous: Path | None = None,
 ) -> dict[str, Any]:
     roles = roles or Roles()
     if destination.exists():
@@ -191,28 +205,34 @@ def backup(
     owner = Ownership(store.control_path)
     operation = secrets.token_hex(16)
     fenced = False
+    snapshot = ExitStack()
     try:
         with store.transaction() as decision:
+            # The exclusive gate: no write is in flight, and none starts until it is released.
             store._auth(store.credential, "admin", "*", decision.evaluated_ms)
             with store.control.locked():
                 anchor = store.control.read_anchor()
                 anchor.update(state="maintenance", maintenance_operation=operation)
                 store.control.anchor(anchor)
                 fenced = True
-        private_dir(destination, create=True)
+            private_dir(destination, create=True)
+            snapshot.enter_context(backup_connection.transaction())
+            backup_connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            settings(backup_connection, store.tenant)  # the first query takes the snapshot
+            # Back to active before the gate is released: the fence lasted as long as it took
+            # to establish the snapshot, not as long as the copy.
+            _unfence(store, operation)
+            fenced = False
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 11,
+            "schema": 12,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
             "tables": {},
         }
-        blobs: list[str] = []
         total = 0
-        with backup_connection.transaction():
-            backup_connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            settings(backup_connection, store.tenant)
+        with snapshot:
             # How far the operations log was applied in this snapshot; compaction never drops
             # records above the oldest retained backup's position.
             position = backup_connection.execute(
@@ -251,40 +271,114 @@ def backup(
                     "rows": count,
                     "sha256": digest_file(path),
                 }
-            digests = backup_connection.execute(
-                "SELECT DISTINCT blob FROM observations WHERE tenant=%s AND blob IS NOT NULL",
-                (store.tenant,),
-            ).fetchall()
-            private_dir(destination / "blobs", create=True)
-            for (digest,) in digests:
-                if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
-                    raise LocalError("blob_corrupt")
-                source = store.root / "blobs" / store.tenant / digest
-                if digest_file(source) != digest:
-                    raise LocalError("blob_corrupt")
-                raw = source.read_bytes()
-                total += len(raw)
-                if total > ARCHIVE_LIMIT:
-                    raise LocalError("backup_archive_limit")
-                atomic(destination / "blobs" / digest, raw)
-                blobs.append(digest)
+            digests = [
+                row[0]
+                for row in backup_connection.execute(
+                    "SELECT DISTINCT blob FROM observations WHERE tenant=%s AND blob IS NOT NULL",
+                    (store.tenant,),
+                ).fetchall()
+            ]
+        # The snapshot is closed. Blob files are copied now, with requests running.
+        blobs, linked, copied, size = _copy_blobs(
+            store, backup_connection, destination, digests, previous
+        )
+        total += size
+        if total > ARCHIVE_LIMIT:
+            raise LocalError("backup_archive_limit")
         manifest["blob_index"] = write_blob_index(destination, blobs)
         manifest["archive_bytes"] = total
+        manifest["blobs_linked"] = linked
+        manifest["blobs_copied"] = copied
         atomic(destination / "manifest", store.control.sign(manifest).encode())
         sync_dir(destination)
+        atomic(store.control_path / "last-backup", str(store.clock.utc_ms()).encode())
         return manifest
     finally:
+        snapshot.close()
         if fenced:
-            with store.control.locked():
-                anchor = store.control.read_anchor()
-                if (
-                    anchor.get("maintenance_operation") == operation
-                    and anchor["state"] == "maintenance"
-                ):
-                    anchor["state"] = "active"
-                    anchor.pop("maintenance_operation")
-                    store.control.anchor(anchor)
+            _unfence(store, operation)
         owner.close()
+
+
+def _unfence(store: PostgresStore, operation: str) -> None:
+    with store.control.locked():
+        anchor = store.control.read_anchor()
+        if anchor.get("maintenance_operation") == operation and anchor["state"] == "maintenance":
+            anchor["state"] = "active"
+            anchor.pop("maintenance_operation")
+            store.control.anchor(anchor)
+
+
+def _previous_blobs(store: PostgresStore, previous: Path | None) -> tuple[Path, set[str]] | None:
+    """The digests a verified earlier archive of this tenant holds, or None to copy everything."""
+    if previous is None:
+        return None
+    try:
+        manifest = store.control.verify_document(previous / "manifest")
+        if (
+            manifest.get("format") != "memoryking-postgres-1"
+            or manifest.get("store") != store.store_id
+            or manifest.get("tenant") != store.tenant
+            or "blob_index" not in manifest
+        ):
+            return None
+        return previous, set(read_blob_index(previous, manifest["blob_index"]))
+    except (OSError, LocalError):
+        return None
+
+
+def archived_blob(archive: Path, digest: str) -> Path:
+    """An archive's copy of a blob: sharded by hash prefix, or flat as earlier archives wrote it."""
+    sharded = archive / "blobs" / digest[: blobfiles.SHARD] / digest
+    return sharded if sharded.is_file() else archive / "blobs" / digest
+
+
+def _copy_blobs(
+    store: PostgresStore,
+    backup_connection: Any,
+    destination: Path,
+    digests: list[str],
+    previous: Path | None,
+) -> tuple[list[str], int, int, int]:
+    earlier = _previous_blobs(store, previous)
+    directory = destination / "blobs"
+    private_dir(directory, create=True)
+    touched: set[Path] = {directory}
+    kept: list[str] = []
+    linked = copied = total = 0
+    for digest in digests:
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise LocalError("blob_corrupt")
+        shard = directory / digest[: blobfiles.SHARD]
+        if shard not in touched:
+            private_dir(shard, create=True)
+            touched.add(shard)
+        source = blobfiles.blob_path(store.root, store.tenant, digest)
+        try:
+            if earlier is not None and digest in earlier[1]:
+                how, size = blobfiles.link_or_copy(
+                    archived_blob(earlier[0], digest), source, shard / digest, digest
+                )
+            else:
+                how, size = "copied", blobfiles.copy_verified(source, shard / digest, digest)
+        except FileNotFoundError:
+            # Purged after the snapshot: the restore replays the purge from the control journal.
+            # A file missing while an observation still names it is corruption.
+            with backup_connection.transaction():
+                settings(backup_connection, store.tenant)
+                named = backup_connection.execute(
+                    "SELECT 1 FROM observations WHERE tenant=%s AND blob=%s LIMIT 1",
+                    (store.tenant, digest),
+                ).fetchone()
+            if named is not None:
+                raise LocalError("blob_corrupt") from None
+            continue
+        linked += how == "linked"
+        copied += how == "copied"
+        total += size
+        kept.append(digest)
+    blobfiles.sync_directories(touched)
+    return kept, linked, copied, total
 
 
 def restore(
@@ -373,12 +467,13 @@ def restore(
             7: TABLES_V6,
             8: TABLES_V8,
             9: TABLES_V9,
-            10: TABLES,
-            11: TABLES,
+            10: TABLES_V10,
+            11: TABLES_V10,
+            12: TABLES,
         }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)
@@ -415,7 +510,7 @@ def restore(
                 or any(c not in "0123456789abcdef" for c in digest)
             ):
                 raise LocalError("backup_invalid")
-            if digest_file(archive / "blobs" / digest) != digest:
+            if digest_file(archived_blob(archive, digest)) != digest:
                 raise LocalError("backup_invalid")
         with connection.transaction():
             settings(connection, tenant)
@@ -437,8 +532,14 @@ def restore(
             hook("restore_fenced")
             directory = root / "blobs" / tenant
             private_dir(directory, create=True)
+            touched: set[Path] = {directory}
             for digest in blobs:
-                atomic(directory / digest, (archive / "blobs" / digest).read_bytes())
+                shard = blobfiles.shard_directory(directory, digest)
+                with archived_blob(archive, digest).open("rb") as stream:
+                    blobfiles.write_durable(shard / digest, stream, digest)
+                (directory / digest).unlink(missing_ok=True)  # a flat copy is now redundant
+                touched.add(shard)
+            blobfiles.sync_directories(touched)
             # The lease is not archived: a restore starts it again.
             connection.execute("DELETE FROM instance_lease WHERE tenant=%s", (tenant,))
             for table in reversed(TABLES):
@@ -576,11 +677,13 @@ def restore(
             controller.anchor(anchor)
         # Orphan blobs go only after the database and anchor are committed, so an
         # interrupted restore never deletes content a retry would still need.
-        for path in directory.iterdir():
+        swept = {directory}
+        for name, path in blobfiles.iterate(directory):
             private_file(path)
-            if path.name not in live:
+            if name not in live:
                 path.unlink()
-        sync_dir(directory)
+                swept.add(path.parent)
+        blobfiles.sync_directories(swept)
         return credential_path
     finally:
         owner.close()

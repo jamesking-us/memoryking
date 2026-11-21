@@ -311,6 +311,114 @@ def summarize(args: Any) -> dict[str, Any]:
     )
 
 
+def consolidate_command(args: Any) -> dict[str, Any]:
+    """One consolidation pass, or with --watch a loop that runs until interrupted."""
+    import tempfile
+
+    from memoryking import consolidation
+    from memoryking.sdk import LocalClient
+
+    scratch = Path(tempfile.mkdtemp(prefix="mk-cons-"))
+    os.chmod(scratch, 0o700)
+
+    def make(project: str) -> tuple[Any, Any, str | None]:
+        client = LocalClient(args.socket, args.credential, project)
+        conversation, ceiling = consolidation.build_conversation(
+            client, args.egress_policy, args.provider, args.model, scratch / "rec"
+        )
+        return client, conversation, ceiling
+
+    if args.watch:
+        loop = consolidation.ConsolidationLoop(
+            make,
+            [args.project],
+            every_s=duration_ms(args.watch) / 1000,
+            idle_ms=duration_ms(args.idle),
+            limit=args.limit,
+        )
+        make(args.project)  # refuse at once when the policy or provider is unusable
+        try:
+            loop.run()
+        except KeyboardInterrupt:
+            pass
+        return {"status": "stopped", "passes": loop.passes}
+    client, conversation, ceiling = make(args.project)
+    since = int(time.time() * 1000) - duration_ms(args.since) if args.since else None
+    return consolidation.consolidate(
+        client,
+        conversation,
+        project=args.project,
+        since_ms=since,
+        limit=args.limit,
+        max_classification=ceiling,
+    )
+
+
+def render_consolidation(result: dict[str, Any]) -> str:
+    status = result["status"]
+    if status == "nothing_new":
+        return f"Nothing new to consolidate (frontier {result.get('frontier', 0)})."
+    if status == "busy":
+        return "The project is not idle yet; nothing was sent."
+    if status == "not_admitted":
+        return (
+            f"Dispatched {result['observations']} observation(s) to the local recording provider; "
+            "it writes no audit record, so nothing was admitted or filed."
+        )
+    if status == "stopped":
+        return f"Stopped after {result['passes']} pass(es)."
+    lines = [
+        f"Consolidation {status}: {len(result['filed'])} claim(s) filed for review from "
+        f"{result['observations']} observation(s); {result['claims_seen']} drafted."
+    ]
+    if result["dropped"]:
+        lines.append("Dropped, with reasons: " + json.dumps(result["dropped"], sort_keys=True))
+    for item in result["filed"]:
+        note = (
+            f" ({item['relation']['type']} {item['relation']['claim']})"
+            if "relation" in item
+            else ""
+        )
+        lines.append(f"  {item['revision']} [{item['kind']}]{note}")
+    lines.append("Review them with `memoryking review list`; nothing here is accepted.")
+    return "\n".join(lines)
+
+
+def start_consolidation(args: Any, socket: Path) -> Any:
+    """The opt-in schedule inside the daemon: it talks to its own socket as the owner and
+    reaches a model only through the egress policy it was started with."""
+    import tempfile
+
+    from memoryking import consolidation
+    from memoryking.sdk import LocalClient
+
+    if args.egress_policy is None or not args.consolidate_project:
+        raise LocalError("egress_policy_required")
+    scratch = Path(tempfile.mkdtemp(prefix="mk-cons-"))
+    os.chmod(scratch, 0o700)
+
+    def make(project: str) -> tuple[Any, Any, str | None]:
+        client = LocalClient(socket, args.control / "owner.credential", project)
+        conversation, ceiling = consolidation.build_conversation(
+            client,
+            args.egress_policy,
+            args.consolidate_provider,
+            args.consolidate_model,
+            scratch / "rec",
+        )
+        return client, conversation, ceiling
+
+    make(args.consolidate_project[0])  # an unusable provider stops the daemon at start
+    loop = consolidation.ConsolidationLoop(
+        make,
+        list(args.consolidate_project),
+        every_s=duration_ms(args.consolidate_every) / 1000,
+        idle_ms=duration_ms(args.consolidate_idle),
+    )
+    loop.start()
+    return loop
+
+
 def render_audit(result: dict[str, Any]) -> str:
     """A human table of egress records; hashes are shortened, nothing else is."""
     lines = [f"egress policy {result['policy_revision']}"]
@@ -464,6 +572,28 @@ def pin_command(args: Any) -> None:
         f"cli-pin-{args.pin_command}-{kind}-{target}-{int(time.time() * 1000)}",
     )
     print(json.dumps(result))
+
+
+def unreviewed_command(args: Any) -> None:
+    """`memoryking unreviewed on|off|show`: the per-project tier policy (an admin decision)."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    if args.unreviewed_command == "show":
+        result = reviewer.call("unreviewed_tier_show", {})
+    else:
+        result = reviewer.call(
+            "unreviewed_tier",
+            {"mode": args.unreviewed_command},
+            f"cli-unreviewed-{args.unreviewed_command}-{int(time.time() * 1000)}",
+        )
+    if args.json:
+        sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+    else:
+        print(
+            f"Unreviewed drafts in briefings for {args.project}: "
+            + ("ON" if result["enabled"] else "off")
+        )
 
 
 def read_credential(path: Path) -> str:
@@ -740,6 +870,13 @@ def render_health(report: dict[str, Any]) -> str:
         )
     if backlog["truncated"]:
         lines.append("  - ...")
+    drafts = report.get("drafts", {"by_method": {}})
+    for method, entry in drafts["by_method"].items():
+        lines.append(
+            f"Drafts by {method}: {entry['drafted']} drafted, {entry['accepted']} accepted, "
+            f"{entry['rejected']} rejected, {entry['waiting']} waiting; accepted of decided "
+            f"{ratio(entry['accepted_of_decided_ppm'])}"
+        )
     lines += ["", f"Coverage: {report['coverage'].replace('_', ' ')}"]
     return "\n".join(lines) + "\n"
 
@@ -840,16 +977,54 @@ def main() -> int:
                 "context may reach; without it only the local recorder is accepted",
             )
             cmd.add_argument(
+                "--workers",
+                type=int,
+                help="Requests served at once (default 8; 1 to 256)",
+            )
+            cmd.add_argument(
+                "--waiters",
+                type=int,
+                help="Connections that may wait for a free worker, up to five seconds each "
+                "(default 16; 0 to 1024); more are refused as service_busy",
+            )
+            cmd.add_argument(
+                "--health-port",
+                type=int,
+                help="Loopback port serving /healthz (liveness) and /readyz (readiness) "
+                "without credentials; 0 chooses a free port; off by default",
+            )
+            cmd.add_argument(
                 "--summary-idle",
                 default="30m",
                 help="Derive a 'where this left off' summary for a task idle this long "
                 "(e.g. 30m, 2h); 0 disables",
+            )
+            cmd.add_argument(
+                "--consolidate-every",
+                help="Off by default. Run background consolidation this often (e.g. 6h) for "
+                "each --consolidate-project, when it has been idle; needs --egress-policy. "
+                "The daemon process then reads the provider's key file",
+            )
+            cmd.add_argument(
+                "--consolidate-project", action="append", default=[], metavar="PROJECT"
+            )
+            cmd.add_argument("--consolidate-provider", help="A provider in the egress policy")
+            cmd.add_argument("--consolidate-model", help="A model the policy allows for it")
+            cmd.add_argument(
+                "--consolidate-idle", default="15m", help="Quiet time before a pass (15m)"
             )
         if name == "init":
             cmd.add_argument("--tenant", default="main")
             cmd.add_argument("--principal", default="owner")
         if name in {"backup", "restore"}:
             cmd.add_argument("--backup", type=Path, required=True)
+        if name == "backup":
+            cmd.add_argument(
+                "--incremental-from",
+                type=Path,
+                help="An earlier backup of this store on the same filesystem: blobs it holds "
+                "are hard-linked after their hash is verified, not copied",
+            )
         if name == "restore":
             cmd.add_argument(
                 "--lost-anchor-journal-head",
@@ -958,6 +1133,25 @@ def main() -> int:
     summ.add_argument("--model", help="A model the policy allows for that provider")
     summ.add_argument("--json", action="store_true")
     add_binding(summ)
+    cons = commands.add_parser(
+        "consolidate",
+        help="Have a model draft claims from recent observations, for review; never accepts",
+    )
+    cons.add_argument("--socket", type=Path)
+    cons.add_argument("--credential", type=Path, help="Credential with capture and inference")
+    cons.add_argument("--project", required=True)
+    cons.add_argument("--since", help="Only observations recorded within this span, e.g. 7d")
+    cons.add_argument("--limit", type=int, help="Observations per pass, 1 to 64 (24)")
+    cons.add_argument("--egress-policy", type=Path, help="The daemon's policy file")
+    cons.add_argument("--provider", help="A policy provider, or local-recording to dry-run")
+    cons.add_argument("--model", help="A model the policy allows for that provider")
+    cons.add_argument(
+        "--watch",
+        metavar="EVERY",
+        help="Keep running: a pass this often (e.g. 6h) while the project is idle",
+    )
+    cons.add_argument("--idle", default="15m", help="With --watch: quiet time before a pass")
+    cons.add_argument("--json", action="store_true")
     audit = commands.add_parser(
         "egress-audit",
         help="List what left this store for a model provider, and whether it arrived",
@@ -1119,6 +1313,17 @@ def main() -> int:
             target = sub.add_mutually_exclusive_group(required=True)
             target.add_argument("--claim", metavar="REVISION_OR_FAMILY")
             target.add_argument("--observation", metavar="OBSERVATION")
+    un = commands.add_parser(
+        "unreviewed",
+        help="Let briefings show unreviewed drafts in a labelled section (admin; off by default)",
+    )
+    un_commands = un.add_subparsers(dest="unreviewed_command", required=True)
+    for name in ("on", "off", "show"):
+        sub = un_commands.add_parser(name)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
     dr = commands.add_parser(
         "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
     )
@@ -1126,6 +1331,11 @@ def main() -> int:
     dr.add_argument("--credential", type=Path)
     dr.add_argument("--project", required=True)
     dr.add_argument("--limit", type=int, default=16)
+    dr.add_argument(
+        "--no-procedures",
+        action="store_true",
+        help="Skip procedure drafts from outcomes that recur across tasks",
+    )
     dr.add_argument("--key", help="Retry key; default: one per project and day")
     dr.add_argument("--json", action="store_true")
     vault = commands.add_parser(
@@ -1280,6 +1490,8 @@ def main() -> int:
                 "influence",
                 "trust",
                 "draft-proposals",
+                "unreviewed",
+                "consolidate",
                 "save-progress",
                 "resume",
                 "review",
@@ -1551,12 +1763,20 @@ def main() -> int:
                     f"receipt {result['receipt']} · {result['method']} · "
                     f"checkpoint {result['checkpoint']} revision {result['revision']}"
                 )
+        elif args.command == "consolidate":
+            result = consolidate_command(args)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+            else:
+                print(render_consolidation(result))
         elif args.command == "review":
             outcome = review_command(args)
             if outcome:
                 return outcome
         elif args.command == "pin":
             pin_command(args)
+        elif args.command == "unreviewed":
+            unreviewed_command(args)
         elif args.command == "draft-proposals":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})
@@ -1571,7 +1791,11 @@ def main() -> int:
                         "incarnation": context["incarnation"],
                         "action": "draft",
                         "key": args.key or f"draft-{args.project}-{day}",
-                        "args": {"project": args.project, "limit": args.limit},
+                        "args": {
+                            "project": args.project,
+                            "limit": args.limit,
+                            "procedures": not args.no_procedures,
+                        },
                     }
                 },
             )
@@ -1586,6 +1810,17 @@ def main() -> int:
                     f"{len(report['drafted'])} draft(s) filed for review from {report['window']} observations; "
                     f"skipped {json.dumps(report['skipped'], sort_keys=True)}"
                 )
+                procedures = report.get("procedures")
+                if procedures is not None:
+                    for item in procedures["drafted"]:
+                        print(
+                            f"{item['revision']} [{item['polarity']} procedure, {item['tasks']} tasks] {item['text']}"
+                        )
+                    print(
+                        f"{len(procedures['drafted'])} procedure draft(s) filed for review "
+                        f"(they still need a review and a separate activation); "
+                        f"skipped {json.dumps(procedures['skipped'], sort_keys=True)}"
+                    )
         elif args.command == "vault":
             from memoryking import vault as vault_module
 
@@ -1794,6 +2029,7 @@ def main() -> int:
                     signal.signal(signal.SIGTERM, stop)
                     dashboard = None
                     embeddings = None
+                    consolidation_loop = None
                     if args.backup_dir is not None:
                         from memoryking.backups import Policy
 
@@ -1809,6 +2045,14 @@ def main() -> int:
                         from memoryking.adapters.local_embeddings import LocalOnnxReranker
 
                         store.reranker = LocalOnnxReranker(args.reranker_model)
+                    health_server = None
+                    if args.health_port is not None:
+                        from memoryking.health import LocalHealthServer
+
+                        if not 0 <= args.health_port <= 65535:
+                            raise LocalError("invalid_health_configuration")
+                        health_server = LocalHealthServer(store.readiness, args.health_port)
+                        event("serve", "health", port=health_server.start())
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")
@@ -1816,11 +2060,13 @@ def main() -> int:
                         store.dashboard = dashboard
                         dashboard.start()
                     try:
-                        with Server(store) as server:
+                        with Server(store, workers=args.workers, waiters=args.waiters) as server:
                             print(
                                 json.dumps({"ready": True, "socket": str(server.path)}), flush=True
                             )
                             event("serve", "ready", dashboard=dashboard is not None)
+                            if args.consolidate_every:
+                                consolidation_loop = start_consolidation(args, server.path)
                             if store.embedder is not None:
                                 embeddings = EmbeddingLoop(
                                     store,
@@ -1833,12 +2079,16 @@ def main() -> int:
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        if consolidation_loop is not None:
+                            consolidation_loop.stop()
                         if embeddings is not None:
                             embeddings.stop()
                         if dashboard:
                             dashboard.stop()
+                        if health_server:
+                            health_server.stop()
                 elif args.command == "backup":
-                    print(json.dumps(store.backup(args.backup)))
+                    print(json.dumps(store.backup(args.backup, previous=args.incremental_from)))
                 elif args.command == "gc":
                     print(
                         json.dumps(

@@ -8,6 +8,7 @@ from pathlib import Path
 import test_working as helpers
 from migration_helpers import historical_inventory
 
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.handoff import Handoff
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_store import LocalStore
@@ -423,7 +424,7 @@ class HandoffTests(unittest.TestCase):
         prepared = self.prepare()
         raw = self.view(prepared, raw=True, key="file")
         self.assertEqual(json.loads(raw)["status"], "ready")
-        (self.data / "blobs" / self.tenant / self.span["content_hash"]).unlink()
+        blobfiles.blob_path(self.data, self.tenant, self.span["content_hash"]).unlink()
         self.fails("handoff_view_stale", lambda: self.view(prepared, key="file"))
         fresh = self.view(prepared, raw=True)
         self.assertEqual(json.loads(fresh)["status"], "incomplete")
@@ -557,5 +558,5 @@ class HandoffTests(unittest.TestCase):
             historical_inventory(db, 4)
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 18)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 20)
         self.assertEqual(self.view(self.prepare())["checkpoint"]["id"], self.saved["checkpoint"])

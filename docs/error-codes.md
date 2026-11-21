@@ -127,6 +127,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `concurrency_limit` | Four job leases are already live; finish or let them expire before claiming more. |
 
+## consolidation
+
+| Code | What to do |
+| --- | --- |
+| `consolidation_run_invalid` | The consolidation run is unknown, belongs to another principal, or was already admitted or abandoned; prepare a new one. |
+| `consolidation_source_invalid` | A consolidation reply must be the exact reply recorded in a delivered egress audit for this principal and project, from a permit that cited this run's input; pass the permit and the unmodified text. |
+
 ## constraint
 
 | Code | What to do |
@@ -252,6 +259,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `egress_audit_reported` | That egress audit record already has a final outcome; a report is written once. |
 | `egress_classification_denied` | A message cites content above the provider's classification ceiling; rebuild the conversation without it or raise the ceiling in the policy. |
 | `egress_policy_invalid` | The egress policy file is malformed: check revision, provider names, hosts, models, classification ceilings and that plain HTTP is loopback-only. |
+| `egress_policy_required` | Consolidation sends text to a model: pass --egress-policy FILE with --provider and --model (the daemon needs the same policy), or --provider local-recording to dry-run. |
 | `egress_provider_denied` | The provider or model is not in the daemon's egress policy; add it to the policy file and restart `serve --egress-policy`. |
 
 ## embedding
@@ -474,12 +482,14 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `invalid_binding` | Binding values are strings of at most 256 bytes over known fields. |
 | `invalid_capabilities` | Capabilities must be a non-empty list of known names without admin; see the deployment guide. |
 | `invalid_checkpoint` | The checkpoint body does not match the contract; start from the fixture shape. |
+| `invalid_concurrency` | Concurrency limits are whole numbers: workers 1 to 256, waiters 0 to 1,024, shared requests 1 to 1,024. |
 | `invalid_constraint` | Constraints need a rule key, value and effect. |
 | `invalid_content_type` | Send `Content-Type: application/json`. |
 | `invalid_dashboard_configuration` | The dashboard port must be between 0 and 65535. |
 | `invalid_delegation` | A delegation must narrow an existing grant with a bounded ttl_ms; check the caller's own capabilities. |
 | `invalid_duration` | Use a number followed by m, h or d, for example `45m`, `12h` or `30d`. |
 | `invalid_evidence_span` | An evidence span needs an observation, byte range and content hash that match the text. |
+| `invalid_health_configuration` | The health port must be a whole number from 0 to 65535; 0 chooses a free port. |
 | `invalid_identifier` | Identifiers are 1 to 96 ASCII letters, digits, `_` or `-`. |
 | `invalid_interval` | The interval's start must precede its end. |
 | `invalid_operation_id` | Operation ids are identifiers of at most 96 characters. |

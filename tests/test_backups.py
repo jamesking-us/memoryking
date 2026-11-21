@@ -75,10 +75,10 @@ class BackupPolicyTests(unittest.TestCase):
         attempts = 0
         real = self.store.backup
 
-        def counted(target):
+        def counted(target, previous=None):
             nonlocal attempts
             attempts += 1
-            return real(target)
+            return real(target, previous=previous)
 
         self.store.backup = counted
         for _ in range(10):  # ten minutes of daemon checks
