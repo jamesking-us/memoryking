@@ -8,7 +8,7 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 
 | Phase | Goal | State |
 | --- | --- | --- |
-| 0 | Remove the defects that stop normal use at modest size | in progress |
+| 0 | Remove the defects that stop normal use at modest size | done, unreleased |
 | 1 | Harden credentials, delegation and the control journal | planned |
 | 2 | Find the right memory: ranking, word forms, passages, semantic search | planned |
 | 3 | Turn evidence into knowledge without a reviewer always present | planned |
@@ -29,7 +29,7 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 - [x] **P0-9 A scoped constraint does not lock out simple readers.** The lean tools, CLI and hooks always send empty bindings, so one accepted constraint scoped to an environment blocks every recall and resume with `applicability_unknown`, without saying which field is missing. *Change:* let the bridge, CLI and hooks carry session bindings; name the unbound field in the reply; do not let briefing-policy uncertainty block reading a checkpoint the caller wrote, or saving one (the lean save reads the latest checkpoint first, so today a blocked read also refuses the save). *Done when:* tests cover recall, resume and save with and without the binding. *Done: unreleased.*
 - [x] **P0-10 The check is deterministic.** One reranker test (`test_rerank_reorders_only_the_fused_window_and_only_when_asked`) and the knowledge demo run by the docs check (`tools/knowledge_demo.py`, `denied` on its first namespace request) each fail intermittently on an unchanged checkout. *Change:* find and remove the nondeterminism in each, in the product if that is where it is. *Done when:* each passes 30 consecutive runs. *Done: unreleased.*
 - [x] **P0-11 Small defects found while fixing the above.** `memoryking trust set` without `--key` fails for a glob source because the default key contains `*`; the lean `resume` tool advertises a larger budget than the resume contract accepts; a reviewer cannot list proposals once a project holds more than 256 revisions of any state, because the diagnostic query keeps the unfiltered bound; the changelog lacks entries for P0-3 to P0-7. *Done when:* each has a test or an entry. *Done: unreleased, except the lean `resume` budget, moved to P0-12.*
-- [~] **P0-12 Follow-ups from Phase 0.** The lean `resume` tool advertises a larger budget than the resume contract accepts. The reviewer listing of procedures still blocks above 256 revisions, as the knowledge listing did. A resume that returns the caller's own checkpoint while constraints are unresolved omits open operations and the summary, so an uncertain operation is not shown there. `hooks install` does not write session bindings into the installed command. *Done when:* each has a test.
+- [x] **P0-12 Follow-ups from Phase 0.** The lean `resume` tool advertises a larger budget than the resume contract accepts. The reviewer listing of procedures still blocks above 256 revisions, as the knowledge listing did. A resume that returns the caller's own checkpoint while constraints are unresolved omits open operations and the summary, so an uncertain operation is not shown there. `hooks install` does not write session bindings into the installed command. *Done when:* each has a test. *Done: unreleased.*
 
 ## Phase 1: credentials, delegation and the journal
 
