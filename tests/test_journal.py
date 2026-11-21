@@ -1,6 +1,7 @@
 """Journal durability: record size limits, torn tails and the verified-prefix cache."""
 
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -179,9 +180,94 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(cached, fresh)
         self.assertEqual([r["sequence"] for r in fresh], [1, 2, 3, 4, 5])
         data = self.journal_path().read_bytes()
-        self.assertEqual(self.store.control._verified[1].digest(), hashlib.sha256(data).digest())
-        # A rewritten prefix invalidates the cache instead of being trusted.
+        state = self.store.control._cache.state
+        self.assertEqual(state.size, len(data))
+        self.assertEqual(
+            bytes(state.hashes),
+            b"".join(hashlib.sha256(line).digest() for line in data.splitlines()),
+        )
+        # A rewritten file invalidates the cache instead of being trusted. The rewrite keeps
+        # the size and the last line, so only the changed modification time shows it; the
+        # time is set explicitly because a fast test can fall inside one clock tick.
         lines = data.splitlines()
         self.journal_path().write_bytes(b"\n".join([lines[1], lines[0], *lines[2:]]) + b"\n")
+        stat = self.journal_path().stat()
+        os.utime(self.journal_path(), ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
         with self.assertRaises(LocalError):
             self.store.control.journal(self.store.anchor)
+
+    def journal_actions(self, count):
+        """Policy records through the store's own path, to build a journal of a given length."""
+        for _ in range(count):
+            self.serial = getattr(self, "serial", 1000) + 1
+            first = self.capture(self.serial)
+            self.store.purge(self.credential, first["observation"])
+
+    def test_extending_the_cache_checks_only_the_tail_and_keeps_every_other_check(self):
+        self.journal_actions(3)
+        control = self.store.control
+        anchor = dict(self.store.anchor)
+        self.assertEqual(control.verified_count(anchor), 3)
+        # A second handle on the same tree, as another process would be: it appends, and this
+        # one extends its cache from the old position rather than trusting a stale count.
+        other = Control(self.control)
+        other_anchor = dict(anchor)
+        other.append(other_anchor, {"kind": "grant", "tenant": "main"})
+        self.assertEqual(control.verified_count(other_anchor), 4)
+        # The older anchor still matches its own sequence: the longer journal is not a rollback.
+        self.assertEqual(control.verified_count(anchor), 4)
+        # An anchor naming a head the journal does not have at that sequence is refused.
+        wrong = {**other_anchor, "journal_head": "1" * 64}
+        with self.assertRaises(LocalError) as caught:
+            control.verified_count(wrong)
+        self.assertEqual(caught.exception.code, "journal_rollback")
+
+    def test_truncation_and_rewrite_are_never_served_from_the_cache(self):
+        self.journal_actions(3)
+        control = self.store.control
+        anchor = dict(self.store.anchor)
+        control.journal(anchor)
+        lines = self.journal_path().read_bytes().splitlines()
+        # Shorter than the cache and the anchor: rollback, not a cache hit.
+        self.journal_path().write_bytes(b"\n".join(lines[:2]) + b"\n")
+        with self.assertRaises(LocalError) as caught:
+            control.verified_count(anchor)
+        self.assertEqual(caught.exception.code, "journal_rollback")
+        # Truncated and rewritten with a different (longer) tail: the last verified line no
+        # longer matches the cached head, so everything is verified again and the damage found.
+        self.journal_path().write_bytes(
+            b"\n".join([lines[0], lines[2], lines[1], lines[2]]) + b"\n"
+        )
+        with self.assertRaises(LocalError):
+            control.verified_count(anchor)
+        self.journal_path().write_bytes(b"\n".join(lines) + b"\n")
+        self.assertEqual(control.verified_count(anchor), 3)
+
+    def test_a_rewrite_that_keeps_size_head_and_time_cannot_change_what_was_verified(self):
+        self.journal_actions(3)
+        control = self.store.control
+        anchor = dict(self.store.anchor)
+        before = control.journal(anchor)
+        data = self.journal_path().read_bytes()
+        stat = self.journal_path().stat()
+        lines = data.splitlines()
+        self.journal_path().write_bytes(b"\n".join([lines[1], lines[0], lines[2]]) + b"\n")
+        os.utime(self.journal_path(), ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        # The cache serves only records it verified, never the rewritten bytes...
+        self.assertEqual(control.journal(anchor), before)
+        # ...and a cold verification, which is what a restart does, refuses the damage.
+        with self.assertRaises(LocalError):
+            Control(self.control).journal(anchor)
+
+    def test_append_after_cache_use_matches_a_cold_reader(self):
+        self.journal_actions(2)
+        self.assertEqual(
+            self.store.control.journal(self.store.anchor),
+            Control(self.control).journal(self.store.anchor),
+        )
+        self.journal_actions(1)
+        cold = Control(self.control)
+        self.assertEqual(len(cold.journal(self.store.anchor)), 3)
+        self.assertEqual(
+            self.store.control.journal(self.store.anchor), cold.journal(self.store.anchor)
+        )

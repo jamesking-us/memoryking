@@ -323,6 +323,39 @@ class LocalStore(StoreCore):
         return control / "owner.credential"
 
     @classmethod
+    def pending_journal(cls, root: Path, control: Path) -> dict[str, Any]:
+        """Offline: journal records the database has not applied, without applying any.
+
+        Takes the ownership locks, so it refuses while a daemon holds the store, and opens the
+        database read-only. Each entry names the sequence, kind and tenant and the error from
+        the last attempt to apply it; record content is never printed, and no record is
+        skipped or altered. The journal and anchor are verified exactly as at open.
+        """
+        paths(root, control)
+        private_dir(root)
+        private_dir(control)
+        owner = Ownership(root)
+        try:
+            control_owner = Ownership(control)
+            try:
+                controller = Control(control)
+                anchor = controller.read_anchor()
+                held = controller.verified_count(anchor)
+                with sqlite3.connect(f"file:{root / 'store.sqlite'}?mode=ro", uri=True) as db:
+                    applied = int(
+                        db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
+                    )
+                if applied > held:
+                    raise LocalError("journal_rollback")
+                return controller.describe_pending(
+                    controller.records_after(anchor, applied), applied, held
+                )
+            finally:
+                control_owner.close()
+        finally:
+            owner.close()
+
+    @classmethod
     def rotate_owner(
         cls,
         root: Path,
@@ -460,7 +493,7 @@ class LocalStore(StoreCore):
             self.db.commit()
             self.fault("after_commit")
             decision.check(self.clock)
-        except BaseException:
+        except BaseException as exc:
             try:
                 self.db.rollback()
                 applied = int(
@@ -468,6 +501,22 @@ class LocalStore(StoreCore):
                 )
                 if self.anchor["journal_sequence"] > applied:
                     self.healthy = False
+                    if (
+                        isinstance(exc, LocalError)
+                        and exc.code == "release_expired"
+                        and all(
+                            record["action"]["kind"] != "operation"
+                            for record in self.control.records_after(self.anchor, applied)
+                        )
+                    ):
+                        # A policy record was journalled and only ran out of its request
+                        # budget (a long purge): apply it now, without one, instead of staying
+                        # fenced until a restart would do exactly that. The caller still gets
+                        # the expiry. Operation records keep the fence: a tool effect whose
+                        # acknowledgment was lost must be reconciled after a restart, and any
+                        # other failure also leaves the fence in place.
+                        self._replay_journal()
+                        self.healthy = True
             except Exception:
                 # Never let cleanup mask the original failure; fail closed instead.
                 self.healthy = False
@@ -495,28 +544,38 @@ class LocalStore(StoreCore):
             raise
 
     def _replay_journal(self) -> None:
-        records = self.control.journal(self.anchor)
+        applied = int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0])
+        held = self.control.verified_count(self.anchor)
         # Journal first, database second, anchor third: the database can never have applied
         # more records than the verified journal holds. A larger position means the journal
         # tail was lost or this database was paired with another control tree; replay would
         # skip those records silently, so the store stays closed.
-        if int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]) > len(
-            records
-        ):
+        if applied > held:
             raise LocalError("journal_rollback")
-        self.db.execute("BEGIN IMMEDIATE")
-        try:
-            for record in records:
+        # Each record commits on its own, with no request budget, so a record that takes
+        # long (a purge) can finish, and progress survives an interruption or a later failure.
+        # A record that fails is noted for the operator and raised; none is ever skipped.
+        for record in self.control.records_after(self.anchor, applied):
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
                 self._apply(record, self.clock.utc_ms())
-            self.db.commit()
-        except Exception:
-            self.db.rollback()
-            raise
-        if records:
-            self.anchor["journal_sequence"] = records[-1]["sequence"]
-            self.anchor["journal_head"] = hashlib.sha256(
-                self.control.sign(records[-1]).encode()
-            ).hexdigest()
+                self.db.commit()
+            except BaseException as exc:
+                self.db.rollback()
+                self.control.note_apply_failure(record, exc)
+                raise
+            if self.anchor["journal_sequence"] < record["sequence"]:
+                self.anchor["journal_sequence"] = record["sequence"]
+                self.anchor["journal_head"] = hashlib.sha256(
+                    self.control.sign(record).encode()
+                ).hexdigest()
+                self.control.anchor(self.anchor)
+            self.control.clear_apply_failure(record["sequence"])
+        if self.anchor["journal_sequence"] < held:
+            # An append that crashed before its anchor write: the records verified, so the
+            # anchor is moved over them now, as a replay always did.
+            self.anchor["journal_sequence"] = held
+            self.anchor["journal_head"] = self.control.head(held)
             self.control.anchor(self.anchor)
 
     def gc(self) -> int:

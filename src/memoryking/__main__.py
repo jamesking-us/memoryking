@@ -614,6 +614,17 @@ def main() -> int:
     doc.add_argument("--reranker-model", type=Path, help="Reranker directory to verify")
     doc.add_argument("--backup-dir", type=Path, help="Scheduled backup directory to check")
     doc.add_argument("--backup-every", help="Backup policy interval the directory should meet")
+    journal = commands.add_parser(
+        "journal", help="Inspect the control journal (offline; stop the daemon first)"
+    )
+    journal_commands = journal.add_subparsers(dest="journal_command", required=True)
+    pending = journal_commands.add_parser(
+        "pending",
+        help="List journal records the database has not applied: sequence, kind, tenant and "
+        "the error from the last attempt, never record content",
+    )
+    pending.add_argument("--store", type=Path)
+    pending.add_argument("--control", type=Path)
     cred = commands.add_parser("credential", help="Issue, list and revoke agent credentials")
     cred_commands = cred.add_subparsers(dest="credential_command", required=True)
     rotate_owner = cred_commands.add_parser(
@@ -1057,6 +1068,8 @@ def main() -> int:
             failed = sum(level == "fail" for level, _, _ in findings)
             print(f"{len(findings)} checks, {failed} failed")
             return 1 if failed else 0
+        elif args.command == "journal":
+            print(json.dumps(LocalStore.pending_journal(args.store, args.control)))
         elif args.command == "credential" and args.credential_command == "rotate-owner":
             path = LocalStore.rotate_owner(args.store, args.control)
             print(json.dumps({"owner_credential": str(path), "rotated": True}))
