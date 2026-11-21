@@ -63,7 +63,9 @@ For capture, keep a stable key and stable source-event identity for the same eve
 
 ## MCP integration
 
-The local bridge connects an MCP-capable host to an already running local service. Use absolute paths in your host's configuration:
+The quickest route is `memoryking setup <claude-code|codex|generic> --project NAME` ([getting started](getting-started.md#2-connect-your-agent)): it creates the store if needed, starts the service, issues one agent credential, registers the lean bridge and installs the hooks under that same credential. What follows is the manual configuration it writes for you.
+
+The local bridge connects an MCP-capable host to a running local service, and with a store profile that allows it (`profile add --autostart`) it starts the service itself when the socket is gone. Spell the paths out, or name a store profile with `--store-profile` (the bridge's `--profile` chooses the tool set, not the store), and add `--profile lean` unless a program, not a model, drives the tools:
 
 ```json
 {
@@ -74,7 +76,8 @@ The local bridge connects an MCP-capable host to an already running local servic
         "-m", "memoryking.adapters.stdio",
         "--socket", "/absolute/path/to/store/service.sock",
         "--credential", "/absolute/path/to/private/agent.credential",
-        "--project", "demo"
+        "--project", "demo",
+        "--profile", "lean"
       ]
     }
   }
@@ -234,10 +237,10 @@ Every claim carries the time it became valid and the position at which it was re
 
 ## Hooks that load and save memory by themselves
 
-Claude Code, Codex and Grok all run command hooks at the same three moments, and MemoryKing ships one command for each. Install them once per project (or per user) and every session on that host starts briefed and ends saved, whatever model is driving:
+Claude Code, Codex and Grok all run command hooks at the same three moments, and MemoryKing ships one command for each. Install them once and every session on that host starts briefed and ends saved, whatever model is driving. `memoryking setup` does this under the same agent credential as the MCP bridge and writes your user-level host file, not the project's shared one. By hand:
 
 ```sh
-.venv/bin/python -m memoryking --profile home hooks install --host claude --project demo --task retry-fix
+.venv/bin/python -m memoryking hooks install --host claude --scope user --project demo --socket "$HOME/.memoryking-data/service.sock" --credential "$HOME/.memoryking-control/agent.credential"
 ```
 
 | Moment | Host event | What `memoryking hook …` does |
@@ -246,7 +249,7 @@ Claude Code, Codex and Grok all run command hooks at the same three moments, and
 | Before the transcript is compacted | `PreCompact` | `pre-compact` captures the tail of the transcript (user turns, assistant text and tool errors from the JSONL, bounded to 16 KiB) plus any compaction instructions as an observation under source `<host>-compact`, and with `--task` saves a minimal checkpoint that references it. The checkpoint holds the newest 2,000 characters of the tail and goes to its own stream, `<task>--mkhook`, so it never replaces a checkpoint the agent saved on `<task>`; each hook has its own retry key, so pre-compact followed by session-end both succeed. |
 | Session end | `SessionEnd` | `session-end` captures the host's last assistant message when it is given, else the transcript tail, under source `<host>-session`. |
 
-The installer merges into the host's own file and leaves every other hook alone: `.claude/settings.json` for Claude Code, `.codex/hooks.json` for Codex and `.grok/hooks/memoryking.json` for Grok, under the project directory or, with `--scope user`, under your home directory. `--print` shows the merged file without writing it and `--remove` takes MemoryKing's entries out again. Commands are written with absolute paths and the profile (or `--socket` and `--credential`) spelled out, because hosts run hooks without your shell's environment; a profile's `bindings` therefore reach the hooks, while `MEMORYKING_BINDINGS` does only if the host passes its environment through (otherwise install with `--binding environment=prod`, repeatable, which writes the binding into each installed command so the hooks resolve constraints as the MCP bridge does; flags win over both). Running the installer twice with the same arguments is a no-op, and changing the bindings rewrites MemoryKing's entries in place.
+The installer merges into the host's own file and leaves every other hook alone: `.claude/settings.json` for Claude Code, `.codex/hooks.json` for Codex and `.grok/hooks/memoryking.json` for Grok, under the project directory or, with `--scope user`, under your home directory. `--print` shows the merged file without writing it and `--remove` takes MemoryKing's entries out again. Commands are written with absolute paths and the profile (or `--socket` and `--credential`) spelled out, because hosts run hooks without your shell's environment; a profile's `bindings` therefore reach the hooks, while `MEMORYKING_BINDINGS` does only if the host passes its environment through (otherwise install with `--binding environment=prod`, repeatable, which writes the binding into each installed command so the hooks resolve constraints as the MCP bridge does; flags win over both). A hook acts as the credential it is given. With only `--profile NAME` that is the profile's credential, which is the owner's unless the profile names another, and the owner is a different principal from the agent the MCP bridge runs as: the hooks' saves are then refused (`checkpoint_writer_denied`, on stderr only) and the session start cannot see the agent's checkpoint. Give the hooks the bridge's credential, as `setup` does. Running the installer twice with the same arguments is a no-op, and changing the bindings rewrites MemoryKing's entries in place.
 
 What the hooks read and scrub. Tool-call inputs (a file body passed to a write tool, a command) and successful tool results are never read; failed tool results are. Before anything is stored, the hooks replace common secret shapes with `[REDACTED]` and add a line with the count to the capture: private-key blocks, `sk-` and `rk-` keys, Stripe-style `sk_live_` keys, AWS access key ids, GitHub, Slack and Google API tokens, JWTs, bearer tokens, and the value in `password=`, `secret:`, `api_key=`, `access_key=` or `*_token=` assignments. This is a safety net, not a guarantee: a secret in another shape, split across lines, encoded, or written in prose is stored as written, and a harmless value can be replaced. Keep secrets out of transcripts, and use `trust` rules to hold sources you do not trust. Everything is deterministic; no model is called.
 

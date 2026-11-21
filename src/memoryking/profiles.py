@@ -29,6 +29,7 @@ FIELDS = (
     "backup_every",
     "backup_keep",
     "bindings",
+    "autostart",
 )
 PATH_FIELDS = (
     "store",
@@ -85,6 +86,10 @@ def validate(name: str, values: Any) -> dict[str, Any]:
         ):
             raise LocalError("profile_config_invalid")
         clean["backup_every"] = values["backup_every"]
+    if "autostart" in values:
+        if not isinstance(values["autostart"], bool):
+            raise LocalError("profile_config_invalid")
+        clean["autostart"] = values["autostart"]
     if "bindings" in values:
         from memoryking import session_bindings
 
@@ -153,6 +158,9 @@ def render(profiles: dict[str, dict[str, Any]]) -> str:
                         f"{json.dumps(k)} = {json.dumps(v)}" for k, v in sorted(value.items())
                     )
                     lines.append(f"{field} = {{ {pairs} }}")
+                    continue
+                if isinstance(value, bool):
+                    lines.append(f"{field} = {'true' if value else 'false'}")
                     continue
                 lines.append(
                     f"{field} = {value}"

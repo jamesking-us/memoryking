@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from time import monotonic
@@ -11,7 +12,7 @@ from typing import Any, BinaryIO
 
 from jsonschema import Draft202012Validator
 
-from memoryking import lean, session_bindings
+from memoryking import daemon, lean, profiles, session_bindings
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError
@@ -166,10 +167,10 @@ class StdioBridge:
                 outgoing.flush()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--socket", type=Path, required=True)
-    parser.add_argument("--credential", type=Path, required=True)
+    parser.add_argument("--socket", type=Path, help="Default: the store profile's socket")
+    parser.add_argument("--credential", type=Path, help="Default: the store profile's credential")
     parser.add_argument("--project", required=True)
     parser.add_argument(
         "--profile",
@@ -197,9 +198,18 @@ def main() -> int:
         "--store-profile",
         help="Named store profile whose `bindings` apply (default MEMORYKING_PROFILE)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
+        name = args.store_profile or os.environ.get("MEMORYKING_PROFILE")
+        if name and (args.socket is None or args.credential is None):
+            resolved = profiles.resolve(name)
+            args.socket = args.socket or Path(resolved["socket"])
+            args.credential = args.credential or Path(resolved["credential"])
+        if args.socket is None or args.credential is None:
+            raise LocalError("socket_required" if args.socket is None else "credential_required")
         bindings = session_bindings.resolve(args.binding, profile=args.store_profile)
+        if name and profiles.resolve(name).get("autostart"):
+            daemon.ensure(name)  # the profile lets the bridge start the daemon
         client = LocalClient(args.socket, args.credential, args.project, bindings=bindings)
         StdioBridge(client, args.profile, args.allow_chat_review).serve(
             sys.stdin.buffer, sys.stdout.buffer

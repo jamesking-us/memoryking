@@ -63,7 +63,7 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 
 ## Phase 4: adoption
 
-- [ ] **P4-1 One command to connect a host.** *Change:* `memoryking setup <host> --project P` creates the store if needed, starts the daemon, issues a credential with the capabilities the tools need, registers the lean MCP profile and installs hooks under the same principal; the bridge starts the daemon when it is not running.
+- [x] **P4-1 One command to connect a host.** *Change:* `memoryking setup <host> --project P` creates the store if needed, starts the daemon, issues a credential with the capabilities the tools need, registers the lean MCP profile and installs hooks under the same principal; the bridge starts the daemon when it is not running. *Done: unreleased. For Claude Code the registration command is printed, not written, because its MCP file format is not documented in this repository; Codex's `config.toml` block and both hosts' hook files are written. Tested on Linux with real processes; not exercised on macOS or against the real hosts.*
 - [ ] **P4-2 A small, standard MCP surface.** *Change:* lean is the default profile; unused schema definitions are pruned from the full catalog; replies return Markdown as content with the envelope as structured content; lean is served over HTTP; current protocol revisions are accepted; server instructions say when to recall and remember.
 - [ ] **P4-3 Lean tools to follow up.** *Change:* `fetch` a cited source, give `feedback`, list recent memory.
 - [ ] **P4-4 Errors a model can recover from.** *Change:* validation failures name the failing field and the allowed values as tool results; denials name the missing capability.
