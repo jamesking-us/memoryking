@@ -304,7 +304,7 @@ The shared profile has the same rule per tenant (`doctor` covers the local profi
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 14 and PostgreSQL 9 (archive schema 7). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 17 and PostgreSQL 12 (archive schema 10). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 

@@ -547,7 +547,8 @@ export class Observatory {
         const ranking = await this.command("experience", "ranking_inspect");
         const held = await this.command("inspection", "held");
         const rules = await this.command("inspection", "trust_list");
-        if (this.unchanged(knowledge, constraints, procedures, ranking, held, rules))
+        const retirements = await this.command("knowledge", "retirements");
+        if (this.unchanged(knowledge, constraints, procedures, ranking, held, rules, retirements))
             return;
         this.output.replaceChildren(e("h3", "Review queue & evidence quality"), e("p", "Source content is untrusted evidence. Review changes lifecycle authority; procedure activation is separate and grants no execution privileges. A policy change requires a new browser sign-in.", "integrity"));
         for (const [name, data, operation] of [
@@ -590,6 +591,7 @@ export class Observatory {
         }
         this.output.append(detail("Active ranking and evaluation evidence", ranking));
         this.output.append(this.heldSection(held, rules));
+        this.output.append(this.retirementSection(retirements));
         const drafting = e("section");
         drafting.append(e("h3", "Draft proposals from repeated evidence"), e("p", "Files a proposal for every name that several independent observations share, with one evidence span per source. Drafts wait here for review like any proposal; nothing becomes knowledge by itself.", "integrity"), button("Draft proposals", () => {
             void this.run(async () => {
@@ -607,6 +609,9 @@ export class Observatory {
         const reason = field(form, "Decision reason (identifier)", "reviewed_in_dashboard");
         reason.required = true;
         reason.pattern = "[A-Za-z0-9_\\-]{1,96}";
+        const note = operation === "knowledge" && action === "review"
+            ? field(form, "Note for the record (free text, optional)", "")
+            : null;
         const breadth = field(form, "I reviewed the applicability breadth", "", "checkbox");
         form.append(e("button", "Confirm " + actionLabel, "primary"), button("Cancel", () => form.remove()));
         form.onsubmit = (event) => {
@@ -620,12 +625,42 @@ export class Observatory {
                 };
                 if (action === "review")
                     args.breadth_reviewed = breadth.checked;
+                if (note && note.value.trim())
+                    args.note = note.value.trim();
                 await this.mutate(operation, action, args);
             });
         };
         this.output.querySelector(".review-confirm")?.remove();
         this.output.append(form);
         reason.focus();
+    }
+    /** Records an agent asked to forget: an admin approves (erases) or a reviewer dismisses. */
+    retirementSection(data) {
+        const section = e("section");
+        section.append(e("h3", "Retirement requests"), e("p", "An agent cannot erase a memory. It asks here. Approving erases the record and what was built from it (admin only, like any purge); dismissing keeps it. Until decided, the record is marked as retirement requested and hidden from its requester's own briefings.", "integrity"));
+        const items = rows(data.items);
+        if (!items.length)
+            section.append(e("p", "No retirement requests in this project."));
+        for (const item of items) {
+            const card = e("article", "", "review-card");
+            card.append(e("h4", String(item.preview ?? item.observation)), e("p", `${String(item.request)} · ${String(item.observation)} · asked by ${String(item.requested_by)}: ${String(item.note)}`));
+            const controls = e("div", "", "actions");
+            for (const decision of ["approve", "dismiss"])
+                controls.append(button(decision === "approve" ? "Approve (erase)" : "Dismiss", () => {
+                    void this.run(async () => {
+                        await this.mutate("knowledge", "retire_decide", {
+                            request: String(item.request),
+                            decision,
+                            reason: decision === "approve"
+                                ? "approved_in_dashboard"
+                                : "dismissed_in_dashboard",
+                        });
+                    });
+                }));
+            card.append(controls);
+            section.append(card);
+        }
+        return section;
     }
     /** Held captures from untrusted sources, with release buttons and the trust rules. */
     heldSection(held, rules) {

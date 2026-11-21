@@ -54,11 +54,11 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 
 ## Phase 3: evidence into knowledge
 
-- [ ] **P3-1 Review from the terminal and from chat.** *Change:* `memoryking review list|accept|reject`; a lean tool that lets an agent present a proposal for the user to confirm.
+- [x] **P3-1 Review from the terminal and from chat.** *Change:* `memoryking review list|accept|reject`; a lean tool that lets an agent present a proposal for the user to confirm. *Done: unreleased.* `review list|show|accept|reject` (plus `--as constraint`, `retire-approve`, `retire-dismiss`) and the lean `propose` and `confirm` tools; `confirm` is off unless the bridge starts with `--allow-chat-review`. Not done: a TTY prompt or interactive review loop.
 - [ ] **P3-2 A labelled tier between raw notes and accepted knowledge.** *Change:* agent-extracted facts that briefings may include, always marked unreviewed, never as constraints, on by policy per project.
 - [ ] **P3-3 Background consolidation that drafts, never accepts.** *Change:* an opt-in pass, under the egress policy, in which a model drafts claims from recent evidence; every claim must cite spans that exist verbatim; drafts enter the existing proposal lifecycle; contradictions with accepted claims are filed as conflicts.
-- [ ] **P3-4 Corrections.** *Change:* `supersedes` on capture; lean `correct` and `forget` that file a retirement with the usual authority; a superseded record stops appearing beside its replacement.
-- [ ] **P3-5 A session start that needs no query.** *Change:* constraints, pinned items, the latest checkpoint and recent decisions, within a budget.
+- [x] **P3-4 Corrections.** *Change:* `supersedes` on capture; lean `correct` and `forget` that file a retirement with the usual authority; a superseded record stops appearing beside its replacement. *Done: unreleased.* `supersedes` on capture and lean `remember`, lean `correct` and `forget`; retirement is a request that only an admin approves (a reviewer can dismiss). A superseded record is hidden only from briefings; catalog, graph, fetch and resume still show it.
+- [x] **P3-5 A session start that needs no query.** *Change:* constraints, pinned items, the latest checkpoint and recent decisions, within a budget. *Done: unreleased.* `recall --start`, the hook default and `pin add|remove|list`. Decisions are recognised by source name (`decision`, `instruction`, `user`, with an optional `-` or `_` suffix), not inferred from text; quality on real sessions is unmeasured beyond a 50-session synthetic test.
 - [ ] **P3-6 Procedures learned from outcomes.** *Change:* draft procedures from repeated successful and failed attempts recorded in checkpoints, into the same review lifecycle.
 
 ## Phase 4: adoption
