@@ -210,11 +210,12 @@ class Execution:
                 )
             current_scope = scope_hash(body["acceptance"])
             try:
-                operations = (
-                    []
-                    if recorded_position is not None
-                    else self.w._operations(who, args, at, include_all=True)[0]
-                )
+                operations: list[dict[str, Any]] = []
+                operations_truncated = False
+                if recorded_position is None:
+                    operations, _, operations_truncated = self.w._operations(
+                        who, args, at, include_all=True
+                    )
             except LocalError:
                 return {
                     **result,
@@ -281,6 +282,7 @@ class Execution:
                 "capture_gaps": body["capture"]["gaps"],
                 "heartbeat": {"status": "unknown", "recorded_ms": None},
                 "repository_freshness": "not_evaluated_by_task_projection",
+                "operations_truncated": operations_truncated,
                 "operations_coverage": "current"
                 if recorded_position is None
                 else "historical_operation_versions_not_retained",

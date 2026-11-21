@@ -592,6 +592,89 @@ class KnowledgeTests(unittest.TestCase):
         with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 1):
             self.assertEqual(self.constraints()["reason"], "constraint_resolution_incomplete")
 
+    def claim_body(self, kind, label):
+        """A distinct claim of `kind`; constraints get their own rule so none conflict."""
+        if kind == "knowledge":
+            return self.body(label)
+        return self.body(
+            label, kind=kind, authority="project", rule_key=label, effect="require", rule_value="x"
+        )
+
+    def retired_and_unreviewed(self, kind, count):
+        """File `count` revisions each of three states that must never count toward the bound."""
+        for index in range(count):
+            self.propose(self.claim_body(kind, f"unreviewed{index}"), key=f"{kind}-u{index}")
+            rejected = self.propose(
+                self.claim_body(kind, f"rejected{index}"), key=f"{kind}-x{index}"
+            )
+            self.review(rejected, decision="reject")
+            retired = self.review(
+                self.propose(self.claim_body(kind, f"retired{index}"), key=f"{kind}-d{index}")
+            )
+            self.review(retired, decision="deprecate")
+
+    def test_registry_bound_counts_only_revisions_accepted_at_the_queried_position(self):
+        from unittest.mock import patch
+
+        for kind, run in (("knowledge", self.query), ("constraint", self.constraints)):
+            with (
+                self.subTest(kind=kind),
+                patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3),
+            ):
+                accepted = [
+                    self.review(
+                        self.propose(self.claim_body(kind, f"live{i}"), key=f"{kind}-live{i}")
+                    )
+                    for i in range(3)
+                ]
+                before = self.store.status(self.owner, "p")["position"]
+                self.retired_and_unreviewed(kind, 4)  # 12 revisions beyond the bound of 3
+                result = run()
+                self.assertEqual(result["status"], "complete")
+                self.assertEqual(
+                    sorted(i["revision"] for i in result["items"]),
+                    sorted(a["revision"] for a in accepted),
+                )
+                if kind == "knowledge":
+                    # A historical query still sees the revisions that were accepted then, and
+                    # the reviewer diagnostic keeps its unfiltered, bounded scan.
+                    self.assertEqual(len(run(recorded_position=before)["items"]), 3)
+                    self.assertEqual(run(diagnostic=True)["status"], "blocked")
+                # A fourth accepted revision does exceed the bound: nothing is dropped silently.
+                self.review(self.propose(self.claim_body(kind, "extra"), key=f"{kind}-extra"))
+                blocked = run()
+                self.assertEqual(blocked["status"], "blocked")
+                self.assertEqual(blocked["items"], [])
+                self.assertEqual(
+                    blocked["reason"],
+                    "constraint_resolution_incomplete"
+                    if kind == "constraint"
+                    else "knowledge_resolution_incomplete",
+                )
+
+    def test_accepted_claims_survive_hundreds_of_unreviewed_drafts(self):
+        accepted = [
+            self.review(self.propose(self.body(f"live {i}"), key=f"live{i}")) for i in range(3)
+        ]
+        for index in range(300):
+            self.propose(self.body(f"draft {index}"), key=f"draft{index}")
+        result = self.query()
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            sorted(i["revision"] for i in result["items"]),
+            sorted(a["revision"] for a in accepted),
+        )
+
+    def test_purged_accepted_constraint_still_blocks_among_retired_revisions(self):
+        from unittest.mock import patch
+
+        with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3):
+            self.review(self.propose(self.claim_body("constraint", "kept"), key="kept"))
+            self.retired_and_unreviewed("constraint", 3)
+            self.assertEqual(self.constraints()["status"], "complete")
+            self.store.purge(self.owner, self.obs["observation"])
+            self.assertEqual(self.constraints()["reason"], "essential_policy_unavailable")
+
     def test_migration_preserves_version_one_capture(self):
         self.store.close()
         import sqlite3
