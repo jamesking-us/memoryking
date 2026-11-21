@@ -156,6 +156,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `credential_audience_mismatch` | The credential was issued for a different service audience; use one issued by this deployment. |
 | `credential_output_exists` | The output file already exists; choose a new private file name. |
 | `credential_output_required` | A grant returns a secret; pass `--credential-output NEW_FILE` to save it privately. |
+| `credential_replaced` | The credential was rotated or its principal was revoked; ask an administrator to issue the current one (`memoryking credential issue`). |
 | `credential_required` | Send a credential: Bearer header on HTTP, `credential` on the socket, or `--credential` on the CLI. |
 | `credential_required_path` | Pass `--credential FILE` or use `--profile NAME`. |
 

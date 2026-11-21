@@ -386,6 +386,50 @@ class PostgresStoreTests(unittest.TestCase):
                     self.pool, self.root, self.control, self.tenant, credential, clock=self.clock
                 )
 
+    def test_a_delegated_token_dies_when_its_issuer_or_its_subject_is_rotated(self):
+        # Decision: a delegated token carries the subject's generation (it acts as the
+        # subject) and the issuer's generation at delegation, so rotating either retires it.
+        def usable(token):
+            try:
+                with PostgresStore(
+                    self.pool, self.root, self.control, self.tenant, token, clock=self.clock
+                ) as store:
+                    with store.transaction() as decision:
+                        store._auth(token, "read", "demo", decision.evaluated_ms)
+            except LocalError as exc:
+                return exc.code
+            return None
+
+        def delegate(issuer):
+            with PostgresStore(
+                self.pool, self.root, self.control, self.tenant, issuer, clock=self.clock
+            ) as store:
+                return store.delegate("subject", "demo", ["read"], 60_000)
+
+        with self.store() as store:
+            issuer = store.grant(self.credential, "issuer", "demo", ["read", "capture"])
+            subject = store.grant(self.credential, "subject", "demo", ["read"])
+        delegated = delegate(issuer)
+        self.assertIsNone(usable(delegated))
+        with self.store() as store:
+            issuer = store.grant(
+                self.credential, "issuer", "demo", ["read", "capture"], rotate=True
+            )
+        self.assertEqual("credential_replaced", usable(delegated))
+        # The rotated issuer delegates again; the new token works.
+        delegated = delegate(issuer)
+        self.assertIsNone(usable(delegated))
+        with self.store() as store:
+            subject = store.grant(self.credential, "subject", "demo", ["read"], rotate=True)
+        self.assertEqual("credential_replaced", usable(delegated))
+        self.assertIsNone(usable(subject))
+        delegated = delegate(issuer)
+        self.assertIsNone(usable(delegated))
+        # Revoking the issuer's access retires the delegation as well.
+        with self.store() as store:
+            store.revoke(self.credential, "issuer", "demo")
+        self.assertEqual("denied", usable(delegated))
+
     def test_archive_commits_to_a_blob_index_and_legacy_embedded_list_restores(self):
         from memoryking.adapters.local_files import atomic
         from memoryking.adapters.postgres_recovery import backup, restore
@@ -401,7 +445,7 @@ class PostgresStoreTests(unittest.TestCase):
             control = store.control
         self.assertEqual(2, manifest["blob_index"]["count"])
         self.assertNotIn("blobs", manifest)
-        self.assertEqual(7, manifest["schema"])
+        self.assertEqual(8, manifest["schema"])
         index = (archive / "blob-index").read_bytes()
         digests = index.decode().splitlines()
 
@@ -427,6 +471,11 @@ class PostgresStoreTests(unittest.TestCase):
         legacy = dict(manifest)
         legacy.pop("blob_index")
         legacy.update(schema=6, blobs=digests)
+        legacy["tables"] = {
+            name: meta
+            for name, meta in manifest["tables"].items()
+            if name != "credential_generations"
+        }
         atomic(archive / "manifest", control.sign(legacy).encode())
         (archive / "blob-index").unlink()
         self.credential = restore_archive()

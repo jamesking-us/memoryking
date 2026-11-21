@@ -377,6 +377,9 @@
                 "null"
               ],
               "minimum": 0
+            },
+            "rotate": {
+              "type": "boolean"
             }
           },
           "required": [

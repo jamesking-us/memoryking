@@ -11,6 +11,7 @@ HINTS: dict[str, str] = {
     # Authorization and identity
     "denied": "The credential lacks the capability or project for this action; use a credential with the right grant or ask the owner for one.",
     "credential_required": "Send a credential: Bearer header on HTTP, `credential` on the socket, or `--credential` on the CLI.",
+    "credential_replaced": "The credential was rotated or its principal was revoked; ask an administrator to issue the current one (`memoryking credential issue`).",
     "credential_audience_mismatch": "The credential was issued for a different service audience; use one issued by this deployment.",
     "credential_output_exists": "The output file already exists; choose a new private file name.",
     "credential_output_required": "A grant returns a secret; pass `--credential-output NEW_FILE` to save it privately.",

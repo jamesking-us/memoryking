@@ -183,7 +183,31 @@ class StoreCore:
         self.last_utc = now
         return Decision(now, self.clock.monotonic_ms(), now + 5000)
 
+    def _generation(self, tenant: str, principal: str) -> int:
+        """The principal's current credential generation; 0 until one is advanced."""
+        row = self.db.execute(
+            "SELECT generation FROM credential_generations WHERE tenant=? AND principal=?",
+            (tenant, principal),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def _advance_generation(self, tenant: str, principal: str) -> None:
+        """Retire every credential issued for the principal so far (policy; replayed on restore)."""
+        self.db.execute(
+            upsert("credential_generations"),
+            (tenant, principal, self._generation(tenant, principal) + 1),
+        )
+
     def _token(self, kind: str, **fields: Any) -> str:
+        if kind == "credential":
+            # Generation 0 is omitted, so a credential that was never rotated is byte-identical
+            # to one issued before generations existed. An internal caller that mints a
+            # credential for a principal gets the current generation unless it names one.
+            generation = fields.pop("generation", None)
+            if generation is None:
+                generation = self._generation(fields["tenant"], fields["principal"])
+            if generation:
+                fields["generation"] = generation
         return str(
             self.control.sign(
                 {"kind": kind, "store": self.store_id, "incarnation": self.incarnation, **fields}
@@ -213,6 +237,16 @@ class StoreCore:
             for row in rows
         ):
             raise LocalError("denied")
+        # After the grant check, so a principal without a current grant is refused exactly as
+        # before; only a credential that would otherwise be accepted learns it was replaced.
+        generation = identity.get("generation", 0)
+        if (
+            not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation != self._generation(identity["tenant"], identity["principal"])
+        ):
+            # Revoked, rotated or replaced: only the principal's current credential is accepted.
+            raise LocalError("credential_replaced")
         return identity
 
     def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
@@ -582,7 +616,13 @@ class StoreCore:
         *,
         starts: int | None = None,
         expires: int | None = None,
+        rotate: bool = False,
     ) -> str:
+        """Grant (or restate) access and return the principal's credential.
+
+        With `rotate`, the principal's credential generation advances in the same journaled
+        decision, so every credential issued before it stops working.
+        """
         identifier(principal)
         identifier(project)
         if not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
@@ -602,10 +642,13 @@ class StoreCore:
                 "starts": starts,
                 "expires": expires,
             }
+            if rotate:
+                action["rotate"] = True
             record = self._journal(action)
             self._apply(record, decision.evaluated_ms)
+            token = self._token("credential", tenant=who["tenant"], principal=principal)
         self._expose()
-        return self._token("credential", tenant=who["tenant"], principal=principal)
+        return token
 
     def grants(self, credential: str) -> list[dict[str, Any]]:
         """Every grant in the caller's tenant, for operators; needs admin rights."""
@@ -801,11 +844,27 @@ class StoreCore:
                     action["expires"],
                 ),
             )
+            if action.get("rotate"):
+                self._advance_generation(tenant, action["principal"])
         elif kind == "revoke":
+            held = self.db.execute(
+                "SELECT 1 FROM grants WHERE tenant=? AND principal=? AND project=?",
+                (tenant, action["principal"], action["project"]),
+            ).fetchone()
             self.db.execute(
                 "DELETE FROM grants WHERE tenant=? AND principal=? AND project=?",
                 (tenant, action["principal"], action["project"]),
             )
+            if (
+                held is not None
+                and self.db.execute(
+                    "SELECT 1 FROM grants WHERE tenant=? AND principal=?",
+                    (tenant, action["principal"]),
+                ).fetchone()
+                is None
+            ):
+                # The principal lost its last grant: a later grant must not revive old credentials.
+                self._advance_generation(tenant, action["principal"])
         elif kind == "purge":
             obs = action["observation"]
             self.db.execute(

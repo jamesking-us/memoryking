@@ -84,7 +84,9 @@ TABLES_V4 = TABLES_V3 + ("egress_audit", "session_summaries")
 # Schema 5 archives add source trust rules and observation holds.
 TABLES_V5 = TABLES_V4 + ("source_trust", "observation_holds")
 # Schema 6 archives add entity anchors.
-TABLES = TABLES_V5 + ("anchors",)
+TABLES_V6 = TABLES_V5 + ("anchors",)
+# Schema 8 archives add credential generations, so a restore knows which credentials were replaced.
+TABLES = TABLES_V6 + ("credential_generations",)
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
@@ -156,7 +158,7 @@ def backup(
         private_dir(destination, create=True)
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 7,
+            "schema": 8,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
@@ -307,12 +309,13 @@ def restore(
             3: TABLES_V3,
             4: TABLES_V4,
             5: TABLES_V5,
-            6: TABLES,
-            7: TABLES,
+            6: TABLES_V6,
+            7: TABLES_V6,
+            8: TABLES,
         }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)

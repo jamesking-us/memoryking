@@ -4,6 +4,7 @@ MemoryKing stores potentially sensitive agent observations. Run it inside a trus
 
 - The local profile trusts one OS owner, private files and a local Unix socket. Another process with the same OS identity is inside that trust boundary.
 - Shared deployments use explicit tenant/project identity, separate database roles, verified transport and bounded delegation. Browser cookies are separate from agent credentials.
+- A credential can be retired without abandoning the principal or restoring the store: revoking a principal's last grant or rotating it (`credential issue --rotate`, `credential rotate-owner` for the owner) advances a per-principal generation that every authorization checks, through the signed control journal, so a restore keeps it retired. Credentials issued before generations existed stay valid until then.
 - Source text is evidence, not permission. Capturing a note cannot grant a role, accept a policy, run code or activate a procedure.
 - Private reads recheck current permissions. The consuming host must use the authorized-conversation integration to rebuild retained model input after revocation; an ordinary memory API call cannot erase a host's old transcript.
 - Backups require independent current control information. Restoring content creates a new history and retires old retry namespaces, watermarks and handles.

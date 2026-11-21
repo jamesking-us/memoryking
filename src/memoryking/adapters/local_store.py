@@ -123,7 +123,7 @@ __all__ = [
 ]
 
 
-SCHEMA_VERSION = 14  # the SQLite user_version the daemon migrates every store to
+SCHEMA_VERSION = 15  # the SQLite user_version the daemon migrates every store to
 
 
 class LocalStore(StoreCore):
@@ -225,6 +225,8 @@ class LocalStore(StoreCore):
             self.db.executescript(Path(__file__).with_name("anchor_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}:
             self.db.executescript(Path(__file__).with_name("position_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}:
+            self.db.executescript(Path(__file__).with_name("credential_schema.sql").read_text())
         elif version != SCHEMA_VERSION:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
@@ -311,6 +313,91 @@ class LocalStore(StoreCore):
         sync_dir(root)
         sync_dir(control.parent)
         return control / "owner.credential"
+
+    @classmethod
+    def rotate_owner(
+        cls,
+        root: Path,
+        control: Path,
+        *,
+        clock: Clock | None = None,
+        fault: Callable[[str], None] | None = None,
+    ) -> Path:
+        """Offline: replace the owner credential with one of the next generation.
+
+        The operator owns the store directories, so the daemon must be stopped (the
+        ownership locks refuse otherwise). The rotation is the same journaled grant restatement
+        that `credential issue --rotate` makes, so a restore replays it. The new credential is
+        made durable as `owner.credential.next` before the generation commits, and is moved
+        over `owner.credential` (an atomic rename) afterwards: a failure in between leaves the
+        working credential in the `.next` file, and running the command again completes the
+        rename instead of rotating a second time. The previous credential stops working at
+        the commit; the new one is on disk from before it.
+        """
+        target, pending = control / "owner.credential", control / "owner.credential.next"
+        with cls(root, control, clock=clock, fault=fault) as store:
+            at = store.clock.utc_ms()
+            tenant = principal = None
+            try:
+                private_file(target)
+                identity = store.control.verify(target.read_text().strip())
+                tenant, principal = identity["tenant"], identity["principal"]
+            except (OSError, KeyError, LocalError):
+                admin = recovery_admin(store.db, at)
+                if admin is not None:
+                    tenant, principal = admin
+            if tenant is None or principal is None:
+                raise LocalError("recovery_admin_missing")
+            if pending.exists() or pending.is_symlink():
+                private_file(pending)
+                try:
+                    body = store.control.verify(pending.read_text().strip())
+                except LocalError:
+                    body = {}
+                if (
+                    body.get("kind") == "credential"
+                    and body.get("incarnation") == store.incarnation
+                    and body.get("tenant") == tenant
+                    and body.get("principal") == principal
+                    and body.get("generation", 0) == store._generation(tenant, principal) > 0
+                ):
+                    # An earlier rotation committed but did not finish moving its file.
+                    os.replace(pending, target)
+                    sync_dir(control)
+                    return target
+                pending.unlink()
+            with store.transaction() as decision:
+                row = store.db.execute(
+                    "SELECT capabilities,starts,expires FROM grants WHERE tenant=? AND principal=? AND project='*'",
+                    (tenant, principal),
+                ).fetchone()
+                capabilities = json.loads(row["capabilities"]) if row is not None else []
+                if (
+                    row is None
+                    or "admin" not in capabilities
+                    or not temporal_valid(decision.evaluated_ms, row["starts"], row["expires"])
+                ):
+                    raise LocalError("administrative_operation_required")
+                record = store._journal(
+                    {
+                        "kind": "grant",
+                        "actor": "operator",
+                        "tenant": tenant,
+                        "principal": principal,
+                        "project": "*",
+                        "capabilities": capabilities,
+                        "starts": row["starts"],
+                        "expires": row["expires"],
+                        "rotate": True,
+                    }
+                )
+                store._apply(record, decision.evaluated_ms)
+                token = store._token("credential", tenant=tenant, principal=principal)
+                atomic(pending, token.encode())
+            store._expose()
+            os.replace(pending, target)
+            sync_dir(control)
+        return target
 
     def close(self) -> None:
         self.db.close()
@@ -470,7 +557,7 @@ class LocalStore(StoreCore):
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 9,
+                "schema": 10,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
                 "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
@@ -536,7 +623,7 @@ class LocalStore(StoreCore):
             controller.journal(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")

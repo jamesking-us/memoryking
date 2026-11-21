@@ -138,7 +138,7 @@ class PostgresStore(StoreCore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "9":
+            if version is None or version[0] != "10":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException as exc:
@@ -167,7 +167,14 @@ class PostgresStore(StoreCore):
                 or at >= delegation["expires"]
             ):
                 raise LocalError("denied")
-            parent = self._token("credential", tenant=self.tenant, principal=delegation["by"])
+            # The issuer's generation at delegation time: rotating the issuer retires the
+            # delegated token (an issuer without a recorded generation is generation 0).
+            parent = self._token(
+                "credential",
+                tenant=self.tenant,
+                principal=delegation["by"],
+                generation=delegation.get("by_generation", 0),
+            )
             StoreCore._auth(self, parent, capability, project, at)
         return super()._auth(token, capability, project, at)
 
@@ -224,6 +231,7 @@ class PostgresStore(StoreCore):
             delegation = {
                 "id": uid("delegation"),
                 "by": self.principal,
+                "by_generation": self._generation(self.tenant, self.principal),
                 "project": project,
                 "capabilities": sorted(set(capabilities)),
                 "expires": decision.evaluated_ms + ttl_ms,
