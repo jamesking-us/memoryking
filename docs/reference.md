@@ -327,7 +327,24 @@ There are four arms, identical except for one closing sentence in the prompts:
 
 A run "left notes on disk" when session 1 added a non-code file (or edited a non-code one such as `NOTES.md`), or changed a Python file only by adding comments or docstrings; the heuristic and its limits are in `RUNNING.md`.
 
-The tool never calls a model unless the person running it supplies an agent command. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically, using the CLI, the MCP bridge over stdio or a notes file as the arm requires, so the pipeline is tested offline in all four arms; its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality until the real run has been made and reported. The exact run protocol, including a worked example of driving a headless agent CLI, is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
+The tool never calls a model unless the person running it supplies an agent command. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically, using the CLI, the MCP bridge over stdio or a notes file as the arm requires, so the pipeline is tested offline in all four arms; its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality. The exact run protocol, including a worked example of driving a headless agent CLI, is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
+
+#### What the first run shows
+
+One repetition of all ten tasks in all four arms was run with the Claude Code CLI (model `sonnet`, at most 60 turns and 15 minutes per session, a new empty home directory for every session). Full setup, per-run table and the report output are in [`benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5.md`](../benchmarks/outcomes/results/2026-11-21-claude-sonnet-5-5.md).
+
+| Arm | Passed | Mean tokens per run | Mean seconds per run |
+| --- | ---: | ---: | ---: |
+| `off` | 6 of 10 | 244,391 | 42 |
+| `notes` | 7 of 10 | 243,255 | 56 |
+| `on` (CLI) | 9 of 10 | 286,438 | 53 |
+| `mcp` | 4 of 10 | 230,150 | 44 |
+
+Exact paired tests (two-sided, no correction for six comparisons): `off` against `notes` p = 1.0; `off` against `on` p = 0.25; `off` against `mcp` p = 0.5; `notes` against `on` p = 0.625; `notes` against `mcp` p = 0.375; `on` against `mcp` p = 0.0625. None of these is distinguishable from chance. In particular, a plain notes file did as well as MemoryKing within what this run can tell (7 against 9 passes). On the four tasks where session 2 really needed what session 1 learned, `off` passed none, `notes` and `on` three each, and `mcp` none; the other six tasks were passed by the agent without memory, so they did not separate the arms.
+
+How memory was used decides how to read the memory arms. In arm `on`, 7 of 10 runs saved something in session 1 and 5 received a briefing with content in session 2. In arm `mcp`, the agent saved nothing in any run and only 3 runs looked something up (and found nothing): this arm measured an agent that did not use the memory tools, not memory that failed to help. In the `notes` arm 8 of 10 runs left notes; in the `off` arm none did.
+
+The limits are one repetition, ten synthetic tasks, one model and one host with runs in parallel (timings are noisy), so only large effects could be seen and none was. It is not evidence of real-task quality.
 
 ## Plan tracking contracts
 
