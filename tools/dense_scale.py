@@ -53,7 +53,9 @@ def build(store: LocalStore, credential: str, size: int) -> tuple[dict[str, Any]
             "observed_at_ms": 1,
         },
     )
-    with store.transaction() as decision:
+    # One long write: a request's five-second deadline would cut a million inserts short.
+    store.db.execute("BEGIN IMMEDIATE")
+    if True:
         original = dict(
             store.db.execute(
                 "SELECT * FROM observations WHERE tenant=? AND id=?",
@@ -74,7 +76,7 @@ def build(store: LocalStore, credential: str, size: int) -> tuple[dict[str, Any]
                 "experimental",
                 0,
                 0,
-                decision.evaluated_ms,
+                int(time.time() * 1000),
             ),
         )
         rng = np.random.default_rng(7)
@@ -121,6 +123,7 @@ def build(store: LocalStore, credential: str, size: int) -> tuple[dict[str, Any]
             "UPDATE embedding_partitions SET scheduled=?,frontier=? WHERE tenant=?",
             (10**9, 10**9, tenant),
         )
+    store.db.commit()
     return {"tenant": tenant, "principal": "owner"}, fingerprint
 
 

@@ -109,7 +109,9 @@ def main() -> None:
     if args.shared_url and not args.tenant:
         parser.error("--tenant is required with --shared-url")
     try:
-        provider = LocalOnnxEmbedding(args.model)
+        from memoryking import semantic
+
+        provider = LocalOnnxEmbedding(args.model, semantic.name_of(args.model))
         client = (
             SharedClient(
                 args.shared_url,

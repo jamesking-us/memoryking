@@ -76,9 +76,11 @@ FUSIONS: dict[str, dict[str, Any]] = {
         "lexical": 1,
         "dense": 2,
     },
-    "convex30": {"name": "convex_lex30_v1", "method": "convex", "lexical": 0.3, "dense": 0.7},
-    "convex50": {"name": "convex_lex50_v1", "method": "convex", "lexical": 0.5, "dense": 0.5},
-    "convex70": {"name": "convex_lex70_v1", "method": "convex", "lexical": 0.7, "dense": 0.3},
+    "convex30": {"name": "convex_lex30_v1", "method": "convex", "lexical": 3, "dense": 7},
+    "convex50": {"name": "convex_lex50_v1", "method": "convex", "lexical": 1, "dense": 1},
+    "convex70": {"name": "convex_lex70_v1", "method": "convex", "lexical": 7, "dense": 3},
+    "convex80": {"name": "convex_lex80_v1", "method": "convex", "lexical": 4, "dense": 1},
+    "convex90": {"name": "convex_lex90_v1", "method": "convex", "lexical": 9, "dense": 1},
 }
 REQUEST_EXTRAS: dict[str, Any] = {}  # set by --text: ask for the rendered text and count it
 ITEM_START = re.compile(r"^\d+\. \*\*\[g\d+\]\*\* ", re.M)
@@ -169,12 +171,21 @@ class StampClock:
 
     def __init__(self, utc_ms: int):
         self.offset = utc_ms - time.time_ns() // 1_000_000
+        self.paused = 0
 
     def utc_ms(self) -> int:
         return time.time_ns() // 1_000_000 + self.offset
 
     def monotonic_ms(self) -> int:
-        return time.monotonic_ns() // 1_000_000
+        return time.monotonic_ns() // 1_000_000 - self.paused
+
+    def pause(self, ms: float) -> None:
+        """Give back time spent on something a recall measurement should not be charged
+        for (a cross-encoder scoring a cold cache on a busy machine): both clocks step back
+        together, so the release deadline sees only the rest of the request."""
+        whole = int(ms)
+        self.paused += whole
+        self.offset -= whole
 
     def advance_to(self, utc_ms: int) -> None:
         self.offset = max(self.offset, utc_ms - time.time_ns() // 1_000_000)
@@ -271,12 +282,16 @@ class CachedReranker:
         if self.path is not None and self.path.exists():
             self.scores = pickle.loads(self.path.read_bytes())  # our own file
         self.calls = 0
+        self.clock: Any = None
 
     def score(self, query: str, texts: list[str]) -> list[int]:
         keys = [hashlib.sha256((query + "\0" + t).encode()).hexdigest() for t in texts]
         missing = [i for i, k in enumerate(keys) if k not in self.scores]
         if missing:
+            started = time.perf_counter()
             found = self.provider.score(query, [texts[i] for i in missing])
+            if self.clock is not None:
+                self.clock.pause((time.perf_counter() - started) * 1000)
             for i, value in zip(missing, found, strict=True):
                 self.scores[keys[i]] = value
             self.calls += 1
@@ -486,6 +501,8 @@ def run_group(
         credential = LocalStore.initialize(root / "db", root / "ctl").read_text()
         with LocalStore(root / "db", root / "ctl", clock=clock) as store:
             store.reranker = reranker
+            if hasattr(reranker, "clock"):
+                reranker.clock = clock
             store.rerank_window = rerank_window
             retrieval = Retrieval(store)
             captured: dict[str, tuple[str, bool]] = {}  # observation -> (session, has_answer)
@@ -787,8 +804,9 @@ def main() -> int:
     parser.add_argument(
         "--fusion",
         choices=sorted(FUSIONS),
-        default="rrf60",
-        help="How the lexical and semantic channels are combined (with --embedding)",
+        default="convex50",
+        help="How the lexical and semantic channels are combined (with --embedding); "
+        "convex50 is the shipped default",
     )
     args = parser.parse_args()
     if args.text:

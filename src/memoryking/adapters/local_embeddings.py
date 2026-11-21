@@ -16,9 +16,10 @@ from memoryking.contracts.canonical import canonical_hash
 from memoryking.domain.embeddings import EmbeddingBatch, fingerprint, quantize, validate_inputs
 from memoryking.domain.local import LocalError
 
-MODEL = "minilm-l6-v2-onnx"
+MODEL = "bge-small-en-v1-5-onnx"  # the default, chosen by measurement (docs/reference.md)
+LEGACY_MODEL = "minilm-l6-v2-onnx"  # the earlier default; stores that enabled it keep working
 # The embedding models that may be installed and enabled; each has a manifest under models/.
-SUPPORTED = (MODEL,)
+SUPPORTED = (MODEL, LEGACY_MODEL)
 RERANKER = "ms-marco-minilm-l6-v2-onnx"
 RERANK_PAIRS = 16  # query/text pairs the model scores in one batch
 RERANK_MAX_PAIRS = 64  # pairs one call may ask for; it runs them in batches of RERANK_PAIRS

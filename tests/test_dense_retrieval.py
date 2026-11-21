@@ -7,6 +7,7 @@ import test_embedding_jobs as jobs
 import test_knowledge as knowledge
 import test_retrieval as retrieval
 
+from memoryking.adapters import retrieval as retrieval_module
 from memoryking.contracts.canonical import canonical_hash
 
 
@@ -61,7 +62,7 @@ class DenseCases:
         self.assertEqual(result["guidance"][0]["authority"], "observed_episode")
         diag = self.receipt(result)["diagnostics"]
         self.assertEqual(diag["model_fingerprints"], [config["fingerprint"]])
-        self.assertEqual(diag["trace"][-2]["metric"], "equal_channel_rrf60_v1")
+        self.assertEqual(diag["trace"][-2]["metric"], retrieval_module.DEFAULT_FUSION["name"])
         replay = self.run_r("replay", {"project": "p", "receipt": result["receipt"]})
         self.assertEqual(result, replay)
 
@@ -283,6 +284,30 @@ class DenseCases:
                 "SELECT count(*) FROM embedding_vectors WHERE kind='claim'"
             ).fetchone()[0]
         self.assertEqual(left, 0)
+
+    def test_the_fusion_in_force_is_named_in_the_receipt_and_is_deterministic(self):
+        config = self.configure()
+        self.drain(config)
+
+        def stage(result):
+            trace = self.receipt(result)["diagnostics"]["trace"]
+            return next(s for s in trace if s.get("metric") not in (None, "bm25_word_forms_v1"))
+
+        default = self.run_r(args=self.dense_args(config))
+        self.assertEqual(
+            stage(default)["fusion"]["method"], retrieval_module.DEFAULT_FUSION["method"]
+        )
+        convex = {"name": "convex_test_v1", "method": "convex", "lexical": 1, "dense": 1}
+        self.store.fusion = convex
+        try:
+            first = self.run_r(args=self.dense_args(config))
+            again = self.run_r(args=self.dense_args(config))
+        finally:
+            self.store.fusion = None
+        self.assertEqual(stage(first)["metric"], "convex_test_v1")
+        self.assertEqual(stage(first)["fusion"], {"method": "convex", "lexical": 1, "dense": 1})
+        self.assertEqual(first["guidance"], again["guidance"])
+        self.assertEqual(first["guidance"][0]["reference"], self.obs["observation"])
 
 
 class DenseRetrievalTests(DenseCases, unittest.TestCase):

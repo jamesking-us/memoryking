@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 
 class Configure(TypedDict):
     project: str
-    model: Literal["minilm-l6-v2-onnx"]
+    model: Literal["bge-small-en-v1-5-onnx", "minilm-l6-v2-onnx"]
     state: Literal["experimental", "disabled"]
     expected_generation: int
 

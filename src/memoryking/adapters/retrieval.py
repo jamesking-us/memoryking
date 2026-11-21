@@ -56,10 +56,13 @@ from memoryking.domain.timeexpr import Understanding, in_ranges, resolve
 
 # Salience: a bounded, documented nudge from use, never a rewrite of the record.
 # How the lexical and semantic channels are combined; the receipt's rank stage names it.
+# Chosen on the pooled LongMemEval oracle set against equal-weight reciprocal-rank fusion
+# (`equal_channel_rrf60_v1`, still selectable); see docs/reference.md. A convex combination of
+# the lexical score over the best lexical score and the similarity scaled over the semantic
+# candidates, equal weights; ties break as before, so the order is deterministic.
 DEFAULT_FUSION: dict[str, Any] = {
-    "name": "equal_channel_rrf60_v1",
-    "method": "rrf",
-    "k": 60,
+    "name": "convex_lex50_v1",
+    "method": "convex",
     "lexical": 1,
     "dense": 1,
 }
