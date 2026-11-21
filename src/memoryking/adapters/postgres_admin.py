@@ -123,6 +123,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             "10",
             "11",
             "12",
+            "13",
         }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
@@ -162,9 +163,14 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             connection.execute("UPDATE shared_meta SET value='11' WHERE key='schema'")
         if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"}:
             connection.execute(
-                Path(__file__).with_name("postgres_operations_schema.sql").read_text()
+                Path(__file__).with_name("postgres_corrections_schema.sql").read_text()
             )
             connection.execute("UPDATE shared_meta SET value='12' WHERE key='schema'")
+        if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"}:
+            connection.execute(
+                Path(__file__).with_name("postgres_operations_schema.sql").read_text()
+            )
+            connection.execute("UPDATE shared_meta SET value='13' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [

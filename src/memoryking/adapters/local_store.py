@@ -132,7 +132,7 @@ __all__ = [
 ]
 
 
-SCHEMA_VERSION = 17  # the SQLite user_version the daemon migrates every store to
+SCHEMA_VERSION = 18  # the SQLite user_version the daemon migrates every store to
 
 
 class LocalStore(StoreCore):
@@ -241,6 +241,8 @@ class LocalStore(StoreCore):
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}:
             self.db.executescript(Path(__file__).with_name("lexical_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
+            self.db.executescript(Path(__file__).with_name("corrections_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}:
             if "on_behalf_of" not in {
                 row[1] for row in self.db.execute("PRAGMA table_info(events)").fetchall()
             }:
@@ -690,7 +692,7 @@ class LocalStore(StoreCore):
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 12,
+                "schema": 13,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
                 # How far the operations log was applied when this backup was taken; compaction
@@ -763,7 +765,7 @@ class LocalStore(StoreCore):
             controller.operations.sync(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")

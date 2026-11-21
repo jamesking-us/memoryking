@@ -7,5 +7,5 @@ INSERT OR IGNORE INTO meta VALUES ('operations','0');
 CREATE TABLE IF NOT EXISTS instance_lease (
  tenant TEXT NOT NULL, holder TEXT NOT NULL, renewed_ms INTEGER NOT NULL,
  PRIMARY KEY(tenant));
-PRAGMA user_version=17;
+PRAGMA user_version=18;
 COMMIT;

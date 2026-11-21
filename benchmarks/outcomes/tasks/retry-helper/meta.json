@@ -1,0 +1,17 @@
+{
+  "id": "retry-helper",
+  "title": "Make uploads retry through the sanctioned helper",
+  "kind": "instruction",
+  "carries": [
+    "Retries must go through uplink.util.retry.call_with_retry (with a name), not net/backoff.py or a new loop; only call_with_retry feeds the ops counters and backoff is being deleted."
+  ],
+  "why_not_in_repo": "The rule was given in session 1 while the work was unrelated to retries, so session 1 leaves no retry call behind. The repository holds two working helpers and nothing says which one is allowed; net/backoff.py has the nicer decorator interface.",
+  "between": false,
+  "stub": {
+    "learn": [
+      "User rule: when something needs retries use uplink.util.retry.call_with_retry with a descriptive name, not net/backoff.py and not a new retry loop. backoff is being deleted and only call_with_retry feeds the ops counters."
+    ],
+    "recall_query": "rule for retries call_with_retry backoff",
+    "must_recall": ["call_with_retry", "backoff"]
+  }
+}

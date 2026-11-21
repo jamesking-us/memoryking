@@ -241,5 +241,17 @@
     ],
     "exit_code": 0,
     "contains": "Memory tool demo passed."
+  },
+  {
+    "id": "outcome-benchmark-validate",
+    "command": [
+      "{python}",
+      "tools/outcome_benchmark.py",
+      "validate",
+      "--task",
+      "legacy-rounding"
+    ],
+    "exit_code": 0,
+    "contains": "\"ok\": true"
   }
 ]

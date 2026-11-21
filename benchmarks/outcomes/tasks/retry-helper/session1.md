@@ -1,0 +1,3 @@
+Please add `verify_manifest(files, text)` to `uplink/sync/checksum.py`. `files` is a dict of path to bytes and `text` is a MANIFEST body in the format `upload_all` writes (one `path digest` pair per line). Return the sorted list of paths that are wrong: files whose digest is missing from the manifest or does not match, and manifest paths that have no file. Add a test.
+
+A standing rule for this codebase while you're in it: when something needs retries, use `uplink.util.retry.call_with_retry` (give it a descriptive `name`) instead of writing another retry loop, and don't use `net/backoff.py`. That one is being deleted once its last caller is gone, and only `call_with_retry` feeds the ops counters.

@@ -91,7 +91,9 @@ TABLES_V6 = TABLES_V5 + ("anchors",)
 # Schema 8 archives add credential generations, so a restore knows which credentials were replaced.
 TABLES_V8 = TABLES_V6 + ("credential_generations",)
 # Schema 9 archives add the lexical statistics and the state of the lexical index.
-TABLES = TABLES_V8 + ("lexical_state", "lexical_projects", "lexical_terms")
+TABLES_V9 = TABLES_V8 + ("lexical_state", "lexical_projects", "lexical_terms")
+# Schema 10 archives add supersession links, retirement requests and pins.
+TABLES = TABLES_V9 + ("supersessions", "retirement_requests", "pins")
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
@@ -200,7 +202,7 @@ def backup(
         private_dir(destination, create=True)
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 10,
+            "schema": 11,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
@@ -370,12 +372,13 @@ def restore(
             6: TABLES_V6,
             7: TABLES_V6,
             8: TABLES_V8,
-            9: TABLES,
+            9: TABLES_V9,
             10: TABLES,
+            11: TABLES,
         }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)
@@ -391,9 +394,9 @@ def restore(
             if digest_file(archive / (table + ".ndjson")) != manifest["tables"][table]["sha256"]:
                 raise LocalError("backup_invalid")
             current, archived = columns(connection, table), manifest["tables"][table]["columns"]
-            # Archives before schema 10 predate the nullable on_behalf_of column.
+            # Archives before schema 11 predate the nullable on_behalf_of column.
             if archived != current and not (
-                manifest["schema"] < 10
+                manifest["schema"] < 11
                 and table in {"events", "receipts"}
                 and current[-1] == "on_behalf_of"
                 and archived == current[:-1]
@@ -481,7 +484,7 @@ def restore(
                     table in {"tenants", "tenant_gates"} and count != 1
                 ):
                     raise LocalError("backup_invalid")
-            # Archives before schema 10 carry no operations position.
+            # Archives before schema 11 carry no operations position.
             connection.execute(
                 "INSERT INTO tenant_meta(tenant,key,value) VALUES (%s,'operations','0') ON CONFLICT DO NOTHING",
                 (tenant,),
