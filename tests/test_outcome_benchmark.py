@@ -4,11 +4,14 @@ import argparse
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+import unittest.mock
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -22,6 +25,13 @@ SPEC.loader.exec_module(ob)
 
 STUB = ROOT / "benchmarks/outcomes/stub_agent.py"
 AGENT = f"{sys.executable} {STUB} {{workdir}} {{prompt_file}} --usage-file {{usage_file}}"
+AGENT_MCP = AGENT + " --mcp-config {mcp_config}"
+
+
+def agent_for(arm):
+    return AGENT_MCP if arm == "mcp" else AGENT
+
+
 CLEAN = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
 
 
@@ -151,11 +161,11 @@ class PrepareTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
-    """The whole flow with the stub agent, in both arms."""
+    """The whole flow with the stub agent, in all four arms."""
 
     TASKS = ("legacy-rounding", "alert-sink", "wrong-total", "staging-collector")
 
-    def test_stub_pipeline_both_arms(self):
+    def test_stub_pipeline_all_arms(self):
         with tempfile.TemporaryDirectory(prefix="mk-obp-") as tmp:
             results = Path(tmp) / "results"
 
@@ -166,7 +176,7 @@ class PipelineTests(unittest.TestCase):
                     argparse.Namespace(
                         task=task,
                         arm=arm,
-                        agent_command=AGENT,
+                        agent_command=agent_for(arm),
                         workdir=str(workdir),
                         results=str(results),
                         rep=1,
@@ -174,37 +184,52 @@ class PipelineTests(unittest.TestCase):
                     )
                 )
 
-            jobs = [(t, a) for t in self.TASKS for a in ("on", "off")]
+            jobs = [(t, a) for t in self.TASKS for a in ob.ARMS]
             with ThreadPoolExecutor(4) as pool:
                 outcomes = dict(zip(jobs, pool.map(one, jobs), strict=True))
             for (task, arm), out in outcomes.items():
-                self.assertEqual(out["passed"], arm == "on", (task, arm))
+                self.assertEqual(out["passed"], arm != "off", (task, arm))
                 data = json.loads(Path(out["result_file"]).read_text())
                 self.assertEqual(data["task"], task)
                 self.assertTrue(all(s["exit_code"] == 0 for s in data["sessions"].values()))
                 self.assertEqual(data["sessions"]["2"]["input_tokens"], 2000)
-                if arm == "on":
-                    store = data["store"]
+                if arm in ob.MEMORY_ARMS:
+                    store, between = data["store"], data["store_at_between"]
                     self.assertGreaterEqual(store["observations_captured"], 3)
                     self.assertEqual(store["briefings_served"], 1)
-                    self.assertIn("checkpoints_saved", store)
+                    self.assertGreater(between["observations_captured"], 0)
+                    self.assertEqual(between["briefings_served"], 0)
+                    self.assertEqual(between["checkpoints_saved"], 1)
                 else:
                     self.assertIsNone(data["store"])
+                    self.assertEqual(data["notes_left"]["left"], arm == "notes")
             # The daemons and stores are gone.
             for task, arm in jobs:
-                if arm == "on":
+                if arm in ob.MEMORY_ARMS:
                     state = json.loads(
                         (ob.bench_dir(Path(tmp) / f"{task}-{arm}") / "state.json").read_text()
                     )
                     self.assertIsNone(state["daemon_pid"])
                     self.assertFalse(Path(state["store_root"]).exists())
             text = ob.cmd_report(argparse.Namespace(results=str(results), json=False))
-            self.assertIn("Memory on", text)
+            for label in ob.ARM_LABELS.values():
+                self.assertIn(label, text)
             agg = ob.aggregate(ob.load_results(results))
-            self.assertEqual(agg["arms"]["on"]["successes"], len(self.TASKS))
+            n = len(self.TASKS)
             self.assertEqual(agg["arms"]["off"]["successes"], 0)
-            self.assertEqual(agg["paired"]["only_memory_on"], len(self.TASKS))
-            self.assertAlmostEqual(agg["paired"]["p_value"], 2 * 0.5**4)
+            for arm in ("notes", "on", "mcp"):
+                self.assertEqual(agg["arms"][arm]["successes"], n)
+            self.assertEqual(len(agg["pairs"]), 6)
+            off_vs_on = next(p for p in agg["pairs"] if (p["a"], p["b"]) == ("off", "on"))
+            self.assertEqual(off_vs_on["only_b"], n)
+            self.assertAlmostEqual(off_vs_on["p_value"], 2 * 0.5**4)
+            for arm in ob.MEMORY_ARMS:
+                use = agg["memory_use"][arm]
+                self.assertEqual(
+                    (use["runs"], use["wrote_in_session1"], use["read_in_session2"]), (n, n, n)
+                )
+            self.assertEqual(agg["notes_left"]["off"]["left_notes"], 0)
+            self.assertEqual(agg["notes_left"]["notes"]["left_notes"], n)
 
     def test_memory_arm_setup_is_what_a_user_would_have(self):
         with tempfile.TemporaryDirectory(prefix="mk-obm-") as tmp:
@@ -218,6 +243,8 @@ class PipelineTests(unittest.TestCase):
                 for phrase in (
                     "memoryking capture",
                     "memoryking recall",
+                    "memoryking save-progress",
+                    "memoryking resume",
                     "--project work",
                     "Resume",
                     "Save progress",
@@ -240,6 +267,12 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(saved.returncode, 0, saved.stderr)
                 recalled = run("recall", "--project", "work", "--query", "retry helper rule")
                 self.assertIn("use the retry helper", recalled.stdout)
+                # The project also comes from the environment, which the CLI now honours.
+                progress = run(
+                    "save-progress", "--task", "t1", "--objective", "o", "--state", "half done"
+                )
+                self.assertEqual(progress.returncode, 0, progress.stderr)
+                self.assertIn("half done", run("resume", "--task", "t1").stdout)
                 # The agent credential cannot administer.
                 denied = run(
                     "credential",
@@ -260,6 +293,7 @@ class PipelineTests(unittest.TestCase):
                 result = json.loads((Path(tmp) / "r/staging-collector-on.json").read_text())
                 self.assertFalse(result["passed"])
                 self.assertEqual(result["store"]["observations_captured"], 1)
+                self.assertEqual(result["store"]["checkpoints_saved"], 1)
             finally:
                 if state.get("daemon_pid"):
                     ob.stop_daemon(state)
@@ -267,15 +301,307 @@ class PipelineTests(unittest.TestCase):
                     shutil.rmtree(state["store_root"], ignore_errors=True)
 
 
+class ArmTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="mk-oba-")
+        self.addCleanup(self.tmp.cleanup)
+
+    def prepare(self, arm, task="alert-sink"):
+        workdir = Path(self.tmp.name) / f"{task}-{arm}"
+        out = ob.cmd_prepare(argparse.Namespace(task=task, arm=arm, workdir=str(workdir), rep=1))
+        state = ob.load_state(workdir)
+        self.addCleanup(self.cleanup_arm, workdir)
+        return workdir, out, state
+
+    @staticmethod
+    def cleanup_arm(workdir):
+        state = ob.load_state(workdir)
+        ob.stop_daemon(state)
+        if state.get("store_root"):
+            shutil.rmtree(state["store_root"], ignore_errors=True)
+
+    @staticmethod
+    def prompts(out):
+        return Path(out["session1_prompt"]).read_text(), Path(out["session2_prompt"]).read_text()
+
+    def test_notes_arm_is_off_plus_a_notes_file_and_one_sentence(self):
+        off_dir, off_out, _ = self.prepare("off")
+        workdir, out, state = self.prepare("notes")
+        self.assertEqual(listing(workdir), sorted([*listing(off_dir), "NOTES.md"]))
+        self.assertLess(len((workdir / "NOTES.md").read_text().splitlines()), 6)
+        self.assertFalse((workdir / "MEMORY.md").exists())
+        self.assertFalse(state.get("store_root"))
+        for plain, noted in zip(self.prompts(off_out), self.prompts(out), strict=True):
+            self.assertEqual(
+                noted,
+                plain.rstrip("\n")
+                + "\n\nYou can keep notes for later sessions in NOTES.md in this directory.\n",
+            )
+        self.assertEqual(ob.agent_env(state), {})
+
+    def test_mcp_arm_has_tools_through_a_config_outside_the_workdir_and_nothing_else(self):
+        off_dir, off_out, _ = self.prepare("off")
+        workdir, out, state = self.prepare("mcp")
+        self.assertEqual(listing(workdir), listing(off_dir))
+        bench = ob.bench_dir(workdir)
+        self.assertFalse((bench / "bin").exists())
+        self.assertEqual(out["mcp_config"], str(bench / "mcp.json"))
+        self.assertEqual(oct((bench / "mcp.json").stat().st_mode & 0o777), "0o600")
+        server = json.loads((bench / "mcp.json").read_text())["mcpServers"]["memoryking"]
+        self.assertEqual(server["command"], sys.executable)
+        args = server["args"]
+        self.assertEqual(args[:2], ["-m", "memoryking.adapters.stdio"])
+        self.assertEqual(args[args.index("--profile") + 1], "lean")
+        self.assertEqual(args[args.index("--project") + 1], "work")
+        self.assertEqual(
+            args[args.index("--socket") + 1], str(Path(state["data"]) / "service.sock")
+        )
+        self.assertTrue(Path(args[args.index("--credential") + 1]).is_file())
+        for plain, with_tools in zip(self.prompts(off_out), self.prompts(out), strict=True):
+            self.assertEqual(
+                with_tools,
+                plain.rstrip("\n")
+                + "\n\nThis project has memory tools available (remember, recall, save_progress, "
+                "resume); using them is allowed.\n",
+            )
+            self.assertNotIn("MEMORY.md", with_tools)
+        # The agent's environment has no memoryking command and no MemoryKing variables.
+        with unittest.mock.patch.dict(os.environ, {"MEMORYKING_PROFILE": "leak"}):
+            env = ob.merged_env(state)
+            self.assertIn("unset MEMORYKING_PROFILE", ob.env_lines(state))
+        self.assertFalse(any(k.startswith("MEMORYKING_") for k in env))
+        for entry in env["PATH"].split(os.pathsep):
+            self.assertFalse(os.access(os.path.join(entry, "memoryking"), os.X_OK), entry)
+        # The credential is the scoped agent one: no administrative capability.
+        listed = ob.memoryking(
+            state, "credential", "list", "--json", credential=state["owner_credential"]
+        ).stdout
+        self.assertIn("checkpoint", listed)
+
+    def test_mcp_arm_needs_the_config_placeholder_and_other_arms_refuse_it(self):
+        mcp_dir, _, _ = self.prepare("mcp")
+        with self.assertRaises(ob.BenchmarkError):
+            ob.cmd_session(
+                argparse.Namespace(workdir=str(mcp_dir), n=1, agent_command="true", timeout=30)
+            )
+        off_dir, _, _ = self.prepare("off")
+        with self.assertRaises(ob.BenchmarkError):
+            ob.cmd_session(
+                argparse.Namespace(
+                    workdir=str(off_dir), n=1, agent_command="true {mcp_config}", timeout=30
+                )
+            )
+
+    def test_the_stub_really_speaks_mcp_to_the_bridge(self):
+        workdir, _, _ = self.prepare("mcp", "staging-collector")
+        for n in (1, 2):
+            ob.cmd_session(
+                argparse.Namespace(workdir=str(workdir), n=n, agent_command=AGENT_MCP, timeout=120)
+            )
+            if n == 1:
+                ob.cmd_between(argparse.Namespace(workdir=str(workdir)))
+        state = ob.load_state(workdir)
+        self.assertTrue(all(s["exit_code"] == 0 for s in state["sessions"].values()))
+        self.assertGreaterEqual(state["store_at_between"]["observations_captured"], 3)
+        self.assertEqual(ob.store_statistics(state)["briefings_served"], 1)
+        self.assertTrue(ob.cmd_check(argparse.Namespace(workdir=str(workdir)))["passed"])
+
+
+class NotesDetectionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="mk-obn-")
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name) / "base"
+        self.work = Path(self.tmp.name) / "work"
+        (self.base / "pkg").mkdir(parents=True)
+        (self.base / "pkg/mod.py").write_text('"""Module."""\n\n\ndef f(x):\n    return x + 1\n')
+        (self.base / "README.md").write_text("# Project\n")
+        (self.base / "data.json").write_text("{}")
+        shutil.copytree(self.base, self.work)
+
+    def found(self):
+        return ob.detect_notes(self.base, self.work)
+
+    def test_untouched_and_real_work_are_not_notes(self):
+        self.assertEqual(self.found(), [])
+        (self.work / "pkg/mod.py").write_text('"""Module."""\n\n\ndef f(x):\n    return x + 2\n')
+        (self.work / "pkg/new.py").write_text("def g():\n    return 1\n")
+        (self.work / "tests.json").write_text("{}")
+        (self.work / "data.json").write_text('{"a": 1}')
+        (self.work / "pkg/empty.py").write_text("")
+        (self.work / "pkg/__pycache__").mkdir()
+        (self.work / "pkg/__pycache__/mod.cpython-312.pyc").write_bytes(b"x")
+        (self.work / "README.md").unlink()
+        self.assertEqual(self.found(), [])
+
+    def test_new_non_code_files_are_notes(self):
+        (self.work / "NOTES.md").write_text("tried X, failed")
+        (self.work / "scratch.txt").write_text("port is 4222")
+        (self.work / "todo").write_text("later")
+        self.assertEqual(self.found(), ["NOTES.md", "scratch.txt", "todo"])
+
+    def test_edited_text_files_are_notes(self):
+        (self.work / "README.md").write_text("# Project\n\nDo not touch legacy/.\n")
+        self.assertEqual(self.found(), ["README.md"])
+
+    def test_comment_and_docstring_only_changes_are_notes(self):
+        (self.work / "pkg/mod.py").write_text(
+            '"""Module. Never use round(): the vendor truncates."""\n\n\n'
+            "# NOTE: the vendor API caps this at 100.\n"
+            "def f(x):\n"
+            '    """Add one."""\n'
+            "    return x + 1  # keep in sync with the feed\n"
+        )
+        self.assertEqual(self.found(), ["pkg/mod.py"])
+
+    def test_comments_mixed_with_code_changes_are_not_detected(self):
+        (self.work / "pkg/mod.py").write_text(
+            '"""Module."""\n\n\n# note\ndef f(x):\n    return x + 2\n'
+        )
+        self.assertEqual(self.found(), [])
+
+    def test_new_python_file_of_only_comments_or_a_docstring_is_notes(self):
+        (self.work / "pkg/lessons.py").write_text('"""Tried retries; they hang."""\n# more\n')
+        (self.work / "pkg/broken.py").write_text("def (:\n")
+        self.assertEqual(self.found(), ["pkg/lessons.py"])
+
+    def test_between_records_what_session_one_left(self):
+        with tempfile.TemporaryDirectory(prefix="mk-obq-") as tmp:
+            first, second = Path(tmp) / "w", Path(tmp) / "w2"
+            for workdir, arm in ((first, "notes"), (second, "off")):
+                ob.cmd_prepare(
+                    argparse.Namespace(task="alert-sink", arm=arm, workdir=str(workdir), rep=1)
+                )
+            ob.cmd_between(argparse.Namespace(workdir=str(first)))
+            self.assertEqual(ob.load_state(first)["notes_left"], {"left": False, "files": []})
+            (second / "NOTES.md").write_text("hello")
+            ob.cmd_between(argparse.Namespace(workdir=str(second)))
+            self.assertEqual(
+                ob.load_state(second)["notes_left"], {"left": True, "files": ["NOTES.md"]}
+            )
+
+
+class AgentCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="mk-obc-")
+        self.addCleanup(self.tmp.cleanup)
+        self.workdir = Path(self.tmp.name) / "w"
+        ob.cmd_prepare(
+            argparse.Namespace(task="alert-sink", arm="off", workdir=str(self.workdir), rep=1)
+        )
+        self.bench = ob.bench_dir(self.workdir)
+
+    def session(self, command, **kw):
+        ns = argparse.Namespace(workdir=str(self.workdir), n=1, agent_command=command, timeout=30)
+        for key, value in kw.items():
+            setattr(ns, key, value)
+        out = ob.cmd_session(ns)
+        return out, ob.load_state(self.workdir)["sessions"]["1"]
+
+    @staticmethod
+    def python(code, *extra):
+        return f"{sys.executable} -c {shlex.quote(code)} {' '.join(extra)}"
+
+    def test_cwd_placeholders_and_stdout_capture(self):
+        code = "import os,sys;print(os.getcwd());print(sys.argv[1]);print(open(sys.argv[2]).read()[:12])"
+        out, rec = self.session(self.python(code, "{session}", "{prompt_file}"))
+        self.assertEqual(out["exit_code"], 0)
+        lines = (self.bench / "agent1.stdout").read_text().splitlines()
+        self.assertEqual(Path(lines[0]).resolve(), self.workdir.resolve())
+        self.assertEqual(lines[1:], ["1", "Work only in"])
+        self.assertNotIn("input_tokens", rec)
+
+    def test_prompt_on_stdin_and_literal_braces_survive(self):
+        code = "import sys;print(sys.stdin.read()[:10]);print(sys.argv[1])"
+        self.session(self.python(code, "'{\"a\": 1}'"), prompt_stdin=True)
+        lines = (self.bench / "agent1.stdout").read_text().splitlines()
+        self.assertEqual(lines, ["Work only ", '{"a": 1}'])
+
+    def test_usage_convention_from_printed_json(self):
+        code = (
+            "import json;print('starting');print(json.dumps({'input_tokens': 120,"
+            " 'output_tokens': 30, 'cost_usd': 0.25, 'duration_ms': 4500, 'result': 'done'}))"
+        )
+        _, rec = self.session(self.python(code))
+        self.assertEqual(
+            (rec["input_tokens"], rec["output_tokens"], rec["cost_usd"]), (120, 30, 0.25)
+        )
+        self.assertEqual(rec["agent_reported_seconds"], 4.5)
+
+    def test_usage_file_wins_and_missing_figures_stay_missing(self):
+        code = (
+            "import json,sys;json.dump({'input_tokens': 5}, open(sys.argv[1], 'w'));"
+            "print('{\"input_tokens\": 99}')"
+        )
+        _, rec = self.session(self.python(code, "{usage_file}"))
+        self.assertEqual(rec["input_tokens"], 5)
+        self.assertNotIn("output_tokens", rec)
+        state = ob.load_state(self.workdir)
+        state["sessions"] = {}
+        ob.save_state(self.workdir, state)
+        _, rec = self.session(self.python("print('no json here')"))
+        self.assertNotIn("input_tokens", rec)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is not installed")
+    def test_usage_jq_maps_a_nested_result(self):
+        code = (
+            "import json;print(json.dumps({'usage': {'input_tokens': 7, 'output_tokens': 3},"
+            " 'total_cost_usd': 0.5, 'duration_ms': 2000}))"
+        )
+        _, rec = self.session(
+            self.python(code),
+            usage_jq="{input_tokens: .usage.input_tokens, output_tokens: .usage.output_tokens,"
+            " cost_usd: .total_cost_usd, duration_seconds: (.duration_ms / 1000)}",
+        )
+        self.assertEqual((rec["input_tokens"], rec["output_tokens"], rec["cost_usd"]), (7, 3, 0.5))
+        self.assertEqual(rec["agent_reported_seconds"], 2.0)
+
+    def test_usage_jq_without_jq_is_refused_before_running(self):
+        with unittest.mock.patch.object(ob.shutil, "which", return_value=None):
+            with self.assertRaises(ob.BenchmarkError):
+                self.session("true", usage_jq=".")
+        self.assertFalse((self.bench / "agent1.stdout").exists())
+
+    def test_timeout_stops_the_command_and_its_children(self):
+        marker = Path(self.tmp.name) / "child-alive"
+        child = f"import time,pathlib;time.sleep(3);pathlib.Path({str(marker)!r}).write_text('x')"
+        code = (
+            "import subprocess,sys,time;"
+            f"subprocess.Popen([sys.executable,'-c',{child!r}]);time.sleep(60)"
+        )
+        started = time.time()
+        out, rec = self.session(self.python(code), timeout=1)
+        self.assertLess(time.time() - started, 20)
+        self.assertEqual((out["exit_code"], out["timed_out"]), (-9, True))
+        self.assertTrue(rec["timed_out"])
+        time.sleep(3.5)
+        self.assertFalse(marker.exists())
+
+    def test_session_environment_is_the_arms(self):
+        code = "import os;print(os.environ.get('MEMORYKING_PROJECT'))"
+        with unittest.mock.patch.dict(os.environ, {"MEMORYKING_PROJECT": "leak"}):
+            self.session(self.python(code))
+        # Arm off changes nothing about the environment; the point of the mcp arm is the
+        # stripped environment, tested in ArmTests.
+        self.assertEqual((self.bench / "agent1.stdout").read_text().strip(), "leak")
+
+
 class ReportTests(unittest.TestCase):
-    def row(self, task, kind, arm, passed, tokens=None, seconds=None):
+    def row(self, task, kind, arm, passed, tokens=None, seconds=None, **extra):
         sessions = {}
         if tokens is not None:
             sessions = {
                 "1": {"input_tokens": tokens, "output_tokens": 0, "seconds": seconds},
                 "2": {"input_tokens": tokens, "output_tokens": 0, "seconds": seconds},
             }
-        return {"task": task, "kind": kind, "arm": arm, "passed": passed, "sessions": sessions}
+        return {
+            "task": task,
+            "kind": kind,
+            "arm": arm,
+            "passed": passed,
+            "sessions": sessions,
+            **extra,
+        }
 
     def test_exact_test(self):
         self.assertEqual(ob.exact_sign_test(0, 0), 1.0)
@@ -285,38 +611,132 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(ob.exact_sign_test(2, 2), 1.0)
         self.assertEqual(ob.exact_sign_test(1, 4), ob.exact_sign_test(4, 1))
 
-    def test_aggregate_and_render(self):
+    def test_aggregate_and_render_for_four_arms(self):
         rows = []
+        passes = {"off": 3, "notes": 5, "on": 8, "mcp": 7}
+        scale = {"off": 1, "notes": 1, "on": 2, "mcp": 3}
         for i in range(10):
             kind = ob.KINDS[i % 4]
-            rows.append(self.row(f"t{i}", kind, "on", i < 8, tokens=100, seconds=2.0))
-            rows.append(self.row(f"t{i}", kind, "off", i < 3, tokens=300, seconds=5.0))
+            for arm, count in passes.items():
+                rows.append(
+                    self.row(
+                        f"t{i}",
+                        kind,
+                        arm,
+                        i < count,
+                        tokens=100 * scale[arm],
+                        seconds=2.0 * (i + 1),
+                    )
+                )
         agg = ob.aggregate(rows)
-        self.assertEqual(agg["arms"]["on"]["successes"], 8)
-        self.assertEqual(agg["arms"]["off"]["successes"], 3)
-        self.assertEqual(agg["arms"]["on"]["mean_tokens"], 200)
-        self.assertEqual(agg["arms"]["off"]["mean_seconds"], 10.0)
-        self.assertEqual(
-            (
-                agg["paired"]["only_memory_on"],
-                agg["paired"]["only_memory_off"],
-                agg["paired"]["both_pass"],
-                agg["paired"]["both_fail"],
-            ),
-            (5, 0, 3, 2),
-        )
-        self.assertAlmostEqual(agg["paired"]["p_value"], 2 / 32)
+        self.assertEqual(agg["arm_order"], ["off", "notes", "on", "mcp"])
+        self.assertEqual({a: v["successes"] for a, v in agg["arms"].items()}, passes)
+        self.assertEqual(agg["arms"]["on"]["tokens"]["mean"], 400)
+        self.assertEqual(agg["arms"]["on"]["tokens"]["median"], 400)
+        self.assertEqual(agg["arms"]["off"]["seconds"]["mean"], 22.0)
+        self.assertEqual(agg["arms"]["off"]["seconds"]["median"], 22.0)
+        self.assertEqual(agg["arms"]["off"]["cost_usd"]["mean"], None)
+        self.assertEqual(len(agg["pairs"]), 6)
+        off_on = next(p for p in agg["pairs"] if (p["a"], p["b"]) == ("off", "on"))
+        self.assertEqual((off_on["only_a"], off_on["only_b"]), (0, 5))
+        self.assertEqual((off_on["both_pass"], off_on["both_fail"]), (3, 2))
+        self.assertAlmostEqual(off_on["p_value"], 2 / 32)
+        self.assertIn("no difference is shown", off_on["reading"])
+        notes_mcp = next(p for p in agg["pairs"] if (p["a"], p["b"]) == ("notes", "mcp"))
+        self.assertEqual((notes_mcp["only_a"], notes_mcp["only_b"]), (0, 2))
+        self.assertIn("no difference is shown", notes_mcp["reading"])
         self.assertEqual(sum(v["on"]["runs"] for v in agg["per_kind"].values()), 10)
         text = ob.render_markdown(agg)
-        self.assertIn("| Memory on | 10 | 8 | 80% |", text)
-        self.assertIn("p = 0.0625", text)
+        self.assertIn("| Off (nothing) | 10 | 3 | 30% |", text)
+        self.assertIn("| Memory CLI (on) | 10 | 8 | 80% |", text)
+        self.assertIn("Memory CLI (on) vs Memory MCP", text)
+        self.assertIn("0.0625", text)
         self.assertIn("Ten tasks can only show a large effect", text)
+        self.assertIn("n/a", text)
 
-    def test_missing_figures_are_reported_as_unavailable(self):
-        agg = ob.aggregate(
-            [self.row("a", "instruction", "on", True), self.row("a", "instruction", "off", False)]
+    def test_median_differs_from_mean(self):
+        rows = [
+            self.row("a", "instruction", "off", True, tokens=10, seconds=1),
+            self.row("b", "instruction", "off", True, tokens=10, seconds=1),
+            self.row("c", "instruction", "off", True, tokens=100, seconds=10),
+        ]
+        figure = ob.aggregate(rows)["arms"]["off"]["tokens"]
+        self.assertEqual((figure["mean"], figure["median"]), (80, 20))
+
+    def test_plain_words_reading(self):
+        self.assertIn("exactly the same tasks", ob.reading("off", "on", 0, 0, 1.0))
+        self.assertIn("same number", ob.reading("off", "on", 2, 2, 1.0))
+        self.assertIn("Off (nothing) passed 6", ob.reading("off", "on", 6, 0, 2 / 64))
+        self.assertIn("unlikely to be chance", ob.reading("off", "on", 6, 0, 2 / 64))
+
+    def test_memory_use_comes_from_the_stores_own_counts(self):
+        def store(obs, checkpoints, briefings, deliveries):
+            return {
+                "observations_captured": obs,
+                "checkpoints_saved": checkpoints,
+                "briefings_served": briefings,
+                "deliveries": deliveries,
+            }
+
+        rows = [
+            # wrote and read
+            self.row(
+                "a",
+                "instruction",
+                "on",
+                True,
+                store=store(5, 1, 3, 4),
+                store_at_between=store(4, 1, 1, 1),
+            ),
+            # wrote but never read in session 2
+            self.row(
+                "b",
+                "instruction",
+                "on",
+                False,
+                store=store(2, 0, 0, 0),
+                store_at_between=store(2, 0, 0, 0),
+            ),
+            # read in session 2 but wrote nothing in session 1
+            self.row(
+                "c",
+                "instruction",
+                "on",
+                False,
+                store=store(0, 0, 2, 0),
+                store_at_between=store(0, 0, 0, 0),
+            ),
+            # an old result without the between figures
+            self.row("d", "instruction", "on", False, store=store(1, 0, 0, 0)),
+        ]
+        use = ob.aggregate(rows)["memory_use"]["on"]
+        self.assertEqual(
+            use, {"runs": 4, "wrote_in_session1": 2, "read_in_session2": 2, "unknown": 1}
         )
-        self.assertIsNone(agg["arms"]["on"]["mean_tokens"])
+        self.assertIn("| Memory CLI (on) | 4 | 2 | 2 | 1 |", ob.render_markdown(ob.aggregate(rows)))
+
+    def test_notes_left_counts_for_off_and_notes_only(self):
+        rows = [
+            self.row(
+                "a", "decision", "off", False, notes_left={"left": True, "files": ["NOTES.md"]}
+            ),
+            self.row("b", "decision", "off", False, notes_left={"left": False, "files": []}),
+            self.row("c", "decision", "off", False),
+            self.row(
+                "a", "decision", "notes", True, notes_left={"left": True, "files": ["NOTES.md"]}
+            ),
+            self.row("a", "decision", "on", True),
+        ]
+        agg = ob.aggregate(rows)
+        self.assertEqual(agg["notes_left"]["off"], {"runs": 3, "left_notes": 1, "unknown": 1})
+        self.assertEqual(agg["notes_left"]["notes"], {"runs": 1, "left_notes": 1, "unknown": 0})
+        self.assertNotIn("on", agg["notes_left"])
+        self.assertIn("Notes left on disk", ob.render_markdown(agg))
+
+    def test_a_single_arm_and_missing_figures_still_report(self):
+        agg = ob.aggregate([self.row("a", "instruction", "on", True)])
+        self.assertEqual(agg["pairs"], [])
+        self.assertIsNone(agg["arms"]["on"]["tokens"]["mean"])
         self.assertIn("n/a", ob.render_markdown(agg))
 
     def test_report_cli_needs_results(self):

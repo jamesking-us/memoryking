@@ -207,19 +207,31 @@ The local dashboard port also serves `POST /api/v1/retrieval` for an agent on th
 
 ### Task-outcome benchmark
 
-`tools/outcome_benchmark.py` measures whether a coding agent finishes multi-session tasks better with MemoryKing than without. The ten tasks in `benchmarks/outcomes/tasks/` each have a small Python project, two prompts written as a user would write them, and a hidden check. Session 1 does part of the work and learns something the repository does not record: an instruction ("never edit `legacy/`", "use this retry helper"), a failed approach and the reason, a decision between two designs, or an environment fact (a port, a flag name, a data format). A task's between-step may delete the slow script or sample data that showed it. Session 2, a separate agent instance, must finish; the hidden check fails on the untouched repository, fails after session 1 alone, and passes only when the carried knowledge was used. The `off` arm gets the same prompts and no memory; the `on` arm gets a private store, a daemon, a credential limited to `capture`, `read`, `checkpoint` and `handoff`, and a `MEMORY.md` note that tells the agent how to use the configured `memoryking` command (capture, recall, save progress, resume), exactly as a user would set it up.
+`tools/outcome_benchmark.py` measures whether a coding agent finishes multi-session tasks better with MemoryKing than without. The ten tasks in `benchmarks/outcomes/tasks/` each have a small Python project, two prompts written as a user would write them, and a hidden check. Session 1 does part of the work and learns something the repository does not record: an instruction ("never edit `legacy/`", "use this retry helper"), a failed approach and the reason, a decision between two designs, or an environment fact (a port, a flag name, a data format). A task's between-step may delete the slow script or sample data that showed it. Session 2, a separate agent instance, must finish; the hidden check fails on the untouched repository, fails after session 1 alone, and passes only when the carried knowledge was used.
+
+There are four arms, identical except for one closing sentence in the prompts:
+
+| Arm | The agent has |
+| --- | --- |
+| `off` | nothing |
+| `notes` | a short `NOTES.md` in the working directory, the plain-file baseline |
+| `on` (the CLI arm) | a private store, a daemon, a credential limited to `capture`, `read`, `checkpoint` and `handoff`, the configured `memoryking` command and a `MEMORY.md` that explains `capture`, `recall`, `save-progress` and `resume` |
+| `mcp` | the same store and credential, reached only as the lean MCP tools (`remember`, `recall`, `save_progress`, `resume`) through a standard `mcpServers` configuration written outside the working directory; no `memoryking` command and no `MEMORY.md` |
 
 | Command | Does |
 | --- | --- |
-| `prepare --task ID --arm on\|off --workdir DIR` | Copies only the fixture to `DIR` and writes the prompts beside it; for `on`, initialises the store, starts the daemon and issues the credential. |
-| `session`, `record` | Run an agent command for one session and record its time and tokens, or record figures from your own runner. |
-| `between --workdir DIR` | Runs the task's between-step; the store and daemon stay up. |
+| `prepare --task ID --arm off\|notes\|on\|mcp --workdir DIR` | Copies only the fixture to `DIR` and writes the prompts beside it; adds `NOTES.md`, or for `on` and `mcp` initialises the store, starts the daemon and issues the credential (and writes `MEMORY.md` or the MCP configuration). |
+| `session`, `record` | Run an agent command for one session, or record figures from your own runner. The command template takes `{workdir}`, `{prompt_file}`, `{session}`, `{usage_file}` and, in arm `mcp`, `{mcp_config}`; the tool sets the working directory and the arm's environment, enforces `--timeout`, saves standard output under `<DIR>.bench/` and reads tokens, cost and duration from a usage file, from `--usage-jq`, or from the last JSON object printed. |
+| `between --workdir DIR` | Runs the task's between-step; the store and daemon stay up. Records which notes session 1 left on disk and the store's statistics after session 1. |
 | `check --workdir DIR` | Runs the hidden check and prints JSON. |
-| `finish --workdir DIR` | Stops the daemon, records the store's counts (observations captured, briefings served, checkpoints saved) and writes the result file. |
-| `report --results DIR` | Success rate per arm, task and knowledge kind, tokens and time where supplied, an exact paired McNemar test and a table for docs. |
+| `finish --workdir DIR` | Stops the daemon, records the store's counts (observations captured, briefings served, deliveries, checkpoints saved) and writes the result file. |
+| `run --task ID --arm A --agent-command CMD` | All of the above for one task and arm in one invocation, for an agent that is a single command. |
+| `report --results DIR` | For any number of arms: success rate per arm, task and knowledge kind; tokens, cost and wall time as mean and median per run; an exact paired McNemar test for every pair of arms with a plain-words reading; how many memory-arm runs wrote in session 1 and read in session 2 (from the store's own counts); how many `off` and `notes` runs left notes on disk. |
 | `validate` | Without a model, shows each task's four expected outcomes (untouched, after session 1, reference solution, plausible wrong solution). |
 
-The tool never calls a model. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically so the pipeline is tested offline in both arms; its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality until the real run has been made and reported. The exact run protocol is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
+A run "left notes on disk" when session 1 added a non-code file (or edited a non-code one such as `NOTES.md`), or changed a Python file only by adding comments or docstrings; the heuristic and its limits are in `RUNNING.md`.
+
+The tool never calls a model unless the person running it supplies an agent command. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically, using the CLI, the MCP bridge over stdio or a notes file as the arm requires, so the pipeline is tested offline in all four arms; its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality until the real run has been made and reported. The exact run protocol, including a worked example of driving a headless agent CLI, is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
 
 ## Plan tracking contracts
 
