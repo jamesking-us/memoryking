@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import os
 import re
 import secrets
 import threading
@@ -452,6 +454,10 @@ def restore(
             admin = recovery_admin(recovery.db, clock.utc_ms(), tenant)
             if admin is None:
                 raise LocalError("recovery_admin_missing")
+            # The generation as the restored database (archive plus replayed journal) records
+            # it, read in this transaction: the credential handed back must be the admin's
+            # current one, not a generation-0 credential that authorization would refuse.
+            generation = recovery._generation(tenant, admin[1])
             position = recovery.db.execute(
                 "SELECT position FROM tenants WHERE tenant=?", (tenant,)
             ).fetchone()[0]
@@ -461,15 +467,14 @@ def restore(
                 ]
             )
         hook("restore_before_activation")
-        credential = controller.sign(
-            {
-                "kind": "credential",
-                "store": controller.store,
-                "incarnation": recovery.incarnation,
-                "tenant": tenant,
-                "principal": admin[1],
-                "audience": audience,
-            }
+        # Generation 0 is omitted from the token, so it stays byte-identical to one minted
+        # before credential generations existed.
+        credential = recovery._token(
+            "credential",
+            tenant=tenant,
+            principal=admin[1],
+            audience=audience,
+            generation=generation,
         )
         credential_path = control / tenant / "owner.credential"
         atomic(credential_path, credential.encode())
@@ -536,11 +541,25 @@ def end_maintenance(
             "SELECT capabilities,starts,expires FROM grants WHERE tenant=%s AND principal=%s AND project='*'",
             (tenant, principal),
         ).fetchone()
+        generation_row = connection.execute(
+            "SELECT generation FROM credential_generations WHERE tenant=%s AND principal=%s",
+            (tenant, principal),
+        ).fetchone()
     capabilities = row[0] if row is not None else []
     if isinstance(capabilities, str):
         capabilities = load_strict(capabilities.encode())
     if row is None or "admin" not in capabilities or not temporal_valid(at, row[1], row[2]):
         raise LocalError("denied")
+    # After the grant check, as in the stores' _auth: a principal without a current admin
+    # grant is refused exactly as before, and only a credential that would otherwise be
+    # accepted learns it was replaced. Compared as integers, never as token text.
+    presented = identity.get("generation", 0)
+    if (
+        not isinstance(presented, int)
+        or isinstance(presented, bool)
+        or presented != (int(generation_row[0]) if generation_row is not None else 0)
+    ):
+        raise LocalError("credential_replaced")
     with controller.locked():
         anchor = controller.read_anchor()
         if identity.get("incarnation") != anchor["incarnation"]:
@@ -551,3 +570,92 @@ def end_maintenance(
         anchor.pop("maintenance_operation")
         controller.anchor(anchor)
     return {"status": "active", "tenant": tenant, "operation": operation}
+
+
+def rotate_owner(
+    pool: Any,
+    root: Path,
+    control: Path,
+    tenant: str,
+    *,
+    audience: str = "memoryking-shared",
+    clock: Clock | None = None,
+    fault: Callable[[str], None] | None = None,
+) -> Path:
+    """Replace the tenant's operator credential file with one of the next generation.
+
+    The operator holds `control/<tenant>/owner.credential` (written by `init-tenant` and
+    `restore`). The rotation is the same journaled grant restatement that makes any
+    rotation, restating the admin's current capabilities (which the `grant` operation
+    cannot, since it never grants `admin`), so a restore replays it. The new credential is
+    made durable as `owner.credential.next` before the generation commits and is then
+    moved over `owner.credential`; a failure in between leaves the working credential in
+    the `.next` file and a repeat run completes the rename instead of rotating a second
+    time. The previous credential stops working at the commit. A running service needs no
+    stop: the rotation is one ordinary tenant transaction.
+    """
+    identifier(tenant)
+    directory = control / tenant
+    private_dir(directory)
+    target, pending = directory / "owner.credential", directory / "owner.credential.next"
+    private_file(target)
+    # Only decoded to open the store; authorization below needs a current admin grant.
+    held = target.read_text().strip()
+    with PostgresStore(
+        pool, root, control, tenant, held, audience=audience, clock=clock, fault=fault
+    ) as store:
+        principal = store.principal
+        with store.transaction() as decision:
+            generation = store._generation(tenant, principal)
+            resumed = False
+            if pending.exists() or pending.is_symlink():
+                private_file(pending)
+                try:
+                    body = store.control.verify(pending.read_text().strip())
+                except LocalError:
+                    body = {}
+                resumed = (
+                    body.get("kind") == "credential"
+                    and body.get("incarnation") == store.incarnation
+                    and body.get("tenant") == tenant
+                    and body.get("principal") == principal
+                    and body.get("audience") == audience
+                    and body.get("generation", 0) == generation > 0
+                )
+                if not resumed:
+                    pending.unlink()
+            if not resumed:
+                row = store.db.execute(
+                    "SELECT capabilities,starts,expires FROM grants "
+                    "WHERE tenant=? AND principal=? AND project='*'",
+                    (tenant, principal),
+                ).fetchone()
+                capabilities = row["capabilities"] if row is not None else []
+                if isinstance(capabilities, str):
+                    capabilities = json.loads(capabilities)
+                if (
+                    row is None
+                    or "admin" not in capabilities
+                    or not temporal_valid(decision.evaluated_ms, row["starts"], row["expires"])
+                ):
+                    raise LocalError("administrative_operation_required")
+                record = store._journal(
+                    {
+                        "kind": "grant",
+                        "actor": "operator",
+                        "tenant": tenant,
+                        "principal": principal,
+                        "project": "*",
+                        "capabilities": capabilities,
+                        "starts": row["starts"],
+                        "expires": row["expires"],
+                        "rotate": True,
+                    }
+                )
+                store._apply(record, decision.evaluated_ms)
+                token = store._token("credential", tenant=tenant, principal=principal)
+                atomic(pending, token.encode())
+        store._expose()
+        os.replace(pending, target)
+        sync_dir(directory)
+    return target
