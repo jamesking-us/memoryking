@@ -146,7 +146,7 @@ class Consolidation:
             at = decision.evaluated_ms
             who = self.s._auth(credential, "capture", project, at)
             self.s._auth(credential, "read", project, at)
-            self.r._expire(at)
+            self.r._expire(at, who["tenant"])
             packet, deps, run = self._input(who, args, decision, receipt, at)
             raw = canonical_bytes(packet)
             if run is not None:
