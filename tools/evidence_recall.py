@@ -58,6 +58,24 @@ GATE = ROOT / "fixtures/evaluation/evidence-recall-gate.json"
 TEXT_LIMIT = 60000
 KS = (5, 10)
 BUDGET = 65536
+REQUEST_EXTRAS: dict[str, Any] = {}  # set by --text: ask for the rendered text and count it
+ITEM_START = re.compile(r"^\d+\. \*\*\[g\d+\]\*\* ", re.M)
+ITEM_END = re.compile(r"(?: _\([^)\n]*\)_)?\n(?:\n## |\n_(?:Showing|\d+ matches)|\Z)")
+
+
+def memory_chars(text: str) -> int:
+    """Characters of recalled memory in a text briefing: the item bodies, without labels."""
+    starts = list(ITEM_START.finditer(text))
+    total = 0
+    for number, match in enumerate(starts):
+        limit = starts[number + 1].start() if number + 1 < len(starts) else len(text)
+        body = text[match.end() : limit]
+        end = ITEM_END.search(body)
+        body = body[: end.start()] if end else body
+        total += len(re.sub(r" _\([^)\n]*\)_\s*$", "", body))
+    return total
+
+
 DEPTH = 32  # the contract's largest top_k: deep enough for ten distinct sessions
 LEVELS = ("session", "turn")
 HEADLINE = (
@@ -184,6 +202,7 @@ def run(
     capture_seconds = 0.0
     latencies: list[float] = []
     tokens: list[int] = []
+    memory: list[int] = []
     for number, group in enumerate(groups, 1):
         found = run_group(group, top_k=top_k, as_of=as_of, budget=budget, reranker=reranker)
         rows += found["rows"]
@@ -191,6 +210,7 @@ def run(
         capture_seconds += found["capture_seconds"]
         latencies += found["latencies"]
         tokens += found["tokens"]
+        memory += found["memory_chars"]
         if progress:
             progress(number, len(groups))
 
@@ -245,6 +265,8 @@ def run(
     }
     report.update(
         tokens_mean=round(statistics.fmean(tokens), 1) if tokens else None,
+        memory_chars_mean=round(statistics.fmean(memory), 1) if memory else None,
+        memory_chars_per_token=round(sum(memory) / sum(tokens), 3) if sum(tokens) else None,
         latency_ms_p50=round(statistics.median(latencies), 2) if latencies else None,
         latency_ms_p95=round(sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)], 2)
         if latencies
@@ -325,6 +347,7 @@ def run_group(
 
             rows: list[dict[str, Any]] = []
             tokens: list[int] = []
+            memory: list[int] = []
             latencies: list[float] = []
             # Questions are asked in date order so the clock never steps back.
             asked = sorted(
@@ -348,6 +371,7 @@ def run_group(
                     "max_output_tokens": budget,
                     "tokenizer": "utf8-byte-estimate-v1",
                     "top_k": max(top_k, DEPTH),
+                    **REQUEST_EXTRAS,
                 }
                 if as_of and when is not None:
                     args["as_of_ms"] = when
@@ -364,7 +388,13 @@ def run_group(
                 retrieval.execute(credential, command).emit(emitted.append)
                 latencies.append((time.perf_counter() - started) * 1000)
                 packet = json.loads(emitted[0])
-                cited = [g["reference"] for g in packet["guidance"] if g["reference"] in captured]
+                if packet.get("format") == "text":
+                    guidance = [s["id"] for s in packet["sources"] if s["ref"].startswith("g")]
+                    memory.append(memory_chars(packet["text"]))
+                else:
+                    guidance = [g["reference"] for g in packet["guidance"]]
+                    memory.append(sum(len(g.get("text", "")) for g in packet["guidance"]))
+                cited = [ref for ref in guidance if ref in captured]
                 ranked_sessions = distinct([captured[c][0] for c in cited])
                 head = cited[:top_k]
                 head_sessions = [captured[c][0] for c in head]
@@ -391,6 +421,7 @@ def run_group(
         "capture_seconds": capture_seconds,
         "latencies": latencies,
         "tokens": tokens,
+        "memory_chars": memory,
     }
 
 
@@ -514,6 +545,18 @@ def main() -> int:
         help="Briefing token budget; the default is the largest the contract allows, so the "
         "number of results asked for, not the budget, limits the ranked list",
     )
+    parser.add_argument(
+        "--text",
+        action="store_true",
+        help="Ask for the rendered text and count it with the characters-per-token estimate "
+        "(what a model reads), instead of the JSON envelope counted in bytes",
+    )
+    parser.add_argument(
+        "--tokenizer",
+        help="Tokenizer for the budget and the reported tokens (default: the byte estimate, "
+        "or the characters estimate with --text); `cl100k_base` is exact and needs the "
+        "tokenizers lock",
+    )
     parser.add_argument("--no-pool", dest="pool", action="store_false")
     parser.add_argument(
         "--no-as-of",
@@ -539,6 +582,10 @@ def main() -> int:
         help="Installed local cross-encoder directory; every briefing then asks for `rerank`",
     )
     args = parser.parse_args()
+    if args.text:
+        REQUEST_EXTRAS.update(format="text", tokenizer="chars-estimate-v1")
+    if args.tokenizer:
+        REQUEST_EXTRAS["tokenizer"] = args.tokenizer
     if args.current is None:
         if args.data is None or args.output is None:
             parser.error("--data and --output are required unless --current is given")

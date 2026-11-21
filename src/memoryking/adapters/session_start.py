@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.token_count import counter
-from memoryking.domain.briefing import pack
+from memoryking.domain.briefing import budget_scope, pack
 from memoryking.domain.local import Decision, LocalError
 from memoryking.domain.selectors import bindings
 
@@ -225,7 +225,9 @@ def start(
             base["warnings"].append("optional_eligibility_incomplete")
         if knowledge.get("conflicts"):
             base["warnings"].append("optional_conflict_possible")
-    raw, used, selected, omitted = pack(base, groups, count, args["max_output_tokens"])
+    raw, used, selected, omitted = pack(
+        base, groups, count, args["max_output_tokens"], retrieval.renderer(args)
+    )
     output = json.loads(raw)
     rendered = output["constraints"] + [i for i in selected if i["authority"] != "agent_checkpoint"]
     deps = retrieval._dependencies(rendered)
@@ -245,9 +247,7 @@ def start(
         "recent_limit": limit,
         "status": output["status"],
         "minimum_required_tokens": output.get("minimum_required_tokens"),
-        "budget_count_scope": "failure_envelope"
-        if output["status"] == "budget_insufficient"
-        else "context",
+        "budget_count_scope": budget_scope(output),
         "usage": {**output["usage"], "output_tokens": used, "serialized_bytes": len(raw)},
         "coverage": output["coverage"],
         "selected": [

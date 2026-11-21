@@ -77,6 +77,10 @@ LEASE_EXPIRY_MS = 60_000
 
 QUEUE_LIMIT = 1000
 DRAIN_BUDGET_MS = 2000  # one drain pass stays well inside the five-second transaction deadline
+# The reindex call's own slice of the rebuild, and the size of store small enough to be rebuilt
+# inside it; the rest is batched housekeeping (see `reindex`).
+REINDEX_CALL_MS = 200
+REINDEX_INLINE_LIMIT = 2000
 # Work waiting on the queue. A pending job with a nonzero fence was reset by a reindex or
 # restore (or already attempted): it is backlog the drain rebuilds, not growth to refuse.
 QUEUED_JOBS = "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('leased','pending') AND (state='leased' OR fence=0)"
@@ -184,6 +188,7 @@ class StoreCore:
     # Set by the serving daemon: its (limit, in use) figures for the metrics endpoint.
     concurrency_gauge: Callable[[], dict[str, tuple[int, int]]] | None = None
     _lexical_pending: bool | None = None
+    _lexical_rate: float | None = None  # observations per second over recent rebuild batches
     _last_summary_scan = 0
 
     # The operator's egress policy; None means the local recorder is the only provider.
@@ -1461,7 +1466,7 @@ class StoreCore:
                     )
                 ),
                 "capacity": self._capacity(tenant),
-                "lexical": lexical_index.describe(self.db, tenant),
+                "lexical": lexical_index.describe(self.db, tenant, self._lexical_rate),
             }
         self._expose()
         return result
@@ -1583,25 +1588,38 @@ class StoreCore:
         return completed
 
     def reindex(self, credential: str) -> dict[str, Any]:
-        """Rebuild the projections now and the lexical index in bounded batches.
+        """Start the rebuild of the projections and the lexical index.
 
-        The projection reset is one short transaction. The lexical rewrite runs in batches
-        that each fit the deadline and resume where they stopped; this call works for a few
-        seconds and the daemon's housekeeping finishes the rest, so captures are never
-        blocked behind a whole-corpus transaction."""
+        The call's own work does not grow with the corpus: it moves the projection
+        generation on and marks the lexical index as rebuilding. A store of at most
+        `REINDEX_INLINE_LIMIT` observations also runs a short first slice, so a small store
+        finishes at once. Everything proportional to the corpus runs afterwards in bounded
+        batches, each its own transaction and resumable from the stored cursor: the daemon's
+        housekeeping, or `rebuild_lexical` called by an operator waiting on it. Each batch
+        also resets the projection jobs of the positions it covers."""
         with self.transaction() as decision:
             who = self._auth(credential, "admin", "*", decision.evaluated_ms)
             tenant = who["tenant"]
-            self._reset_projections(tenant)
+            self._begin_projection_reset(tenant)
             lexical_index.begin(self.db, tenant)
+            small = (
+                self.db.execute(
+                    "SELECT count(*) FROM (SELECT 1 FROM observations WHERE tenant=? AND deleted=0 LIMIT ?) AS found",
+                    (tenant, REINDEX_INLINE_LIMIT + 1),
+                ).fetchone()[0]
+                <= REINDEX_INLINE_LIMIT
+            )
         self._lexical_pending = True
         self._expose()
-        self.rebuild_lexical(tenant, wall_ms=3000)
+        if small:
+            self.rebuild_lexical(tenant, wall_ms=REINDEX_CALL_MS, step_ms=REINDEX_CALL_MS)
         with self.transaction():
-            result = lexical_index.describe(self.db, tenant)
+            result = lexical_index.describe(self.db, tenant, self._lexical_rate, counts=False)
         return result
 
-    def rebuild_lexical(self, tenant: str | None = None, wall_ms: int = 1500) -> bool:
+    def rebuild_lexical(
+        self, tenant: str | None = None, wall_ms: int = 1500, step_ms: int = lexical_index.STEP_MS
+    ) -> bool:
         """Advance any unfinished lexical rebuild by whole batches until the wall budget is
         spent; True when no tenant in scope has work left. Each batch is its own transaction."""
         started = time.monotonic()
@@ -1622,8 +1640,23 @@ class StoreCore:
                     self._lexical_pending = False
                     return True
                 name = pending[0]
+                batch_started = time.monotonic()
+                counted: dict[str, int] = {"documents": 0}
                 lexical_index.step(
-                    self.db, name, lambda row, n=name: lexical_index.blob_text(self.root, row, n)
+                    self.db,
+                    name,
+                    lambda row, n=name: lexical_index.blob_text(self.root, row, n),
+                    budget_ms=step_ms,
+                    reset=lambda low, high, n=name: self._reset_jobs(n, low, high),
+                    stats=counted,
+                )
+            took = time.monotonic() - batch_started
+            if counted["documents"] and took > 0:
+                sample = counted["documents"] / took
+                self._lexical_rate = (
+                    sample
+                    if self._lexical_rate is None
+                    else 0.7 * self._lexical_rate + 0.3 * sample
                 )
             if (time.monotonic() - started) * 1000 >= wall_ms:
                 return False
@@ -1639,6 +1672,68 @@ class StoreCore:
             budget_ms=10**9,
         ):
             pass
+
+    def _begin_projection_reset(self, tenant: str) -> None:
+        """Move the projection generation on; jobs and items follow in batches.
+
+        Constant work. Jobs of the old generation are reset by `_reset_jobs` as the rebuild
+        passes their positions, and the frontier cannot advance past one until it is, because
+        it only counts jobs of the current generation."""
+        self.db.execute(
+            "UPDATE projections SET incarnation=?,generation=generation+1,frontier=0 WHERE tenant=?",
+            (self.incarnation, tenant),
+        )
+
+    def _reset_jobs(self, tenant: str, low: int, high: int) -> None:
+        """Reset the jobs at event positions in (low, high] to the current generation, and
+        drop the projection items of the observations there (they are rebuilt by the drain)."""
+        generation = self.db.execute(
+            "SELECT generation FROM projections WHERE tenant=?", (tenant,)
+        ).fetchone()[0]
+        epoch = self.db.execute(
+            "SELECT purge_epoch FROM tenants WHERE tenant=?", (tenant,)
+        ).fetchone()[0]
+        self.db.execute(
+            "DELETE FROM projection_items WHERE tenant=? AND observation IN (SELECT id FROM observations WHERE tenant=? AND position>? AND position<=?)",
+            (tenant, tenant, low, high),
+        )
+        self.db.execute(
+            "UPDATE jobs SET incarnation=?,generation=?,fence=fence+1,attempts=0,lease_until=0,available=0,purge_epoch=?,state=CASE WHEN observation IS NULL OR observation IN (SELECT id FROM observations WHERE tenant=? AND position>? AND position<=? AND deleted=1) THEN 'noop' ELSE 'pending' END WHERE tenant=? AND position>? AND position<=? AND generation<>?",
+            (self.incarnation, generation, epoch, tenant, low, high, tenant, low, high, generation),
+        )
+        # Finished jobs behind the frontier are deleted (see retention), so the rebuild creates the
+        # missing ones in this range: one per event position, pending while its observation is live.
+        last = low
+        while True:
+            missing = self.db.execute(
+                "SELECT e.position,o.id AS observation,o.deleted,o.revision,o.principal FROM events e"
+                " LEFT JOIN jobs j ON j.tenant=e.tenant AND j.position=e.position"
+                " LEFT JOIN observations o ON o.tenant=e.tenant AND o.position=e.position"
+                " WHERE e.tenant=? AND e.position>? AND e.position<=? AND j.id IS NULL"
+                " ORDER BY e.position LIMIT 5000",
+                (tenant, last, high),
+            ).fetchall()
+            if not missing:
+                break
+            for row in missing:
+                live = row["observation"] is not None and not row["deleted"]
+                self.db.execute(
+                    "INSERT INTO jobs(tenant,id,position,observation,incarnation,generation,state,fence,purge_epoch,revision,principal) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        tenant,
+                        uid("job"),
+                        row["position"],
+                        row["observation"],
+                        self.incarnation,
+                        generation,
+                        "pending" if live else "noop",
+                        1,
+                        epoch,
+                        row["revision"] or 1,
+                        row["principal"] or "system",
+                    ),
+                )
+            last = missing[-1]["position"]
 
     def _reset_projections(self, tenant: str) -> None:
         self.db.execute("DELETE FROM projection_items WHERE tenant=?", (tenant,))
