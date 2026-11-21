@@ -4,6 +4,13 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Hosts use memory without being told how
+
+- Saving and loading no longer depend on the model fetching a tool. Claude Code lists an MCP server's tools by name only; the four working lean tools (`remember`, `recall`, `save_progress`, `resume`) now carry `_meta` `anthropic/alwaysLoad` (the others an `anthropic/searchHint`), and `memoryking setup claude-code` prints `claude mcp add-json` with `"alwaysLoad": true`. Each tool's first sentence and the server instructions say when to call it: save an instruction, a decision, a fact or a failed approach as soon as you have it, not at the end.
+- The session-start hook opens with a note that names the memory tools in the host's vocabulary (`hook session-start --tools mcp|cli`, written by `setup`), then a briefing that now shows what the user said and decided lately (the hooks capture the user's turns verbatim as `user-<host>`; the newest two show up to 2,400 bytes), how the last captured session ended and the newest observations of the user's own scope. Before, a hook capture never appeared in the start briefing, because only sources named `decision`, `instruction` or `user` were listed there.
+- `memoryking hooks install` and `hook session-start` take `--tools`; `isMeta` system lines in a transcript are no longer taken for user turns.
+- The task-outcome benchmark gains arm `setup` (what `memoryking setup claude-code` installs, passed to a headless host as a settings file and an MCP configuration; no mention of memory in the prompt) and `report --rep` (pass rate per arm over repetitions with a task-resampled interval, paired tests over task-by-repetition pairs and over tasks). `RUNNING.md` has a worked headless Claude Code example. The first real run is recorded as measured in the reference; the changes above have not been re-measured with a real agent.
+
 ### A small, standard MCP surface
 
 - Lean is the default tool set, over stdio and over shared HTTP. The bridge serves `lean` unless `--profile full` is passed (the full catalog is for programs); the shared endpoint serves lean at `/v1/tenants/{tenant}/projects/{project}/mcp` and the full catalog at `?profile=full`. This changes what an existing client of either transport sees by default: pass `--profile full` or `?profile=full` to keep the old tool names.
