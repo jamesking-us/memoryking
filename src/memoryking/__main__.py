@@ -304,10 +304,10 @@ def doctor(
     def record(level: str, name: str, detail: str) -> None:
         findings.append((level, name, detail))
 
-    if sys.version_info[:2] == (3, 12):
+    if sys.version_info[:2] in {(3, 12), (3, 13)}:
         record("ok", "python", sys.version.split()[0])
     else:
-        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12")
+        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12 or 3.13")
     for label, path in (("store", store), ("control", control)):
         try:
             private_dir(path)
