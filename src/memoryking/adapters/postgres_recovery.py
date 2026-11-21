@@ -138,6 +138,35 @@ def settings(connection: Any, tenant: str) -> None:
     connection.execute("SET LOCAL lock_timeout='5s'")
 
 
+def pending_journal(pool: Any, control: Path, tenant: str) -> dict[str, Any]:
+    """Journal records the tenant's database has not applied, without applying any.
+
+    Names the sequence, kind and tenant of each and the error from the last attempt to apply
+    it (recorded beside the journal), never record content. The journal is verified against
+    the anchor exactly as a request would, and nothing is skipped, altered or replayed.
+    """
+    from memoryking.adapters.postgres_pool import acquire
+
+    identifier(tenant)
+    private_dir(control / tenant)
+    controller = SharedControl(control / tenant)
+    connection = acquire(pool, timeout=5)
+    try:
+        with connection.transaction():
+            settings(connection, tenant)
+            row = connection.execute("SELECT value FROM meta WHERE key='journal'").fetchone()
+        applied = int(row[0]) if row is not None else 0
+    finally:
+        pool.putconn(connection)
+    with controller.locked():
+        anchor = controller.read_anchor()
+        held = controller.verified_count(anchor)
+        if applied > held:
+            raise LocalError("journal_rollback")
+        records = controller.records_after(anchor, applied)
+    return controller.describe_pending(records, applied, held)
+
+
 def backup(
     store: PostgresStore, backup_connection: Any, destination: Path, *, roles: Roles | None = None
 ) -> dict[str, Any]:

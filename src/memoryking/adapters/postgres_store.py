@@ -32,6 +32,20 @@ from memoryking.domain.local import Clock, Decision, LocalError, SystemClock
 from memoryking.observability_metrics import Metrics
 
 
+class _ReplayPending(Exception):
+    """Unapplied journal records were found; leave the transaction and apply them first."""
+
+    def __init__(self, records: list[dict[str, Any]]):
+        super().__init__()
+        self.records = records
+
+
+# Journal replay is not part of any request's five seconds: a long purge needs longer than a
+# request's budget. Each statement may run this long (milliseconds); the record count is
+# bounded by the journal, and each record commits on its own.
+JOURNAL_APPLY_STATEMENT_MS = 900_000
+
+
 class PostgresStore(StoreCore):
     control: SharedControl
     tenant: str  # always bound; the local store leaves StoreCore.tenant None
@@ -252,7 +266,9 @@ class PostgresStore(StoreCore):
         self._expose()
         return token
 
-    def _settings(self) -> None:
+    def _settings(self, statement_ms: int | None = None) -> None:
+        """Transaction settings. `statement_ms` replaces the request budget for one statement,
+        which only journal replay uses: its work is not part of any request's five seconds."""
         self.connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
         self.connection.execute("SET LOCAL search_path=memoryking,pg_catalog")
         remaining_ms = (
@@ -262,8 +278,11 @@ class PostgresStore(StoreCore):
         )
         if remaining_ms <= 0:
             raise LocalError("service_busy")
-        for setting in ("lock_timeout", "statement_timeout"):
-            self.connection.execute("SELECT set_config(%s,%s,true)", (setting, str(remaining_ms)))
+        self.connection.execute("SELECT set_config('lock_timeout',%s,true)", (str(remaining_ms),))
+        self.connection.execute(
+            "SELECT set_config('statement_timeout',%s,true)",
+            (str(remaining_ms if statement_ms is None else statement_ms),),
+        )
         self.connection.execute("SELECT set_config('memoryking.tenant',%s,true)", (self.tenant,))
         self.connection.execute(
             "SELECT set_config('memoryking.principal',%s,true)", (self.principal,)
@@ -298,6 +317,43 @@ class PostgresStore(StoreCore):
         with self.control.locked():
             return self.control.records_after(self.anchor, applied)
 
+    def _replay_pending(self, records: list[dict[str, Any]]) -> None:
+        """Apply unapplied journal records, each in its own transaction without a request budget.
+
+        Journal first, database second, anchor third: a record is applied and committed before
+        the anchor advances over it, and progress survives an interruption because every
+        record that committed stays applied. A record that fails is noted for the operator
+        (sequence, kind, tenant and error code only) and raised; nothing is skipped, so the
+        records after it stay pending.
+        """
+        for record in records:
+            try:
+                with self.connection.transaction():
+                    self._settings(JOURNAL_APPLY_STATEMENT_MS)
+                    self.active = True
+                    row = self.connection.execute(
+                        "SELECT tenant FROM memoryking.tenant_gates WHERE tenant=%s FOR UPDATE",
+                        (self.tenant,),
+                    ).fetchone()
+                    if row is None:
+                        raise LocalError("denied")
+                    self._apply(record, self._now().evaluated_ms)
+            except BaseException as exc:
+                self.control.note_apply_failure(record, exc)
+                raise
+            finally:
+                self.active = False
+            with self.control.locked():
+                anchor = self.control.read_anchor()
+                if anchor["journal_sequence"] < record["sequence"]:
+                    anchor["journal_sequence"] = record["sequence"]
+                    anchor["journal_head"] = hashlib.sha256(
+                        self.control.sign(record).encode()
+                    ).hexdigest()
+                    self.control.anchor(anchor)
+                self.anchor = anchor
+            self.control.clear_apply_failure(record["sequence"])
+
     @contextmanager
     def transaction(self) -> Iterator[Decision]:
         with self.lock:
@@ -309,53 +365,57 @@ class PostgresStore(StoreCore):
             clock_locked: float | None = None
             committed_ok = False
             try:
-                with self.connection.transaction():
-                    self._settings()
-                    self.active = True
-                    mode = "SHARE" if self.release_only else "UPDATE"
-                    row = self.connection.execute(
-                        f"SELECT tenant FROM memoryking.tenant_gates WHERE tenant=%s FOR {mode}",
-                        (self.tenant,),
-                    ).fetchone()
-                    if row is None:
-                        raise LocalError("denied")
-                    locked = time.monotonic()
-                    pending = self._validate_anchor()
-                    if pending and self.release_only:
-                        raise LocalError("journal_replay_required")
-                    decision = self._now()
-                    for record in pending:
-                        self._apply(record, decision.evaluated_ms)
-                    if pending:
-                        with self.control.locked():
-                            anchor = self.control.read_anchor()
-                            anchor["journal_sequence"] = pending[-1]["sequence"]
-                            anchor["journal_head"] = hashlib.sha256(
-                                self.control.sign(pending[-1]).encode()
-                            ).hexdigest()
-                            self.control.anchor(anchor)
-                            self.anchor = anchor
-                    yield decision
-                    self.fault("before_commit")
-                    decision.check(self.clock)
-                    clock_started = time.monotonic()
-                    serial = self.connection.execute(
-                        "SELECT memoryking.next_commit_serial(%s,%s)", (self.tenant, MAX_COUNTER)
-                    ).fetchone()
-                    if serial is None or serial[0] is None:
-                        raise LocalError("counter_exhausted")
-                    clock_locked = time.monotonic()
-                    position = self.db.execute(
-                        "SELECT position FROM tenants WHERE tenant=?", (self.tenant,)
-                    ).fetchone()[0]
-                    decision.check(self.clock)
-                    committed = {
-                        "commit_serial": int(serial[0]),
-                        "position": position,
-                        "last_utc": self.last_utc,
-                    }
-                self.committed = committed
-                committed_ok = True
+                replays = 0
+                while True:
+                    try:
+                        with self.connection.transaction():
+                            self._settings()
+                            self.active = True
+                            mode = "SHARE" if self.release_only else "UPDATE"
+                            row = self.connection.execute(
+                                f"SELECT tenant FROM memoryking.tenant_gates WHERE tenant=%s FOR {mode}",
+                                (self.tenant,),
+                            ).fetchone()
+                            if row is None:
+                                raise LocalError("denied")
+                            locked = time.monotonic()
+                            pending = self._validate_anchor()
+                            if pending and self.release_only:
+                                raise LocalError("journal_replay_required")
+                            if pending:
+                                # Applied outside this request's transaction and budget, one record
+                                # per transaction, then this request starts over on a settled journal.
+                                raise _ReplayPending(pending)
+                            decision = self._now()
+                            yield decision
+                            self.fault("before_commit")
+                            decision.check(self.clock)
+                            clock_started = time.monotonic()
+                            serial = self.connection.execute(
+                                "SELECT memoryking.next_commit_serial(%s,%s)",
+                                (self.tenant, MAX_COUNTER),
+                            ).fetchone()
+                            if serial is None or serial[0] is None:
+                                raise LocalError("counter_exhausted")
+                            clock_locked = time.monotonic()
+                            position = self.db.execute(
+                                "SELECT position FROM tenants WHERE tenant=?", (self.tenant,)
+                            ).fetchone()[0]
+                            decision.check(self.clock)
+                            committed = {
+                                "commit_serial": int(serial[0]),
+                                "position": position,
+                                "last_utc": self.last_utc,
+                            }
+                        self.committed = committed
+                        committed_ok = True
+                        break
+                    except _ReplayPending as replay:
+                        self.active = False
+                        replays += 1
+                        if replays > 3:
+                            raise LocalError("journal_replay_required") from None
+                        self._replay_pending(replay.records)
                 self.fault("after_commit")
                 decision.check(self.clock)
             finally:

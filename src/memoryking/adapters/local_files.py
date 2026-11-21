@@ -11,6 +11,7 @@ import os
 import secrets
 import stat
 import threading
+import time
 from array import array
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ from memoryking.domain.local import LocalError
 # Largest signed journal line accepted on write and read. It covers every journaled
 # action (bindings are bounded at 128 KiB canonical, selectors at 16 KiB) with headroom.
 JOURNAL_RECORD_LIMIT = 262144
+# The last record that could not be applied (sequence, kind, tenant, error code), beside the journal.
+APPLY_FAILURE = "journal-apply-failure"
 
 
 def durable_sync(fd: int) -> None:
@@ -350,6 +353,15 @@ class Control:
         if not hmac.compare_digest(expected.encode(), anchor["journal_head"].encode()):
             raise LocalError("journal_rollback")
 
+    def head(self, count: int) -> str:
+        """The chain head (hash of the record line) after `count` verified records."""
+        state = self._cache.state
+        if count == 0:
+            return "0" * 64
+        if state is None or count > len(state.offsets):
+            raise LocalError("journal_invalid")
+        return bytes(state.hashes[(count - 1) * 32 : count * 32]).hex()
+
     def verified_count(self, anchor: dict[str, Any]) -> int:
         """Verify the journal against the anchor and return how many records it holds."""
         return len(self._sync(anchor).offsets)
@@ -373,6 +385,84 @@ class Control:
                 raise LocalError("journal_invalid")
             records.append(self._verify(line.decode("ascii"), JOURNAL_RECORD_LIMIT))
         return records
+
+    def note_apply_failure(self, record: dict[str, Any], exc: BaseException) -> None:
+        """Remember which record could not be applied and why, for the operator's listing.
+
+        Diagnostic only and unsigned: it holds the sequence, kind, tenant and an error code,
+        never record content or exception text, and nothing trusts it. It is rewritten only
+        when the failure changes, so a record that fails on every request costs one write.
+        """
+        action = record.get("action", {})
+        code = exc.code if isinstance(exc, LocalError) else None
+        if code is None:
+            state = getattr(exc, "sqlstate", None)
+            code = (
+                "statement_timeout"
+                if state == "57014"
+                else f"database_error_{state}"
+                if isinstance(state, str) and state.isalnum()
+                else type(exc).__name__
+            )
+        detail = {
+            "sequence": record["sequence"],
+            "kind": action.get("kind"),
+            "tenant": action.get("tenant"),
+            "error": code,
+        }
+        try:
+            existing = self.apply_failure()
+            if existing is not None and all(existing.get(k) == v for k, v in detail.items()):
+                return
+            atomic(
+                self.path / APPLY_FAILURE,
+                canonical_bytes({**detail, "attempted_ms": time.time_ns() // 1_000_000}),
+            )
+        except (OSError, LocalError):
+            pass
+
+    def apply_failure(self) -> dict[str, Any] | None:
+        try:
+            private_file(self.path / APPLY_FAILURE)
+            value = load_strict((self.path / APPLY_FAILURE).read_bytes())
+        except (OSError, LocalError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def clear_apply_failure(self, applied: int) -> None:
+        """Forget a recorded failure once that record, or a later one, has been applied."""
+        held = self.apply_failure()
+        if (
+            held is not None
+            and isinstance(held.get("sequence"), int)
+            and held["sequence"] <= applied
+        ):
+            (self.path / APPLY_FAILURE).unlink(missing_ok=True)
+
+    def describe_pending(
+        self, records: list[dict[str, Any]], applied: int, held: int
+    ) -> dict[str, Any]:
+        """Unapplied records for an operator: sequence, kind, tenant and the last apply error.
+
+        Record content is never included: a record may carry a binding, a selector or a
+        principal that is itself sensitive.
+        """
+        failure = self.apply_failure()
+        pending = []
+        for record in records:
+            action = record["action"]
+            last = None
+            if failure is not None and failure.get("sequence") == record["sequence"]:
+                last = {"error": failure.get("error"), "attempted_ms": failure.get("attempted_ms")}
+            pending.append(
+                {
+                    "sequence": record["sequence"],
+                    "kind": action.get("kind"),
+                    "tenant": action.get("tenant"),
+                    "last_apply_error": last,
+                }
+            )
+        return {"journal_records": held, "applied": applied, "pending": pending}
 
     def journal(self, anchor: dict[str, Any]) -> list[dict[str, Any]]:
         """The verified, hash-chained journal; only an unanchored torn final line is tolerated."""
