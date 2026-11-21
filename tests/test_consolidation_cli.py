@@ -113,6 +113,27 @@ models = ["grok-4"]
         self.assertIn("delivered", self.cli("egress-audit", "--project", "p"))
         self.assertIn("Nothing new to consolidate", self.cli("consolidate", *args, "--since", "1d"))
 
+    def test_the_unreviewed_tier_is_an_admin_switch_and_labels_what_recall_shows(self):
+        self.capture("a", "Retries in payments/retry.py are capped at three attempts.")
+        self.capture("b", "The payments/retry.py cap of three attempts caused a page last week.")
+        self.cli("draft-proposals", "--project", "p", "--no-procedures")
+        ask = ("recall", "--project", "p", "--query", "payments retry attempts")
+        self.assertNotIn("Unreviewed", self.cli(*ask))
+        self.assertIn("off", self.cli("unreviewed", "show", "--project", "p"))
+        reviewer = self.credential("rev", ["read", "review", "capture"])
+        refused = self.cli("unreviewed", "on", "--project", "p", credential=reviewer, expect=2)
+        self.assertIn("denied", refused)
+        self.assertIn("ON", self.cli("unreviewed", "on", "--project", "p"))
+        shown = self.cli(*ask)
+        self.assertIn("## Unreviewed, drafted from evidence", shown)
+        self.assertIn("repeated evidence", shown)
+        self.assertNotIn("## Must follow", shown)
+        self.assertEqual(
+            json.loads(self.cli("unreviewed", "show", "--project", "p", "--json"))["enabled"], True
+        )
+        self.cli("unreviewed", "off", "--project", "p")
+        self.assertNotIn("Unreviewed", self.cli(*ask))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,8 +94,8 @@ TABLES_V8 = TABLES_V6 + ("credential_generations",)
 TABLES_V9 = TABLES_V8 + ("lexical_state", "lexical_projects", "lexical_terms")
 # Schema 10 archives add supersession links, retirement requests and pins.
 TABLES_V10 = TABLES_V9 + ("supersessions", "retirement_requests", "pins")
-# Schema 11 archives add the consolidation runs.
-TABLES = TABLES_V10 + ("consolidation_runs",)
+# Schema 11 archives add the consolidation runs and the unreviewed-tier policy.
+TABLES = TABLES_V10 + ("consolidation_runs", "unreviewed_tier")
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 

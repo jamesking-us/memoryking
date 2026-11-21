@@ -266,7 +266,11 @@ def render_consolidation(result: dict[str, Any]) -> str:
     if result["dropped"]:
         lines.append("Dropped, with reasons: " + json.dumps(result["dropped"], sort_keys=True))
     for item in result["filed"]:
-        note = f" ({item['relation']['type']} {item['relation']['claim']})" if "relation" in item else ""
+        note = (
+            f" ({item['relation']['type']} {item['relation']['claim']})"
+            if "relation" in item
+            else ""
+        )
         lines.append(f"  {item['revision']} [{item['kind']}]{note}")
     lines.append("Review them with `memoryking review list`; nothing here is accepted.")
     return "\n".join(lines)
@@ -460,6 +464,28 @@ def pin_command(args: Any) -> None:
         f"cli-pin-{args.pin_command}-{kind}-{target}-{int(time.time() * 1000)}",
     )
     print(json.dumps(result))
+
+
+def unreviewed_command(args: Any) -> None:
+    """`memoryking unreviewed on|off|show`: the per-project tier policy (an admin decision)."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    if args.unreviewed_command == "show":
+        result = reviewer.call("unreviewed_tier_show", {})
+    else:
+        result = reviewer.call(
+            "unreviewed_tier",
+            {"mode": args.unreviewed_command},
+            f"cli-unreviewed-{args.unreviewed_command}-{int(time.time() * 1000)}",
+        )
+    if args.json:
+        sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+    else:
+        print(
+            f"Unreviewed drafts in briefings for {args.project}: "
+            + ("ON" if result["enabled"] else "off")
+        )
 
 
 def read_credential(path: Path) -> str:
@@ -1079,6 +1105,17 @@ def main() -> int:
             target = sub.add_mutually_exclusive_group(required=True)
             target.add_argument("--claim", metavar="REVISION_OR_FAMILY")
             target.add_argument("--observation", metavar="OBSERVATION")
+    un = commands.add_parser(
+        "unreviewed",
+        help="Let briefings show unreviewed drafts in a labelled section (admin; off by default)",
+    )
+    un_commands = un.add_subparsers(dest="unreviewed_command", required=True)
+    for name in ("on", "off", "show"):
+        sub = un_commands.add_parser(name)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
     dr = commands.add_parser(
         "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
     )
@@ -1086,6 +1123,11 @@ def main() -> int:
     dr.add_argument("--credential", type=Path)
     dr.add_argument("--project", required=True)
     dr.add_argument("--limit", type=int, default=16)
+    dr.add_argument(
+        "--no-procedures",
+        action="store_true",
+        help="Skip procedure drafts from outcomes that recur across tasks",
+    )
     dr.add_argument("--key", help="Retry key; default: one per project and day")
     dr.add_argument("--json", action="store_true")
     vault = commands.add_parser(
@@ -1234,6 +1276,7 @@ def main() -> int:
                 "influence",
                 "trust",
                 "draft-proposals",
+                "unreviewed",
                 "consolidate",
                 "review",
                 "pin",
@@ -1499,6 +1542,8 @@ def main() -> int:
                 return outcome
         elif args.command == "pin":
             pin_command(args)
+        elif args.command == "unreviewed":
+            unreviewed_command(args)
         elif args.command == "draft-proposals":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})
@@ -1513,7 +1558,11 @@ def main() -> int:
                         "incarnation": context["incarnation"],
                         "action": "draft",
                         "key": args.key or f"draft-{args.project}-{day}",
-                        "args": {"project": args.project, "limit": args.limit},
+                        "args": {
+                            "project": args.project,
+                            "limit": args.limit,
+                            "procedures": not args.no_procedures,
+                        },
                     }
                 },
             )
@@ -1528,6 +1577,17 @@ def main() -> int:
                     f"{len(report['drafted'])} draft(s) filed for review from {report['window']} observations; "
                     f"skipped {json.dumps(report['skipped'], sort_keys=True)}"
                 )
+                procedures = report.get("procedures")
+                if procedures is not None:
+                    for item in procedures["drafted"]:
+                        print(
+                            f"{item['revision']} [{item['polarity']} procedure, {item['tasks']} tasks] {item['text']}"
+                        )
+                    print(
+                        f"{len(procedures['drafted'])} procedure draft(s) filed for review "
+                        f"(they still need a review and a separate activation); "
+                        f"skipped {json.dumps(procedures['skipped'], sort_keys=True)}"
+                    )
         elif args.command == "vault":
             from memoryking import vault as vault_module
 

@@ -112,8 +112,10 @@ def parse_reply(text: str) -> list[Any]:
         value = json.loads(body)
     except ValueError as exc:
         raise ValueError("reply_not_json") from exc
-    if not isinstance(value, dict) or set(value) != {"claims"} or not isinstance(
-        value["claims"], list
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"claims"}
+        or not isinstance(value["claims"], list)
     ):
         raise ValueError("reply_shape_invalid")
     return value["claims"]
@@ -413,7 +415,9 @@ class Consolidation:
                 continue
             seen_text.add(sameness(body["text"]))
             known[1][
-                frozenset((e["observation"], e["start_byte"], e["end_byte"]) for e in body["evidence"])
+                frozenset(
+                    (e["observation"], e["start_byte"], e["end_byte"]) for e in body["evidence"]
+                )
             ] = "proposed"
             if relation:
                 self.db.execute(
@@ -429,7 +433,8 @@ class Consolidation:
                 }
             )
         accepted_reply = not any(
-            reason in dropped for reason in ("reply_too_large", "reply_not_json", "reply_shape_invalid")
+            reason in dropped
+            for reason in ("reply_too_large", "reply_not_json", "reply_shape_invalid")
         )
         self.db.execute(
             "UPDATE consolidation_runs SET state=?,permit=?,provider=?,model=?,filed=?,dropped=?,closed=? WHERE tenant=? AND id=?",
@@ -592,7 +597,9 @@ class Consolidation:
         if key in by_text:
             drop("duplicate")
             return None
-        if by_evidence.get(frozenset((s["observation"], s["start_byte"], s["end_byte"]) for s in spans)):
+        if by_evidence.get(
+            frozenset((s["observation"], s["start_byte"], s["end_byte"]) for s in spans)
+        ):
             drop("duplicate")
             return None
         if not anchor:

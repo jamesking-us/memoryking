@@ -143,7 +143,9 @@ class ConsolidationLoop:
         self.make, self.projects = make, projects
         self.every_s, self.idle_ms, self.limit = every_s, idle_ms, limit
         self.stopping = threading.Event()
-        self.thread = threading.Thread(target=self.run, name="memoryking-consolidation", daemon=True)
+        self.thread = threading.Thread(
+            target=self.run, name="memoryking-consolidation", daemon=True
+        )
         self.passes = 0
 
     def tick(self) -> list[dict[str, Any]]:

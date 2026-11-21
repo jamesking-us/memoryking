@@ -638,6 +638,9 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 64
+            },
+            "procedures": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -1018,6 +1021,88 @@
         "action",
         "args",
         "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "unreviewed_tier"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "mode": {
+              "enum": [
+                "on",
+                "off"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "mode"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "unreviewed_tier_show"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args"
       ]
     }
   ]
