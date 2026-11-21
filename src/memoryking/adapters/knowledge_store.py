@@ -36,9 +36,15 @@ class Knowledge:
         if command["incarnation"] != self.s.incarnation:
             raise LocalError("history_changed")
         action, args = command["action"], command["args"]
+        if action == "consolidate_prepare":
+            from memoryking.adapters.consolidation import Consolidation
+
+            return Consolidation(self).prepare(credential, command)
         cap = {
             "propose": "capture",
             "draft": "capture",
+            "consolidate_prepare": "capture",
+            "consolidate_admit": "capture",
             "review": "review",
             "attest": "attest",
             "promote": "review",
@@ -70,6 +76,7 @@ class Knowledge:
             mutation = action in {
                 "propose",
                 "draft",
+                "consolidate_admit",
                 "review",
                 "attest",
                 "promote",
@@ -113,6 +120,10 @@ class Knowledge:
                 from memoryking.adapters.proposals import Proposals
 
                 result = Proposals(self).draft(credential, who, args, at)
+            elif action == "consolidate_admit":
+                from memoryking.adapters.consolidation import Consolidation
+
+                result = Consolidation(self).admit(credential, who, args, at)
             elif action == "promote":
                 result = self.promote(credential, who, args, at)
             elif action == "review":

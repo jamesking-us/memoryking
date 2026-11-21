@@ -127,6 +127,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `concurrency_limit` | Four job leases are already live; finish or let them expire before claiming more. |
 
+## consolidation
+
+| Code | What to do |
+| --- | --- |
+| `consolidation_run_invalid` | The consolidation run is unknown, belongs to another principal, or was already admitted or abandoned; prepare a new one. |
+| `consolidation_source_invalid` | A consolidation reply must be the exact reply recorded in a delivered egress audit for this principal and project, from a permit that cited this run's input; pass the permit and the unmodified text. |
+
 ## constraint
 
 | Code | What to do |
@@ -251,6 +258,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `egress_audit_reported` | That egress audit record already has a final outcome; a report is written once. |
 | `egress_classification_denied` | A message cites content above the provider's classification ceiling; rebuild the conversation without it or raise the ceiling in the policy. |
 | `egress_policy_invalid` | The egress policy file is malformed: check revision, provider names, hosts, models, classification ceilings and that plain HTTP is loopback-only. |
+| `egress_policy_required` | Consolidation sends text to a model: pass --egress-policy FILE with --provider and --model (the daemon needs the same policy), or --provider local-recording to dry-run. |
 | `egress_provider_denied` | The provider or model is not in the daemon's egress policy; add it to the policy file and restart `serve --egress-policy`. |
 
 ## embedding
