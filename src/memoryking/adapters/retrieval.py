@@ -1517,7 +1517,11 @@ class Retrieval:
                 continue
             shapes[entry[1]] = shape(entry[2][0]["text"])
             for cluster in clusters:
-                if duplicates(shapes[entries[cluster[0]][1]], shapes[entry[1]]):
+                # a question that names a date keeps a copy in that range apart from the rest
+                same_time = entries[cluster[0]][2][0].get("in_time_range") == entry[2][0].get(
+                    "in_time_range"
+                )
+                if same_time and duplicates(shapes[entries[cluster[0]][1]], shapes[entry[1]]):
                     cluster.append(index)
                     break
             else:
