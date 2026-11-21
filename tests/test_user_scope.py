@@ -251,6 +251,18 @@ class UserScopeTests(unittest.TestCase):
             store.revoke(self.victor, "agent-b", VICTOR)
         self.fails("denied", lambda: self.put(self.victor_agent, VICTOR, "again", "v2"))
 
+    def test_a_link_carries_only_what_the_credential_was_issued_with_and_ends_with_it(self):
+        reader = self.store.grant(self.owner, "agent-r", "p", ["read"], for_user="alice")
+        self.fails("denied", lambda: self.put(reader, USER, "not allowed", "r1"))
+        # A credential without capture or read acts for nobody.
+        worker = self.store.grant(self.owner, "worker", "p", ["jobs"], for_user="alice")
+        self.fails("denied", lambda: self.user_op(worker, action="scope"))
+        # Ending the agent's last project grant ends its link and retires its credential.
+        self.store.revoke(self.owner, "agent-r", "p")
+        self.fails("denied", lambda: self.user_op(reader, action="scope"))
+        shown = self.user_op(self.alice, action="show")
+        self.assertNotIn("agent-r", [a["principal"] for a in shown["agents"]])
+
     def test_session_start_carries_standing_user_claims(self):
         _, mine = self.put(self.alice, USER, "The user replies in British English.", "u1")
         self.accept(

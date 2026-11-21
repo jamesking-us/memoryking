@@ -830,7 +830,9 @@ class StoreCore:
             record = self._journal(action)
             self._apply(record, at)
             if owner is not None and not scoped:
-                self._link_user(credential, who, principal, owner, starts, expires, at)
+                self._link_user(
+                    credential, who, principal, owner, capabilities, starts, expires, at
+                )
             token = self._token("credential", tenant=who["tenant"], principal=principal)
         self._expose()
         return token
@@ -850,12 +852,20 @@ class StoreCore:
         who: dict[str, Any],
         principal: str,
         owner: str,
+        requested: list[str],
         starts: int | None,
         expires: int | None,
         at: int,
     ) -> None:
-        """Make `principal` act for `owner`, creating the owner's own scope grant first."""
+        """Make `principal` act for `owner`, creating the owner's own scope grant first.
+
+        The link carries only what the credential was issued with, and only what an agent may
+        hold in a user scope; a credential with neither `capture` nor `read` acts for nobody."""
         project = user_project(owner)
+        allowed = USER_OWNER_CAPABILITIES if principal == owner else USER_AGENT_CAPABILITIES
+        capabilities = sorted(set(requested) & allowed)
+        if not capabilities:
+            return
         # Authority over that scope is checked for this very call, not inherited from the
         # grant it accompanies: only an administrator or the user may link anyone to it.
         self.user_authority(credential, project, at)
@@ -870,8 +880,7 @@ class StoreCore:
             is None
         ):
             steps.append((owner, sorted(USER_OWNER_CAPABILITIES), None, None))
-        agent = USER_OWNER_CAPABILITIES if principal == owner else USER_AGENT_CAPABILITIES
-        steps.append((principal, sorted(agent), starts, expires))
+        steps.append((principal, capabilities, starts, expires))
         for name, capabilities, start, end in steps:
             record = self._journal(
                 {
@@ -1112,16 +1121,26 @@ class StoreCore:
                 "DELETE FROM grants WHERE tenant=? AND principal=? AND project=?",
                 (tenant, action["principal"], action["project"]),
             )
-            if (
-                held is not None
-                and self.db.execute(
-                    "SELECT 1 FROM grants WHERE tenant=? AND principal=?",
-                    (tenant, action["principal"]),
-                ).fetchone()
-                is None
-            ):
-                # The principal lost its last grant: a later grant must not revive old credentials.
-                self._advance_generation(tenant, action["principal"])
+            if held is not None:
+                left = [
+                    row[0]
+                    for row in self.db.execute(
+                        "SELECT project FROM grants WHERE tenant=? AND principal=?",
+                        (tenant, action["principal"]),
+                    ).fetchall()
+                ]
+                # Links to a user's scope are not grants of their own: an agent whose project
+                # access ended no longer acts for anyone, so they end with it.
+                if all(
+                    is_user_project(p) and project_owner(p) != action["principal"] for p in left
+                ):
+                    self.db.execute(
+                        "DELETE FROM grants WHERE tenant=? AND principal=?",
+                        (tenant, action["principal"]),
+                    )
+                    # The principal lost its last grant: a later grant must not revive old
+                    # credentials.
+                    self._advance_generation(tenant, action["principal"])
         elif kind == "purge":
             obs = action["observation"]
             self.db.execute(
