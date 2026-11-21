@@ -81,7 +81,7 @@
           "budget": {
             "type": "integer",
             "minimum": 256,
-            "maximum": 100000,
+            "maximum": 65536,
             "description": "Token budget for the briefing. Default 6000."
           },
           "task": {
@@ -261,7 +261,7 @@
           "budget": {
             "type": "integer",
             "minimum": 256,
-            "maximum": 100000,
+            "maximum": 65536,
             "description": "Token budget. Default 12000."
           }
         },

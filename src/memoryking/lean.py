@@ -16,7 +16,7 @@ from memoryking.sdk import LocalClient
 
 IDENTIFIER = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,96}$"}
 TEXT = {"type": "string", "minLength": 1, "maxLength": 8192}
-BUDGET = {"type": "integer", "minimum": 256, "maximum": 100000}
+BUDGET = {"type": "integer", "minimum": 256, "maximum": 65536}
 ROLES = ("review", "implement", "verify", "operate")
 
 TOOLS: list[dict[str, Any]] = [
