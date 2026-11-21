@@ -917,9 +917,12 @@ class StoreCore:
             return 0
         try:
             credential = credential_file.read_text().strip()
-            return Working(self).idle_summaries(
-                credential, self.summary_idle_ms, self.clock.utc_ms() if now is None else now
-            )
+            # The daemon calls this on its service thread while request threads share the
+            # one connection: the scan's reads must not interleave with their statements.
+            with self.lock:
+                return Working(self).idle_summaries(
+                    credential, self.summary_idle_ms, self.clock.utc_ms() if now is None else now
+                )
         except (OSError, LocalError):
             return 0
 

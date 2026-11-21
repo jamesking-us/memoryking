@@ -275,6 +275,24 @@ class WorkingTests(unittest.TestCase):
             ).fetchone()
         )
 
+    def test_idle_summary_scan_holds_the_store_lock_it_shares_with_requests(self):
+        # The daemon runs the scan on its service thread while request threads use the
+        # same connection; an unlocked scan made the first request fail with `denied`.
+        self.store.summary_idle_ms = 1000
+        held = []
+        original = Working.idle_summaries
+
+        def watch(working, *args):
+            held.append(self.store.lock._is_owned())
+            return original(working, *args)
+
+        Working.idle_summaries = watch
+        try:
+            self.store.idle_summaries(self.clock().utc)
+        finally:
+            Working.idle_summaries = original
+        self.assertEqual(held, [True])
+
     def test_idle_summaries_are_derived_once_by_the_owner_between_requests(self):
         clock = self.clock()
         saved = self.save()

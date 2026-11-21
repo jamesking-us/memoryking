@@ -637,9 +637,12 @@ class KnowledgeTests(unittest.TestCase):
                 )
                 if kind == "knowledge":
                     # A historical query still sees the revisions that were accepted then, and
-                    # the reviewer diagnostic keeps its unfiltered, bounded scan.
+                    # the reviewer diagnostic lists the newest revisions of any state in pages.
                     self.assertEqual(len(run(recorded_position=before)["items"]), 3)
-                    self.assertEqual(run(diagnostic=True)["status"], "blocked")
+                    listing = run(diagnostic=True)
+                    self.assertEqual(listing["status"], "complete")
+                    self.assertTrue(listing["truncated"])
+                    self.assertEqual(len(listing["items"]), 3)
                 # A fourth accepted revision does exceed the bound: nothing is dropped silently.
                 self.review(self.propose(self.claim_body(kind, "extra"), key=f"{kind}-extra"))
                 blocked = run()
@@ -663,6 +666,53 @@ class KnowledgeTests(unittest.TestCase):
         self.assertEqual(
             sorted(i["revision"] for i in result["items"]),
             sorted(a["revision"] for a in accepted),
+        )
+
+    def test_reviewer_listing_pages_instead_of_blocking(self):
+        from unittest.mock import patch
+
+        with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3):
+            drafts = [
+                self.propose(self.body(f"draft {i}"), key=f"draft{i}")["revision"] for i in range(7)
+            ]
+            seen, pages, before = [], 0, None
+            while True:
+                page = self.query(
+                    diagnostic=True, **({} if before is None else {"before_position": before})
+                )
+                self.assertEqual(page["status"], "complete")
+                self.assertLessEqual(len(page["items"]), 3)
+                self.assertEqual({i["state"] for i in page["items"]}, {"proposed"})
+                seen = [i["revision"] for i in page["items"]] + seen
+                pages += 1
+                if not page["truncated"]:
+                    self.assertIsNone(page["next_before_position"])
+                    break
+                before = page["next_before_position"]
+            self.assertEqual((seen, pages), (drafts, 3))
+            # Without the diagnostic there is nothing accepted to resolve, and no paging.
+            plain = self.query()
+            self.assertEqual(
+                (plain["status"], plain["items"], plain["truncated"]), ("complete", [], False)
+            )
+
+    def test_reviewer_can_list_proposals_among_hundreds_of_drafts(self):
+        accepted = self.review(self.propose(self.body("live"), key="live"))
+        drafts = [
+            self.propose(self.body(f"draft {i}"), key=f"draft{i}")["revision"] for i in range(300)
+        ]
+        listing = self.query(diagnostic=True)
+        self.assertEqual(listing["status"], "complete")
+        self.assertTrue(listing["truncated"])
+        self.assertEqual(len(listing["items"]), 256)
+        revisions = [i["revision"] for i in listing["items"]]
+        self.assertEqual(revisions[-1], drafts[-1])  # the newest proposals are listed
+        self.assertEqual(revisions[0], drafts[300 - 256])
+        rest = self.query(diagnostic=True, before_position=listing["next_before_position"])
+        self.assertFalse(rest["truncated"])
+        self.assertEqual(
+            sorted(i["revision"] for i in rest["items"]),
+            sorted([accepted["revision"], *drafts[:44]]),
         )
 
     def test_purged_accepted_constraint_still_blocks_among_retired_revisions(self):

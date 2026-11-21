@@ -556,7 +556,9 @@ export class Observatory {
             ["Procedures", procedures, "experience"],
         ]) {
             const section = e("section");
-            section.append(e("h3", name), e("p", `Resolution: ${readable(data.status)} · ${readable(data.reason)}`));
+            section.append(e("h3", name), e("p", `Resolution: ${readable(data.status)} · ${readable(data.reason)}${data.truncated
+                ? " · newest only; older revisions are not listed here"
+                : ""}`));
             for (const item of rows(data.items)) {
                 const card = e("article", "", "review-card"), body = doc(item.body);
                 card.append(e("h4", String(body.text ?? body.name ?? item.revision)), e("p", `${readable(item.state ?? item.lifecycle)} · ${readable(item.authority)} · version ${item.family_version}`), detail("Applicability, sources, conflicts and attestations", item));

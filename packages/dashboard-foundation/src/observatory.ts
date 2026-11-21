@@ -751,7 +751,11 @@ export class Observatory {
         e("h3", name),
         e(
           "p",
-          `Resolution: ${readable(data.status)} · ${readable(data.reason)}`,
+          `Resolution: ${readable(data.status)} · ${readable(data.reason)}${
+            data.truncated
+              ? " · newest only; older revisions are not listed here"
+              : ""
+          }`,
         ),
       );
       for (const item of rows(data.items)) {

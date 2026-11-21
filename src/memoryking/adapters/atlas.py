@@ -112,7 +112,7 @@ def query(
             constraints=constraints,
             attestation_limit=33,
         )
-        if result["status"] != "complete":
+        if result["status"] != "complete" or result.get("truncated"):
             limits.add("claim_resolution_incomplete")
         for item in result["items"]:
             ident, body = item["revision"], item["body"]

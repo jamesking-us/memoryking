@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -448,6 +450,19 @@ def render_health(report: dict[str, Any]) -> str:
         lines.append("  - ...")
     lines += ["", f"Coverage: {report['coverage'].replace('_', ' ')}"]
     return "\n".join(lines) + "\n"
+
+
+def default_trust_key(project: str, source: str, level: str) -> str:
+    """The retry key for a trust rule: readable when it is valid, else a stable hash.
+
+    A glob such as `scraper-*` (or the project `*`) is outside the key alphabet, and a
+    long source exceeds its length, so those derive from a digest of the rule instead.
+    """
+    key = f"trust-{project}-{source}-{level}"
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,96}", key):
+        return key
+    digest = hashlib.sha256(canonical_bytes([project, source, level])).hexdigest()
+    return f"trust-{digest[:32]}"
 
 
 def main() -> int:
@@ -1092,7 +1107,9 @@ def main() -> int:
             }
             if args.trust_command == "set":
                 command["args"].update(source=args.source, level=args.level)
-                command["key"] = args.key or f"trust-{args.project}-{args.source}-{args.level}"
+                command["key"] = args.key or default_trust_key(
+                    args.project, args.source, args.level
+                )
             elif args.trust_command == "release":
                 command["args"]["observation"] = args.observation
                 command["key"] = args.key or f"release-{args.observation}"
