@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from memoryking.application.storage import upsert
-from memoryking.domain.local import LocalError
+from memoryking.domain.local import LocalError, is_user_project
 
 if TYPE_CHECKING:
     from memoryking.application.store_core import StoreCore
@@ -168,7 +168,10 @@ class Corrections:
             raise LocalError("invalid_transition")
         if args["decision"] == "approve":
             # Purge stays an admin action: a reviewer may dismiss but not approve.
-            self.s._auth(credential, "admin", "*", at)
+            if is_user_project(args["project"]):
+                self.s.user_authority(credential, args["project"], at)
+            else:
+                self.s._auth(credential, "admin", "*", at)
             self.s._apply(
                 self.s._journal(
                     {

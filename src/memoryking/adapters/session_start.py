@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.token_count import counter
 from memoryking.domain.briefing import budget_scope, pack
-from memoryking.domain.local import Decision, LocalError
+from memoryking.domain.local import Decision, LocalError, is_user_project
 from memoryking.domain.selectors import bindings
 
 if TYPE_CHECKING:
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 DECISION_SOURCE = re.compile(r"^(decision|instruction|user)([-_].*)?$")
 RECENT_DAYS = 14
 RECENT_LIMIT = 5
+USER_LIMIT = 8  # accepted claims from the user's own scope shown at start
 EXCERPT_BYTES = 800
 DAY_MS = 86_400_000
 MAX_INT = 9_007_199_254_740_991
@@ -163,6 +164,18 @@ def start(
                     entry = _episode(retrieval, found[0], "pinned")
                     entry["retirement_requested"] = found[1] or None
                     groups.append([{k_: v for k_, v in entry.items() if v is not None}])
+        # 1b. What the user's own memory says is standing: their accepted claims, newest
+        # first, labelled as coming from that memory (constraints are already above).
+        mine = sorted(
+            (i for i in accepted.values() if is_user_project(i.get("project", ""))),
+            key=lambda i: -i["created_position"],
+        )
+        for item in mine[:USER_LIMIT]:
+            if item["revision"] not in seen:
+                seen.add(item["revision"])
+                claim = retrieval._claim(item)
+                claim["selection_reason"] = "user_memory"
+                groups.append([claim])
         # 2. The agent's latest checkpoint for the named task.
         if args.get("task"):
             from memoryking.adapters.working import Working

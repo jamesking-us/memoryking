@@ -17,7 +17,7 @@ from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
-from memoryking.domain.local import LocalError, Released
+from memoryking.domain.local import LocalError, Released, is_user_project
 from memoryking.domain.usage import UsageRecord, summarize
 
 CATALOG_TEXT_BYTES = 196608  # text per catalog page, under the inspection reply limit
@@ -55,7 +55,11 @@ class Inspection:
                 "release",
                 "health",
             }:
-                self.s._auth(credential, "admin", "*", at)
+                if is_user_project(args["project"]):
+                    # In a user scope the user holds these powers, not an administrator.
+                    self.s.user_authority(credential, args["project"], at)
+                else:
+                    self.s._auth(credential, "admin", "*", at)
             if action == "history":
                 result = self.history(who, args, at)
             elif action == "operations":

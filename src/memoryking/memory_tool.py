@@ -31,6 +31,8 @@ from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 
 ROOT = "/memories"
+USER_DIRECTORY = "user"
+USER_ROOT = f"{ROOT}/{USER_DIRECTORY}"
 README = "README.md"
 CLAIMS = "claims"
 SUFFIX = ".md"
@@ -456,11 +458,61 @@ class MemoryTool:
 
     definition = DEFINITION
 
-    def __init__(self, client: LocalClient):
+    def __init__(self, client: LocalClient, user_client: LocalClient | None = None):
         self.files = Files(client)
         self.project = client.project
+        # The user's own memory, when the credential acts for a user: its own directory,
+        # `/memories/user`, served by a second tool over the user scope.
+        self.user = (
+            MemoryTool(user_client)
+            if user_client is not None and client.project != USER_DIRECTORY
+            else None
+        )
+
+    @classmethod
+    def for_session(cls, client: LocalClient) -> MemoryTool:
+        """A tool that also exposes the user scope when this credential acts for a user."""
+        try:
+            scope = LocalClient(
+                client.socket, client.credential_file, client.user_project(), client.namespace
+            )
+        except LocalError:
+            return cls(client)
+        return cls(client, scope)
+
+    def _user_command(self, command: Any) -> str | None:
+        """The result of a command under `/memories/user`, or None when it is not one."""
+        assert self.user is not None
+        alias = f"{ROOT}/{self.user.project}"
+        keys = (
+            *("command", "path", "old_path", "new_path", "file_text", "old_str", "new_str"),
+            *("insert_line", "insert_text", "view_range"),
+        )
+        given = {k: field(command, k) for k in keys if field(command, k) is not None}
+        mine = [k for k in ("path", "old_path", "new_path") if isinstance(given.get(k), str)]
+        inside = [k for k in mine if given[k] == USER_ROOT or given[k].startswith(USER_ROOT + "/")]
+        if not inside:
+            return None
+        if len(inside) != len(mine):
+            raise MemoryToolError(
+                "Error: user memory and project memory are separate; copy the text instead."
+            )
+        for key in inside:
+            given[key] = alias + given[key][len(USER_ROOT) :]
+        return self.user.execute(given).replace(alias, USER_ROOT)
 
     def execute(self, command: Any) -> str:
+        if self.user is not None:
+            forwarded = self._user_command(command)
+            if forwarded is not None:
+                return forwarded
+            listing = self._execute(command)
+            if field(command, "command") == "view" and field(command, "path") == ROOT:
+                listing += f"\n0\t{USER_ROOT}"
+            return listing
+        return self._execute(command)
+
+    def _execute(self, command: Any) -> str:
         name = field(command, "command")
         handler = {
             "view": self.view,

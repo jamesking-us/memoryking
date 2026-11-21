@@ -58,6 +58,15 @@ TOOLS: list[dict[str, Any]] = [
                     **IDENTIFIER,
                     "description": "Id of an earlier memory you can read that this replaces.",
                 },
+                "scope": {
+                    "enum": ["project", "user"],
+                    "description": "Where to keep it. `project` (default): this project's own facts. "
+                    "`user`: a durable fact or preference about the person you work for that applies "
+                    "in every project, such as the tools they want used, how they like changes "
+                    "split, or the language to reply in. Never project facts, code or secrets. "
+                    "Their other agents will read it, and it counts as a standing instruction only "
+                    "once they review it.",
+                },
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -507,18 +516,20 @@ def call(
         observed = arguments.get("observed_ms")
         if observed is None:
             observed = int(time.time() * 1000) // DAY_MS * DAY_MS
+        project = client.user_project() if arguments.get("scope") == "user" else client.project
         event = arguments.get("event") or _event(
             source,
             arguments["text"]
             + (f"\n{arguments['supersedes']}" if "supersedes" in arguments else ""),
             observed,
-            client.project,
+            project,
         )
         return client.tool(
             "memory_capture",
             {
                 "key": event,
                 "request": {
+                    **({"project": project} if project != client.project else {}),
                     "source": source,
                     "source_event": event,
                     "text": arguments["text"],
