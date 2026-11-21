@@ -200,6 +200,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `delegation_depth_exceeded` | Delegated credentials cannot delegate again; request a grant from an administrator. |
+| `delegation_superseded` | This delegated credential predates the rule that a delegation acts for its issuer; ask the issuer to delegate again. |
 
 ## delta
 
