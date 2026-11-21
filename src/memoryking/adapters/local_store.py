@@ -47,6 +47,7 @@ from memoryking.application.store_core import (  # noqa: F401
     USAGE_LIMIT,
     StoreCore,
     identifier,
+    lease_holder,
     uid,
 )
 from memoryking.contracts.canonical import canonical_bytes
@@ -131,7 +132,7 @@ __all__ = [
 ]
 
 
-SCHEMA_VERSION = 17  # the SQLite user_version the daemon migrates every store to
+SCHEMA_VERSION = 18  # the SQLite user_version the daemon migrates every store to
 
 
 class LocalStore(StoreCore):
@@ -142,11 +143,13 @@ class LocalStore(StoreCore):
         *,
         clock: Clock | None = None,
         fault: Callable[[str], None] | None = None,
+        instance_id: str | None = None,
     ):
         paths(root, control)
         private_dir(root)
         private_dir(control)
         self.root, self.control_path = root, control
+        self.lease = lease_holder(control, instance_id)
         self.owner = Ownership(root)
         try:
             self.control_owner = Ownership(control)
@@ -239,6 +242,12 @@ class LocalStore(StoreCore):
             self.db.executescript(Path(__file__).with_name("lexical_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
             self.db.executescript(Path(__file__).with_name("corrections_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}:
+            if "on_behalf_of" not in {
+                row[1] for row in self.db.execute("PRAGMA table_info(events)").fetchall()
+            }:
+                self.db.execute("ALTER TABLE events ADD COLUMN on_behalf_of TEXT")
+            self.db.executescript(Path(__file__).with_name("operations_schema.sql").read_text())
         elif version != SCHEMA_VERSION:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
@@ -308,6 +317,8 @@ class LocalStore(StoreCore):
                 "frontiers": {},
                 "journal_sequence": 0,
                 "journal_head": "0" * 64,
+                "operations_sequence": 0,
+                "operations_head": "0" * 64,
                 "last_utc": 0,
                 "commit_serial": 0,
             }
@@ -349,11 +360,22 @@ class LocalStore(StoreCore):
                     applied = int(
                         db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
                     )
+                    row = db.execute("SELECT value FROM meta WHERE key='operations'").fetchone()
+                    applied_operations = int(row[0]) if row is not None else 0
                 if applied > held:
                     raise LocalError("journal_rollback")
-                return controller.describe_pending(
+                result = controller.describe_pending(
                     controller.records_after(anchor, applied), applied, held
                 )
+                held_operations = controller.operations.verified_count(anchor)
+                if applied_operations > held_operations:
+                    raise LocalError("journal_rollback")
+                result["operations"] = controller.describe_pending(
+                    controller.operations.records_after(anchor, applied_operations),
+                    applied_operations,
+                    held_operations,
+                )
+                return result
             finally:
                 control_owner.close()
         finally:
@@ -367,6 +389,7 @@ class LocalStore(StoreCore):
         *,
         clock: Clock | None = None,
         fault: Callable[[str], None] | None = None,
+        instance_id: str | None = None,
     ) -> Path:
         """Offline: replace the owner credential with one of the next generation.
 
@@ -380,7 +403,7 @@ class LocalStore(StoreCore):
         the commit; the new one is on disk from before it.
         """
         target, pending = control / "owner.credential", control / "owner.credential.next"
-        with cls(root, control, clock=clock, fault=fault) as store:
+        with cls(root, control, clock=clock, fault=fault, instance_id=instance_id) as store:
             at = store.clock.utc_ms()
             tenant = principal = None
             try:
@@ -479,6 +502,7 @@ class LocalStore(StoreCore):
         self.db.execute("BEGIN IMMEDIATE")
         try:
             decision = self._now()
+            self._hold_lease(decision.evaluated_ms)
             yield decision
             self.fault("before_commit")
             decision.check(self.clock)
@@ -503,11 +527,16 @@ class LocalStore(StoreCore):
                 applied = int(
                     self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
                 )
-                if self.anchor["journal_sequence"] > applied:
+                operations = self._meta_int("operations")
+                if (
+                    self.anchor["journal_sequence"] > applied
+                    or self.anchor.get("operations_sequence", 0) > operations
+                ):
                     self.healthy = False
                     if (
                         isinstance(exc, LocalError)
                         and exc.code == "release_expired"
+                        and self.anchor.get("operations_sequence", 0) <= operations
                         and all(
                             record["action"]["kind"] != "operation"
                             for record in self.control.records_after(self.anchor, applied)
@@ -575,11 +604,38 @@ class LocalStore(StoreCore):
                 ).hexdigest()
                 self.control.anchor(self.anchor)
             self.control.clear_apply_failure(record["sequence"])
+        self._replay_operations()
         if self.anchor["journal_sequence"] < held:
             # An append that crashed before its anchor write: the records verified, so the
             # anchor is moved over them now, as a replay always did.
             self.anchor["journal_sequence"] = held
             self.anchor["journal_head"] = self.control.head(held)
+            self.control.anchor(self.anchor)
+
+    def _replay_operations(self) -> None:
+        """Apply operations-log records the database has not applied, as the journal's are."""
+        log = self.control.operations
+        applied = self._meta_int("operations")
+        held = log.verified_count(self.anchor)
+        if applied > held:
+            raise LocalError("journal_rollback")
+        for record in log.records_after(self.anchor, applied):
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self._apply(record, self.clock.utc_ms())
+                self.db.commit()
+            except BaseException as exc:
+                self.db.rollback()
+                self.control.note_apply_failure(record, exc)
+                raise
+            if self.anchor.get("operations_sequence", 0) < record["sequence"]:
+                self.anchor["operations_sequence"] = record["sequence"]
+                self.anchor["operations_head"] = log.head(record["sequence"])
+                self.control.anchor(self.anchor)
+        if self.anchor.get("operations_sequence", 0) < held:
+            # An append that crashed before its anchor write: the records verified.
+            self.anchor["operations_sequence"] = held
+            self.anchor["operations_head"] = log.head(held)
             self.control.anchor(self.anchor)
 
     def gc(self) -> int:
@@ -636,9 +692,12 @@ class LocalStore(StoreCore):
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 12,
+                "schema": 13,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
+                # How far the operations log was applied when this backup was taken; compaction
+                # never drops records above the oldest retained backup's position.
+                "operations_sequence": self._meta_int("operations"),
                 "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
                 "database_sha256": hashlib.sha256(
                     (destination / "store.sqlite").read_bytes()
@@ -689,6 +748,9 @@ class LocalStore(StoreCore):
                     "journal_head": "0" * 64,
                 }
                 records = controller.journal(anchor)
+                # The operations log has no separate checkpoint: its own verified chain stands.
+                state = controller.operations.sync(anchor, trust_anchor=True)
+                anchor.update(operations_sequence=state.count, operations_head=state.head)
                 head = (
                     hashlib.sha256(controller.sign(records[-1]).encode()).hexdigest()
                     if records
@@ -700,11 +762,15 @@ class LocalStore(StoreCore):
             else:
                 anchor = controller.read_anchor()
             controller.journal(anchor)
+            controller.operations.sync(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
                 or manifest.get("store") != controller.store
             ):
+                raise LocalError("backup_invalid")
+            # A backup older than what compaction kept cannot find its operation intents.
+            if manifest.get("operations_sequence", 0) < controller.operations.compacted_through():
                 raise LocalError("backup_invalid")
             data = (backup / "store.sqlite").read_bytes()
             if hashlib.sha256(data).hexdigest() != manifest["database_sha256"]:
@@ -750,6 +816,7 @@ class LocalStore(StoreCore):
                     "UPDATE meta SET value=? WHERE key='incarnation'", (recovery.incarnation,)
                 )
                 recovery.db.execute("UPDATE retries SET result=NULL")
+                recovery.db.execute("DELETE FROM instance_lease")
                 recovery.db.execute("DELETE FROM receipts")
                 recovery.db.execute(
                     "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]'"

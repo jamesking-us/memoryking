@@ -18,9 +18,16 @@ from memoryking.observability import failure
 
 class SharedService:
     def __init__(
-        self, pool: Any, root: Path, control: Path, *, audience: str = "memoryking-shared"
+        self,
+        pool: Any,
+        root: Path,
+        control: Path,
+        *,
+        audience: str = "memoryking-shared",
+        instance_id: str | None = None,
     ):
         self.pool, self.root, self.control, self.audience = pool, root, control, audience
+        self.instance_id = instance_id
         self.dashboard: Any = None
         # Retention runs per tenant at most hourly from request traffic: a store is
         # built per request, so the timer lives here, not on the store.
@@ -85,6 +92,7 @@ class SharedService:
             audience=self.audience,
             release_only=release_only,
             request_deadline=request_deadline,
+            instance_id=self.instance_id,
         )
         store.egress_policy = self.egress_policy
         return store
