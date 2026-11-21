@@ -685,6 +685,11 @@ def main() -> int:
         cmd = commands.add_parser(name)
         cmd.add_argument("--store", type=Path)
         cmd.add_argument("--control", type=Path)
+        if name in {"serve", "backup", "gc"}:
+            cmd.add_argument(
+                "--instance-id",
+                help="Name this deployment for the instance lease; set it on every process of a multi-host deployment (default: derived from the control directory)",
+            )
         if name == "serve":
             cmd.add_argument(
                 "--dashboard-port",
@@ -777,6 +782,9 @@ def main() -> int:
     )
     rotate_owner.add_argument("--store", type=Path)
     rotate_owner.add_argument("--control", type=Path)
+    rotate_owner.add_argument(
+        "--instance-id", help="The id the running instance uses, when it sets one"
+    )
     for name in ("issue", "list", "revoke"):
         item = cred_commands.add_parser(name)
         item.add_argument("--socket", type=Path)
@@ -1297,7 +1305,7 @@ def main() -> int:
         elif args.command == "journal":
             print(json.dumps(LocalStore.pending_journal(args.store, args.control)))
         elif args.command == "credential" and args.credential_command == "rotate-owner":
-            path = LocalStore.rotate_owner(args.store, args.control)
+            path = LocalStore.rotate_owner(args.store, args.control, instance_id=args.instance_id)
             print(json.dumps({"owner_credential": str(path), "rotated": True}))
         elif args.command == "credential":
             credential = read_credential(args.credential)
@@ -1560,7 +1568,9 @@ def main() -> int:
                 result["credential_file"] = str(args.credential_output)
             sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
         else:
-            with LocalStore(args.store, args.control) as store:
+            with LocalStore(
+                args.store, args.control, instance_id=getattr(args, "instance_id", None)
+            ) as store:
                 if args.command == "serve":
                     configure(args.log_level, trace=args.trace)
                     if args.egress_policy is not None:
