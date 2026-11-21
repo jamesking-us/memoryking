@@ -91,7 +91,12 @@ class PostgresStore(StoreCore):
         paths(root, control)
         private_dir(root)
         private_dir(control)
-        private_dir(control / tenant)
+        try:
+            private_dir(control / tenant)
+        except FileNotFoundError:
+            # A tenant that does not exist answers exactly like a credential that does not
+            # verify for one that does, so the response never reveals which tenants exist.
+            raise LocalError("invalid_token") from None
         self.root, self.control_path = root, control / tenant
         self.control = SharedControl(self.control_path)
         self.anchor = self.control.read_anchor()

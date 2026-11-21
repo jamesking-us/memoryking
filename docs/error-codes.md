@@ -874,7 +874,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `service_busy` | The service is at its concurrency bound; back off briefly and retry. |
+| `service_busy` | The service is at its concurrency bound or a database lock or statement timed out; back off briefly and retry. |
 | `service_unavailable` | The service failed internally; find the request id in the daemon log. |
 
 ## session

@@ -13,10 +13,12 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 
+from memoryking.adapters.postgres_pool import busy_sqlstate
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
+from memoryking.observability import busy
 from memoryking.sdk import BINDING_FIELDS, CATALOG, TOOL_VALIDATORS, LocalClient
 
 PROTOCOL_VERSION = "2025-11-25"
@@ -116,6 +118,21 @@ class SharedMCP:
                 ],
                 is_error=True,
             )
+        except Exception as exc:
+            if (state := busy_sqlstate(exc)) is None:
+                raise
+            busy("shared_mcp", state)
+            return types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text",
+                        text=canonical_bytes(
+                            {"error": "service_busy", "hint": hint("service_busy")}
+                        ).decode(),
+                    )
+                ],
+                is_error=True,
+            )
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         from memoryking.adapters.shared_http import bearer, error
@@ -142,7 +159,11 @@ class SharedMCP:
         except LocalError as exc:
             await error(exc.code, 403)(scope, receive, send)
             return
-        except Exception:
+        except Exception as exc:
+            if (state := busy_sqlstate(exc)) is not None:
+                busy("shared_mcp", state)
+                await error("service_busy", 429)(scope, receive, send)
+                return
             await error("service_unavailable", 503)(scope, receive, send)
             return
 

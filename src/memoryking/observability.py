@@ -79,6 +79,11 @@ def event(component: str, name: str, **fields: Any) -> None:
     LOGGER.info("component=%s event=%s%s", component, name, _fields(fields))
 
 
+def busy(component: str, sqlstate: str) -> None:
+    """A transient database conflict answered as service_busy: a warning, never content."""
+    LOGGER.warning("component=%s event=service_busy sqlstate=%s", component, sqlstate)
+
+
 def failure(component: str, exc: BaseException, **fields: Any) -> str:
     """Record an unexpected failure and return the request id handed to the caller."""
     request_id = secrets.token_hex(8)

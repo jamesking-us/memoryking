@@ -99,7 +99,7 @@ HINTS: dict[str, str] = {
     "ranking_limit": "The ranking request exceeds its bound; reduce cases or votes.",
     "usage_retention_limit": "100,000 usage attempts are retained; expired rows are pruned automatically, otherwise wait for retention to pass.",
     "usage_cohort_limit": "The usage cohort is full; start a new cohort.",
-    "service_busy": "The service is at its concurrency bound; back off briefly and retry.",
+    "service_busy": "The service is at its concurrency bound or a database lock or statement timed out; back off briefly and retry.",
     "service_unavailable": "The service failed internally; find the request id in the daemon log.",
     "release_expired": "More than five seconds passed between authorization and delivery; request again.",
     "clock_untrusted": "The system clock moved backwards or disagrees with monotonic time; fix the clock and retry.",

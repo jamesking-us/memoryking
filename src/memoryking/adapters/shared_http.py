@@ -14,12 +14,13 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
+from memoryking.adapters.postgres_pool import busy_sqlstate
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
-from memoryking.observability import failure
+from memoryking.observability import busy, failure
 
 
 class ReleaseResponse(Response):
@@ -59,7 +60,14 @@ def error(code: str, status: int = 400, request_id: str | None = None) -> Respon
         body["request_id"] = request_id
     return Response(
         canonical_bytes(body),
-        status_code=503 if code in {"service_busy", "service_unavailable"} else status,
+        # Pool pressure and outages are 503; a transient database conflict names its own 429.
+        status_code=(
+            429
+            if status == 429
+            else 503
+            if code in {"service_busy", "service_unavailable"}
+            else status
+        ),
         media_type="application/json",
         headers={"Cache-Control": "no-store"},
     )
@@ -181,6 +189,9 @@ def create_app(
         except TimeoutError:
             return error("request_timeout", 408)
         except Exception as exc:
+            if (state := busy_sqlstate(exc)) is not None:
+                busy("shared_http", state)
+                return error("service_busy", 429)
             # No SQL, supplied content, filesystem paths or credentials in responses.
             return error("service_unavailable", 503, failure("shared_http", exc))
 
