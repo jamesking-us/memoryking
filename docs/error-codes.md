@@ -92,7 +92,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `checkpoint_capacity` | This stream holds the maximum number of checkpoints; resume and continue from the latest. |
+| `checkpoint_capacity` | The tenant holds 4,096 live checkpoints or 256 MiB. Ordinary streams retire revisions beyond their newest 130 automatically; plan revisions are kept. Purge work you no longer need. |
 | `checkpoint_dependency_limit` | A checkpoint may cite at most the documented number of dependencies. |
 | `checkpoint_evidence_unavailable` | Evidence cited by the checkpoint is missing or unreadable. |
 | `checkpoint_input_limit` | The checkpoint exceeds its size limit; trim findings or attachments. |
@@ -294,7 +294,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `experience_actor_audience_required` | The actor must be among the record's readers. |
-| `experience_capacity` | The tenant reached its experience record limit; see the limits table. |
+| `experience_capacity` | The tenant holds 10,000 live experience records (latest revisions). Superseded ones do not count; the count falls only when source observations are purged or the store is restored. |
 | `experience_integrity_failure` | The record does not match its hash. |
 | `experience_record_limit` | The record exceeds the per-record size limit. |
 | `experience_record_unavailable` | The record is missing, purged, or not visible. |
@@ -339,11 +339,11 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `handoff_ack_invalid` | Acknowledge with the view stamp you received. |
-| `handoff_capacity` | Too many handoffs are outstanding for this stream; acknowledge or cancel some. |
+| `handoff_capacity` | The tenant has 4,096 live handoffs; cancel the ones no longer needed or wait for their ttl. Cancelled, superseded and expired handoffs do not count. |
 | `handoff_expired` | The handoff's ttl passed; prepare a new one. |
 | `handoff_superseded` | A newer handoff replaced this one; use the latest. |
 | `handoff_unavailable` | The handoff is missing, purged, or not addressed to this principal. |
-| `handoff_view_capacity` | Too many handoff views are retained; let older ones expire. |
+| `handoff_view_capacity` | The tenant has 4,096 handoff views with retained briefings; a view stops counting when its briefing expires (30 days) or is evicted. |
 | `handoff_view_stale` | Policy or checkpoint changed since the view; preview again. |
 
 ## harness

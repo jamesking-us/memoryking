@@ -19,6 +19,7 @@ from memoryking.contracts.validation import validate_handoff
 
 class HandoffTests(unittest.TestCase):
     tearDown = helpers.WorkingTests.tearDown
+    tenant_id = helpers.WorkingTests.tenant_id
     scope = helpers.WorkingTests.scope
     command = helpers.WorkingTests.command
     execute = helpers.WorkingTests.execute
@@ -102,6 +103,38 @@ class HandoffTests(unittest.TestCase):
             },
             self.recipient,
         )
+
+    def fabricate_handoffs(self, count, state, expires=None, prefix="fab"):
+        """Insert `count` handoff rows in `state`; each has its own stream, so none supersedes."""
+        tenant = self.tenant_id()
+        expires = self.store.clock.utc_ms() + 10**12 if expires is None else expires
+        with self.store.transaction():
+            for number in range(count):
+                self.store.db.execute(
+                    "INSERT INTO handoffs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        tenant,
+                        f"hnd_{prefix}_{state}_{number}",
+                        "p",
+                        f"{prefix}{number}",
+                        "task",
+                        self.saved["checkpoint"],
+                        "owner",
+                        "reviewer",
+                        "review",
+                        "verification",
+                        "[{}]",
+                        self.store.incarnation,
+                        1,
+                        expires,
+                        state,
+                        1,
+                        None,
+                    ),
+                )
+
+    def handoff_capacity(self, name="handoffs"):
+        return self.store.status(self.owner, "p")["capacity"][name]
 
     def replay(self, receipt, credential=None):
         output = []
@@ -458,6 +491,61 @@ class HandoffTests(unittest.TestCase):
             "args": {},
         }
         self.fails("invalid_request", lambda: Handoff(self.store).execute(self.owner, bad))
+
+    def test_only_live_handoffs_count_toward_the_bound(self):
+        self.fabricate_handoffs(1500, "cancelled")
+        self.fabricate_handoffs(1500, "superseded")
+        self.fabricate_handoffs(1000, "prepared", expires=1)  # the ttl passed long ago
+        self.fabricate_handoffs(96, "retired")  # 4,096 rows: the old refusal point
+        self.assertEqual(self.handoff_capacity()["used"], 0)
+        first = self.prepare()
+        self.assertEqual(self.handoff_capacity()["used"], 1)
+        self.fabricate_handoffs(4094, "prepared", prefix="live")
+        full = self.handoff_capacity()
+        self.assertEqual((full["used"], full["limit"], full["warning"]), (4095, 4096, True))
+        # Preparing again for the same scope supersedes the first, so it still fits.
+        again = self.prepare()
+        self.assertEqual(self.handoff_capacity()["used"], 4095)
+        self.fabricate_handoffs(1, "prepared", prefix="last")
+        other = self.save(helpers.checkpoint(), 0, task="other", readers=["owner", "reviewer"])[
+            "checkpoint"
+        ]
+        self.fails("handoff_capacity", lambda: self.prepare(task="other", checkpoint=other))
+        self.assertEqual(self.handoff_capacity()["used"], 4096)
+        # A cancelled handoff releases its slot at once.
+        self.run_h("cancel", {"project": "p", "handle": again["handle"]})
+        self.assertEqual(self.handoff_capacity()["used"], 4095)
+        self.assertNotEqual(first["handle"], again["handle"])
+
+    def test_views_count_while_their_briefing_is_retained_and_orphans_are_released(self):
+        prepared = self.prepare()
+        tenant = self.tenant_id()
+        with self.store.transaction():
+            for number in range(4096):  # the old refusal point, with no briefing behind them
+                self.store.db.execute(
+                    "INSERT INTO handoff_views VALUES (?,?,?,?,?,?,?,?,?)",
+                    (
+                        tenant,
+                        f"view_{number}",
+                        prepared["handle"],
+                        "reviewer",
+                        "materialize",
+                        "s" * 64,
+                        "h" * 64,
+                        "ready",
+                        1,
+                    ),
+                )
+        self.assertEqual(self.handoff_capacity("handoff_views")["used"], 0)
+        raw = self.view(prepared, key="delivery", raw=True)
+        self.assertEqual(self.handoff_capacity("handoff_views")["used"], 1)
+        count = "SELECT count(*) FROM handoff_views"
+        self.assertEqual(self.store.db.execute(count).fetchone()[0], 4097)
+        self.store.expire_results()
+        self.assertEqual(self.store.db.execute(count).fetchone()[0], 1)
+        # The retained view keeps replaying and keeps its slot.
+        self.assertEqual(self.replay(json.loads(raw)["receipt"]), raw)
+        self.assertEqual(self.handoff_capacity("handoff_views")["used"], 1)
 
     def test_schema_four_upgrade_preserves_checkpoint_and_adds_handoff(self):
         import sqlite3

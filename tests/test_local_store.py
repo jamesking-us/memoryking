@@ -724,6 +724,11 @@ with LocalStore(root, ctl, fault=fail) as store:
                 "rendered_bytes",
                 "operation_intents",
                 "processing_usage",
+                "checkpoints",
+                "checkpoint_bytes",
+                "handoffs",
+                "handoff_views",
+                "experience_records",
             },
         )
 

@@ -21,6 +21,18 @@ from typing import Any, Self, cast
 
 from memoryking.adapters.local_contract import validate_capture
 from memoryking.adapters.local_files import atomic, private_dir, private_file, sync_dir
+from memoryking.application.retention import (
+    CHECKPOINT_BYTES_LIMIT,
+    CHECKPOINT_LIMIT,
+    EXPERIENCE_LIMIT,
+    HANDOFF_LIMIT,
+    HANDOFF_VIEW_LIMIT,
+    live_checkpoints,
+    live_experience,
+    live_handoff_views,
+    live_handoffs,
+    release_all,
+)
 from memoryking.application.storage import Dialect, insert_ignore, upsert
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import Clock, Decision, LocalError, Released, temporal_valid
@@ -90,6 +102,11 @@ CAPACITY_LIMITS = {
     "rendered_bytes": ARTIFACT_BYTES_LIMIT,
     "operation_intents": INTENT_LIMIT,
     "processing_usage": USAGE_LIMIT,
+    "checkpoints": CHECKPOINT_LIMIT,
+    "checkpoint_bytes": CHECKPOINT_BYTES_LIMIT,
+    "handoffs": HANDOFF_LIMIT,
+    "handoff_views": HANDOFF_VIEW_LIMIT,
+    "experience_records": EXPERIENCE_LIMIT,
 }
 
 
@@ -888,6 +905,10 @@ class StoreCore:
             self.db.execute(
                 "DELETE FROM session_summaries WHERE expires<=?", (decision.evaluated_ms,)
             )
+            # Old checkpoint revisions, orphaned hand-off views and superseded experience
+            # revisions are released here, and at write time when a bound is reached.
+            for (tenant,) in self.db.execute("SELECT tenant FROM tenants").fetchall():
+                release_all(self.db, tenant, self.incarnation)
         return int(count)
 
     def housekeeping(self, interval_ms: int = 3_600_000) -> bool:
@@ -1167,6 +1188,7 @@ class StoreCore:
             "SELECT count(*),coalesce(sum(length(body)),0) FROM rendered_artifacts WHERE tenant=? AND state='retained'",
             (tenant,),
         ).fetchone()
+        checkpoints, checkpoint_bytes = live_checkpoints(self.db, self.dialect, tenant)
         used = {
             "jobs": count(QUEUED_JOBS),
             "rendered_artifacts": int(artifacts),
@@ -1175,6 +1197,11 @@ class StoreCore:
                 "SELECT count(*) FROM operation_intents WHERE tenant=? AND state IN ('intent_recorded','dispatching','unknown')"
             ),
             "processing_usage": count("SELECT count(*) FROM processing_usage WHERE tenant=?"),
+            "checkpoints": checkpoints,
+            "checkpoint_bytes": checkpoint_bytes,
+            "handoffs": live_handoffs(self.db, tenant, self.clock.utc_ms()),
+            "handoff_views": live_handoff_views(self.db, tenant),
+            "experience_records": live_experience(self.db, tenant, self.incarnation),
         }
         return {
             name: {"used": used[name], "limit": limit, "warning": used[name] * 5 >= limit * 4}

@@ -753,6 +753,11 @@ class DashboardTests(unittest.TestCase):
                 "rendered_bytes",
                 "operation_intents",
                 "processing_usage",
+                "checkpoints",
+                "checkpoint_bytes",
+                "handoffs",
+                "handoff_views",
+                "experience_records",
             },
         )
         self.assertEqual(capacity["jobs"]["limit"], 1000)

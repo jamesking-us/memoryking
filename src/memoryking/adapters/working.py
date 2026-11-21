@@ -18,6 +18,12 @@ from memoryking.adapters.local_store import (
 )
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.token_count import counter
+from memoryking.application.retention import (
+    CHECKPOINT_BYTES_LIMIT,
+    CHECKPOINT_LIMIT,
+    live_checkpoints,
+    release_checkpoints,
+)
 from memoryking.application.storage import insert_ignore
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, canonical_hash
@@ -299,15 +305,14 @@ class Working:
             if args["run"] is not None:
                 raise LocalError("plan_task_stream_required")
             validate(args["checkpoint"]["plan"], previous.get("plan") if previous else None)
-        total, size = self.db.execute(
-            "SELECT count(*),coalesce(sum("
-            + self.s.dialect.byte_length("body")
-            + "),0) FROM checkpoints WHERE tenant=?",
-            (who["tenant"],),
-        ).fetchone()
         body = canonical_bytes(args["checkpoint"])
-        if total >= 4096 or size + len(body) > 268435456:
-            raise LocalError("checkpoint_capacity")
+        total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
+        if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
+            # Release at write time: old revisions of ordinary streams stop counting.
+            release_checkpoints(self.db, who["tenant"])
+            total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
+            if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
+                raise LocalError("checkpoint_capacity")
         identifier, digest = uid("ckpt"), hashlib.sha256(body).hexdigest()
         position = self.s._event(
             who["tenant"], "checkpoint_saved", identifier, at, who["principal"]

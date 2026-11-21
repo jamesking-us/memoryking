@@ -56,7 +56,7 @@ def render_status(result: dict[str, Any], version: str) -> str:
             used, limit = value["used"], value["limit"]
             shown = (
                 f"{used / 1048576:.1f} / {limit // 1048576} MiB"
-                if name == "rendered_bytes"
+                if name in {"rendered_bytes", "checkpoint_bytes"}
                 else f"{used:,} / {limit:,}"
             )
             flag = "  warning" if value.get("warning") else ""

@@ -157,6 +157,49 @@ class WorkingTests(unittest.TestCase):
             self.transition("dispatching", 1, operation=name)
             self.transition("succeeded", 2, operation=name)
 
+    def tenant_id(self):
+        return self.store.db.execute("SELECT tenant FROM tenants").fetchone()[0]
+
+    def fabricate_checkpoints(self, streams, revisions, prefix="bulk"):
+        """Insert `streams` ordinary streams of `revisions` available checkpoints each.
+
+        Direct rows stand in for thousands of real saves: the capacity and release rules
+        read these tables, and the real-save path is exercised by the tests around them.
+        """
+        tenant, body = self.tenant_id(), json.dumps(checkpoint(), sort_keys=True)
+        with self.store.transaction():
+            for number in range(streams):
+                task = f"{prefix}{number}"
+                for revision in range(1, revisions + 1):
+                    ident = f"ckpt_{task}_{revision}"
+                    self.store.db.execute(
+                        "INSERT INTO checkpoints VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            tenant,
+                            ident,
+                            "p",
+                            task,
+                            "task",
+                            revision,
+                            "owner",
+                            self.store.incarnation,
+                            1,
+                            body if revision == revisions else "{}",
+                            "0" * 64,
+                            '["owner"]',
+                            "[]",
+                            "available",
+                            1,
+                        ),
+                    )
+                self.store.db.execute(
+                    "INSERT INTO checkpoint_streams VALUES (?,?,?,?,?,?,?,?)",
+                    (tenant, "p", task, "task", "owner", revisions, self.store.incarnation, ident),
+                )
+
+    def checkpoint_capacity(self):
+        return self.store.status(self.owner, "p")["capacity"]["checkpoints"]
+
     def restart(self):
         self.store.close()
         self.store = LocalStore(self.data, self.control)
@@ -867,3 +910,57 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
             "SELECT state,body FROM rendered_artifacts WHERE id=?", (old["receipt"],)
         ).fetchone()
         self.assertEqual(tuple(row), ("expired", None))
+
+    def test_status_reports_the_bounds_that_hold_history(self):
+        capacity = self.store.status(self.owner, "p")["capacity"]
+        for name, limit in {
+            "checkpoints": 4096,
+            "checkpoint_bytes": 268435456,
+            "handoffs": 4096,
+            "handoff_views": 4096,
+            "experience_records": 10000,
+        }.items():
+            self.assertEqual(capacity[name], {"used": 0, "limit": limit, "warning": False}, name)
+        self.save()
+        self.assertEqual(self.checkpoint_capacity()["used"], 1)
+
+    def test_old_revisions_stop_counting_and_a_full_tenant_checkpoints_again(self):
+        self.fabricate_checkpoints(8, 512)  # 4,096 rows: the old refusal point
+        full = self.checkpoint_capacity()
+        self.assertEqual((full["used"], full["warning"]), (4096, True))
+        self.save()  # refused as checkpoint_capacity before live counting and release
+        self.assertEqual(self.checkpoint_capacity()["used"], 8 * 130 + 1)
+        rows = self.store.db.execute("SELECT count(*) FROM checkpoints").fetchone()[0]
+        self.assertEqual(rows, 4097)  # retired revisions stay as tombstones
+        old, newest = (
+            self.store.db.execute(
+                "SELECT state,body,revision FROM checkpoints WHERE id=?", (f"ckpt_bulk0_{n}",)
+            ).fetchone()
+            for n in (382, 383)
+        )
+        self.assertEqual(tuple(old), ("retired", None, 382))
+        self.assertEqual(tuple(newest)[0], "available")  # 512 - 129 is the oldest kept
+        # The stream's revision number was never freed: compare-and-set still counts on.
+        self.assertEqual(self.save(checkpoint(), 512, task="bulk0")["revision"], 513)
+        self.fails("checkpoint_revision_conflict", lambda: self.save(revision=1, task="bulk0"))
+
+    def test_housekeeping_retires_old_revisions_without_waiting_for_the_cap(self):
+        self.fabricate_checkpoints(2, 200)
+        self.assertEqual(self.checkpoint_capacity()["used"], 400)
+        self.store.expire_results()
+        self.assertEqual(self.checkpoint_capacity()["used"], 260)
+        self.store.expire_results()
+        self.assertEqual(self.checkpoint_capacity()["used"], 260)
+
+    def test_a_restored_tenant_that_was_at_the_cap_checkpoints_again(self):
+        from recovery_helpers import backup_fixture, restore_fixture
+
+        self.fabricate_checkpoints(8, 128)  # 1,024 rows; ordinary streams under the window
+        self.fabricate_checkpoints(24, 128, prefix="more")  # 4,096 live in all
+        self.assertEqual(self.checkpoint_capacity()["used"], 4096)
+        self.fails("checkpoint_capacity", lambda: self.save())
+        archive = backup_fixture(self)
+        restore_fixture(self, archive)
+        self.assertEqual(self.checkpoint_capacity()["used"], 0)
+        self.assertEqual(self.save()["revision"], 1)
+        self.assertEqual(self.checkpoint_capacity()["used"], 1)
