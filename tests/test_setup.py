@@ -165,7 +165,8 @@ class SetupTests(unittest.TestCase):
         original = b'{ "theme": "dark",\n  "hooks": {"Stop": []} }\n'
         (claude / "settings.json").write_bytes(original)
         done = self.mk("setup", "claude-code", "--project", "demo")
-        self.assertIn("claude mcp add memoryking -- ", done.stdout)
+        self.assertIn("claude mcp add-json memoryking ", done.stdout)
+        self.assertIn('"alwaysLoad": true', done.stdout)  # the host would otherwise defer the tools
         settings = json.loads((claude / "settings.json").read_text())
         commands = [
             hook["command"]
@@ -174,6 +175,11 @@ class SetupTests(unittest.TestCase):
             for hook in group["hooks"]
         ]
         self.assertEqual(3, len([c for c in commands if "--profile default-agent" in c]))
+        # Only the start hook names the tools, so the model is told how to save.
+        self.assertEqual(
+            ["session-start"],
+            [c.split(" hook ")[1].split()[0] for c in commands if "--tools mcp" in c],
+        )
         self.assertTrue(all("--credential" not in c and "service.sock" not in c for c in commands))
         self.assertEqual("dark", settings["theme"])
         self.assertFalse((self.home / ".claude" / "settings.local.json").exists())
