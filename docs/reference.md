@@ -12,6 +12,7 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 | pytest plugin | `pytest -p memoryking.pytest_plugin` | Records failing tests as observations when the environment names a store. |
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
+| Framework adapters | `memoryking.integrations.<name>` | Lean tools in the shape of OpenAI-compatible function calling, the Claude Agent SDK, the OpenAI Agents SDK, LangChain/LangGraph (with a `BaseStore`) and LlamaIndex (with a memory block); the framework is imported lazily and never installed. See the [agent guide](agent-guide.md#using-memoryking-from-agent-frameworks). |
 | MCP stdio | `python -m memoryking.adapters.stdio` | Nine model-facing memory tools; daemon must already run. |
 | Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp` | Authenticated Streamable HTTP transport. |
 | Reference agent | `python -m memoryking.reference_agent --help` | Create-file/readback task harness, checkpoint/recovery, the local recording provider or a policy adapter. |
