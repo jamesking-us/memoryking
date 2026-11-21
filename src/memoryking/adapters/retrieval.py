@@ -1282,16 +1282,16 @@ class Retrieval:
                 or reference
                 for _, reference, group in head
             ]
-            key = ("rerank", reranker.fingerprint, args["query"], tuple(texts))
-            if head and self.models is not None and key not in self.models:
+            scoring = ("rerank", reranker.fingerprint, args["query"], tuple(texts))
+            if head and self.models is not None and scoring not in self.models:
                 # Scored with no gate or lock held; the next attempt decides afresh and finds
                 # the scores here only if it ranks the same window (a pure function of text).
-                raise _Inference(key, lambda: reranker.score(args["query"], texts))
+                raise _Inference(scoring, lambda: reranker.score(args["query"], texts))
             try:
                 if not head:
                     scores = []
                 elif self.models is not None:
-                    scores = self.models[key]
+                    scores = self.models[scoring]
                     if isinstance(scores, LocalError):
                         raise scores
                 else:
