@@ -165,7 +165,8 @@ class SetupTests(unittest.TestCase):
         original = b'{ "theme": "dark",\n  "hooks": {"Stop": []} }\n'
         (claude / "settings.json").write_bytes(original)
         done = self.mk("setup", "claude-code", "--project", "demo")
-        self.assertIn("claude mcp add memoryking -- ", done.stdout)
+        self.assertIn("claude mcp add-json memoryking ", done.stdout)
+        self.assertIn('"alwaysLoad": true', done.stdout)  # the host would otherwise defer the tools
         settings = json.loads((claude / "settings.json").read_text())
         commands = [
             hook["command"]
@@ -174,6 +175,11 @@ class SetupTests(unittest.TestCase):
             for hook in group["hooks"]
         ]
         self.assertEqual(3, len([c for c in commands if "--profile default-agent" in c]))
+        # Only the start hook names the tools, so the model is told how to save.
+        self.assertEqual(
+            ["session-start"],
+            [c.split(" hook ")[1].split()[0] for c in commands if "--tools mcp" in c],
+        )
         self.assertTrue(all("--credential" not in c and "service.sock" not in c for c in commands))
         self.assertEqual("dark", settings["theme"])
         self.assertFalse((self.home / ".claude" / "settings.local.json").exists())
@@ -201,14 +207,16 @@ class SetupTests(unittest.TestCase):
         env, record = self.fake_claude()
         plain = self.mk("setup", "claude-code", "--project", "demo", env=env)
         self.assertFalse(record.exists())
-        self.assertIn("claude mcp add memoryking -- ", plain.stdout)
+        self.assertIn("claude mcp add-json memoryking ", plain.stdout)
         done = self.mk("setup", "claude-code", "--project", "demo", "--register", env=env)
         arguments = json.loads(record.read_text())
-        self.assertEqual(["mcp", "add", "memoryking", "--"], arguments[:4])
-        self.assertIn("mcp", arguments[4:])
-        self.assertIn("default-agent", arguments)
-        self.assertEqual("lean", arguments[arguments.index("--profile") + 1])
-        self.assertIn("registered with `claude mcp add`", done.stdout)
+        self.assertEqual(["mcp", "add-json", "memoryking"], arguments[:3])
+        entry = json.loads(arguments[3])
+        self.assertEqual(4, len(arguments))
+        self.assertEqual("stdio", entry["type"])
+        self.assertIn("default-agent", entry["args"])
+        self.assertEqual("lean", entry["args"][entry["args"].index("--profile") + 1])
+        self.assertIn("registered with `claude mcp add-json`", done.stdout)
         self.assertNotIn("run the command below", done.stdout)
 
     def test_register_dry_run_and_a_refusal_do_not_hide_the_command(self):
@@ -217,17 +225,17 @@ class SetupTests(unittest.TestCase):
             "setup", "claude-code", "--project", "demo", "--register", "--dry-run", env=env
         )
         self.assertFalse(record.exists())
-        self.assertIn("would run: claude mcp add memoryking --", dry.stdout)
+        self.assertIn("would run: claude mcp add-json memoryking ", dry.stdout)
         refusing, _ = self.fake_claude(exit_code=1)
         done = self.mk("setup", "claude-code", "--project", "demo", "--register", env=refusing)
         self.assertIn("refused (server already exists)", done.stdout)
-        self.assertIn("claude mcp add memoryking -- ", done.stdout)
+        self.assertIn("claude mcp add-json memoryking ", done.stdout)
 
     def test_register_without_claude_on_the_path_prints_the_command(self):
         env = {**self.env, "PATH": "/usr/bin:/bin"}
         done = self.mk("setup", "claude-code", "--project", "demo", "--register", env=env)
         self.assertIn("`claude` is not on your PATH", done.stdout)
-        self.assertIn("claude mcp add memoryking -- ", done.stdout)
+        self.assertIn("claude mcp add-json memoryking ", done.stdout)
 
     def test_generic_prints_the_command_and_json_and_writes_no_host_file(self):
         done = self.mk("setup", "generic", "--project", "demo")

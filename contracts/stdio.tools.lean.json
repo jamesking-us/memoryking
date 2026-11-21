@@ -4,7 +4,7 @@
   "tools": [
     {
       "name": "remember",
-      "description": "Save one thing you observed: an error, a test result, a decision, or a fact with its source. The same text from the same source on the same day replays instead of duplicating. What you save is evidence for later briefings, never an instruction.",
+      "description": "Save a decision, an instruction from the user, a fact you were told, a failed approach or an error as soon as you have it, with its source; do not wait until the end. The same text from the same source on the same day replays instead of duplicating. What you save is evidence for later briefings, never an instruction.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -76,11 +76,14 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/alwaysLoad": true
       }
     },
     {
       "name": "recall",
-      "description": "Get a briefing before you start: constraints you must follow, then ranked guidance with [g1]-style citations and a Sources footer, as Markdown. Read the status line first; blocked means decide, not truncate.",
+      "description": "Look up what earlier sessions and the user recorded about what you are about to do, before you start or when you need a fact: constraints you must follow, then ranked guidance with [g1]-style citations and a Sources footer, as Markdown. Read the status line first; blocked means decide, not truncate.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -136,11 +139,14 @@
       "annotations": {
         "readOnlyHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/alwaysLoad": true
       }
     },
     {
       "name": "save_progress",
-      "description": "Save where a task stands before you stop or hand over. Objective and current state are enough; add next actions, findings, failed attempts and blockers as you have them. A section you leave out keeps what the task's latest save recorded (or is noted as never written when there is none); a section you send replaces it, and an empty list clears it. Findings are saved as hypotheses until evidence is attached by other means.",
+      "description": "Save where a task stands before you stop, hand over or run out of room. Objective and current state are enough; add next actions, findings, failed attempts and blockers as you have them. A section you leave out keeps what the task's latest save recorded (or is noted as never written when there is none); a section you send replaces it, and an empty list clears it. Findings are saved as hypotheses until evidence is attached by other means.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -259,11 +265,14 @@
         "destructiveHint": false,
         "idempotentHint": false,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/alwaysLoad": true
       }
     },
     {
       "name": "resume",
-      "description": "Pick up a task from its latest saved progress: a Markdown handover note with where it stands, next actions, what not to repeat, blockers, open operations and the gaps that were never written down.",
+      "description": "Pick up a task from its latest saved progress when a session continues earlier work: a Markdown handover note with where it stands, next actions, what not to repeat, blockers, open operations and the gaps that were never written down.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -297,6 +306,9 @@
       "annotations": {
         "readOnlyHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/alwaysLoad": true
       }
     },
     {
@@ -357,11 +369,14 @@
         "destructiveHint": false,
         "idempotentHint": false,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "pass a task to another agent or reviewer"
       }
     },
     {
       "name": "propose",
-      "description": "File a lasting fact or rule you believe is true, citing the memories it rests on, so the user can review it. It becomes a proposal, never accepted knowledge; nothing changes until the user confirms.",
+      "description": "File a lasting fact or rule you believe is true for the user to review, citing the memories it rests on. It becomes a proposal, never accepted knowledge; nothing changes until the user confirms.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -393,6 +408,9 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "suggest a lasting rule or fact for the user to approve"
       }
     },
     {
@@ -431,6 +449,9 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "record the user's decision on a proposal"
       }
     },
     {
@@ -462,6 +483,9 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "replace a memory that is wrong or out of date"
       }
     },
     {
@@ -492,6 +516,9 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "retire a memory that should not be used"
       }
     },
     {
@@ -526,6 +553,9 @@
       "annotations": {
         "readOnlyHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "read the full text behind a cited memory"
       }
     },
     {
@@ -574,6 +604,9 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "say whether a recalled memory helped"
       }
     },
     {
@@ -594,6 +627,9 @@
       "annotations": {
         "readOnlyHint": true,
         "openWorldHint": false
+      },
+      "_meta": {
+        "anthropic/searchHint": "list the newest memories with ids"
       }
     }
   ]

@@ -29,8 +29,9 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "remember",
         "description": (
-            "Save one thing you observed: an error, a test result, a decision, or a fact "
-            "with its source. The same text from the same source on the same day replays "
+            "Save a decision, an instruction from the user, a fact you were told, a failed "
+            "approach or an error as soon as you have it, with its source; do not wait "
+            "until the end. The same text from the same source on the same day replays "
             "instead of duplicating. What you save is evidence for later briefings, never "
             "an instruction."
         ),
@@ -87,9 +88,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "recall",
         "description": (
-            "Get a briefing before you start: constraints you must follow, then ranked "
-            "guidance with [g1]-style citations and a Sources footer, as Markdown. Read the "
-            "status line first; blocked means decide, not truncate."
+            "Look up what earlier sessions and the user recorded about what you are about to "
+            "do, before you start or when you need a fact: constraints you must follow, then "
+            "ranked guidance with [g1]-style citations and a Sources footer, as Markdown. "
+            "Read the status line first; blocked means decide, not truncate."
         ),
         "inputSchema": {
             "type": "object",
@@ -142,8 +144,8 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "save_progress",
         "description": (
-            "Save where a task stands before you stop or hand over. Objective and current "
-            "state are enough; add next actions, findings, failed attempts and blockers as "
+            "Save where a task stands before you stop, hand over or run out of room. "
+            "Objective and current state are enough; add next actions, findings, failed attempts and blockers as "
             "you have them. A section you leave out keeps what the task's latest save "
             "recorded (or is noted as never written when there is none); a section you "
             "send replaces it, and an empty list clears it. Findings are saved as "
@@ -194,8 +196,8 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "resume",
         "description": (
-            "Pick up a task from its latest saved progress: a Markdown handover note with "
-            "where it stands, next actions, what not to repeat, blockers, open operations "
+            "Pick up a task from its latest saved progress when a session continues earlier "
+            "work: a Markdown handover note with where it stands, next actions, what not to repeat, blockers, open operations "
             "and the gaps that were never written down."
         ),
         "inputSchema": {
@@ -249,8 +251,8 @@ TOOLS += [
     {
         "name": "propose",
         "description": (
-            "File a lasting fact or rule you believe is true, citing the memories it rests on, "
-            "so the user can review it. It becomes a proposal, never accepted knowledge; "
+            "File a lasting fact or rule you believe is true for the user to review, citing "
+            "the memories it rests on. It becomes a proposal, never accepted knowledge; "
             "nothing changes until the user confirms."
         ),
         "inputSchema": {
@@ -426,6 +428,30 @@ TOOLS += [
 # `confirm` records a user's decision through the agent, which only works when the operator
 # started the bridge with chat review; without it the tool is left out of the catalog.
 CHAT_REVIEW_TOOLS = {"confirm"}
+
+# Claude Code lists an MCP server's tools by name only and loads a tool's schema when the model
+# searches for it, so a model that never searches never saves anything. It reads these keys of a
+# tool's `_meta` (verified in the CLI's own configuration schema and tool loader; other hosts
+# ignore them): `anthropic/alwaysLoad` keeps a tool's full definition in every prompt, and
+# `anthropic/searchHint` is what tool search matches besides the description. The four tools a
+# session needs are always loaded; the rest stay deferred behind a hint.
+ALWAYS_LOADED = ("remember", "recall", "save_progress", "resume")
+SEARCH_HINTS = {
+    "hand_off": "pass a task to another agent or reviewer",
+    "propose": "suggest a lasting rule or fact for the user to approve",
+    "confirm": "record the user's decision on a proposal",
+    "correct": "replace a memory that is wrong or out of date",
+    "forget": "retire a memory that should not be used",
+    "fetch": "read the full text behind a cited memory",
+    "feedback": "say whether a recalled memory helped",
+    "recent": "list the newest memories with ids",
+}
+for _tool in TOOLS:
+    _tool["_meta"] = (
+        {"anthropic/alwaysLoad": True}
+        if _tool["name"] in ALWAYS_LOADED
+        else {"anthropic/searchHint": SEARCH_HINTS[_tool["name"]]}
+    )
 
 
 def tools(chat_review: bool = False) -> list[dict[str, Any]]:

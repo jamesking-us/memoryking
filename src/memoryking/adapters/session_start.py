@@ -31,19 +31,31 @@ if TYPE_CHECKING:
 # A source names a decision or an instruction from the user when it is `decision`,
 # `instruction` or `user`, alone or followed by `-` or `_` and anything else
 # (`user-instruction`, `decision_log`). Hooks and tools choose the source; nothing is
-# inferred from the text.
+# inferred from the text. The host hooks write the user's own turns as `user-<host>`.
 DECISION_SOURCE = re.compile(r"^(decision|instruction|user)([-_].*)?$")
+# What a host's end-of-session or pre-compaction hook captured: the newest text of a session.
+SESSION_SOURCE = re.compile(r"^(claude|codex|grok)-(session|compact)$")
 RECENT_DAYS = 14
 RECENT_LIMIT = 5
 USER_LIMIT = 8  # accepted claims from the user's own scope shown at start
+USER_OBSERVATIONS = 3  # newest observations of the user's own scope shown at start
 EXCERPT_BYTES = 800
+# The newest decisions and instructions get room for a whole prompt; older ones a gist.
+FULL_EXCERPT_BYTES = 2400
+FULL_EXCERPTS = 2
+# A session capture's newest text is its end (what the agent concluded), so that is shown.
+SESSION_TAIL_BYTES = 1600
 DAY_MS = 86_400_000
 MAX_INT = 9_007_199_254_740_991
 
 
-def _episode(retrieval: Retrieval, row: Any, reason: str) -> dict[str, Any]:
+def _episode(
+    retrieval: Retrieval, row: Any, reason: str, limit: int = EXCERPT_BYTES, tail: bool = False
+) -> dict[str, Any]:
     raw = retrieval._blob(row)
-    excerpt = raw[:EXCERPT_BYTES].decode("utf-8", errors="ignore")
+    start = max(0, len(raw) - limit) if tail else 0
+    shown = raw[start : start + limit].decode("utf-8", errors="ignore")
+    excerpt = ("[earlier text omitted] " if tail and start else "") + shown
     return {
         "reference": row["id"],
         "authority": "observed_episode",
@@ -53,8 +65,8 @@ def _episode(retrieval: Retrieval, row: Any, reason: str) -> dict[str, Any]:
         "observed_at_ms": row["observed_at_ms"],
         "assurance": "actor_reported",
         "selection_reason": reason,
-        "excerpt_start_byte": 0,
-        "excerpt_end_byte": len(excerpt.encode()),
+        "excerpt_start_byte": start,
+        "excerpt_end_byte": start + len(shown.encode()),
         "source_bytes": len(raw),
         "content_hash": row["blob"],
     }
@@ -138,10 +150,10 @@ def start(
         seen: set[str] = set()
         corrections = Corrections(s)
 
-        def observation(ident: str) -> Any:
+        def observation(ident: str, where: str = project) -> Any:
             row = db.execute(
                 "SELECT * FROM observations WHERE tenant=? AND id=? AND project=?",
-                (tenant, ident, project),
+                (tenant, ident, where),
             ).fetchone()
             if row is None or not s._visible(who, row, at):
                 return None
@@ -224,11 +236,53 @@ def start(
             if found is None or row["id"] in seen or not DECISION_SOURCE.match(found[0]["source"]):
                 continue
             seen.add(row["id"])
+            entry = _episode(
+                retrieval,
+                found[0],
+                "user_decision",
+                FULL_EXCERPT_BYTES if taken < FULL_EXCERPTS else EXCERPT_BYTES,
+            )
             taken += 1
-            entry = _episode(retrieval, found[0], "user_decision")
             if found[1]:
                 entry["retirement_requested"] = True
             recent.append((row["position"], entry))
+        # 3b. How the newest session captured by a host hook ended: its last text, which is
+        # where the agent states what it concluded (a failed approach, a finding).
+        for row in db.execute(
+            retrieval.SCOPE
+            + "(o.source LIKE ? OR o.source LIKE ?) ORDER BY o.position DESC,o.id DESC LIMIT 17",
+            (tenant, project, source, who["principal"], "%-session", "%-compact"),
+        ).fetchall():
+            found = observation(row["id"])
+            if found is None or row["id"] in seen or not SESSION_SOURCE.match(found[0]["source"]):
+                continue
+            seen.add(row["id"])
+            entry = _episode(retrieval, found[0], "last_session", SESSION_TAIL_BYTES, tail=True)
+            if found[1]:
+                entry["retirement_requested"] = True
+            recent.append((row["position"], entry))
+            break
+        # 3c. The newest observations of the user's own scope (what they told any of their
+        # agents, in any project), when this agent acts for a user.
+        scope_project = s.user_scope(who, "read", at)
+        if scope_project is not None:
+            shown = 0
+            for row in db.execute(
+                retrieval.SCOPE + "1=1 ORDER BY o.position DESC,o.id DESC LIMIT 17",
+                (tenant, scope_project, source, who["principal"]),
+            ).fetchall():
+                if shown >= USER_OBSERVATIONS:
+                    break
+                found = observation(row["id"], scope_project)
+                if found is None or row["id"] in seen:
+                    continue
+                seen.add(row["id"])
+                shown += 1
+                entry = _episode(retrieval, found[0], "user_memory")
+                entry["scope"] = "user"
+                if found[1]:
+                    entry["retirement_requested"] = True
+                recent.append((row["position"], entry))
         groups.extend([item] for _, item in sorted(recent, key=lambda pair: -pair[0]))
         nothing = not base["constraints"] and not groups
         base["status"] = "no_relevant_memory" if nothing else "partial"
