@@ -90,6 +90,20 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(handed.status, "prepared")
         self.assertTrue(handed.handle)
 
+    def test_the_lean_recall_tool_takes_a_time_range(self):
+        self.client.remember("retry backoff exceeded the deadline", source="pytest")
+
+        def recall(**window):
+            return lean.call(self.client, "recall", {"query": "deadline", **window})["text"]
+
+        self.assertIn("retry backoff", recall(**{"from": "2000-01-01", "to": "2999-12-31"}))
+        self.assertIn("retry backoff", recall(**{"from": "2000-01-01"}))
+        self.assertNotIn("retry backoff", recall(**{"to": "2000-01-01"}))
+        self.assertNotIn("retry backoff", recall(**{"from": "2999-01-01"}))
+        self.fails("invalid_request", lambda: recall(**{"from": "yesterday-ish"}))
+        properties = next(t for t in lean.TOOLS if t["name"] == "recall")["inputSchema"]
+        self.assertTrue({"from", "to"} <= set(properties["properties"]))
+
     def test_bad_arguments_are_refused_before_any_request_with_a_hint(self):
         error = self.fails("invalid_tool_arguments", lambda: self.client.recall(""))
         self.assertTrue(error.hint)

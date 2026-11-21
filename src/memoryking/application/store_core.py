@@ -217,6 +217,9 @@ class StoreCore:
 
     dashboard: Any = None
 
+    # Set by a daemon that schedules consolidation: reports its child processes in `status`.
+    consolidation: Any = None
+
     # 0 anchors every committing transaction before release; see `_expose_locked`.
     anchor_interval_ms: int = 0
 
@@ -1708,6 +1711,8 @@ class StoreCore:
                     )
                 ),
             }
+        if self.consolidation is not None:
+            result["consolidation"] = self.consolidation.describe()
         self._expose()
         return result
 

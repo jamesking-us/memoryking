@@ -33,7 +33,7 @@ flowchart LR
 
 ## What is new
 
-Everything since the last tagged pre-release is listed in the [changelog](https://github.com/jamesking-us/memoryking/blob/main/CHANGELOG.md), newest first, with a link into the guide for each feature: the memory-health report, Anthropic's memory tool and the Markdown vault, proposal drafts from repeated evidence, entity anchors and salience, as-of briefings, source trust, the influence report, host hooks and structured plans. The [release page](https://github.com/jamesking-us/memoryking/releases) carries the same notes for each published version.
+One command, `memoryking setup`, connects Claude Code, Codex or any other host that starts MCP servers: it creates a store, starts the service, issues the agent its own limited credential, registers the tools and installs session hooks. The default tool set is now small and answers in readable Markdown, and an agent can also keep preferences that follow you across every project. Token budgets count what the model really receives, questions that contain dates ("what did we decide last week") are understood, and a model you allow can draft claims for you to review. Credentials can be rotated, and a delegated token now acts as the person who issued it (a breaking change that the changelog explains). The [changelog](https://github.com/jamesking-us/memoryking/blob/main/CHANGELOG.md) lists everything, newest first, and the [release page](https://github.com/jamesking-us/memoryking/releases) carries the notes of each published version.
 
 ## What it does for agents
 
@@ -47,9 +47,9 @@ Everything since the last tagged pre-release is listed in the [changelog](https:
 | Avoid stale advice | Repository identity, applicability rules and freshness checks for guidance tied to code. |
 | Recover safely | Records of uncertain operations and history-aware backup/restore, so a restart does not silently authorize repeating an action. |
 | Understand what happened | A dashboard with capacity, task progress, a per-project timeline, a memory graph, on-demand briefings with their receipts, and retrieval history. |
-| Fit any agent host | A lean five-tool MCP profile with defaults for Claude Code, Codex, Grok or any stdio host; cited Markdown briefings; capture from the CLI, pytest or git hooks; one command installs session hooks that load memory at the start of a session and save it before compaction and at the end. |
+| Fit any agent host | A small default MCP tool set (eleven tools: remember, recall, save progress, resume, hand off, propose, correct, forget, fetch, feedback and recent, plus a twelfth, confirm, only if you turn on chat review) for Claude Code, Codex, Grok or any stdio host; cited Markdown briefings; capture from the CLI, pytest or git hooks; `memoryking setup` also installs session hooks that load memory at the start of a session and save it before compaction and at the end. |
 | Use any Claude API agent | Anthropic's memory tool answered from a project: notes are versioned observations, claim files are proposals, every write has a receipt. The same files export as a Markdown vault for hand editing and import back as versions and proposals. |
-| Keep the review queue fed | Claims are drafted from repeated evidence with their sources attached, without a model, and wait for review like any proposal; nothing becomes knowledge by itself. |
+| Keep the review queue fed | Claims are drafted from repeated evidence with their sources attached, without a model, or by a model you allow under your egress policy, and wait for review like any proposal; nothing becomes knowledge by itself. |
 | Hold what you do not trust yet | Mark a source untrusted and its captures are recorded but invisible to every briefing and review until an admin releases them. |
 | Know where a memory went | For any observation, every claim, checkpoint, handoff, summary and briefing built from it and who received them, from the dashboard or `memoryking influence`. |
 | Know whether memory is paying for itself | A health report from the store's own receipts: helpful feedback, empty briefings, memory never read, claims that lost their evidence and the review backlog, with fixed thresholds and no model grading itself, from the dashboard or `memoryking health`. |
@@ -59,7 +59,7 @@ The core runs locally **without a model account, GPU or paid API**. A shared Pos
 
 ## See it work
 
-You need Python **3.12**. From a terminal:
+You need Python **3.12** (3.13 also works). From a terminal:
 
 ```sh
 python3.12 -m venv .venv
@@ -70,7 +70,7 @@ git clone https://github.com/jamesking-us/memoryking.git
 
 The first two lines install the released package; the checkout is only there for the example. The example creates a temporary store, saves a finding and an unfinished task, closes the first connection, and resumes through a new client. It prints a readable walkthrough, makes no model requests, and removes its temporary data when finished.
 
-For a lasting installation and the browser dashboard, follow the [getting started guide](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md): name your store once with `memoryking profile add`, then `status`, `doctor`, `dashboard open` and `credential issue` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md).
+To connect an agent for real, run `memoryking setup claude-code --project my-app` (or `codex`, or `generic` for any other host). It creates a store, starts the service in the background, gives the agent a limited credential, registers the memory tools and installs the session hooks; `memoryking setup ... --remove` undoes it. The [getting started guide](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md) walks through it, then `status`, `doctor` and `dashboard open` need no paths. If you are evaluating the idea rather than installing software, start with the [agent workflows](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md).
 
 ## See what your agents are doing
 
@@ -109,7 +109,7 @@ See [deployment and configuration](https://github.com/jamesking-us/memoryking/bl
 
 | Guide | What you will learn |
 | --- | --- |
-| [Getting started](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md) | Install, run the demo, create a store and open the dashboard. |
+| [Getting started](https://github.com/jamesking-us/memoryking/blob/main/docs/getting-started.md) | Install, connect your agent with `memoryking setup`, run the demo and open the dashboard. |
 | [Using MemoryKing with agents](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md) | Capture → brief → checkpoint → resume → handoff; Python, lean and full MCP profiles for any host, and automatic capture from hooks. |
 | [Deployment and configuration](https://github.com/jamesking-us/memoryking/blob/main/docs/deployment.md) | Local/shared/Docker setups, credentials, configuration, upgrades and recovery. |
 | [How it is designed](https://github.com/jamesking-us/memoryking/blob/main/docs/design.md) | Storage, knowledge review, retrieval, permissions and recovery guarantees. |
@@ -120,7 +120,7 @@ See [deployment and configuration](https://github.com/jamesking-us/memoryking/bl
 
 ## Current status
 
-**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Improved real-task success or reduced token cost has not yet been demonstrated. Windows, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
+**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Improved real-task success or reduced token cost has not yet been demonstrated: a first small run of the task benchmark with a real agent could not tell memory from no memory. Windows, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
 
 MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](https://github.com/jamesking-us/memoryking/blob/main/SECURITY.md) and [current limits](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#current-limits).
 

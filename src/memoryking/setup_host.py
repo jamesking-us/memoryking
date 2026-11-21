@@ -19,6 +19,7 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -362,9 +363,32 @@ def register(args: Any, files: Files, home: Path, command: list[str]) -> tuple[s
             ]
         return f"{outcome} {path} (lean profile)", []
     if args.host == "claude-code":
-        return "run the command below (MemoryKing does not edit Claude Code's MCP file)", [
-            "claude mcp add memoryking -- " + shlex.join(command)
-        ]
+        add = ["claude", "mcp", "add", "memoryking", "--", *command]
+        manual = "run the command below (MemoryKing does not edit Claude Code's MCP file)"
+        if not getattr(args, "register", False):
+            return manual, [shlex.join(add)]
+        if args.dry_run:
+            return "would run: " + shlex.join(add), []
+        found = shutil.which("claude")
+        if found is None:
+            return "`claude` is not on your PATH; " + manual, [shlex.join(add)]
+        # Claude Code's own command registers it, so its file format is never edited here.
+        try:
+            done = subprocess.run(
+                [found, *add[1:]], capture_output=True, text=True, timeout=60, check=False
+            )
+        except (OSError, subprocess.SubprocessError):
+            return "`claude mcp add` could not run; " + manual, [shlex.join(add)]
+        if done.returncode == 0:
+            return "registered with `claude mcp add` (undo: `claude mcp remove memoryking`)", []
+        reason = (done.stderr or done.stdout).strip().splitlines()
+        return (
+            "`claude mcp add` refused"
+            + (f" ({reason[0][:120]})" if reason else "")
+            + "; "
+            + manual,
+            [shlex.join(add)],
+        )
     return "printed below, for any MCP host", [
         "command: " + shlex.join(command),
         "JSON: "

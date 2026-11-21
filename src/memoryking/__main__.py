@@ -111,6 +111,22 @@ def render_status(result: dict[str, Any], version: str) -> str:
     lexical = result.get("lexical")
     if lexical:
         lines.append("Lexical    " + lexical_line(lexical))
+    for item in result.get("consolidation") or []:
+        when = (
+            f", next pass in {max(0, item['next_run_ms'] - int(time.time() * 1000)) // 60_000} min"
+            if item["next_run_ms"] is not None
+            else ""
+        )
+        lines.append(
+            f"Consolidation {item['project']}: {item['state']}"
+            + (f" (pid {item['pid']})" if item["pid"] else "")
+            + when
+            + (
+                f", last exit {item['last_exit']}, {item['consecutive_failures']} failure(s)"
+                if item["consecutive_failures"]
+                else ""
+            )
+        )
     capacity = result.get("capacity", {})
     if capacity:
         lines.append("Capacity")
@@ -351,6 +367,8 @@ def consolidate_command(args: Any) -> dict[str, Any]:
 
     scratch = Path(tempfile.mkdtemp(prefix="mk-cons-"))
     os.chmod(scratch, 0o700)
+    if args.parent_pid:
+        consolidation.watch_parent(args.parent_pid)
 
     def make(project: str) -> tuple[Any, Any, str | None]:
         client = LocalClient(args.socket, args.credential, project)
@@ -382,6 +400,7 @@ def consolidate_command(args: Any) -> dict[str, Any]:
         since_ms=since,
         limit=args.limit,
         max_classification=ceiling,
+        idle_ms=args.idle_ms,
     )
 
 
@@ -416,38 +435,41 @@ def render_consolidation(result: dict[str, Any]) -> str:
 
 
 def start_consolidation(args: Any, socket: Path) -> Any:
-    """The opt-in schedule inside the daemon: it talks to its own socket as the owner and
-    reaches a model only through the egress policy it was started with."""
-    import tempfile
-
+    """The opt-in schedule of the daemon: a supervisor that launches separate `consolidate`
+    processes with the same egress policy. The daemon never reads a provider key; the child
+    that runs the adapter does."""
     from memoryking import consolidation
-    from memoryking.sdk import LocalClient
+    from memoryking.adapters.egress_policy import LOCAL_PROVIDER, EgressPolicy
+    from memoryking.providers import adapter
 
     if args.egress_policy is None or not args.consolidate_project:
         raise LocalError("egress_policy_required")
-    scratch = Path(tempfile.mkdtemp(prefix="mk-cons-"))
-    os.chmod(scratch, 0o700)
-
-    def make(project: str) -> tuple[Any, Any, str | None]:
-        client = LocalClient(socket, args.control / "owner.credential", project)
-        conversation, ceiling = consolidation.build_conversation(
-            client,
+    every_s = duration_ms(args.consolidate_every) / 1000
+    idle_ms = duration_ms(args.consolidate_idle)
+    if args.consolidate_provider != LOCAL_PROVIDER:
+        if not args.consolidate_provider or not args.consolidate_model:
+            raise LocalError("egress_policy_required")
+        # An unknown provider stops the daemon at start; this builds the adapter, reads no key.
+        adapter(
+            EgressPolicy.load(args.egress_policy),
+            args.consolidate_provider,
+            args.consolidate_model,
+        )
+    supervisor = consolidation.ConsolidationSupervisor(
+        lambda project: consolidation.child_command(
+            socket,
+            args.control / "owner.credential",
+            project,
             args.egress_policy,
             args.consolidate_provider,
             args.consolidate_model,
-            scratch / "rec",
-        )
-        return client, conversation, ceiling
-
-    make(args.consolidate_project[0])  # an unusable provider stops the daemon at start
-    loop = consolidation.ConsolidationLoop(
-        make,
+            idle_ms,
+        ),
         list(args.consolidate_project),
-        every_s=duration_ms(args.consolidate_every) / 1000,
-        idle_ms=duration_ms(args.consolidate_idle),
+        every_s=every_s,
     )
-    loop.start()
-    return loop
+    supervisor.start()
+    return supervisor
 
 
 def render_audit(result: dict[str, Any]) -> str:
@@ -1079,7 +1101,8 @@ def main() -> int:
                 "--consolidate-every",
                 help="Off by default. Run background consolidation this often (e.g. 6h) for "
                 "each --consolidate-project, when it has been idle; needs --egress-policy. "
-                "The daemon process then reads the provider's key file",
+                "The daemon launches and supervises a separate `consolidate` process for it "
+                "and never reads the provider's key file itself",
             )
             cmd.add_argument(
                 "--consolidate-project", action="append", default=[], metavar="PROJECT"
@@ -1142,6 +1165,12 @@ def main() -> int:
         help="Also serve the loopback dashboard on this port (0 chooses one); needs a daemon restart",
     )
     setup.add_argument("--no-hooks", action="store_true", help="Register the MCP bridge only")
+    setup.add_argument(
+        "--register",
+        action="store_true",
+        help="claude-code only: register the bridge by running `claude mcp add` (when `claude` "
+        "is on PATH) instead of printing the command",
+    )
     setup.add_argument("--dry-run", action="store_true", help="Print every change, make none")
     setup.add_argument("--remove", action="store_true", help="Undo this host's registration")
     add_binding(setup)
@@ -1275,6 +1304,8 @@ def main() -> int:
         help="Keep running: a pass this often (e.g. 6h) while the project is idle",
     )
     cons.add_argument("--idle", default="15m", help="With --watch: quiet time before a pass")
+    cons.add_argument("--idle-ms", type=int, help=argparse.SUPPRESS)  # set by the daemon
+    cons.add_argument("--parent-pid", type=int, help=argparse.SUPPRESS)  # set by the daemon
     cons.add_argument("--json", action="store_true")
     audit = commands.add_parser(
         "egress-audit",
@@ -2262,6 +2293,7 @@ def main() -> int:
                             event("serve", "ready", dashboard=dashboard is not None)
                             if args.consolidate_every:
                                 consolidation_loop = start_consolidation(args, server.path)
+                                store.consolidation = consolidation_loop
                             if store.embedder is not None:
                                 embeddings = EmbeddingLoop(
                                     store,

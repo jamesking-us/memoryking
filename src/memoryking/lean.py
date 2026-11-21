@@ -110,6 +110,18 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "Brief as the project stood then: a date (YYYY-MM-DD) or ISO "
                     "date-time. Omit for now.",
                 },
+                "from": {
+                    **TEXT,
+                    "maxLength": 40,
+                    "description": "Only memories observed at or after this date (YYYY-MM-DD) "
+                    "or ISO date-time.",
+                },
+                "to": {
+                    **TEXT,
+                    "maxLength": 40,
+                    "description": "Only memories observed at or before this; a bare date means "
+                    "the end of that day.",
+                },
                 "salience": {
                     "type": "boolean",
                     "description": "Let your own recent use of memories nudge the ranking "
@@ -778,6 +790,15 @@ def call(
             from memoryking.hooks import as_of_ms
 
             args["as_of_ms"] = as_of_ms(arguments["as_of"])
+        if "from" in arguments or "to" in arguments:
+            from memoryking.hooks import range_ms
+
+            window = {}
+            if "from" in arguments:
+                window["from_ms"] = range_ms(arguments["from"], end=False)
+            if "to" in arguments:
+                window["to_ms"] = range_ms(arguments["to"], end=True)
+            args["time_range"] = window
         if arguments.get("salience"):
             args["salience"] = "on"
         if arguments.get("rerank"):
