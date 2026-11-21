@@ -386,6 +386,97 @@ class PostgresStoreTests(unittest.TestCase):
                     self.pool, self.root, self.control, self.tenant, credential, clock=self.clock
                 )
 
+    def test_restore_refuses_a_migration_role_that_bypasses_row_security(self):
+        from memoryking.adapters.postgres_recovery import backup, restore
+
+        self.capture()
+        archive = self.base / (self.tenant + "-bypass")
+        with (
+            self.store() as store,
+            psycopg.connect(self.cluster.dsn("mk_backup"), autocommit=True) as connection,
+        ):
+            backup(store, connection, archive)
+        with psycopg.connect(self.cluster.dsn(), autocommit=True) as admin:
+            for attribute, undo in (("BYPASSRLS", "NOBYPASSRLS"), ("SUPERUSER", "NOSUPERUSER")):
+                admin.execute(f"ALTER ROLE mk_migration {attribute}")
+                try:
+                    with psycopg.connect(
+                        self.cluster.dsn("mk_migration"), autocommit=True
+                    ) as connection:
+                        with self.assertRaises(LocalError) as caught:
+                            restore(
+                                connection,
+                                self.root,
+                                self.control,
+                                self.tenant,
+                                archive,
+                                clock=self.clock,
+                            )
+                    self.assertEqual("migration_role_required", caught.exception.code)
+                finally:
+                    admin.execute(f"ALTER ROLE mk_migration {undo}")
+        self.capture(2)  # The refused restore changed nothing.
+
+    def test_expire_results_states_its_tenant_in_every_write(self):
+        from unittest import mock
+
+        from memoryking.adapters.postgres_sql import PostgresSQL
+
+        self.capture()
+        seen = []
+        original = PostgresSQL.execute
+
+        def record(db, statement, parameters=()):
+            seen.append((statement, tuple(parameters)))
+            return original(db, statement, parameters)
+
+        with self.store() as store, mock.patch.object(PostgresSQL, "execute", record):
+            store.expire_results()
+        writes = [item for item in seen if item[0].startswith(("UPDATE retries", "DELETE FROM"))]
+        self.assertGreaterEqual(len(writes), 5)
+        for statement, parameters in writes:
+            self.assertIn("tenant=?", statement)
+            self.assertIn(self.tenant, parameters)
+
+    def test_restore_leaves_other_tenants_rows_alone(self):
+        from memoryking.adapters.postgres_recovery import backup, restore
+
+        other = "t_" + uuid.uuid4().hex
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as migration:
+            other_credential = initialize_tenant(
+                migration, self.root, self.control, other
+            ).read_text()
+        with PostgresStore(
+            self.pool, self.root, self.control, other, other_credential, clock=self.clock
+        ) as store:
+            other_namespace = store.namespace(other_credential, "demo")
+            store.capture(other_credential, other_namespace, "key1", observation(1))
+        self.capture()
+        archive = self.base / (self.tenant + "-isolation")
+        with (
+            self.store() as store,
+            psycopg.connect(self.cluster.dsn("mk_backup"), autocommit=True) as connection,
+        ):
+            backup(store, connection, archive)
+        counts = (
+            "SELECT (SELECT count(*) FROM memoryking.retries WHERE tenant=%(t)s AND result IS NOT NULL),"
+            "(SELECT count(*) FROM memoryking.receipts WHERE tenant=%(t)s),"
+            "(SELECT count(*) FROM memoryking.tenant_meta WHERE tenant=%(t)s AND key='incarnation' AND value=%(i)s)"
+        )
+        with psycopg.connect(self.cluster.dsn(), autocommit=True) as admin:
+            incarnation = admin.execute(
+                "SELECT value FROM memoryking.tenant_meta WHERE tenant=%s AND key='incarnation'",
+                (other,),
+            ).fetchone()[0]
+            before = admin.execute(counts, {"t": other, "i": incarnation}).fetchone()
+        self.assertEqual(1, before[0])
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+            restore(connection, self.root, self.control, self.tenant, archive, clock=self.clock)
+        with psycopg.connect(self.cluster.dsn(), autocommit=True) as admin:
+            self.assertEqual(
+                before, admin.execute(counts, {"t": other, "i": incarnation}).fetchone()
+            )
+
     def test_archive_commits_to_a_blob_index_and_legacy_embedded_list_restores(self):
         from memoryking.adapters.local_files import atomic
         from memoryking.adapters.postgres_recovery import backup, restore
@@ -492,6 +583,20 @@ class PostgresStoreTests(unittest.TestCase):
             ).read_text()
         with self.store() as store:
             self.assertEqual(1, len(delivered(store.read(self.credential, "demo"))["items"]))
+
+    def test_database_ahead_of_the_control_journal_fails_closed(self):
+        control = self.control / self.tenant
+        stale = {name: (control / name).read_bytes() for name in ("journal", "anchor")}
+        with self.store() as store:
+            store.grant(self.credential, "reader", "demo", ["read"])
+        # A journal tail lost after the database commit, or a control tree copied from
+        # before it: the database has applied a record the journal does not hold.
+        for name, data in stale.items():
+            (control / name).write_bytes(data)
+        with self.assertRaises(LocalError) as caught:
+            with self.store() as store:
+                store.status(self.credential, "demo")
+        self.assertEqual("journal_rollback", caught.exception.code)
 
     def test_lost_anchor_requires_independently_retained_current_journal_head(self):
         from memoryking.adapters.postgres_recovery import backup, restore

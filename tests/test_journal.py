@@ -120,6 +120,20 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(len(data.splitlines()), 2)
         self.assertEqual(self.store.anchor["journal_sequence"], 2)
 
+    def test_database_ahead_of_the_journal_fails_closed_at_open(self):
+        first = self.capture(1)
+        stale = {name: (self.control / name).read_bytes() for name in ("journal", "anchor")}
+        self.store.purge(self.credential, first["observation"])
+        self.assertEqual(self.store.anchor["journal_sequence"], 1)
+        self.store.close()
+        # A journal tail lost after the database commit (and its anchor still behind), or a
+        # control tree copied from before the action, leaves the database ahead of the journal.
+        for name, data in stale.items():
+            (self.control / name).write_bytes(data)
+        with self.assertRaises(LocalError) as caught:
+            LocalStore(self.root, self.control)
+        self.assertEqual(caught.exception.code, "journal_rollback")
+
     def test_damage_inside_the_anchored_journal_stays_fatal(self):
         first = self.capture(1)
         self.store.purge(self.credential, first["observation"])

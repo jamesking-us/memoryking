@@ -27,6 +27,23 @@ def acquire(pool: Any, timeout: float | None = None) -> Any:
         raise LocalError("service_unavailable") from None
 
 
+# Lock not available, statement timeout or cancel, deadlock, serialization failure: waiting
+# resolves each, and nothing in the store retries them, so a request that meets one is busy.
+BUSY_SQLSTATES = frozenset({"55P03", "57014", "40P01", "40001"})
+
+
+def busy_sqlstate(exc: BaseException | None) -> str | None:
+    """The SQLSTATE of a driver error that means 'try again shortly', if exc is or wraps one."""
+    for _ in range(4):
+        if exc is None:
+            return None
+        state = getattr(exc, "sqlstate", None)
+        if state in BUSY_SQLSTATES:
+            return str(state)
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
 def reset(connection: Any) -> None:
     if connection.info.transaction_status != TransactionStatus.IDLE:
         connection.rollback()

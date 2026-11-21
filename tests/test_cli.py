@@ -6,12 +6,13 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from memoryking import __version__
-from memoryking.__main__ import doctor, duration_ms, render_grants, render_status
+from memoryking.__main__ import doctor, duration, duration_ms, render_grants, render_status
 from memoryking.adapters.local_ipc import Server
 from memoryking.adapters.local_store import LocalStore
 from memoryking.domain.local import LocalError
@@ -280,6 +281,30 @@ class OperatorCommandTests(unittest.TestCase):
             *common,
             expect=2,
         )
+
+    def test_doctor_says_how_far_ahead_a_recorded_clock_jump_is(self):
+        from memoryking.adapters.local_files import Control
+
+        controller = Control(self.control_dir)
+        anchor = controller.read_anchor()
+        original = anchor["last_utc"]
+        self.assertEqual("2 d 3 h 4 min 5 s", duration(((2 * 24 + 3) * 60 + 4) * 60_000 + 5_000))
+        try:
+            anchor["last_utc"] = int(time.time() * 1000) + 3 * 3_600_000 + 5 * 60_000 + 30_000
+            controller.anchor(anchor)
+            ((level, _, detail),) = [
+                item
+                for item in doctor(self.store_dir, self.control_dir, None, None)
+                if item[1] == "clock"
+            ]
+            self.assertEqual("fail", level)
+            self.assertIn("3 h 5 min", detail)
+            self.assertIn("clock_untrusted", detail)
+        finally:
+            anchor["last_utc"] = original
+            controller.anchor(anchor)
+        levels = {n: lv for lv, n, _ in doctor(self.store_dir, self.control_dir, None, None)}
+        self.assertEqual("ok", levels["clock"])
 
     def test_doctor_reports_a_healthy_store_and_a_missing_daemon_query(self):
         findings = doctor(self.store_dir, self.control_dir, self.server.path, self.credential)

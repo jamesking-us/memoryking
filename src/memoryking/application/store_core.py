@@ -123,6 +123,9 @@ def uid(prefix: str) -> str:
 class StoreCore:
     """What every backend shares; the attributes below are supplied by the backend."""
 
+    # Set by a store bound to one tenant (the shared profile); None for the local store.
+    tenant: str | None = None
+
     db: Any
     dialect: Dialect
     control: Any
@@ -883,31 +886,38 @@ class StoreCore:
         self.db.execute("UPDATE meta SET value=? WHERE key='journal'", (str(record["sequence"]),))
 
     def expire_results(self) -> int:
+        # A tenant-bound store (shared profile) states its tenant in every statement rather
+        # than relying on row-level security alone; the local store is single-tenant
+        # housekeeping over every tenant it holds, so it adds no predicate.
+        scope, bound = (" AND tenant=?", (self.tenant,)) if self.tenant else ("", ())
         with self.transaction() as decision:
+            now = decision.evaluated_ms
             count = self.db.execute(
-                "UPDATE retries SET result=NULL WHERE result IS NOT NULL AND expires<=?",
-                (decision.evaluated_ms,),
+                "UPDATE retries SET result=NULL WHERE result IS NOT NULL AND expires<=?" + scope,
+                (now, *bound),
             ).rowcount
             self.db.execute(
-                "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?",
-                (decision.evaluated_ms,),
+                "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?"
+                + scope,
+                (now, *bound),
             )
             # Usage rows keep their 30-day retention; expired rows release capacity.
-            self.db.execute(
-                "DELETE FROM processing_usage WHERE expires<=?", (decision.evaluated_ms,)
-            )
+            self.db.execute("DELETE FROM processing_usage WHERE expires<=?" + scope, (now, *bound))
             # Access receipts are evidence for 30 days; the dashboard writes one per poll.
             self.db.execute(
-                "DELETE FROM receipts WHERE evaluated<=?", (decision.evaluated_ms - RETRY_MS,)
+                "DELETE FROM receipts WHERE evaluated<=?" + scope, (now - RETRY_MS, *bound)
             )
             # Egress audit records outlive purge (the delivery happened) but not retention.
-            self.db.execute("DELETE FROM egress_audit WHERE expires<=?", (decision.evaluated_ms,))
-            self.db.execute(
-                "DELETE FROM session_summaries WHERE expires<=?", (decision.evaluated_ms,)
-            )
+            self.db.execute("DELETE FROM egress_audit WHERE expires<=?" + scope, (now, *bound))
+            self.db.execute("DELETE FROM session_summaries WHERE expires<=?" + scope, (now, *bound))
             # Old checkpoint revisions, orphaned hand-off views and superseded experience
             # revisions are released here, and at write time when a bound is reached.
-            for (tenant,) in self.db.execute("SELECT tenant FROM tenants").fetchall():
+            tenants = (
+                self.db.execute("SELECT tenant FROM tenants WHERE tenant=?", bound).fetchall()
+                if self.tenant
+                else self.db.execute("SELECT tenant FROM tenants").fetchall()
+            )
+            for (tenant,) in tenants:
                 release_all(self.db, tenant, self.incarnation)
         return int(count)
 

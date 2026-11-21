@@ -34,6 +34,7 @@ from memoryking.observability_metrics import Metrics
 
 class PostgresStore(StoreCore):
     control: SharedControl
+    tenant: str  # always bound; the local store leaves StoreCore.tenant None
 
     def dense_exact(
         self, statement: str, parameters: tuple[Any, ...], request: dict[str, Any], limit: int
@@ -91,7 +92,12 @@ class PostgresStore(StoreCore):
         paths(root, control)
         private_dir(root)
         private_dir(control)
-        private_dir(control / tenant)
+        try:
+            private_dir(control / tenant)
+        except FileNotFoundError:
+            # A tenant that does not exist answers exactly like a credential that does not
+            # verify for one that does, so the response never reveals which tenants exist.
+            raise LocalError("invalid_token") from None
         self.root, self.control_path = root, control / tenant
         self.control = SharedControl(self.control_path)
         self.anchor = self.control.read_anchor()
@@ -273,6 +279,10 @@ class PostgresStore(StoreCore):
             or position[0] < self.anchor["frontiers"].get(self.tenant, 0)
         ):
             raise LocalError("recovery_required")
+        if int(meta["journal"]) > len(records):
+            # The database applied more journal records than the control journal holds: the
+            # journal tail was lost or another control tree is in use. Never skip silently.
+            raise LocalError("journal_rollback")
         self.last_utc = max(self.last_utc, self.anchor["last_utc"])
         return [record for record in records if record["sequence"] > int(meta["journal"])]
 

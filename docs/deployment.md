@@ -211,7 +211,7 @@ Preparation requires a new private directory. Wait for PostgreSQL health before 
 
 The owner credential is in `tmp/shared-evaluation/control/data/demo/owner.credential`. A worker needs its own project-scoped `read,jobs` credential at `secrets/worker/worker.credential`. The one-shot worker handles only `audit_probe`; repository and embedding workers are separate entry points. The local daemon drains `audit_probe` jobs between requests and the shared service drains up to 64 after each capture, so the scheduled worker is a safety net for jobs created by other paths and for a tenant that only reads; it reports `idle` when there is nothing to claim.
 
-Database roles are least privilege: the worker role can insert receipts but not change or delete them, and cannot write tenant counters directly; the commit serial advances only through the owner-run `next_commit_serial` function. Row-level security is keyed on a session setting the client sets itself, so treat it as defense in depth behind the role grants, not as the sole boundary.
+Database roles are least privilege: the worker role can insert receipts but not change or delete them, and cannot write tenant counters directly; the commit serial advances only through the owner-run `next_commit_serial` function. Row-level security is keyed on a session setting the client sets itself, so treat it as defense in depth behind the role grants, not as the sole boundary. Restore refuses a migration role that is a superuser or has `BYPASSRLS` (the runtime pool already refuses such roles), and every statement in restore and in the shared result expiry names its tenant instead of relying on row-level security alone. The shared service answers a request for an unknown tenant exactly as it answers a bad credential for a known one, so responses do not reveal which tenants exist, and a lock or statement timeout (or deadlock) during a request returns `service_busy` with 429 rather than an internal error; retry after a pause.
 
 If a backup process dies after fencing its tenant, the anchor stays in `maintenance` and every request answers `recovery_required`. Clear it with the operation id the backup recorded (`maintenance_operation` in the anchor), presenting a current admin credential:
 
@@ -245,6 +245,8 @@ Restore verifies the archive, replays current revocations/deletions and creates 
 
 If the anchor alone is missing, `restore --lost-anchor-journal-head CURRENT_INDEPENDENT_64_HEX_HEAD` requires a genuinely independently retained current checkpoint, intact identity and matching journal. Missing or rolled-back evidence fails closed. Do not derive that argument from a potentially rolled-back local journal.
 
+The store also refuses to open (`journal_rollback`) when the database has applied more journal records than the control journal holds, for example after a power loss that kept the database commit but lost the journal's tail, or when a copied control tree from an earlier moment is paired with a newer database. Control files and backup files are flushed with `F_FULLFSYNC` on platforms that provide it (macOS), the same strength as SQLite's `fullfsync` setting, and with `fsync` elsewhere; the macOS path has not been exercised on real hardware in this repository's tests.
+
 Shared backup uses the runtime and separate backup DSNs plus current tenant owner credential. Restore uses the migration DSN:
 
 ```sh
@@ -253,6 +255,18 @@ Shared backup uses the runtime and separate backup DSNs plus current tenant owne
 ```
 
 The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. It bounds rows at 1 MiB, the signed manifest at 1 MiB (the blob list lives in a hash-committed `blob-index` file, which is not bounded) and payload at 16 GiB. Backup briefly fences the tenant. Interrupted restore remains fenced until explicit recovery succeeds. Other tenants retain their own state.
+
+### Clock recovery
+
+The store never accepts a time earlier than the latest time it recorded: that record lives in the control anchor, outside the database, so a rolled-back clock cannot replay expired grants or reopen revoked access. The consequence is that a wall clock which jumped forward (a bad NTP source, a manual change, a virtual machine resumed with a wrong time) and was then corrected leaves the recorded time ahead of the real one. Until real time reaches it, every request answers `clock_untrusted`.
+
+Diagnose it with `memoryking doctor --store ... --control ...`. The `clock` check fails and says how far ahead the recorded time is (for example `3 h 5 min`); an `ok` result means the clock is not the cause. Then:
+
+1. Make sure the system clock is correct now (`timedatectl status`, `chronyc tracking`) and stays so. Do not move it forward to match the record.
+2. Wait. The store recovers by itself the moment real time passes the recorded time; no restart is needed. Grants and credentials are not extended or shortened by the wait. If the offset is small, this is the whole procedure.
+3. If the offset is too large to wait out, there is no lighter override and none should be added, because one would also remove the rollback protection. The only existing path is a full restore under [Backup and recovery](#backup-and-recovery): restore creates a new history incarnation (old credentials, namespaces, watermarks and handles are retired) and sets the recorded time to the current clock. A local restore does this directly; a shared restore refuses while the clock is behind the record, so it needs the lost-anchor form (`--lost-anchor-journal-head`, which requires an independently retained current journal checkpoint and an absent anchor). Use it only when the clock is known to be right.
+
+The shared profile has the same rule per tenant (`doctor` covers the local profile only).
 
 ## Upgrades, retention and removal
 

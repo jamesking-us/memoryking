@@ -107,7 +107,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `clock_untrusted` | The system clock moved backwards or disagrees with monotonic time; fix the clock and retry. |
+| `clock_untrusted` | The clock is behind the latest time this store recorded, or disagrees with monotonic time; `memoryking doctor` shows how far, and the deployment guide has Clock recovery. |
 
 ## clone
 
@@ -496,7 +496,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `journal_invalid` | The policy journal's chain is broken; restore using independent control evidence. |
 | `journal_record_limit` | The policy action exceeds 256 KiB and was refused before writing; reduce its payload. |
 | `journal_replay_required` | Unapplied journal records exist; reopen the store to replay them. |
-| `journal_rollback` | The journal is shorter than the anchor records; the control state was rolled back. |
+| `journal_rollback` | The journal is shorter than the anchor or the database records; the control state was rolled back or does not belong to this database. |
 | `journal_tenant_missing` | A journal record names a tenant the database lacks; restore the matching database. |
 
 ## knowledge
@@ -564,7 +564,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `migration_role_required` | Run migrations with the migration database role. |
+| `migration_role_required` | Run migrations and restore with the migration database role, which must not be a superuser or bypass row security. |
 
 ## mixed
 
@@ -874,7 +874,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `service_busy` | The service is at its concurrency bound; back off briefly and retry. |
+| `service_busy` | The service is at its concurrency bound or a database lock or statement timed out; back off briefly and retry. |
 | `service_unavailable` | The service failed internally; find the request id in the daemon log. |
 
 ## session

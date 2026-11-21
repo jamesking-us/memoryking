@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import secrets
 import sqlite3
@@ -23,6 +22,7 @@ from memoryking.adapters.local_files import (
     Control,
     Ownership,
     atomic,
+    durable_sync,
     private_dir,
     private_file,
     read_blob_index,
@@ -63,10 +63,17 @@ from memoryking.observability_metrics import Metrics
 # are pruned. `status` reports utilisation for every entry of CAPACITY_LIMITS.
 
 
-def recovery_admin(db: Any, at: int) -> tuple[str, str] | None:
-    """The first tenant-wide grant that holds a currently valid admin capability."""
+def recovery_admin(db: Any, at: int, tenant: str | None = None) -> tuple[str, str] | None:
+    """The first tenant-wide grant that holds a currently valid admin capability.
+
+    The local restore searches every tenant; the shared restore names its own.
+    """
+    scope, bound = (" AND tenant=?", (tenant,)) if tenant else ("", ())
     for row in db.execute(
-        "SELECT tenant,principal,capabilities,starts,expires FROM grants WHERE project='*' ORDER BY tenant,principal"
+        "SELECT tenant,principal,capabilities,starts,expires FROM grants WHERE project='*'"
+        + scope
+        + " ORDER BY tenant,principal",
+        bound,
     ).fetchall():
         capabilities = row["capabilities"]
         if isinstance(capabilities, str):
@@ -401,6 +408,14 @@ class LocalStore(StoreCore):
 
     def _replay_journal(self) -> None:
         records = self.control.journal(self.anchor)
+        # Journal first, database second, anchor third: the database can never have applied
+        # more records than the verified journal holds. A larger position means the journal
+        # tail was lost or this database was paired with another control tree; replay would
+        # skip those records silently, so the store stays closed.
+        if int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]) > len(
+            records
+        ):
+            raise LocalError("journal_rollback")
         self.db.execute("BEGIN IMMEDIATE")
         try:
             for record in records:
@@ -456,7 +471,7 @@ class LocalStore(StoreCore):
             finally:
                 target.close()
             with (destination / "store.sqlite").open("rb") as stream:
-                os.fsync(stream.fileno())
+                durable_sync(stream.fileno())
             private_dir(destination / "blobs", create=True)
             blobs: list[str] = []
             for tenant, digest in self.db.execute(
@@ -630,13 +645,21 @@ class LocalStore(StoreCore):
             if controller_owner:
                 controller_owner.close()
 
-    def _retire_optional(self) -> None:
-        """A restored history cannot reuse projected vectors, leases or adapter bases."""
-        self.db.execute("UPDATE ranking_state SET configuration=NULL,version=version+1")
-        self.db.execute("DELETE FROM adapter_bases")
-        self.db.execute("DELETE FROM embedding_items")
-        self.db.execute("DELETE FROM embedding_jobs")
+    def _retire_optional(self, tenant: str | None = None) -> None:
+        """A restored history cannot reuse projected vectors, leases or adapter bases.
+
+        A local restore replaces the whole store's history, so it passes no tenant and the
+        statements cover every tenant; the shared restore names its tenant in each one.
+        """
+        scope, bound = (" WHERE tenant=?", (tenant,)) if tenant else ("", ())
         self.db.execute(
-            "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0",
-            (self.incarnation,),
+            "UPDATE ranking_state SET configuration=NULL,version=version+1" + scope, bound
+        )
+        self.db.execute("DELETE FROM adapter_bases" + scope, bound)
+        self.db.execute("DELETE FROM embedding_items" + scope, bound)
+        self.db.execute("DELETE FROM embedding_jobs" + scope, bound)
+        self.db.execute(
+            "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0"
+            + scope,
+            (self.incarnation, *bound),
         )

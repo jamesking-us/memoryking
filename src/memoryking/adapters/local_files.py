@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import fcntl
 import hashlib
 import hmac
@@ -20,10 +21,37 @@ from memoryking.domain.local import LocalError
 JOURNAL_RECORD_LIMIT = 262144
 
 
+def durable_sync(fd: int) -> None:
+    """Flush a descriptor to stable storage.
+
+    Where the platform has ``fcntl.F_FULLFSYNC`` (macOS) a plain ``fsync`` does not force
+    the drive to flush its cache, so the full flush is used, matching SQLite's ``fullfsync``.
+    It falls back to ``os.fsync`` only when the call is unsupported for that descriptor.
+    """
+    full = getattr(fcntl, "F_FULLFSYNC", None)
+    if full is not None:
+        try:
+            fcntl.fcntl(fd, full)
+            return
+        except OSError as exc:
+            if exc.errno not in _FULLSYNC_UNSUPPORTED:
+                raise
+    os.fsync(fd)
+
+
+_FULLSYNC_UNSUPPORTED = {
+    code
+    for code in (
+        getattr(errno, name, None) for name in ("ENOTSUP", "EOPNOTSUPP", "EINVAL", "ENOTTY")
+    )
+    if code is not None
+}
+
+
 def sync_dir(path: Path) -> None:
     fd = os.open(path, os.O_RDONLY)
     try:
-        os.fsync(fd)
+        durable_sync(fd)
     finally:
         os.close(fd)
 
@@ -54,7 +82,7 @@ def atomic(path: Path, data: bytes) -> None:
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
             stream.flush()
-            os.fsync(stream.fileno())
+            durable_sync(stream.fileno())
         os.replace(temporary, path)
         sync_dir(path.parent)
     finally:
@@ -265,7 +293,7 @@ class Control:
             stream.seek(0, os.SEEK_END)
             stream.write(line)
             stream.flush()
-            os.fsync(stream.fileno())
+            durable_sync(stream.fileno())
         prefix = verified[1].copy()
         prefix.update(line)
         self._verified = (

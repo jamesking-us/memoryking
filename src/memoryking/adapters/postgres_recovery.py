@@ -20,6 +20,7 @@ from psycopg import sql
 from memoryking.adapters.local_files import (
     Ownership,
     atomic,
+    durable_sync,
     private_dir,
     private_file,
     read_blob_index,
@@ -192,9 +193,7 @@ def backup(
                             out.write(line)
                             count += 1
                     out.flush()
-                    import os
-
-                    os.fsync(out.fileno())
+                    durable_sync(out.fileno())
                 manifest["tables"][table] = {
                     "columns": names,
                     "rows": count,
@@ -260,6 +259,13 @@ def restore(
     for directory in (root, control, control / tenant, archive):
         private_dir(directory)
     if connection.execute("SELECT current_user").fetchone()[0] != roles.migration:
+        raise LocalError("migration_role_required")
+    # Restore writes one tenant's rows; a role that bypasses row-level security would not
+    # be confined to them, so refuse it rather than trusting the role name alone.
+    attributes = connection.execute(
+        "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user"
+    ).fetchone()
+    if attributes is None or any(attributes):
         raise LocalError("migration_role_required")
     if connection.execute("SELECT pg_is_in_recovery()").fetchone()[0]:
         raise LocalError("primary_required")
@@ -421,27 +427,31 @@ def restore(
             recovery.db.execute(
                 "UPDATE meta SET value=? WHERE key='incarnation'", (recovery.incarnation,)
             )
-            recovery.db.execute("UPDATE retries SET result=NULL")
-            recovery.db.execute("DELETE FROM receipts")
+            recovery.db.execute("UPDATE retries SET result=NULL WHERE tenant=?", (tenant,))
+            recovery.db.execute("DELETE FROM receipts WHERE tenant=?", (tenant,))
             recovery.db.execute(
-                "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]'"
+                "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=?",
+                (tenant,),
             )
             recovery.db.execute(
-                "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]'"
+                "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]' WHERE tenant=?",
+                (tenant,),
             )
-            recovery.db.execute("UPDATE handoffs SET state='retired'")
-            recovery._retire_optional()
+            recovery.db.execute("UPDATE handoffs SET state='retired' WHERE tenant=?", (tenant,))
+            recovery._retire_optional(tenant)
             recovery._reindex(tenant)
             live = {
                 row[0]
                 for row in recovery.db.execute(
-                    "SELECT blob FROM observations WHERE blob IS NOT NULL"
+                    "SELECT blob FROM observations WHERE blob IS NOT NULL AND tenant=?", (tenant,)
                 )
             }
-            admin = recovery_admin(recovery.db, clock.utc_ms())
+            admin = recovery_admin(recovery.db, clock.utc_ms(), tenant)
             if admin is None:
                 raise LocalError("recovery_admin_missing")
-            position = recovery.db.execute("SELECT position FROM tenants").fetchone()[0]
+            position = recovery.db.execute(
+                "SELECT position FROM tenants WHERE tenant=?", (tenant,)
+            ).fetchone()[0]
             serial = int(
                 recovery.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[
                     0
