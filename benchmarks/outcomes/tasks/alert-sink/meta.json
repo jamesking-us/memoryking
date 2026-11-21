@@ -1,0 +1,19 @@
+{
+  "id": "alert-sink",
+  "title": "Evaluate alert rules, then wire delivery",
+  "kind": "decision",
+  "carries": [
+    "Delivery decision: webhook sink only (ops has moved off e-mail, nothing may send mail).",
+    "info alerts are dashboard-only and are never delivered."
+  ],
+  "why_not_in_repo": "Session 1 builds the rule evaluator, which is sink-agnostic, so its code does not show where alerts go. The decision was stated in session 1 only; the repository ships both sinks and the dispatch signature offers both transports, so delivering everything everywhere looks natural.",
+  "between": false,
+  "stub": {
+    "learn": [
+      "Decision: alert delivery goes through the webhook sink only because ops has moved off e-mail. Nothing should send mail, so never call the email sink.",
+      "Decision: info severity alerts are only for the dashboard and are never delivered anywhere. Only warning and critical are delivered."
+    ],
+    "recall_query": "alert delivery decision webhook sink email info severity",
+    "must_recall": ["webhook sink only", "info"]
+  }
+}

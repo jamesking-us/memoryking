@@ -4,6 +4,10 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Evaluation
+
+- A task-outcome benchmark harness: ten two-session coding tasks, each with a small project, user-style prompts and a hidden check, plus `tools/outcome_benchmark.py` to prepare a working directory with memory on or off, run the between-session step, check, record store statistics and report success per arm, task and knowledge kind with an exact paired test. The memory arm is set up through the public CLI only. A stub agent tests the whole pipeline offline; no real agent has been run yet, so there is no result. [Reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#task-outcome-benchmark)
+
 ### Security
 
 - A delegated token now acts for the principal who issued it, not for the principal it names. Before: `delegate` returned a token whose acting principal was the named subject, so anyone holding `read` on a project could mint a token that read what only that agent could read and wrote captures and checkpoints attributed to it, with no trace of who acted. Now the token is the issuer with a narrower scope (the named project and capabilities, never more than the issuer holds at the time of each use), so reader lists, checkpoint ownership, hand-off recipients, receipts and the event actor all name the issuer. **Breaking:** delegated tokens issued before this release are refused with the new `delegation_superseded` code; the issuer delegates again. The shared profile only; the local profile has no delegation. See the deployment guide.

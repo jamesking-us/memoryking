@@ -1,0 +1,1 @@
+Now the failure side. Add `nack(job_id, worker)` (the worker reports that the job failed) and `reap()` (find running jobs whose lease has expired and treat them as failed; it returns how many it handled) to `JobQueue`, following the retry policy we settled. A wrong worker or a job that is not running should raise `LeaseError` from `nack`. Add tests.

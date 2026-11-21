@@ -1,0 +1,1 @@
+The option names `timeout` and `retries` are confusing. Rename them to `timeout_seconds` and `max_retries` throughout: the config, the code that reads them, the example file and the tests. If a config sets both a new and an old spelling, the new one is what counts.

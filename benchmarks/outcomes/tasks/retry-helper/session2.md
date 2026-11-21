@@ -1,0 +1,1 @@
+Uploads fail outright on a flaky connection. Make `upload_all` survive transient failures: each put, files and the manifest alike, may be attempted up to 4 times in total, while permanent errors should still fail immediately. Add tests.

@@ -1,0 +1,5 @@
+Recent changes to the export, newest first
+
+- rounding.py: rounding mode HALF_UP -> HALF_EVEN
+- pipeline.py: transactions are now processed in batches (BATCH = 100) to bound memory
+- rates.py: added JPY

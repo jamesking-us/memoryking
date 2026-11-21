@@ -226,6 +226,22 @@ Both read through the `inspection` operation's `catalog` action (read capability
 
 The local dashboard port also serves `POST /api/v1/retrieval` for an agent on the same machine: a retrieval command (`brief`, `fetch`, `receipt`, `replay`, `receipts`, `atlas`) in the request body, authenticated with `Authorization: Bearer <credential>` instead of a browser session, with exact `Host` and `Origin` checks and no cookies. It exists so a host can reuse the dashboard's loopback listener; the Unix socket remains the primary local transport and the shared service offers the same operations over HTTPS.
 
+### Task-outcome benchmark
+
+`tools/outcome_benchmark.py` measures whether a coding agent finishes multi-session tasks better with MemoryKing than without. The ten tasks in `benchmarks/outcomes/tasks/` each have a small Python project, two prompts written as a user would write them, and a hidden check. Session 1 does part of the work and learns something the repository does not record: an instruction ("never edit `legacy/`", "use this retry helper"), a failed approach and the reason, a decision between two designs, or an environment fact (a port, a flag name, a data format). A task's between-step may delete the slow script or sample data that showed it. Session 2, a separate agent instance, must finish; the hidden check fails on the untouched repository, fails after session 1 alone, and passes only when the carried knowledge was used. The `off` arm gets the same prompts and no memory; the `on` arm gets a private store, a daemon, a credential limited to `capture`, `read`, `checkpoint` and `handoff`, and a `MEMORY.md` note that tells the agent how to use the configured `memoryking` command (capture, recall, save progress, resume), exactly as a user would set it up.
+
+| Command | Does |
+| --- | --- |
+| `prepare --task ID --arm on\|off --workdir DIR` | Copies only the fixture to `DIR` and writes the prompts beside it; for `on`, initialises the store, starts the daemon and issues the credential. |
+| `session`, `record` | Run an agent command for one session and record its time and tokens, or record figures from your own runner. |
+| `between --workdir DIR` | Runs the task's between-step; the store and daemon stay up. |
+| `check --workdir DIR` | Runs the hidden check and prints JSON. |
+| `finish --workdir DIR` | Stops the daemon, records the store's counts (observations captured, briefings served, checkpoints saved) and writes the result file. |
+| `report --results DIR` | Success rate per arm, task and knowledge kind, tokens and time where supplied, an exact paired McNemar test and a table for docs. |
+| `validate` | Without a model, shows each task's four expected outcomes (untouched, after session 1, reference solution, plausible wrong solution). |
+
+The tool never calls a model. A bundled stub agent (`benchmarks/outcomes/stub_agent.py`) solves or fails tasks deterministically so the pipeline is tested offline in both arms; its results say nothing about any real agent. With ten tasks only a large effect can be detected, a pass is one run of one agent on a small fixture, and the harness is not evidence of real-task quality until the real run has been made and reported. The exact run protocol is in [`benchmarks/outcomes/RUNNING.md`](../benchmarks/outcomes/RUNNING.md).
+
 ## Plan tracking contracts
 
 `memory_plan` groups four working-state actions. `plan_save` creates or revises a typed plan; `plan_step` updates one step; `plan_get` reads the current or an earlier revision; `plan_list` pages the project's current plans. Read and checkpoint capabilities, current project and audience authorization, writer ownership, compare-and-set revisions, durable retry keys and the history id are enforced by the existing working-state transaction. A plan is stored as a checkpoint on its task stream, so no schema migration or second store is involved, and backup, restore and purge treat it like any checkpoint. An ordinary task stream cannot turn into a plan, or a plan into an ordinary stream.
