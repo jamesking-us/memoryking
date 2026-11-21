@@ -123,6 +123,19 @@ def main():
             ),
             ("node-dependencies", ["npm", "ci", "--ignore-scripts"], checkout),
             ("checks", [str(python), "tools/check.py"], checkout),
+            (
+                "scale",
+                [
+                    str(python),
+                    "tools/scale_regression.py",
+                    "--sizes",
+                    "20000",
+                    "--output",
+                    "tmp/scale.json",
+                    "--check",
+                ],
+                checkout,
+            ),
             ("build", [str(python), "-m", "build", "--no-isolation"], checkout),
             ("wheel", [str(python), "tools/check_wheel.py"], checkout),
             ("release", [str(python), "tools/build_release.py"], checkout),
@@ -227,6 +240,8 @@ def main():
                 break
         if (checkout / "tmp/checks").exists():
             shutil.copytree(checkout / "tmp/checks", output / "checks")
+        if (checkout / "tmp/scale.json").exists():
+            shutil.copyfile(checkout / "tmp/scale.json", output / "scale.json")
         if (checkout / "tmp/shared-pilot.json").exists():
             shutil.copyfile(checkout / "tmp/shared-pilot.json", output / "shared-pilot.json")
         if (checkout / "tmp/runtime-install").exists():

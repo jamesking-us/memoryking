@@ -1,8 +1,30 @@
 {
+  "sample": "longmemeval-regression-sample.json",
+  "measured": "pooled, 72 questions, as of each question's date, depth 32, budget 65536, ranking lexical-v2 at commit 165280c; thresholds sit about three questions' worth below the measurement",
   "minimum": {
-    "session_recall_at_k": 1.0,
-    "answer_turn_recall_at_k": 1.0,
-    "session_mrr": 1.0
+    "session_recall_any_at_5": 0.81,
+    "session_recall_any_at_10": 0.86,
+    "session_recall_all_at_5": 0.74,
+    "session_recall_all_at_10": 0.81,
+    "turn_recall_any_at_5": 0.67,
+    "turn_recall_any_at_10": 0.78,
+    "turn_recall_all_at_5": 0.52,
+    "turn_recall_all_at_10": 0.67,
+    "session_mrr_distinct": 0.76,
+    "turn_mrr": 0.5,
+    "session_recall_at_k": 0.84,
+    "answer_turn_recall_at_k": 0.78,
+    "session_mrr": 0.76
+  },
+  "by_question_type_minimum": {
+    "session_recall_any_at_10": {
+      "knowledge-update": 0.9,
+      "multi-session": 0.9,
+      "single-session-assistant": 0.9,
+      "single-session-preference": 0.75,
+      "single-session-user": 0.9,
+      "temporal-reasoning": 0.5
+    }
   },
   "maximum": {
     "latency_ms_p95": 2000

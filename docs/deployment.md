@@ -4,7 +4,7 @@ Start with the local profile unless you need several machines or tenants. These 
 
 ## Installation profiles
 
-All profiles use Python 3.12. Dependencies are hash-locked; package source is installed separately with `--no-deps`.
+All profiles use Python 3.12; the container images pin it, and 3.13 is supported for the core install (see [Runtimes](reference.md#runtimes-python-versions-and-windows)). Dependencies are hash-locked; package source is installed separately with `--no-deps`.
 
 | Lock | Purpose |
 | --- | --- |
@@ -108,7 +108,8 @@ Configuration comes from CLI flags and authorized API operations. There is no ge
 | `doctor --store`, `--control` | Checks Python, directory ownership and layout, socket path, schema version, journal integrity and tokenizer; with `--socket` and `--credential` it also reports capacity and frontier from the daemon. Exit 1 when a check fails. |
 | `credential issue NAME --project P --capabilities a,b [--expires 30d] [--rotate] --output FILE` | Issues a scoped credential into a new private file; `--rotate` replaces the principal's credential so every earlier one stops working. `credential list` shows every grant with validity; `credential revoke NAME --project P` removes one. All take `--socket` and an admin `--credential`. |
 | `credential rotate-owner --store`, `--control` | Offline: replaces `owner.credential` with a new credential and retires the old one. The daemon must be stopped. See [rotating credentials](#rotating-credentials). |
-| `capture --project P [--text T] [--source S] [--event E]` | Saves one observation from `--text` or stdin with a stable event id; `recall --project P --query Q` prints a cited Markdown briefing (`--json` for the packet). Both accept `--profile` or `MEMORYKING_SOCKET`, `MEMORYKING_CREDENTIAL` and `MEMORYKING_PROJECT`. |
+| `capture --project P [--text T] [--source S] [--event E]` | Saves one observation from `--text` or stdin with a stable event id; `recall --project P --query Q` prints a cited Markdown briefing (`--json` for the packet). Both accept `--profile` or `MEMORYKING_SOCKET`, `MEMORYKING_CREDENTIAL` and `MEMORYKING_PROJECT` (the default for `--project`, here and in `summarize`). |
+| `save-progress --task T --objective O --state S [--next A] [--finding F] [--blocker B] [--failed "action => outcome"]`, `resume --task T` | The lean `save_progress` and `resume` tools as commands, for an agent that has a shell and no MCP. Repeatable flags repeat; `--json` prints the structured result. Same connection options as `capture`. |
 | `dashboard open --socket`, `--credential` | Issues a one-use code and opens the dashboard signed in; `--print-only` prints the link instead. The code travels in the URL fragment and expires in 60 seconds. |
 | `request --socket`, `--credential` | Required socket and private credential file paths. |
 | `request --credential-output` | New private output file required for a grant; secret values are not printed. |

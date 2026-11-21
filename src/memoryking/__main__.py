@@ -133,6 +133,48 @@ def add_binding(parser: Any) -> None:
     )
 
 
+def failed_attempt(value: str) -> dict[str, str]:
+    action, arrow, outcome = value.partition("=>")
+    if not arrow or not action.strip() or not outcome.strip():
+        raise argparse.ArgumentTypeError('expected "action => outcome"')
+    return {"action": action.strip(), "outcome": outcome.strip()}
+
+
+def lean_command(args: Any) -> dict[str, Any]:
+    """Run the lean save_progress or resume tool for the CLI, through the same code."""
+    from memoryking import hooks, lean
+    from memoryking.adapters.stdio import LEAN_VALIDATORS
+    from memoryking.sdk import LocalClient
+
+    name = args.command.replace("-", "_")
+    arguments: dict[str, Any] = {"task": args.task, "run": args.run}
+    if name == "save_progress":
+        arguments.update(objective=args.objective, current_state=args.state)
+        for key, value in (
+            ("next_actions", args.next),
+            ("findings", args.finding),
+            ("blockers", args.blocker),
+            ("hard_constraints", args.constraint),
+            ("failed_attempts", args.failed),
+            ("share_with", args.share_with),
+        ):
+            if value:
+                arguments[key] = value
+    else:
+        arguments["budget"] = args.budget
+    if not LEAN_VALIDATORS[name].is_valid(arguments):
+        raise LocalError("invalid_tool_arguments")
+    socket, credential, project = hooks.connection_files(
+        profile=args.profile,
+        socket=args.socket,
+        credential=args.credential,
+        project=args.project,
+        config=args.config,
+    )
+    bindings = session_bindings.resolve(args.binding, profile=args.profile, config=args.config)
+    return lean.call(LocalClient(socket, credential, project, bindings=bindings), name, arguments)
+
+
 def summarize(args: Any) -> dict[str, Any]:
     """Extractive by default; with --provider, a policy adapter writes it through the audited path."""
     import uuid
@@ -396,10 +438,10 @@ def doctor(
     def record(level: str, name: str, detail: str) -> None:
         findings.append((level, name, detail))
 
-    if sys.version_info[:2] == (3, 12):
+    if sys.version_info[:2] in {(3, 12), (3, 13)}:
         record("ok", "python", sys.version.split()[0])
     else:
-        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12")
+        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12 or 3.13")
     for label, path in (("store", store), ("control", control)):
         try:
             private_dir(path)
@@ -834,7 +876,7 @@ def main() -> int:
     )
     summ.add_argument("--socket", type=Path)
     summ.add_argument("--credential", type=Path)
-    summ.add_argument("--project", required=True)
+    summ.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     summ.add_argument("--task", required=True)
     summ.add_argument("--run")
     summ.add_argument("--egress-policy", type=Path, help="With --provider: the daemon's policy")
@@ -869,7 +911,7 @@ def main() -> int:
     cap = commands.add_parser("capture", help="Save one observation from text or stdin")
     cap.add_argument("--socket", type=Path)
     cap.add_argument("--credential", type=Path)
-    cap.add_argument("--project", required=True)
+    cap.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     cap.add_argument("--text", help="The observation; omit to read it from stdin")
     cap.add_argument("--source", default="cli", help="Where it came from, e.g. git or pytest")
     cap.add_argument("--event", help="Stable event id so a rerun replays; default: a text hash")
@@ -893,7 +935,7 @@ def main() -> int:
     rec = commands.add_parser("recall", help="Print a cited Markdown briefing for a query")
     rec.add_argument("--socket", type=Path)
     rec.add_argument("--credential", type=Path)
-    rec.add_argument("--project", required=True)
+    rec.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     rec.add_argument("--query", help="What you are about to work on (or use --start)")
     rec.add_argument(
         "--start",
@@ -918,6 +960,35 @@ def main() -> int:
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     add_binding(rec)
+    sp = commands.add_parser(
+        "save-progress", help="Save where a task stands (the lean save_progress tool)"
+    )
+    res = commands.add_parser(
+        "resume", help="Print a task's latest saved progress (the lean resume tool)"
+    )
+    for item in (sp, res):
+        item.add_argument("--socket", type=Path)
+        item.add_argument("--credential", type=Path)
+        item.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        item.add_argument("--task", required=True, help="Task id, stable across sessions")
+        item.add_argument("--run")
+        item.add_argument("--json", action="store_true", help="Print the structured result")
+        add_binding(item)
+    sp.add_argument("--objective", required=True)
+    sp.add_argument("--state", required=True, help="Where the task stands now")
+    sp.add_argument("--next", action="append", metavar="ACTION", help="Repeatable")
+    sp.add_argument("--finding", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument("--blocker", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument("--constraint", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument(
+        "--failed",
+        action="append",
+        type=failed_attempt,
+        metavar='"ACTION => OUTCOME"',
+        help="A failed attempt and why; repeatable",
+    )
+    sp.add_argument("--share-with", action="append", metavar="PRINCIPAL", help="Repeatable")
+    res.add_argument("--budget", type=int, default=12000)
     rv = commands.add_parser(
         "review", help="Review waiting proposals and retirement requests from the terminal"
     )
@@ -1122,11 +1193,17 @@ def main() -> int:
                 "influence",
                 "trust",
                 "draft-proposals",
+                "save-progress",
+                "resume",
                 "review",
                 "pin",
             }
             else set()
         )
+        if args.command in {"capture", "recall", "summarize"} and args.project is None:
+            args.project = os.environ.get("MEMORYKING_PROJECT")
+            if not args.project:
+                raise LocalError("project_required")
         for field in ("store", "control", "socket", "credential"):
             if hasattr(args, field) and getattr(args, field) is None and field not in optional:
                 raise LocalError(field + "_required")
@@ -1364,6 +1441,14 @@ def main() -> int:
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command in {"save-progress", "resume"}:
+            result = lean_command(args)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+            elif args.command == "resume":
+                print(result["text"], end="")
+            else:
+                print(json.dumps({k: result[k] for k in ("task", "revision", "id") if k in result}))
         elif args.command == "summarize":
             result = summarize(args)
             if args.json:
