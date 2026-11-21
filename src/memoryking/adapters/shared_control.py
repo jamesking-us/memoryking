@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from memoryking.adapters.local_files import Control, JournalCache, private_file
+from memoryking.adapters.operations_log import OperationsLog
 from memoryking.domain.local import LocalError
 
 # A store, and so a `SharedControl`, is built per request. The verified journal prefix is kept
@@ -38,6 +39,7 @@ class SharedControl(Control):
     def __init__(self, path: Path):
         super().__init__(path)
         self._cache = _journal_cache(path, self.key)
+        self.operations = OperationsLog(self, self._cache.operations)
         self.thread_lock = threading.RLock()
 
     @contextmanager

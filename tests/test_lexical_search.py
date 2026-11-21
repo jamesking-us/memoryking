@@ -347,8 +347,8 @@ class LocalMigrationTests(unittest.TestCase):
         self.store.db.execute("PRAGMA user_version=15")
         self.store.close()
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(17, SCHEMA_VERSION)
-        self.assertEqual(17, self.store.db.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(18, SCHEMA_VERSION)
+        self.assertEqual(18, self.store.db.execute("PRAGMA user_version").fetchone()[0])
         status = self.store.status(self.owner, "q")["lexical"]
         self.assertEqual("legacy", status["state"])
         self.assertEqual("lexical-v1", status["configuration"])
