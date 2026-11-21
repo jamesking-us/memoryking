@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import os
 import threading
 import time
@@ -10,13 +11,33 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from memoryking.adapters.local_files import Control, private_file
+from memoryking.adapters.local_files import Control, JournalCache, private_file
 from memoryking.domain.local import LocalError
+
+# A store, and so a `SharedControl`, is built per request. The verified journal prefix is kept
+# per control tree and signing key for the life of the process so a request verifies only
+# what was appended since the last one; see `Control._usable` for when it is trusted.
+_CACHES: dict[tuple[str, str], JournalCache] = {}
+_CACHES_LOCK = threading.Lock()
+_CACHE_LIMIT = 512
+
+
+def _journal_cache(path: Path, key: bytes) -> JournalCache:
+    identity = (os.path.realpath(path), hashlib.sha256(b"journal-cache" + key).hexdigest())
+    with _CACHES_LOCK:
+        cache = _CACHES.pop(identity, None)
+        if cache is None:
+            cache = JournalCache(keep_records=False)
+        _CACHES[identity] = cache
+        while len(_CACHES) > _CACHE_LIMIT:
+            _CACHES.pop(next(iter(_CACHES)))
+        return cache
 
 
 class SharedControl(Control):
     def __init__(self, path: Path):
         super().__init__(path)
+        self._cache = _journal_cache(path, self.key)
         self.thread_lock = threading.RLock()
 
     @contextmanager

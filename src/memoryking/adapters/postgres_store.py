@@ -272,7 +272,7 @@ class PostgresStore(StoreCore):
     def _validate_anchor(self) -> list[dict[str, Any]]:
         with self.control.locked():
             self.anchor = self.control.read_anchor()
-            records = self.control.journal(self.anchor)
+            held = self.control.verified_count(self.anchor)
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         position = self.db.execute(
             "SELECT position FROM tenants WHERE tenant=?", (self.tenant,)
@@ -287,12 +287,16 @@ class PostgresStore(StoreCore):
             or position[0] < self.anchor["frontiers"].get(self.tenant, 0)
         ):
             raise LocalError("recovery_required")
-        if int(meta["journal"]) > len(records):
+        applied = int(meta["journal"])
+        if applied > held:
             # The database applied more journal records than the control journal holds: the
             # journal tail was lost or another control tree is in use. Never skip silently.
             raise LocalError("journal_rollback")
         self.last_utc = max(self.last_utc, self.anchor["last_utc"])
-        return [record for record in records if record["sequence"] > int(meta["journal"])]
+        if applied == held:
+            return []
+        with self.control.locked():
+            return self.control.records_after(self.anchor, applied)
 
     @contextmanager
     def transaction(self) -> Iterator[Decision]:
