@@ -26,6 +26,8 @@ LATER_TABLES = {
     "supersessions",
     "retirement_requests",
     "pins",
+    "consolidation_runs",
+    "unreviewed_tier",
 }
 
 
@@ -545,7 +547,7 @@ class PostgresStoreTests(unittest.TestCase):
             control = store.control
         self.assertEqual(2, manifest["blob_index"]["count"])
         self.assertNotIn("blobs", manifest)
-        self.assertEqual(11, manifest["schema"])
+        self.assertEqual(12, manifest["schema"])
         index = (archive / "blob-index").read_bytes()
         digests = index.decode().splitlines()
 
