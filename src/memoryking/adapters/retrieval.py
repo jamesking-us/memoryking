@@ -21,13 +21,14 @@ from memoryking.adapters.local_store import (
     uid,
 )
 from memoryking.adapters.token_count import counter
+from memoryking.application import lexical_index
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.anchors import anchors_in
 from memoryking.domain.briefing import (
     COMPILER,
     CONFIGURATION,
-    QUERY_TERM_LIMIT,
+    LEGACY_CONFIGURATION,
     counted,
     pack,
     relevance,
@@ -35,13 +36,27 @@ from memoryking.domain.briefing import (
     terms,
 )
 from memoryking.domain.briefing_text import textualize
+from memoryking.domain.lexicon import (
+    QUERY_TERM_LIMIT,
+    STEM_MARK,
+    Corpus,
+    Term,
+    query_terms,
+    stem,
+)
+from memoryking.domain.lexicon import score as bm25
 from memoryking.domain.local import Decision, LocalError, Released
 from memoryking.domain.selectors import bindings
 
 # Salience: a bounded, documented nudge from use, never a rewrite of the record.
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
 RERANK_TEXT_BYTES = 16384  # the reranker's per-text limit
-SALIENCE_WEIGHT = 100_000  # at most a tenth of a full lexical score, in millionths
+SALIENCE_WEIGHT = (
+    45_000  # a tenth of a typical full match (about 1/(K1+1) of the scale), in millionths
+)
+LEGACY_SALIENCE_WEIGHT = (
+    100_000  # the same tenth, on the lexical-v1 scale where a full match is 1.0
+)
 SALIENCE_WINDOW_MS = 90 * 86_400_000  # deliveries older than this do not count
 SALIENCE_HALF_LIFE_MS = 30 * 86_400_000  # use fades by half every thirty days
 ARCHIVE_AFTER_MS = 180 * 86_400_000  # never-used records older than this rank last
@@ -454,6 +469,8 @@ class Retrieval:
 
         tenant_row = self.db.execute("SELECT * FROM tenants WHERE tenant=?", (tenant,)).fetchone()
         source = tenant_row["position"]
+        lexical_current = lexical_index.state(self.db, tenant)[0] == lexical_index.CURRENT
+        configuration = CONFIGURATION if lexical_current else LEGACY_CONFIGURATION
         if "as_of_ms" in args:
             # One instant stands for both clocks: the history frontier as it was then
             # (the last event recorded by that wall time) and the claim validity time.
@@ -524,7 +541,7 @@ class Retrieval:
             },
         )
         diag: dict[str, Any] = {
-            "configuration": CONFIGURATION,
+            "configuration": configuration,
             "compiler": COMPILER,
             "selector_version": "1",
             "store": self.s.store_id,
@@ -534,7 +551,7 @@ class Retrieval:
             "source_position": source,
             "source_watermark": self.s._token("watermark", tenant=tenant, position=source),
             "channel_frontiers": {
-                "lexical": {"position": source, "configuration": CONFIGURATION},
+                "lexical": {"position": source, "configuration": configuration},
                 "dense": {key: value for key, value in dense.items() if key != "scores"},
             },
             "policy_epoch": tenant_row["policy_epoch"],
@@ -595,6 +612,7 @@ class Retrieval:
                 dense,
                 ranking,
                 evaluation=ranking_override is not None,
+                lexical_current=lexical_current,
             )
             for stage in trace:
                 if stage.get("stage") == "rerank_v1" and "model" in stage:
@@ -705,6 +723,127 @@ class Retrieval:
             ),
         }
 
+    SCOPE = (
+        "SELECT o.id,o.position FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 "
+        "AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) "
+        "AND NOT EXISTS(SELECT 1 FROM observation_holds h WHERE h.tenant=o.tenant AND h.id=o.id AND h.state='held') AND "
+    )
+
+    @staticmethod
+    def tier_sizes(count: int) -> list[int]:
+        """How many of the rarest terms each conjunction keeps: all of them, then fewer.
+
+        The first few steps drop one term at a time (the most common goes first); later
+        steps halve, so a long query costs a bounded number of searches."""
+        if count <= 0:
+            return []
+        sizes = list(range(count, max(count - 4, 0), -1))
+        size = count - 4
+        while size > 1:
+            size = (size + 1) // 2
+            sizes.append(size)
+        if sizes[-1] != 1:
+            sizes.append(1)
+        return list(dict.fromkeys(sizes))
+
+    def _select(
+        self,
+        who: dict[str, Any],
+        args: dict[str, Any],
+        recorded: int,
+        qterms: list[Term],
+        corpus: Corpus,
+        anchors: list[str],
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Candidate observations by informativeness, not recency.
+
+        Exact anchors first. Then the documents holding every query term, then holding all
+        but the most common one, and so on down to the rarest term alone, then the other
+        terms one at a time from rare to common; within a step the newest come first.
+        Every search carries the full authorization filter (tenant, project, not deleted,
+        recorded position, readers, not held) before its limit, so a reader never competes
+        with, or is crowded out by, records they cannot read."""
+        tenant, project = who["tenant"], args["project"]
+        scope = (tenant, project, recorded, who["principal"])
+        chosen: dict[str, int] = {}
+        if anchors:
+            hits: dict[str, int] = {}
+            position: dict[str, int] = {}
+            for anchor in anchors:
+                for row in self.db.execute(
+                    self.SCOPE
+                    + "o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
+                    (*scope, tenant, anchor),
+                ).fetchall():
+                    hits[row["id"]] = hits.get(row["id"], 0) + 1
+                    position[row["id"]] = row["position"]
+            for found in sorted(hits, key=lambda i: (-hits[i], -position[i], i))[:128]:
+                chosen[found] = position[found]
+        # Rarest first; a term no document holds (frequency zero) goes last, so it is the
+        # first one dropped and never empties a search that other terms could fill.
+        ordered = sorted(
+            qterms, key=lambda t: (corpus.frequency(t.key) == 0, corpus.frequency(t.key), t.key)
+        )
+        searches = [ordered[:n] for n in self.tier_sizes(len(ordered))]
+        searches += [[term] for term in ordered[1:7]]
+        ran = 0
+        for group in searches:
+            if len(chosen) > 256:
+                break
+            expression = self.s.dialect.lexical_expression([t.alternatives() for t in group])
+            ran += 1
+            for row in self.db.execute(
+                self.SCOPE
+                + "o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
+                + self.s.dialect.lexical_boolean()
+                + ") ORDER BY o.position DESC,o.id DESC LIMIT ?",
+                (*scope, tenant, expression, 257 + len(chosen)),
+            ).fetchall():
+                chosen.setdefault(row["id"], row["position"])
+        ids = list(chosen)
+        ids = ids[:256] + (ids[256:257] if len(ids) > 256 else [])
+        return ids, {"searches": ran, "terms": len(qterms)}
+
+    def _legacy_select(
+        self,
+        who: dict[str, Any],
+        args: dict[str, Any],
+        recorded: int,
+        query: list[str],
+        anchors: list[str],
+    ) -> list[str]:
+        """The pre-lexical-v2 selection, kept for a store whose index is not rebuilt yet."""
+        tenant = who["tenant"]
+        scope = (tenant, args["project"], recorded, who["principal"])
+        coverage: dict[str, int] = {}
+        position: dict[str, int] = {}
+        limited = False
+        for term in query:
+            rows = self.db.execute(
+                self.SCOPE
+                + "o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
+                + self.s.dialect.lexical_match()
+                + ") ORDER BY o.position DESC,o.id DESC LIMIT 257",
+                (*scope, tenant, '"' + term.replace('"', '""') + '"'),
+            ).fetchall()
+            limited = limited or len(rows) > 256
+            for row in rows:
+                coverage[row["id"]] = coverage.get(row["id"], 0) + 1
+                position[row["id"]] = row["position"]
+        # An anchor in the query gets its own newest-first window and counts double.
+        for anchor in anchors:
+            rows = self.db.execute(
+                self.SCOPE
+                + "o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
+                (*scope, tenant, anchor),
+            ).fetchall()
+            limited = limited or len(rows) > 256
+            for row in rows:
+                coverage[row["id"]] = coverage.get(row["id"], 0) + 2
+                position[row["id"]] = row["position"]
+        ordered = sorted(coverage, key=lambda i: (-coverage[i], -position[i], i))
+        return ordered[:256] + (ordered[256:257] if limited or len(ordered) > 256 else [])
+
     def _candidates(
         self,
         who: dict[str, Any],
@@ -717,10 +856,33 @@ class Retrieval:
         ranking: dict[str, Any],
         *,
         evaluation: bool = False,
+        lexical_current: bool = False,
     ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]], str]:
+        tenant = who["tenant"]
         query = terms(args["query"])
+        qterms = query_terms(args["query"]) if lexical_current else []
         anchors = anchors_in(args["query"])[:16]
         candidates = knowledge["items"]
+        # Term weights come from whole-project statistics (not what this reader may see)
+        # and only ever shape order; they are never copied into a packet or trace. A
+        # historical view uses today's statistics, which the trace says.
+        corpus = (
+            lexical_index.corpus(self.db, tenant, args["project"], [t.key for t in qterms])
+            if qterms
+            else Corpus()
+        )
+        wanted_words = {w for t in qterms for w in t.words}
+        wanted_keys = {t.key for t in qterms}
+
+        def scorer(text: str) -> int:
+            return bm25(qterms, text, corpus) if lexical_current else relevance(query, text)
+
+        def is_wanted(token: str) -> bool:
+            if not lexical_current:
+                return token in query
+            root = stem(token)
+            return token in wanted_words or (root is not None and STEM_MARK + root in wanted_keys)
+
         key = canonical_hash(
             {
                 "tenant": who["tenant"],
@@ -728,7 +890,7 @@ class Retrieval:
                 "store": self.s.store_id,
                 "incarnation": self.s.incarnation,
                 "generation": source,
-                "configuration": CONFIGURATION,
+                "configuration": CONFIGURATION if lexical_current else LEGACY_CONFIGURATION,
                 "compiler": COMPILER,
                 "request": args,
                 "eligible": [[i["revision"], i.get("body_hash")] for i in candidates],
@@ -737,60 +899,20 @@ class Retrieval:
         cache = self.s.retrieval_cache
         entry = cache.get(key)
         hit = entry is not None and at < entry["expires"]
+        selection: dict[str, Any] = {}
         if hit and entry is not None:
             ids = entry["ids"]
+            selection = entry.get("selection", {})
         else:
             ids = []
             if query and args.get("freshness", "any") != "attested":
-                # Tenant/scope/audience filtering precedes the candidate limit. Each term
-                # gets its own newest-first window, so a common word cannot crowd out the
-                # documents that match the rare ones; the windows are merged by how many
-                # terms a document matches, then by recency, and the top 257 are scored.
-                coverage: dict[str, int] = {}
-                position: dict[str, int] = {}
-                limited = False
-                for term in query:
-                    rows = self.db.execute(
-                        "SELECT o.id,o.position FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
-                        + self.s.dialect.lexical_match()
-                        + ") ORDER BY o.position DESC,o.id DESC LIMIT 257",
-                        (
-                            who["tenant"],
-                            args["project"],
-                            recorded,
-                            who["principal"],
-                            who["tenant"],
-                            '"' + term.replace('"', '""') + '"',
-                        ),
-                    ).fetchall()
-                    limited = limited or len(rows) > 256
-                    for row in rows:
-                        coverage[row["id"]] = coverage.get(row["id"], 0) + 1
-                        position[row["id"]] = row["position"]
-                # An anchor in the query (a path, symbol, ticket, URL, host or error code)
-                # gets its own newest-first window too, and counts double in coverage:
-                # naming the thing exactly outranks sharing a word with it.
-                for anchor in anchors:
-                    rows = self.db.execute(
-                        "SELECT o.id,o.position FROM observations o WHERE o.tenant=? AND o.project=? AND o.deleted=0 AND o.position<=? AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
-                        (
-                            who["tenant"],
-                            args["project"],
-                            recorded,
-                            who["principal"],
-                            who["tenant"],
-                            anchor,
-                        ),
-                    ).fetchall()
-                    limited = limited or len(rows) > 256
-                    for row in rows:
-                        coverage[row["id"]] = coverage.get(row["id"], 0) + 2
-                        position[row["id"]] = row["position"]
-                ordered = sorted(coverage, key=lambda i: (-coverage[i], -position[i], i))
-                ids = ordered[:256] + (ordered[256:257] if limited or len(ordered) > 256 else [])
+                if lexical_current:
+                    ids, selection = self._select(who, args, recorded, qterms, corpus, anchors)
+                else:
+                    ids = self._legacy_select(who, args, recorded, query, anchors)
             if len(cache) >= 64:
                 cache.pop(next(iter(cache)))
-            cache[key] = {"expires": at + 60000, "ids": ids}
+            cache[key] = {"expires": at + 60000, "ids": ids, "selection": selection}
         anchor_sets: dict[str, set[str]] = {}
         if anchors and ids:
             for row in self.db.execute(
@@ -856,9 +978,12 @@ class Retrieval:
         # The live evaluator supplies applicability-qualified edges; suppressed or
         # unavailable endpoints never become text or counts in this trace.
         ranked: list[tuple[int, str, list[dict[str, Any]]]] = []
+        # Equal scores order by authority (accepted knowledge before unreviewed
+        # observations), then newest recorded first, then the reference for determinism.
+        tie: dict[str, tuple[int, int, str]] = {}
         visited: set[str] = set()
         for key_id, item in by_id.items():
-            score = relevance(query, item["body"]["text"])
+            score = scorer(item["body"]["text"])
             if not score or key_id in visited:
                 continue
             group_ids, pending = set(), [key_id]
@@ -871,7 +996,7 @@ class Retrieval:
             group = []
             for revision in sorted(group_ids):
                 claim = self._claim(by_id[revision])
-                claim["lexical_score_ppm"] = relevance(query, by_id[revision]["body"]["text"])
+                claim["lexical_score_ppm"] = scorer(by_id[revision]["body"]["text"])
                 claim["conflicts"] = sorted(adjacency[revision])
                 claim["conflict_resolution"] = (
                     "incomplete" if group_ids & unresolved else "complete"
@@ -879,8 +1004,10 @@ class Retrieval:
                 if revision != key_id:
                     claim["selection_reason"] = "conflict_expansion"
                 group.append(claim)
-            score = max(relevance(query, by_id[i]["body"]["text"]) for i in group_ids)
-            ranked.append((score, min(group_ids), group))
+            score = max(scorer(by_id[i]["body"]["text"]) for i in group_ids)
+            lead = min(group_ids)
+            tie[lead] = (0, -max(by_id[i].get("created_position", 0) for i in group_ids), lead)
+            ranked.append((score, lead, group))
         dense_scores = dense["scores"]
         positions: dict[str, int] = {}
         for observation in dict.fromkeys([*ids[:256], *dense_scores]):
@@ -890,10 +1017,11 @@ class Retrieval:
             if row is None or not self.s._visible(who, row, at):
                 continue
             positions[observation] = row["position"]
+            tie[observation] = (1, -row["position"], observation)
             raw = self._blob(row)
             # A whole atomic excerpt has attribution and bounds; never a paraphrase.
             full = raw.decode()
-            score = relevance(query, full)
+            score = scorer(full)
             anchor_hits = 0
             if anchors:
                 # Exact overlap of the query's anchors with the record's, in millionths,
@@ -901,13 +1029,18 @@ class Retrieval:
                 anchor_hits = sum(1 for a in anchors if a in anchor_sets.get(observation, ()))
                 score = max(score, anchor_hits * 1000000 // len(anchors))
             offset = 0
-            if score and not relevance(query, raw[:4096].decode("utf-8", errors="ignore")):
+            if (
+                score
+                and len(raw) > 4096
+                and not any(
+                    is_wanted(m.group().casefold())
+                    for m in re.finditer(r"[^\W_]+", raw[:4096].decode("utf-8", errors="ignore"))
+                )
+            ):
                 # Locate an actual term in the original text; avoid byte/character
                 # offsets derived from casefold, which can change Unicode length.
-                import re
-
                 match = next(
-                    (m for m in re.finditer(r"[^\W_]+", full) if m.group().casefold() in query),
+                    (m for m in re.finditer(r"[^\W_]+", full) if is_wanted(m.group().casefold())),
                     None,
                 )
                 if match:
@@ -946,7 +1079,8 @@ class Retrieval:
                         ],
                     )
                 )
-        ranked.sort(key=lambda i: (-i[0], i[1]))
+        rank_key = lambda item: (-item[0], tie.get(item[1], (2, 0, item[1])))  # noqa: E731
+        ranked.sort(key=rank_key)
         if "dense" in args:
             # Equal-channel reciprocal-rank fusion; similarity never changes
             # authority, policy completeness or registered conflict expansion.
@@ -970,7 +1104,7 @@ class Retrieval:
                 )
                 for _, reference, group in ranked
             ]
-            ranked.sort(key=lambda item: (-item[0], item[1]))
+            ranked.sort(key=rank_key)
         historical = "recorded_position" in args or "valid_ms" in args
         salience_trace: dict[str, Any] = {"stage": "salience_v1"}
         if historical:
@@ -989,6 +1123,7 @@ class Retrieval:
             # earlier briefings delivered unless that is what the caller wants.
             salience_trace["state"] = "off_unless_requested"
         else:
+            salience_weight = SALIENCE_WEIGHT if lexical_current else LEGACY_SALIENCE_WEIGHT
             salience = self._salience(who, args["project"], positions, at)
             archival = 0
             rescored = []
@@ -1004,15 +1139,15 @@ class Retrieval:
                         "deliveries_90d": item["deliveries"],
                         "helpful_votes": item["helpful"],
                     }
-                score += SALIENCE_WEIGHT * item["strength_ppm"] // 1_000_000
+                score += salience_weight * item["strength_ppm"] // 1_000_000
                 if item["tier"] == "archival":
                     # Still searchable and cited when nothing else matches; ranked last.
                     score -= ARCHIVAL_PENALTY
                     archival += 1
                 rescored.append((score, reference, group))
-            ranked = sorted(rescored, key=lambda item: (-item[0], item[1]))
+            ranked = sorted(rescored, key=rank_key)
             salience_trace.update(
-                weight_ppm=SALIENCE_WEIGHT,
+                weight_ppm=salience_weight,
                 delivery_window_days=SALIENCE_WINDOW_MS // 86_400_000,
                 half_life_days=SALIENCE_HALF_LIFE_MS // 86_400_000,
                 archive_after_days=ARCHIVE_AFTER_MS // 86_400_000,
@@ -1074,10 +1209,23 @@ class Retrieval:
                 "visible_candidates": len(ranked),
                 "candidate_limit_reached": len(ids) > 256,
                 "max_candidates": 256,
+                "configuration": CONFIGURATION if lexical_current else LEGACY_CONFIGURATION,
+                **(
+                    {
+                        "selection": "informative_tiers_v1",
+                        "searches": selection.get("searches", 0),
+                        "statistics": "whole_project_current_corpus",
+                    }
+                    if lexical_current
+                    else {
+                        "selection": "per_term_recency_windows_v1",
+                        "statistics": "unavailable_until_reindex",
+                    }
+                ),
             },
             {
                 "stage": "rank",
-                "metric": "literal_term_overlap_v1",
+                "metric": "bm25_word_forms_v1" if lexical_current else "literal_term_overlap_v1",
                 "selected_groups": min(limit, len(ranked)),
             },
         ]

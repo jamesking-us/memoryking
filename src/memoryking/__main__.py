@@ -30,6 +30,35 @@ def bar(used: int, limit: int, width: int = 12) -> str:
     return "[" + "#" * filled + "." * (width - filled) + "]"
 
 
+def lexical_findings(db: Any, version: int) -> list[tuple[str, str, int]]:
+    """(tenant, state, observations not yet in the current lexical format) from a read-only
+    connection; a store older than schema 16 has every populated tenant on the old format."""
+    found: list[tuple[str, str, int]] = []
+    for (tenant,) in db.execute("SELECT tenant FROM tenants").fetchall():
+        row = (
+            db.execute(
+                "SELECT state,cursor FROM lexical_state WHERE tenant=?", (tenant,)
+            ).fetchone()
+            if version >= 16
+            else None
+        )
+        total = db.execute(
+            "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0", (tenant,)
+        ).fetchone()[0]
+        if row is None:
+            if total:
+                found.append((tenant, "legacy", total))
+        elif row[0] != "current":
+            left = db.execute(
+                "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0 AND position>?",
+                (tenant, max(row[1], 0)),
+            ).fetchone()[0]
+            found.append((tenant, row[0], left))
+        else:
+            found.append((tenant, "current", 0))
+    return found
+
+
 def render_status(result: dict[str, Any], version: str) -> str:
     """A human summary of the status operation; `--json` prints the raw result instead."""
     projection = result.get("projection", {})
@@ -49,6 +78,15 @@ def render_status(result: dict[str, Any], version: str) -> str:
             else "none"
         ),
     ]
+    lexical = result.get("lexical")
+    if lexical:
+        line = f"Lexical    {lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
+        if lexical.get("state") != "current":
+            line += (
+                f"; {lexical.get('remaining_observations', '?')} observations to rewrite for "
+                f"{lexical.get('target_configuration', '?')}. {lexical.get('action', '')}"
+            )
+        lines.append(line)
     capacity = result.get("capacity", {})
     if capacity:
         lines.append("Capacity")
@@ -294,8 +332,10 @@ def doctor(
     database = store / "store.sqlite"
     if database.exists():
         try:
+            lexical_state: list[tuple[str, str, int]] = []
             with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
                 version = db.execute("PRAGMA user_version").fetchone()[0]
+                lexical_state = lexical_findings(db, version)
             record(
                 "ok" if version == SCHEMA_VERSION else "warn",
                 "schema",
@@ -306,6 +346,18 @@ def doctor(
                     else f"; the daemon migrates to {SCHEMA_VERSION} on next start"
                 ),
             )
+            for tenant, state, remaining in lexical_state:
+                if state == "current":
+                    record("ok", "lexical index", f"{tenant}: current (lexical-v2)")
+                else:
+                    record(
+                        "warn",
+                        "lexical index",
+                        f"{tenant}: {state}, still on the previous configuration (lexical-v1) with "
+                        f"{remaining} observations to rewrite; run a reindex "
+                        "(`memoryking request` with the operation reindex and empty args); "
+                        "the daemon finishes it in batches and captures keep working",
+                    )
         except sqlite3.Error as exc:
             record("fail", "schema", f"cannot read {database}: {type(exc).__name__}")
     else:

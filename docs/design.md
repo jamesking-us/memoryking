@@ -46,7 +46,7 @@ An independent control tree records signing identity, recovery anchors and polic
 
 1. Authenticate the caller and bind its tenant, project and current history.
 2. Resolve mandatory constraints completely within explicit bounds.
-3. Find relevant accessible observations and accepted guidance, using lexical retrieval by default and configured optional channels when available.
+3. Find relevant accessible observations and accepted guidance, using lexical retrieval by default (see [How lexical ranking works](#how-lexical-ranking-works)) and configured optional channels when available.
 4. Check applicability, repository freshness, evidence visibility and conflicts.
 5. Fit the complete response into the requested budget, preserving essential fields.
 6. Persist the authorization decision and response identity before releasing bytes.
@@ -54,6 +54,22 @@ An independent control tree records signing identity, recovery anchors and polic
 The result includes a status, guidance/evidence references and usage information. An unresolved essential constraint blocks rather than disappearing from a top-k list. Unknown token usage is not counted as zero; a byte estimate is labeled as an estimate.
 
 Receipts preserve how a response was assembled. **Replay** returns retained exact response bytes if current authorization still permits it. **Rerun** performs a new retrieval and creates a new receipt. Neither operation implies a model response will be identical.
+
+## How lexical ranking works
+
+Lexical ranking is the default channel and needs no model. It answers three questions in plain words: which records are worth looking at, how well does each one match, and what happens when two match equally.
+
+**Words and word forms.** Text is split into lowercase words (letters and digits; an underscore ends a word). Ordinary English words are also reduced to a stem by a small, fixed suffix stemmer, so "retry", "retries", "retried" and "retrying" meet, as do "charge", "charged" and "charging", or "customer" and "customers". Identifiers are left alone: a word containing a digit (`PAY-142`, `v2`), words joined by underscores (`retry_charge`), non-ASCII words and words shorter than three letters are matched exactly, and the exact names that anchors extract are matched exactly as before. About a hundred common English function words ("the", "of", "which") are ignored in queries; words that matter in code and incident notes ("not", "null", "error", "test", "fail", "no", "all") are kept. An exact word in the record scores higher than the same word in another form.
+
+**Rarity and length.** A word that few records in the project contain says more than one that most do, and a short note that mentions the word says more than a long one that mentions it in passing. The score is a BM25-style weighting: each query word counts by how rare it is in the project (a word every record has counts almost nothing), saturating as it repeats, and adjusted for how long the record is. The total is divided by the highest total any record could reach for that query, so the score always lies between 0 and 1,000,000 (millionths) and is never cut off at the top. A record holding every query word once at average length scores about 454,000; shorter records and repeated words score higher, and an exact anchor match still scores 1,000,000. The salience nudge, dense fusion (which uses ranks only) and the bounded ranking experiments work on this scale as before, with the salience weight set to a tenth of a typical full match.
+
+**Which records are looked at.** The candidate set is chosen by informativeness, not recency. MemoryKing first asks the full-text index for the records that contain every query word, then relaxes: it drops the most common word, then the next, and so on down to the single rarest word, then tries the remaining words one at a time from rare to common, until 256 candidates are found. Recency only orders records inside one step. A note that holds all three of a query's words is therefore found even when each word alone appears in hundreds of newer notes. Anchors found in the query contribute their exact matches first. Every search carries the authorization filter (tenant, project, not deleted, recorded position, readers, not held) before any limit, so unreadable records neither appear nor crowd out readable ones.
+
+**Ties.** Equal scores are ordered by authority (accepted knowledge before unreviewed observations), then newest recorded first, then by reference so the order is always the same. A stale fact and the correction that replaced it have the same score when they say nearly the same thing; the correction comes first.
+
+**Statistics.** How many records of a project hold each word, and the records' total length, are kept in small tables maintained at capture, purge and reindex, in the same transaction as the record. They describe the whole project, held and restricted records included, because rarity is a property of the corpus; they are used only to weigh and to order searches, and no packet or trace carries a word's count. What a reader receives is limited to what the result ordering already implies. A historical (`as_of` or `recorded_position`) briefing ranks with the current statistics and says so in its trace (`statistics: whole_project_current_corpus`); which records are eligible is still decided as of that position.
+
+**Versions.** The receipt's `configuration` names the ranking that produced a briefing: `lexical-v2` is the BM25-style ranking over word forms, `lexical-v1` the earlier term overlap. A store upgraded from an earlier release keeps answering with `lexical-v1` until its lexical index is rebuilt (`status` and `doctor` say so); a replay returns the stored bytes whichever ranking made them.
 
 ## Applicability and time
 
