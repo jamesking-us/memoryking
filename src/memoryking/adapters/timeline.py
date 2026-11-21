@@ -33,7 +33,7 @@ def timeline(
         cursor = " AND e.position<?"
         params.append(before)
     rows = store.db.execute(
-        "SELECT e.position,e.kind,e.subject,e.actor,e.at_ms,"
+        "SELECT e.position,e.kind,e.subject,e.actor,e.on_behalf_of,e.at_ms,"
         " o.project AS observation_project,"
         " f.project AS claim_project,"
         " c.project AS checkpoint_project,"
@@ -66,6 +66,8 @@ def timeline(
                 "subject_kind": subject_kind,
                 "actor": row["actor"],
                 "at_ms": row["at_ms"],
+                # Present only when a delegated credential acted: the actor is its issuer.
+                **({"on_behalf_of": row["on_behalf_of"]} if row["on_behalf_of"] else {}),
             }
         )
         if len(items) >= limit:

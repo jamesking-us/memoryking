@@ -385,6 +385,7 @@ HINTS: dict[str, str] = {
     "recovery_checkpoint_invalid": "The supplied journal head does not match the journal.",
     "maintenance_operation_mismatch": "Pass the operation id recorded in the anchor's maintenance_operation.",
     "control_busy": "Another process holds the control lock; wait or stop it.",
+    "control_lease_held": "Another instance holds this tenant (a copied control tree or a different --instance-id); it lapses 60 s after its last renewal. Stop it, or give every process one --instance-id.",
     "control_must_be_independent": "Store and control directories may not contain each other.",
     "initialization_requires_new_directories": "Initialize into directories that do not exist yet.",
     "inherited_owner_forbidden": "A forked process may not reuse its parent's store ownership.",

@@ -27,7 +27,7 @@ from memoryking.adapters.local_store import (
 from memoryking.adapters.postgres_sql import PostgresSQL
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.application.storage import PostgresDialect
-from memoryking.application.store_core import StoreCore
+from memoryking.application.store_core import StoreCore, lease_holder
 from memoryking.domain.local import Clock, Decision, LocalError, SystemClock
 from memoryking.observability_metrics import Metrics
 
@@ -97,6 +97,7 @@ class PostgresStore(StoreCore):
         release_only: bool = False,
         audience: str = "memoryking-shared",
         request_deadline: float | None = None,
+        instance_id: str | None = None,
     ):
         """`request_deadline` is a monotonic instant: checkout, the checkout checks and
         every statement in this store's transactions stop at it, so a saturated pool or
@@ -113,6 +114,7 @@ class PostgresStore(StoreCore):
             # verify for one that does, so the response never reveals which tenants exist.
             raise LocalError("invalid_token") from None
         self.root, self.control_path = root, control / tenant
+        self.lease = lease_holder(self.control_path, instance_id)
         self.control = SharedControl(self.control_path)
         self.anchor = self.control.read_anchor()
         self.store_id, self.incarnation = self.control.store, self.anchor["incarnation"]
@@ -123,6 +125,9 @@ class PostgresStore(StoreCore):
         if identity.get("tenant") != tenant:
             raise LocalError("denied")
         self.principal = identifier(identity["principal"])
+        # A delegated credential acts as its issuer for this subject; every event and receipt
+        # the request writes records the subject (the transaction supplies it as a setting).
+        self.on_behalf_of: str | None = (identity.get("delegation") or {}).get("on_behalf_of")
         self.clock = clock or SystemClock()
         self.fault = fault or (lambda _: None)
         self.lock = threading.RLock()
@@ -158,7 +163,7 @@ class PostgresStore(StoreCore):
             version = self.connection.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()
-            if version is None or version[0] != "13":
+            if version is None or version[0] != "14":
                 raise LocalError("schema_unsupported")
             self.db = PostgresSQL(self.connection, lambda: self.active)
         except BaseException as exc:
@@ -295,11 +300,20 @@ class PostgresStore(StoreCore):
         self.connection.execute(
             "SELECT set_config('memoryking.principal',%s,true)", (self.principal,)
         )
+        # Journal replay applies records other principals wrote; it carries no subject.
+        self.connection.execute(
+            "SELECT set_config('memoryking.on_behalf_of',%s,true)",
+            ((self.on_behalf_of or "") if statement_ms is None else "",),
+        )
+
+    def _control_guard(self) -> Any:
+        return self.control.locked()
 
     def _validate_anchor(self) -> list[dict[str, Any]]:
         with self.control.locked():
             self.anchor = self.control.read_anchor()
             held = self.control.verified_count(self.anchor)
+            held_operations = self.control.operations.verified_count(self.anchor)
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
         position = self.db.execute(
             "SELECT position FROM tenants WHERE tenant=?", (self.tenant,)
@@ -314,16 +328,21 @@ class PostgresStore(StoreCore):
             or position[0] < self.anchor["frontiers"].get(self.tenant, 0)
         ):
             raise LocalError("recovery_required")
-        applied = int(meta["journal"])
+        applied, applied_operations = int(meta["journal"]), int(meta.get("operations", 0))
+        if applied_operations > held_operations:
+            raise LocalError("journal_rollback")
         if applied > held:
             # The database applied more journal records than the control journal holds: the
             # journal tail was lost or another control tree is in use. Never skip silently.
             raise LocalError("journal_rollback")
         self.last_utc = max(self.last_utc, self.anchor["last_utc"])
-        if applied == held:
+        if applied == held and applied_operations == held_operations:
             return []
         with self.control.locked():
-            return self.control.records_after(self.anchor, applied)
+            return [
+                *self.control.records_after(self.anchor, applied),
+                *self.control.operations.records_after(self.anchor, applied_operations),
+            ]
 
     def _replay_pending(self, records: list[dict[str, Any]]) -> None:
         """Apply unapplied journal records, each in its own transaction without a request budget.
@@ -353,14 +372,21 @@ class PostgresStore(StoreCore):
                 self.active = False
             with self.control.locked():
                 anchor = self.control.read_anchor()
-                if anchor["journal_sequence"] < record["sequence"]:
+                if record.get("log") == "operations":
+                    if anchor.get("operations_sequence", 0) < record["sequence"]:
+                        self.control.operations.verified_count(anchor)
+                        anchor["operations_sequence"] = record["sequence"]
+                        anchor["operations_head"] = self.control.operations.head(record["sequence"])
+                        self.control.anchor(anchor)
+                elif anchor["journal_sequence"] < record["sequence"]:
                     anchor["journal_sequence"] = record["sequence"]
                     anchor["journal_head"] = hashlib.sha256(
                         self.control.sign(record).encode()
                     ).hexdigest()
                     self.control.anchor(anchor)
                 self.anchor = anchor
-            self.control.clear_apply_failure(record["sequence"])
+            if record.get("log") != "operations":
+                self.control.clear_apply_failure(record["sequence"])
 
     @contextmanager
     def transaction(self) -> Iterator[Decision]:
@@ -387,6 +413,8 @@ class PostgresStore(StoreCore):
                             if row is None:
                                 raise LocalError("denied")
                             locked = time.monotonic()
+                            # Before any replay: a refused holder must not apply records.
+                            self._hold_lease(self.clock.utc_ms(), writer=not self.release_only)
                             pending = self._validate_anchor()
                             if pending and self.release_only:
                                 raise LocalError("journal_replay_required")

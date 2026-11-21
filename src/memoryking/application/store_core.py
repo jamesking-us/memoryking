@@ -10,13 +10,15 @@ backend subclasses the other.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
 import re
 import secrets
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Self, cast
 
@@ -60,6 +62,10 @@ CAPABILITIES = {
 
 
 RETRY_MS = 30 * 24 * 60 * 60 * 1000
+# Instance lease: a holder renews at most this often, and another holder is refused until the
+# renewal is this old. See "Instance lease" in docs/deployment.md.
+LEASE_RENEW_MS = 15_000
+LEASE_EXPIRY_MS = 60_000
 
 
 QUEUE_LIMIT = 1000
@@ -122,6 +128,24 @@ def uid(prefix: str) -> str:
     return prefix + "_" + secrets.token_hex(16)
 
 
+def lease_holder(control_path: Path, instance_id: str | None) -> str:
+    """Who holds a store: a hash of the operator's `--instance-id`, else of the control tree.
+
+    Without an id the control directory's device and inode stand for the tree, so processes
+    sharing one control tree on one volume compute the same holder, and a copy of the tree
+    (a different inode) does not. Device and inode mean nothing across hosts or containers,
+    so a deployment on more than one host must set the id.
+    """
+    if instance_id is not None:
+        if not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", instance_id):
+            raise LocalError("invalid_request")
+        material = b"instance:" + instance_id.encode()
+    else:
+        info = os.stat(control_path)
+        material = f"tree:{info.st_dev}:{info.st_ino}".encode()
+    return hashlib.sha256(b"memoryking-lease:" + material).hexdigest()
+
+
 class StoreCore:
     """What every backend shares; the attributes below are supplied by the backend."""
 
@@ -132,6 +156,7 @@ class StoreCore:
     dialect: Dialect
     control: Any
     control_path: Path
+    lease: str  # the holder this process claims the instance lease as
     root: Path
     clock: Clock
     lock: threading.RLock
@@ -277,6 +302,79 @@ class StoreCore:
         self._expose()
         return token
 
+    def _meta_int(self, key: str) -> int:
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def _control_guard(self) -> Any:
+        """What serializes control-tree writers beyond this process; the shared store overrides."""
+        return nullcontext()
+
+    def compact_operations(self, directory: Path) -> int:
+        """Drop operations-log segments that no retained backup needs; returns how many went.
+
+        `directory` holds the retained backups. A segment goes only when it is sealed, lies at
+        or below the operations position of the OLDEST backup there (so restoring any retained
+        backup still finds the intents), and every operation in it is resolved and reconciled
+        in this incarnation. With no backup there, nothing is dropped. The identities a dropped
+        segment consumed stay consumed (see `OperationsLog.compact`).
+        """
+        from memoryking.adapters.operations_log import oldest_coverage
+
+        coverage = oldest_coverage(self.control, directory)
+        if coverage <= 0:
+            return 0
+        current = self.incarnation
+
+        def resolved(identities: Any) -> bool:
+            for tenant, identity in identities:
+                row = self.db.execute(
+                    "SELECT state,incarnation,reconciled_incarnation FROM operation_intents WHERE tenant=? AND id=?",
+                    (tenant, identity),
+                ).fetchone()
+                if (
+                    row is None
+                    or row["state"] not in ("succeeded", "failed")
+                    or (row["reconciled_incarnation"] or row["incarnation"]) != current
+                ):
+                    return False
+            return True
+
+        with self.transaction(), self._control_guard():
+            return int(self.control.operations.compact(self.anchor, coverage, resolved))
+
+    def _hold_lease(self, at: int, *, writer: bool = True) -> None:
+        """Claim, renew or be refused the instance lease for this store (see `lease_holder`).
+
+        The same holder always passes, so a restart after a crash is never blocked and several
+        processes sharing one control tree co-hold. Another holder is refused while the
+        recorded renewal is younger than LEASE_EXPIRY_MS. Renewal is written at most every
+        LEASE_RENEW_MS, and only by a transaction that may write; a tenant with no row claims
+        it on its first writing transaction.
+        """
+        key = self.tenant or "*"
+        row = self.db.execute(
+            "SELECT holder,renewed_ms FROM instance_lease WHERE tenant=?", (key,)
+        ).fetchone()
+        if row is None:
+            if writer:
+                self.db.execute(
+                    "INSERT INTO instance_lease(tenant,holder,renewed_ms) VALUES (?,?,?)",
+                    (key, self.lease, at),
+                )
+            return
+        if hmac.compare_digest(str(row["holder"]).encode(), self.lease.encode()):
+            if writer and at - row["renewed_ms"] >= LEASE_RENEW_MS:
+                self.db.execute("UPDATE instance_lease SET renewed_ms=? WHERE tenant=?", (at, key))
+            return
+        if at - row["renewed_ms"] < LEASE_EXPIRY_MS:
+            raise LocalError("control_lease_held")
+        if writer:
+            self.db.execute(
+                "UPDATE instance_lease SET holder=?,renewed_ms=? WHERE tenant=?",
+                (self.lease, at, key),
+            )
+
     def _event(self, tenant: str, kind: str, subject: str, at: int, actor: str = "system") -> int:
         if (
             self.db.execute("SELECT position FROM tenants WHERE tenant=?", (tenant,)).fetchone()[0]
@@ -288,7 +386,7 @@ class StoreCore:
             "SELECT position FROM tenants WHERE tenant=?", (tenant,)
         ).fetchone()[0]
         self.db.execute(
-            "INSERT INTO events VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO events(tenant,position,event_id,kind,subject,origin,at_ms,actor) VALUES (?,?,?,?,?,?,?,?)",
             (tenant, position, uid("evt"), kind, subject, self.incarnation, at, actor),
         )
         return position
@@ -717,7 +815,11 @@ class StoreCore:
                 raise LocalError("unavailable")
             action["source_identity"] = list(row)
         try:
-            record = self.control.append(self.anchor, action)
+            if action["kind"] == "operation":
+                # Operation intents live in their own compactable, hash-chained log.
+                record = self.control.operations.append(self.anchor, action)
+            else:
+                record = self.control.append(self.anchor, action)
             self.fault("after_journal")
             return cast(dict[str, Any], record)
         except LocalError as exc:
@@ -837,8 +939,10 @@ class StoreCore:
             )
 
     def _apply(self, record: dict[str, Any], at: int) -> None:
-        sequence = int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0])
-        if record["sequence"] <= sequence:
+        # A record advances the position of the log it came from: operation records have a
+        # sequence of their own, so one never hides behind the journal's.
+        applied_key = "operations" if record.get("log") == "operations" else "journal"
+        if record["sequence"] <= self._meta_int(applied_key):
             return
         action = record["action"]
         tenant = action["tenant"]
@@ -963,7 +1067,9 @@ class StoreCore:
             action.get("actor", "system"),
         )
         self._enqueue(tenant, position, None, "system")
-        self.db.execute("UPDATE meta SET value=? WHERE key='journal'", (str(record["sequence"]),))
+        self.db.execute(
+            "UPDATE meta SET value=? WHERE key=?", (str(record["sequence"]), applied_key)
+        )
 
     def expire_results(self) -> int:
         # A tenant-bound store (shared profile) states its tenant in every statement rather
