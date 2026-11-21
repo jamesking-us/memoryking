@@ -208,6 +208,32 @@ class SharedDashboardTests(unittest.TestCase):
         with self.fetch("/api/snapshot") as response:
             self.assertEqual(403, response.status)
 
+    def test_a_rotated_credential_cannot_sign_in_or_keep_a_dashboard_session(self):
+        from memoryking.adapters.postgres_recovery import rotate_owner
+        from memoryking.domain.local import LocalError
+
+        stale_code = self.command("dashboard_bootstrap", {})["code"]
+        self.login()
+        old = self.credential
+        path = rotate_owner(self.pool, self.root, self.control, self.tenant, clock=self.clock)
+        current = path.read_text()
+        # The session and the unexchanged code belong to the replaced credential.
+        with self.fetch("/api/snapshot") as response:
+            self.assertEqual(403, response.status)
+        with self.fetch("/api/bootstrap", {"code": stale_code}) as response:
+            self.assertEqual(403, response.status)
+        with self.fetch("/api/snapshot") as response:
+            self.assertEqual(403, response.status)
+        with self.assertRaises(LocalError) as caught:
+            self.command("dashboard_bootstrap", {}, old)
+        self.assertEqual("credential_replaced", caught.exception.code)
+        # The current credential signs in and reads.
+        code = self.command("dashboard_bootstrap", {}, current)["code"]
+        with self.fetch("/api/bootstrap", {"code": code}) as response:
+            self.assertEqual(200, response.status)
+        with self.fetch("/api/snapshot") as response:
+            self.assertEqual(200, response.status)
+
     def test_stream_reauthorizes_after_policy_change_and_does_not_replay(self):
         self.login()
         with self.fetch("/api/events") as response:
