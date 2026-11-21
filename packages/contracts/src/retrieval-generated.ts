@@ -18,6 +18,7 @@ export interface Brief {
   as_of_ms?: number;
   salience?: "on" | "off";
   rerank?: "on" | "off";
+  time_range?: Record<string, unknown>;
 }
 
 export interface Fetch {

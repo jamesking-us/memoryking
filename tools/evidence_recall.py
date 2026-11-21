@@ -551,6 +551,12 @@ def main() -> int:
         help="Ask for the rendered text and count it with the characters-per-token estimate "
         "(what a model reads), instead of the JSON envelope counted in bytes",
     )
+    parser.add_argument(
+        "--tokenizer",
+        help="Tokenizer for the budget and the reported tokens (default: the byte estimate, "
+        "or the characters estimate with --text); `cl100k_base` is exact and needs the "
+        "tokenizers lock",
+    )
     parser.add_argument("--no-pool", dest="pool", action="store_false")
     parser.add_argument(
         "--no-as-of",
@@ -578,6 +584,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.text:
         REQUEST_EXTRAS.update(format="text", tokenizer="chars-estimate-v1")
+    if args.tokenizer:
+        REQUEST_EXTRAS["tokenizer"] = args.tokenizer
     if args.current is None:
         if args.data is None or args.output is None:
             parser.error("--data and --output are required unless --current is given")

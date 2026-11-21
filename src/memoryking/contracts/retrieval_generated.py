@@ -22,6 +22,7 @@ class Brief(TypedDict):
     as_of_ms: NotRequired[int]
     salience: NotRequired[Literal["on", "off"]]
     rerank: NotRequired[Literal["on", "off"]]
+    time_range: NotRequired[dict[str, Any]]
 
 class Fetch(TypedDict):
     project: str
