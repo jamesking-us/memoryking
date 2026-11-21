@@ -564,7 +564,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `migration_role_required` | Run migrations with the migration database role. |
+| `migration_role_required` | Run migrations and restore with the migration database role, which must not be a superuser or bypass row security. |
 
 ## mixed
 

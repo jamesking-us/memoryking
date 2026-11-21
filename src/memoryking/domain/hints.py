@@ -364,7 +364,7 @@ HINTS: dict[str, str] = {
     "backup_requires_new_directory": "Back up into a new directory.",
     "backup_requires_new_external_directory": "Back up into a new directory outside the store and control paths.",
     "backup_role_required": "Run backups with the backup database role.",
-    "migration_role_required": "Run migrations with the migration database role.",
+    "migration_role_required": "Run migrations and restore with the migration database role, which must not be a superuser or bypass row security.",
     "runtime_table_owner_forbidden": "The runtime role must not own tables; use the migration role for schema work.",
     "database_durability_required": "PostgreSQL must run with fsync, synchronous_commit and full_page_writes on.",
     "database_tls_required": "Remote DSNs must use sslmode=verify-full.",
