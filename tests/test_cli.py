@@ -478,6 +478,60 @@ class CaptureCommandTests(OperatorCommandTests):
         audit = json.loads(self.cli("egress-audit", "--project", "demo", "--json", *common))
         self.assertIsInstance(audit, dict)
 
+    def test_trust_default_keys_are_valid_for_globs_and_stable_for_plain_sources(self):
+        from memoryking.__main__ import default_trust_key
+
+        self.assertEqual(
+            default_trust_key("demo", "scraper", "untrusted"), "trust-demo-scraper-untrusted"
+        )
+        glob = default_trust_key("demo", "scraper-*", "untrusted")
+        self.assertRegex(glob, r"^[A-Za-z0-9_-]{1,96}$")
+        self.assertEqual(glob, default_trust_key("demo", "scraper-*", "untrusted"))
+        self.assertNotEqual(glob, default_trust_key("demo", "scraper-?", "untrusted"))
+        self.assertNotEqual(glob, default_trust_key("demo", "scraper-*", "trusted"))
+        self.assertRegex(default_trust_key("*", "x", "trusted"), r"^[A-Za-z0-9_-]{1,96}$")
+        self.assertRegex(default_trust_key("demo", "s" * 200, "trusted"), r"^[A-Za-z0-9_-]{1,96}$")
+
+    def test_trust_set_held_and_release_reach_the_daemon_without_explicit_keys(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        rule = ["trust", "set", "--project", "demo", "--source", "scraper-*"]
+        rule += ["--level", "untrusted", "--json", *common]
+        first = json.loads(self.cli(*rule))
+        self.assertEqual(first["status"], "recorded")
+        self.assertTrue(json.loads(self.cli(*rule))["replayed"])
+        self.assertIn("scraper-*", self.cli("trust", "list", "--project", "demo", *common))
+        token = self.credential.read_text()
+        held = self.store.capture(
+            token,
+            self.store.namespace(token, "demo"),
+            "scrape-1",
+            {
+                "version": 1,
+                "project": "demo",
+                "source": "scraper-web",
+                "source_event": "scrape-1",
+                "text": "Zebra retry hint from a web page",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        self.assertTrue(held["held"])
+        queue = json.loads(self.cli("trust", "held", "--project", "demo", "--json", *common))
+        self.assertEqual([i["observation"] for i in queue["held"]], [held["observation"]])
+        self.assertIn(held["observation"], self.cli("trust", "held", "--project", "demo", *common))
+        released = json.loads(
+            self.cli(
+                "trust", "release", held["observation"], "--project", "demo", "--json", *common
+            )
+        )
+        self.assertEqual(released["status"], "released")
+        self.assertEqual(
+            json.loads(self.cli("trust", "held", "--project", "demo", "--json", *common))["held"],
+            [],
+        )
+        self.assertIn("No held captures", self.cli("trust", "held", "--project", "demo", *common))
+
     def test_capture_and_recall_through_the_cli_and_hooks(self):
         common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
         out = json.loads(
