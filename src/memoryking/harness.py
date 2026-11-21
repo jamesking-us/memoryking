@@ -410,7 +410,9 @@ class ReferenceHarness:
                 },
             )
         )
-        if packet.get("checkpoint") is None:
+        # A blocked resume may still carry the caller's own checkpoint, but a harness acts
+        # only on resolved mandatory constraints.
+        if packet.get("checkpoint") is None or packet.get("status") == "blocked":
             raise LocalError("essential_context_unavailable")
         if (
             packet["checkpoint"]["id"] != self.data["checkpoint"]

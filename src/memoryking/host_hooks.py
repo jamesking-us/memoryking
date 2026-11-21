@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from memoryking import hooks
+from memoryking import hooks, session_bindings
 from memoryking.adapters.local_ipc import request
 from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError
@@ -255,10 +255,14 @@ def session_start(
     query: str | None = None,
     task: str | None = None,
     budget: int = 6000,
+    binding: list[str] | None = None,
     **where: Any,
 ) -> str:
     """Cited Markdown for the model: the task's resume packet first, then a briefing."""
     socket, token, project = hooks.connection(**where)
+    points = session_bindings.resolve(
+        binding, profile=where.get("profile"), config=where.get("config")
+    )
     parts: list[str] = []
     if task:
         context = request(socket, token, "context", {"project": project})
@@ -279,7 +283,7 @@ def session_start(
                                 "task": stream,
                                 "run": None,
                                 "checkpoint": None,
-                                "bindings": [{}],
+                                "bindings": points,
                                 "max_output_tokens": share,
                                 "tokenizer": "utf8-byte-estimate-v1",
                                 "format": "text",
@@ -296,6 +300,7 @@ def session_start(
         budget=budget,
         text=True,
         task=task,
+        binding=binding,
         socket=socket,
         credential=Path(where["credential"]) if where.get("credential") else None,
         project=project,

@@ -11,7 +11,7 @@ from typing import Any, BinaryIO
 
 from jsonschema import Draft202012Validator
 
-from memoryking import lean
+from memoryking import lean, session_bindings
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError
@@ -176,9 +176,22 @@ def main() -> int:
         default="full",
         help="lean: five flat tools (remember, recall, save_progress, resume, hand_off)",
     )
+    parser.add_argument(
+        "--binding",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Where this session works, such as environment=prod; repeatable. Also "
+        "MEMORYKING_BINDINGS and a named store profile (--store-profile)",
+    )
+    parser.add_argument(
+        "--store-profile",
+        help="Named store profile whose `bindings` apply (default MEMORYKING_PROFILE)",
+    )
     args = parser.parse_args()
     try:
-        client = LocalClient(args.socket, args.credential, args.project)
+        bindings = session_bindings.resolve(args.binding, profile=args.store_profile)
+        client = LocalClient(args.socket, args.credential, args.project, bindings=bindings)
         StdioBridge(client, args.profile).serve(sys.stdin.buffer, sys.stdout.buffer)
     except (LocalError, OSError, ContractError) as exc:
         print(

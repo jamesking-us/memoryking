@@ -88,6 +88,60 @@ class InferenceTests(unittest.TestCase):
             }
         )
 
+    def test_an_unresolved_constraints_resume_is_never_fed_to_the_model(self):
+        constraint = self.propose(
+            self.body(
+                "Never touch production data",
+                kind="constraint",
+                authority="project",
+                rule_key="prod",
+                effect="prohibit",
+                rule_value="write",
+                selector=knowledge_helpers.sel(knowledge_helpers.eq("environment", "prod")),
+            ),
+            key="prod-rule",
+        )
+        self.review(constraint)
+        scope = {"project": "p", "task": "task", "run": None}
+        self.client.working(
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "save",
+                "key": "ckpt",
+                "args": {
+                    **scope,
+                    "expected_revision": 0,
+                    "readers": ["owner"],
+                    "checkpoint": json.loads(
+                        (
+                            Path(__file__).resolve().parents[1]
+                            / "fixtures/contracts/checkpoint.json"
+                        ).read_text()
+                    ),
+                },
+            }
+        )
+        resume = {
+            "version": 1,
+            "incarnation": self.store.incarnation,
+            "action": "resume",
+            "args": {
+                **scope,
+                "checkpoint": None,
+                "bindings": [{}],
+                "max_output_tokens": 6000,
+                "tokenizer": "utf8-byte-estimate-v1",
+            },
+        }
+        packet = self.client.working(resume)
+        # The caller can read its own checkpoint, but the packet says it is unresolved.
+        self.assertEqual(packet["status"], "blocked")
+        self.assertIsNotNone(packet["checkpoint"])
+        self.fails("essential_context_unavailable", lambda: self.context.add_memory(packet))
+        resume["args"]["bindings"] = [{"environment": "dev"}]
+        self.context.add_memory(self.client.working(resume))
+
     def test_ui_originated_injection_keeps_evidence_authority_at_provider_boundary(self):
         from test_inspection import InspectionCases
 

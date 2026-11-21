@@ -558,6 +558,8 @@ class Retrieval:
         groups: list[list[dict[str, Any]]] = []
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
+            if mandatory.get("unbound_fields"):
+                base["unbound_fields"] = mandatory["unbound_fields"]
             # Only explicitly authorized conflicts are ever present in this result.
             if mandatory["reason"] == "unresolved_conflict":
                 base["constraints"] = [self._claim(i) for i in mandatory["items"]]
