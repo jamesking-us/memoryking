@@ -21,7 +21,7 @@ import test_reranker as rr
 from test_local_store import FakeClock, observation
 
 from memoryking.adapters.local_files import Control
-from memoryking.adapters.local_store import ANCHOR_INTERVAL_MS, LocalStore
+from memoryking.adapters.local_store import LocalStore
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.adapters.shared_service import SharedService
@@ -311,6 +311,9 @@ class PostgresBriefingTests(BriefingCases, pg.NativeFixture):
             self.assertEqual("on", connection.execute("SHOW synchronous_commit").fetchone()[0])
 
 
+INTERVAL = 1000  # the opt-in anchor interval the relaxed tests run with
+
+
 class AnchorTests(unittest.TestCase):
     """What the anchor protects, and when it is written (see `LocalStore._expose_locked`)."""
 
@@ -324,13 +327,22 @@ class AnchorTests(unittest.TestCase):
         self.store = self.open()
         self.namespace = self.store.namespace(self.credential, "demo")
 
-    def open(self):
-        return LocalStore(
+    def open(self, interval=0):
+        store = LocalStore(
             self.root,
             self.control,
             clock=self.clock,
             fault=lambda point: self.writes.append(point) if point == "before_anchor" else None,
         )
+        store.anchor_interval_ms = interval
+        return store
+
+    def crash(self):
+        """Stop as a killed process does: nothing is flushed on the way out."""
+        store, self.store = self.store, None
+        store.db.close()
+        store.control_owner.close()
+        store.owner.close()
 
     def tearDown(self):
         if self.store:
@@ -377,17 +389,30 @@ class AnchorTests(unittest.TestCase):
             self.assertEqual(result["position"], self.anchor()["frontiers"]["main"])
         self.assertEqual(base + 3, len(self.writes))
 
-    def test_reads_that_change_no_history_write_no_anchor_until_the_interval_passes(self):
+    def test_every_committing_request_is_anchored_and_one_that_committed_nothing_is_not(self):
+        self.capture(1)
+        written = len(self.writes)
+        for number in range(3):
+            self.brief()  # a receipt is a committed row the anchor protects
+            self.assertEqual(self.serial(), self.anchor()["commit_serial"])
+            self.assertEqual(self.store.last_utc, self.anchor()["last_utc"])
+            self.assertEqual(written + number + 1, len(self.writes))
+        written = len(self.writes)
+        self.store.grants(self.credential)
+        self.store.status(self.credential, "demo")
+        self.assertEqual(written, len(self.writes))
+
+    def test_opted_in_reads_write_no_anchor_until_the_interval_passes(self):
+        self.store.close()
+        self.store = self.open(INTERVAL)
         self.capture(1)
         written, serial = len(self.writes), self.anchor()["commit_serial"]
         for _ in range(3):
             self.brief()
-        self.store.grants(self.credential)
-        self.store.status(self.credential, "demo")
         self.assertEqual(written, len(self.writes))
         self.assertEqual(serial, self.anchor()["commit_serial"])
         self.assertGreater(self.serial(), serial)  # the receipts are committed, the anchor lags
-        self.clock.advance(ANCHOR_INTERVAL_MS)
+        self.clock.advance(INTERVAL)
         self.brief()
         self.assertEqual(written + 1, len(self.writes))
         self.assertEqual(self.serial(), self.anchor()["commit_serial"])
@@ -402,7 +427,9 @@ class AnchorTests(unittest.TestCase):
             self.store.read("not-a-token", "demo")
         self.assertEqual(serial, self.serial())
 
-    def test_close_writes_what_was_left_for_later(self):
+    def test_opted_in_close_writes_what_was_left_for_later(self):
+        self.store.close()
+        self.store = self.open(INTERVAL)
         self.capture(1)
         self.brief()
         lagging = self.anchor()["commit_serial"]
@@ -474,27 +501,49 @@ class AnchorTests(unittest.TestCase):
             self.open()
         self.assertEqual("recovery_required", refused.exception.code)
 
-    def test_a_database_rolled_back_behind_receipts_is_refused_once_they_are_anchored(self):
+    def test_a_database_rolled_back_behind_even_one_receipt_is_refused(self):
         self.capture(1)
         before = self.snapshot("before")
         self.store = self.open()
-        for _ in range(3):
-            self.brief()
-        self.store.close()  # close writes the commit serial the receipts advanced
-        self.store = None
+        self.brief()
+        self.crash()  # killed with the receipt delivered: no close, no flush
         self.roll_back_to(before)
         with self.assertRaises(LocalError) as refused:
             self.open()
         self.assertEqual("recovery_required", refused.exception.code)
 
-    def test_the_clock_high_water_mark_is_never_more_than_the_interval_behind(self):
+    def test_opted_in_the_window_is_receipts_within_the_interval_and_nothing_wider(self):
+        self.store.close()
+        self.store = self.open(INTERVAL)
+        self.capture(1)
+        before = self.snapshot("before")
+        self.store = self.open(INTERVAL)
+        self.brief()
+        self.crash()
+        self.roll_back_to(before)
+        self.open(INTERVAL).close()  # the documented window: a rollback of receipts only
+        # A rollback behind a position is refused however the interval is set.
+        self.store = self.open(INTERVAL)
+        self.capture(2)
+        again = self.snapshot("again")
+        self.store = self.open(INTERVAL)
+        self.capture(3)
+        self.crash()
+        self.roll_back_to(again)
+        with self.assertRaises(LocalError) as refused:
+            self.open(INTERVAL)
+        self.assertEqual("recovery_required", refused.exception.code)
+
+    def test_opted_in_the_clock_high_water_mark_is_never_more_than_the_interval_behind(self):
+        self.store.close()
+        self.store = self.open(INTERVAL)
         self.capture(1)
         for _ in range(5):
-            self.clock.advance(ANCHOR_INTERVAL_MS // 4)
+            self.clock.advance(INTERVAL // 4)
             self.brief()
-            self.assertLess(self.store.last_utc - self.anchor()["last_utc"], ANCHOR_INTERVAL_MS)
+            self.assertLess(self.store.last_utc - self.anchor()["last_utc"], INTERVAL)
         self.store.close()
-        self.store = self.open()
+        self.store = self.open(INTERVAL)
         # A clock that went back past what was anchored is refused; the old instant is not reused.
         self.clock.utc = self.anchor()["last_utc"] - 1
         with self.assertRaises(LocalError) as refused:
@@ -576,6 +625,12 @@ os._exit(0)
         import json
 
         saved = json.loads((control / "receipt.json").read_text())
+        with LocalStore(root, control) as probe:
+            # The killed process never closed, yet the anchor already covered the receipt.
+            serial = probe.db.execute("SELECT value FROM meta WHERE key='commit_serial'")
+            self.assertEqual(
+                int(serial.fetchone()[0]), Control(control).read_anchor()["commit_serial"]
+            )
         (control / "receipt.json").unlink()
         with LocalStore(root, control) as store:
             command = {
@@ -611,18 +666,7 @@ class PostgresAnchorTests(pg.NativeFixture):
     def anchor(self):
         return SharedControl(self.control / self.tenant).read_anchor()
 
-    def test_a_capture_is_anchored_and_a_briefing_is_not(self):
-        with self.store_for() as store:
-            before = self.anchor()["frontiers"][self.tenant]
-            namespace = store.namespace(self.owner, "demo")
-            result = store.capture(
-                self.owner, namespace, "k1", observation(1, project="demo", text="timeout memory")
-            )
-            self.assertEqual(result["position"], self.anchor()["frontiers"][self.tenant])
-            self.assertGreater(result["position"], before)
-        anchored = len(self.points)
-        self.assertGreaterEqual(anchored, 1)
-        serial = self.anchor()["commit_serial"]
+    def brief(self):
         with self.store_for() as store:
             command = {
                 "version": 1,
@@ -638,15 +682,41 @@ class PostgresAnchorTests(pg.NativeFixture):
             }
             out = []
             Retrieval(store).execute(self.owner, command).emit(out.append)
-            self.assertIn(b"timeout memory", out[0])
-        # The briefing named a position the anchor already covered, so it wrote nothing new
-        # (it may be the first write of the interval for the commit serial, never for history).
-        self.assertLessEqual(len(self.points), anchored + 1)
-        self.assertEqual(
-            self.anchor()["frontiers"][self.tenant],
-            result["position"],
-        )
-        self.assertGreaterEqual(self.anchor()["commit_serial"], serial)
+            return out[0]
+
+    def serial(self):
+        query = "SELECT value FROM tenant_meta WHERE key='commit_serial'"
+        return int(self.store.db.execute(query).fetchone()[0])
+
+    def test_a_capture_and_a_briefing_are_anchored_before_release(self):
+        with self.store_for() as store:
+            namespace = store.namespace(self.owner, "demo")
+            result = store.capture(
+                self.owner, namespace, "k1", observation(1, project="demo", text="timeout memory")
+            )
+            self.assertEqual(result["position"], self.anchor()["frontiers"][self.tenant])
+        self.assertEqual(self.serial(), self.anchor()["commit_serial"])
+        for _ in range(2):
+            self.assertIn(b"timeout memory", self.brief())
+            self.assertEqual(self.serial(), self.anchor()["commit_serial"])
+            self.assertGreaterEqual(self.anchor()["last_utc"], 1)
+
+    def test_opted_in_a_briefing_leaves_the_serial_to_the_interval(self):
+        with self.store_for() as store:
+            namespace = store.namespace(self.owner, "demo")
+            store.capture(self.owner, namespace, "k1", observation(1, project="demo"))
+        self.brief()  # the first write of the interval
+        from memoryking.adapters import postgres_store
+
+        original = postgres_store.PostgresStore.anchor_interval_ms
+        postgres_store.PostgresStore.anchor_interval_ms = 60_000
+        try:
+            serial = self.anchor()["commit_serial"]
+            self.brief()
+            self.assertEqual(serial, self.anchor()["commit_serial"])
+            self.assertGreater(self.serial(), serial)
+        finally:
+            postgres_store.PostgresStore.anchor_interval_ms = original
 
     def test_a_request_that_wrote_nothing_takes_no_commit_serial(self):
         query = "SELECT value FROM tenant_meta WHERE key='commit_serial'"

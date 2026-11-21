@@ -46,6 +46,7 @@ class SharedService:
         self.metrics = Metrics()
 
     egress_policy: Any | None = None
+    anchor_interval_ms: int = 0
 
     def warm(self) -> None:
         """Verify every tenant's control journal once, so no request pays for a cold start.
@@ -340,6 +341,7 @@ class SharedService:
             instance_id=self.instance_id,
         )
         store.egress_policy = self.egress_policy
+        store.anchor_interval_ms = self.anchor_interval_ms
         # One set of counters for the process: a store is built per request.
         store.counters = self.metrics
         return store

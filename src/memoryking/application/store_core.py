@@ -206,6 +206,9 @@ class StoreCore:
 
     dashboard: Any = None
 
+    # 0 anchors every committing transaction before release; see `_expose_locked`.
+    anchor_interval_ms: int = 0
+
     # Held by one briefing's transaction, never across transactions: what a transaction has
     # already established about holds and a principal's read grant per project. A policy
     # change takes the exclusive gate, so neither can move while a briefing holds the gate.

@@ -9,7 +9,7 @@ import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 

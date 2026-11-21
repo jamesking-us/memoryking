@@ -950,6 +950,12 @@ def main() -> int:
                 "context may reach; without it only the local recorder is accepted",
             )
             cmd.add_argument(
+                "--anchor-interval-ms",
+                type=int,
+                default=0,
+                help="Opt in to less anchor durability for throughput: the commit serial and clock high-water mark of a request that moved no position are written at most this many ms late (default 0: every committing request is anchored before release). A rollback that discards only receipts from that window is then not detected, and a clock that went back by less than the window across a restart is not refused",
+            )
+            cmd.add_argument(
                 "--workers",
                 type=int,
                 help="Requests served at once (default 8; 1 to 256)",
@@ -1988,6 +1994,9 @@ def main() -> int:
                         from memoryking.adapters.egress_policy import EgressPolicy
 
                         store.egress_policy = EgressPolicy.load(args.egress_policy)
+                    if not 0 <= args.anchor_interval_ms <= 60_000:
+                        raise LocalError("invalid_anchor_interval")
+                    store.anchor_interval_ms = args.anchor_interval_ms
                     store.summary_idle_ms = (
                         0 if args.summary_idle in {"0", "off"} else duration_ms(args.summary_idle)
                     )

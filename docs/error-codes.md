@@ -479,6 +479,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `invalid_anchor_interval` | The anchor interval is whole milliseconds from 0 (every committing request anchored before release) to 60,000. |
 | `invalid_binding` | Binding values are strings of at most 256 bytes over known fields. |
 | `invalid_capabilities` | Capabilities must be a non-empty list of known names without admin; see the deployment guide. |
 | `invalid_checkpoint` | The checkpoint body does not match the contract; start from the fixture shape. |

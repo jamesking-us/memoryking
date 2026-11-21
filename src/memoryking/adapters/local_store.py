@@ -133,11 +133,6 @@ __all__ = [
 ]
 
 
-# What the anchor holds beyond the history it protects (the commit serial, the clock's
-# high-water mark) is written at most this late; a change of history is written at once.
-ANCHOR_INTERVAL_MS = 1000
-
-
 SCHEMA_VERSION = 20  # the SQLite user_version the daemon migrates every store to
 
 
@@ -584,30 +579,36 @@ class LocalStore(StoreCore):
             self._expose_locked()
 
     def _expose_locked(self) -> None:
-        """Make the anchor cover everything this process has committed and may now acknowledge.
+        """Make the anchor cover everything this process has committed before it acknowledges.
 
-        The anchor refuses a database or journal rolled back behind an acknowledged write. What
-        it must therefore cover before an acknowledgment is the history: a tenant's position
-        (a watermark names it) and, through the journal's own append, the journal and operations
-        heads. A transaction that moved none of them needs no anchor write, because the anchor
-        already covers every position anyone has been told. The commit serial and the clock's
-        high-water mark only tighten the check for a change that touched no history (a receipt),
-        so they are written when due: after ANCHOR_INTERVAL_MS, on `close` and by the daemon's
-        maintenance pass. A writer that finds its position already covered by another's anchor
-        write (made under this lock, so finished) acknowledges without a second fsync."""
+        The anchor refuses a database or journal rolled back behind an acknowledged write, so
+        every transaction that committed a row (a capture, a policy change, and a receipt too)
+        is anchored before its bytes are released, exactly as before. A request that committed
+        nothing needs no anchor and costs no fsync, and writers whose commits precede one
+        anchor write share it: that write is made under this lock, so it has finished before
+        the next writer looks, and each acknowledges only after the anchor covering its commit
+        is durable.
+
+        `anchor_interval_ms` above zero is the operator's opt-in to less: the commit serial and
+        the clock's high-water mark of a transaction that moved no position are then written at
+        most that late (on `close` and from the daemon's maintenance pass too). The cost is
+        stated in docs/deployment.md."""
         if not self.healthy:
             raise LocalError("recovery_required")
         try:
             frontiers, serial = self._anchor_state()
             now = self.clock.monotonic_ms()
             covered = frontiers == self.anchor["frontiers"]
-            soft = (
-                serial != self.anchor["commit_serial"] or self.last_utc != self.anchor["last_utc"]
-            )
-            due = soft and (
-                now - self._anchor_at >= ANCHOR_INTERVAL_MS
-                or self.last_utc - self.anchor["last_utc"] >= ANCHOR_INTERVAL_MS
-            )
+            committed = serial != self.anchor["commit_serial"]
+            interval = self.anchor_interval_ms
+            if interval:
+                dirty = committed or self.last_utc != self.anchor["last_utc"]
+                due = dirty and (
+                    now - self._anchor_at >= interval
+                    or self.last_utc - self.anchor["last_utc"] >= interval
+                )
+            else:
+                due = committed
             if covered and not due:
                 return
             self._write_anchor(frontiers, serial, now)

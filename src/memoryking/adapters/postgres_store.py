@@ -47,9 +47,8 @@ class _ReplayPending(Exception):
 JOURNAL_APPLY_STATEMENT_MS = 900_000
 
 
-# What the anchor holds beyond history (see `_expose`) is written at most this often per tenant
-# directory in this process.
-ANCHOR_SECONDS = 1.0
+# When the anchor of each tenant directory was last written by this process (the opt-in
+# `anchor_interval_ms`, see `_expose`).
 ANCHOR_WRITTEN: dict[str, float] = {}
 
 
@@ -490,6 +489,7 @@ class PostgresStore(StoreCore):
                                 "commit_serial": int(serial[0]),
                                 "position": position,
                                 "last_utc": self.last_utc,
+                                "wrote": bool(self.facade.writes),
                             }
                         self.committed = committed
                         committed_ok = True
@@ -537,25 +537,30 @@ class PostgresStore(StoreCore):
     def _expose(self) -> None:
         """Make the anchor cover the history this request committed before it acknowledges.
 
-        See `LocalStore._expose_locked` for what the anchor protects. Here the anchor read at the
-        start of this transaction already covers every position a request may name when it is at
-        or past this one, so a request that moved none (a briefing that wrote only its receipt)
-        writes nothing; the commit serial and the clock's high-water mark are written when due,
-        at most once per interval and tenant in this process."""
+        Every request that committed a row is anchored first (see `LocalStore._expose_locked`),
+        and a request that committed nothing writes nothing unless it names a position the
+        anchor does not yet cover. Under the control lock the anchor is read again, so a writer
+        whose commit an earlier writer's anchor write already covers acknowledges without a
+        second write. `anchor_interval_ms` above zero is the operator's opt-in to writing the
+        serial and clock of a request that moved no position at most that late."""
         if not self.healthy or self.committed is None:
             raise LocalError("recovery_required")
         committed, held = self.committed, self.anchor
         covered = committed["position"] <= held["frontiers"].get(self.tenant, 0)
         now = time.monotonic()
         key = str(self.control_path)
-        soft = (
-            committed["commit_serial"] > held["commit_serial"]
-            or committed["last_utc"] > held["last_utc"]
-        )
-        due = soft and (
-            now - ANCHOR_WRITTEN.get(key, 0.0) >= ANCHOR_SECONDS
-            or committed["last_utc"] - held["last_utc"] >= ANCHOR_SECONDS * 1000
-        )
+        interval = self.anchor_interval_ms
+        if interval:
+            soft = (
+                committed["commit_serial"] > held["commit_serial"]
+                or committed["last_utc"] > held["last_utc"]
+            )
+            due = soft and (
+                now - ANCHOR_WRITTEN.get(key, 0.0) >= interval / 1000
+                or committed["last_utc"] - held["last_utc"] >= interval
+            )
+        else:
+            due = committed["wrote"]
         if covered and not due:
             if self.metrics:
                 self.metrics[-1]["anchor_ms"] = 0.0
@@ -566,6 +571,13 @@ class PostgresStore(StoreCore):
                 anchor = self.control.read_anchor()
                 if anchor["state"] != "active" or anchor["incarnation"] != self.incarnation:
                     raise LocalError("history_changed")
+                if (
+                    committed["position"] <= anchor["frontiers"].get(self.tenant, 0)
+                    and committed["commit_serial"] <= anchor["commit_serial"]
+                    and committed["last_utc"] <= anchor["last_utc"]
+                ):
+                    self.anchor = anchor  # an earlier writer's anchor write covers this one
+                    return
                 self.fault("before_anchor")
                 anchor["frontiers"][self.tenant] = max(
                     anchor["frontiers"].get(self.tenant, 0), committed["position"]
