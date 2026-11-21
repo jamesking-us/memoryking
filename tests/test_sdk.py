@@ -290,11 +290,11 @@ class SDKTests(unittest.TestCase):
                 "recent",
             ],
         )
-        # Flat tools, no oneOf. The tools a bridge serves by default stay under 10 KiB; the
-        # catalog file also lists `confirm`, which is served only with chat review, and
-        # fetch, feedback and recent brought it past that line, so its ceiling is 11 KiB.
-        self.assertLess(len(json.dumps(lean.tools(), separators=(",", ":"))), 10240)
-        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 11264)
+        # Flat tools, no oneOf. fetch, feedback, recent and the user `scope` argument brought
+        # the served tools to about 10.7 KB (ceiling 11 KiB); the catalog file also lists
+        # `confirm`, served only with chat review (ceiling 12 KiB).
+        self.assertLess(len(json.dumps(lean.tools(), separators=(",", ":"))), 11264)
+        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 12288)
         for tool in lean.TOOLS:
             self.assertNotIn("oneOf", json.dumps(tool["inputSchema"]))
         first = lean.call(

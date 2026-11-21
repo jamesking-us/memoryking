@@ -133,6 +133,8 @@ class SetupTests(unittest.TestCase):
             ]
         )
         self.assertFalse(saved[0]["isError"], saved[0])
+        user = self.bridge([("remember", {"text": "I prefer tabs", "scope": "user"})])[0]
+        self.assertFalse(user["isError"], user)  # setup linked the agent to the user scope
         self.assertFalse(saved[1]["isError"], saved[1])
         self.assertIn("fix retries", saved[2]["content"][0]["text"])
         hook = self.mk(
@@ -188,7 +190,11 @@ class SetupTests(unittest.TestCase):
     def test_the_agent_credential_holds_what_the_lean_tools_need_and_has_no_expiry(self):
         self.mk("setup", "generic", "--project", "demo")
         listing = self.mk("--profile", "default", "credential", "list", "--json").stdout
-        row = next(r for r in json.loads(listing)["items"] if r["principal"] == "agent")
+        row = next(
+            r
+            for r in json.loads(listing)["items"]
+            if r["principal"] == "agent" and r["project"] == "demo"
+        )
         self.assertEqual(["capture", "checkpoint", "handoff", "read"], sorted(row["capabilities"]))
         self.assertIsNone(row["expires"])
 
