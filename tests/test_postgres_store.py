@@ -479,8 +479,8 @@ class PostgresStoreTests(unittest.TestCase):
             )
 
     def test_a_delegated_token_dies_when_its_issuer_or_its_subject_is_rotated(self):
-        # Decision: a delegated token carries the subject's generation (it acts as the
-        # subject) and the issuer's generation at delegation, so rotating either retires it.
+        # Decision: a delegated token acts as the issuer and also records the named
+        # subject's generation at delegation, so rotating either retires it.
         def usable(token):
             try:
                 with PostgresStore(

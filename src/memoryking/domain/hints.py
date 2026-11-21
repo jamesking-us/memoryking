@@ -21,6 +21,7 @@ HINTS: dict[str, str] = {
     "invalid_capabilities": "Capabilities must be a non-empty list of known names without admin; see the deployment guide.",
     "invalid_delegation": "A delegation must narrow an existing grant with a bounded ttl_ms; check the caller's own capabilities.",
     "delegation_depth_exceeded": "Delegated credentials cannot delegate again; request a grant from an administrator.",
+    "delegation_superseded": "This delegated credential predates the rule that a delegation acts for its issuer; ask the issuer to delegate again.",
     "administrative_operation_required": "This action needs an administrator credential with a tenant-wide grant.",
     "session_required": "Sign in to the dashboard first; the request carried no session cookie.",
     "session_expired": "The dashboard session passed its 15-minute limit; sign in again with a new one-use code.",
