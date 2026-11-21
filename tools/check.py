@@ -39,7 +39,7 @@ def main():
             sys.executable,
             "tools/evidence_recall.py",
             "--data",
-            "fixtures/evaluation/longmemeval-sample.json",
+            "fixtures/evaluation/longmemeval-regression-sample.json",
             "--gate",
             "--output",
             "tmp/checks/evidence-recall.json",
@@ -50,6 +50,13 @@ def main():
             "--gate",
             "--output",
             "tmp/checks/retrieval-benchmark.json",
+        ],
+        [
+            sys.executable,
+            "tools/stale_facts_benchmark.py",
+            "--gate",
+            "--output",
+            "tmp/checks/stale-facts.json",
         ],
     ]
     if os.environ.get("MEMORYKING_REQUIRE_POSTGRES") == "1":
