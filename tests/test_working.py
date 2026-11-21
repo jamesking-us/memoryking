@@ -551,6 +551,9 @@ class WorkingTests(unittest.TestCase):
 
     def test_unknown_constraint_applicability_still_returns_the_callers_own_checkpoint(self):
         self.save()
+        self.intent(operation="uncertain")
+        self.transition("dispatching", 1, operation="uncertain")
+        derived = self.summarize(key="before-block")
         self.constraint(
             "Never touch production data",
             selector={
@@ -565,14 +568,28 @@ class WorkingTests(unittest.TestCase):
         self.assertEqual(packet["checkpoint"]["revision"], 1)
         self.assertEqual(packet["constraints"], [])
         self.assertNotIn("Never touch production", json.dumps(packet))
+        # An effect that may or may not have happened is shown beside the blocked checkpoint,
+        # with the latest summary the reader may see.
+        self.assertEqual(
+            [(o["id"], o["state"], o["reconciliation_required"]) for o in packet["operations"]],
+            [("uncertain", "dispatching", True)],
+        )
+        self.assertFalse(packet["operations_truncated"])
+        self.assertEqual(packet["summary"]["receipt"], derived["receipt"])
         text = self.resume(format="text")
+        self.assertIn("## Open operations", text["text"])
+        self.assertIn("uncertain: dispatching **reconcile before repeating**", text["text"])
+        self.assertIn("## Where this left off", text["text"])
         self.assertEqual(text["status"], "blocked")
         self.assertIn("Missing binding fields: `environment`", text["text"])
         self.assertIn("Mandatory constraints: unresolved", text["text"])
         self.assertIn(checkpoint()["objective"], text["text"])
         # Bound, the same stream resumes ready with the constraint resolved.
         ready = self.resume(bindings=[{"environment": "prod"}])
-        self.assertEqual(ready["status"], "ready")
+        # (incomplete, not ready, only because the operation above is still uncertain).
+        self.assertEqual(ready["status"], "incomplete")
+        self.assertEqual(ready["reason"], "recovery_reconciliation_required")
+        self.assertEqual(ready["operations"], packet["operations"])
         self.assertEqual(ready["constraints"][0]["text"], "Never touch production data")
         self.assertNotIn("unbound_fields", ready)
         # Other consumers of the same state still get no checkpoint from a blocked read.
