@@ -204,6 +204,8 @@ What this relies on, and how each part is known:
 - **Fresh instance per session, the host's own memory off, least-permissive tools, no access to this repository**: as for every arm. Use a throwaway two-session probe once (a made-up codeword in session 1, asked for in session 2) to confirm that nothing but the arm's own mechanism carries it; in arm `setup` the codeword is expected to carry through the hooks, so run the probe in arm `off` to confirm the isolation.
 - **Usage keys.** Confirm the `--usage-jq` filter on one real result; a filter that matches nothing records `n/a`, not an error.
 
+Observed in the second run (CLI 2.1.330): with `--include-hook-events` the stream shows the start hook and its output but not the session-end hook, which runs after the result line; add `--debug-file` to read its completion (`SessionEnd ... completed with status 0`) and confirm by the captures in the store. The tools of the `setup` and `mcp` allowed-tools list should include `mcp__memoryking__fetch` if you want a `recall` followed by a `fetch` to work; the second run left it out.
+
 Run each task and arm at least three times (`--rep 1`, `--rep 2`, `--rep 3`) and read the result with `report --rep`.
 
 ## Reporting
