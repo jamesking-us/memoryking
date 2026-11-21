@@ -157,16 +157,24 @@ def pending_journal(pool: Any, control: Path, tenant: str) -> dict[str, Any]:
         with connection.transaction():
             settings(connection, tenant)
             row = connection.execute("SELECT value FROM meta WHERE key='journal'").fetchone()
+            operations = connection.execute(
+                "SELECT value FROM meta WHERE key='operations'"
+            ).fetchone()
         applied = int(row[0]) if row is not None else 0
+        applied_operations = int(operations[0]) if operations is not None else 0
     finally:
         pool.putconn(connection)
     with controller.locked():
         anchor = controller.read_anchor()
         held = controller.verified_count(anchor)
-        if applied > held:
+        held_operations = controller.operations.verified_count(anchor)
+        if applied > held or applied_operations > held_operations:
             raise LocalError("journal_rollback")
         records = controller.records_after(anchor, applied)
-    return controller.describe_pending(records, applied, held)
+        pending = controller.operations.records_after(anchor, applied_operations)
+    result = controller.describe_pending(records, applied, held)
+    result["operations"] = controller.describe_pending(pending, applied_operations, held_operations)
+    return result
 
 
 def backup(
@@ -192,7 +200,7 @@ def backup(
         private_dir(destination, create=True)
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 9,
+            "schema": 10,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
@@ -203,6 +211,13 @@ def backup(
         with backup_connection.transaction():
             backup_connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             settings(backup_connection, store.tenant)
+            # How far the operations log was applied in this snapshot; compaction never drops
+            # records above the oldest retained backup's position.
+            position = backup_connection.execute(
+                "SELECT value FROM tenant_meta WHERE tenant=%s AND key='operations'",
+                (store.tenant,),
+            ).fetchone()
+            manifest["operations_sequence"] = int(position[0]) if position is not None else 0
             for table in TABLES:
                 names = columns(backup_connection, table)
                 if not names:
@@ -337,9 +352,13 @@ def restore(
                 if head != lost_anchor_journal_head:
                     raise LocalError("recovery_checkpoint_invalid")
                 anchor.update(journal_sequence=len(records), journal_head=head)
+                # The operations log has no separate checkpoint: its own verified chain stands.
+                state = controller.operations.sync(anchor, trust_anchor=True)
+                anchor.update(operations_sequence=state.count, operations_head=state.head)
             else:
                 anchor = controller.read_anchor()
             records = controller.journal(anchor)
+            controller.operations.sync(anchor)
         private_file(archive / "manifest")
         manifest = controller.verify_document(archive / "manifest")
         archive_tables = {
@@ -352,10 +371,11 @@ def restore(
             7: TABLES_V6,
             8: TABLES_V8,
             9: TABLES,
+            10: TABLES,
         }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)
@@ -363,10 +383,21 @@ def restore(
             raise LocalError("backup_invalid")
         if clock.utc_ms() < anchor["last_utc"]:
             raise LocalError("clock_untrusted")
+        # An archive older than what compaction kept cannot find its operation intents.
+        operations_applied = manifest.get("operations_sequence", 0)
+        if operations_applied < controller.operations.compacted_through():
+            raise LocalError("backup_invalid")
         for table in archive_tables:
             if digest_file(archive / (table + ".ndjson")) != manifest["tables"][table]["sha256"]:
                 raise LocalError("backup_invalid")
-            if columns(connection, table) != manifest["tables"][table]["columns"]:
+            current, archived = columns(connection, table), manifest["tables"][table]["columns"]
+            # Archives before schema 10 predate the nullable on_behalf_of column.
+            if archived != current and not (
+                manifest["schema"] < 10
+                and table in {"events", "receipts"}
+                and current[-1] == "on_behalf_of"
+                and archived == current[:-1]
+            ):
                 raise LocalError("schema_unsupported")
         # Archives before schema 7 embed the list; later ones commit to a separate index.
         blobs = (
@@ -405,6 +436,8 @@ def restore(
             private_dir(directory, create=True)
             for digest in blobs:
                 atomic(directory / digest, (archive / "blobs" / digest).read_bytes())
+            # The lease is not archived: a restore starts it again.
+            connection.execute("DELETE FROM instance_lease WHERE tenant=%s", (tenant,))
             for table in reversed(TABLES):
                 if table not in {"tenants", "tenant_gates"}:
                     connection.execute(
@@ -448,6 +481,11 @@ def restore(
                     table in {"tenants", "tenant_gates"} and count != 1
                 ):
                     raise LocalError("backup_invalid")
+            # Archives before schema 10 carry no operations position.
+            connection.execute(
+                "INSERT INTO tenant_meta(tenant,key,value) VALUES (%s,'operations','0') ON CONFLICT DO NOTHING",
+                (tenant,),
+            )
             # Reuse reviewed journal reconciliation, under an explicit native DB gate.
             recovery = LocalStore.__new__(LocalStore)
             recovery.root, recovery.control_path = root, control / tenant
@@ -459,6 +497,9 @@ def restore(
             connection.row_factory = record_factory
             recovery.db = PostgresSQL(connection)
             for record in records:
+                recovery._apply(record, clock.utc_ms())
+            operation_records = controller.operations.records_after(anchor, operations_applied)
+            for record in operation_records:
                 recovery._apply(record, clock.utc_ms())
             recovery.incarnation = uid("hist")
             recovery.db.execute(
@@ -522,6 +563,11 @@ def restore(
                 anchor.update(
                     journal_sequence=records[-1]["sequence"],
                     journal_head=hashlib.sha256(controller.sign(records[-1]).encode()).hexdigest(),
+                )
+            if operation_records:
+                anchor.update(
+                    operations_sequence=operation_records[-1]["sequence"],
+                    operations_head=controller.operations.head(operation_records[-1]["sequence"]),
                 )
             anchor.pop("maintenance_operation", None)
             controller.anchor(anchor)
@@ -613,6 +659,7 @@ def rotate_owner(
     audience: str = "memoryking-shared",
     clock: Clock | None = None,
     fault: Callable[[str], None] | None = None,
+    instance_id: str | None = None,
 ) -> Path:
     """Replace the tenant's operator credential file with one of the next generation.
 
@@ -634,7 +681,15 @@ def rotate_owner(
     # Only decoded to open the store; authorization below needs a current admin grant.
     held = target.read_text().strip()
     with PostgresStore(
-        pool, root, control, tenant, held, audience=audience, clock=clock, fault=fault
+        pool,
+        root,
+        control,
+        tenant,
+        held,
+        audience=audience,
+        clock=clock,
+        fault=fault,
+        instance_id=instance_id,
     ) as store:
         principal = store.principal
         with store.transaction() as decision:

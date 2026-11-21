@@ -122,6 +122,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             "9",
             "10",
             "11",
+            "12",
         }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
@@ -159,6 +160,11 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
         if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}:
             connection.execute(Path(__file__).with_name("postgres_lexical_schema.sql").read_text())
             connection.execute("UPDATE shared_meta SET value='11' WHERE key='schema'")
+        if version[0] in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"}:
+            connection.execute(
+                Path(__file__).with_name("postgres_operations_schema.sql").read_text()
+            )
+            connection.execute("UPDATE shared_meta SET value='12' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [
@@ -281,6 +287,8 @@ def initialize_tenant(
         "frontiers": {},
         "journal_sequence": 0,
         "journal_head": "0" * 64,
+        "operations_sequence": 0,
+        "operations_head": "0" * 64,
         "last_utc": 0,
         "commit_serial": 0,
     }
@@ -294,6 +302,7 @@ def initialize_tenant(
             ("store", store),
             ("incarnation", incarnation),
             ("journal", "0"),
+            ("operations", "0"),
             ("commit_serial", "0"),
         ):
             connection.execute("INSERT INTO tenant_meta VALUES (%s,%s,%s)", (tenant, key, value))

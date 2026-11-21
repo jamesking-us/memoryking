@@ -16,6 +16,7 @@ from array import array
 from pathlib import Path
 from typing import Any
 
+from memoryking.adapters.operations_log import OperationsCache, OperationsLog
 from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.local import LocalError
 
@@ -185,6 +186,7 @@ class JournalCache:
         self.keep_records = keep_records
         self.lock = threading.RLock()
         self.state: JournalState | None = None
+        self.operations = OperationsCache()
 
 
 class Control:
@@ -197,6 +199,7 @@ class Control:
         self.store: str = identity["store"]
         self.key = bytes.fromhex(identity["key"])
         self._cache = cache or JournalCache(keep_records=True)
+        self.operations = OperationsLog(self, self._cache.operations)
         # Byte offset of an unacknowledged torn final line, discarded on the next append.
         self.torn_tail: int | None = None
 
