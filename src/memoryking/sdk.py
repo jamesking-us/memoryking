@@ -86,8 +86,18 @@ class LocalClient:
     enforce exact-byte dispatch, dependency inheritance and conversation rebuilding.
     """
 
-    def __init__(self, socket: Path, credential_file: Path, project: str, namespace: str = "sdk"):
+    def __init__(
+        self,
+        socket: Path,
+        credential_file: Path,
+        project: str,
+        namespace: str = "sdk",
+        bindings: list[dict[str, Any]] | None = None,
+    ):
         self.socket, self.credential_file, self.project = socket, credential_file, project
+        # Session bindings fill the briefing and resume calls that name none (see
+        # `session_bindings`); a call that carries its own bindings keeps them.
+        self.bindings = [dict(b) for b in bindings] if bindings else [{}]
         # A named namespace makes `key` a real idempotency key across processes.
         self.namespace = namespace
         self.last_context = self._request(self._credential(), "context", {"project": project})
@@ -270,7 +280,7 @@ class LocalClient:
         if "project" in fields:
             args.setdefault("project", self.project)
         if "bindings" in fields:
-            args.setdefault("bindings", [{}])
+            args.setdefault("bindings", [dict(b) for b in self.bindings])
         if "max_output_tokens" in fields:
             args.setdefault("max_output_tokens", DEFAULT_BUDGET)
         if "tokenizer" in fields:

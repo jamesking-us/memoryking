@@ -22,6 +22,7 @@ ENVELOPE_FIELDS = (
     "version",
     "status",
     "reason",
+    "unbound_fields",
     "receipt",
     "incarnation",
     "evaluated_ms",
@@ -59,6 +60,18 @@ def _item_source(tag: str, item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return line, {"ref": tag, "kind": "revision", "id": reference}
 
 
+def _missing_fields(packet: dict[str, Any]) -> str:
+    """One sentence naming the binding fields a blocked packet needs; names only."""
+    fields = packet.get("unbound_fields")
+    if packet.get("reason") != "applicability_unknown" or not fields:
+        return ""
+    names = ", ".join(f"`{f}`" for f in fields)
+    return (
+        f" Missing binding fields: {names}. Set them once for the session"
+        " (`--binding key=value` or `MEMORYKING_BINDINGS`) and ask again."
+    )
+
+
 def _qualifier(item: dict[str, Any]) -> str:
     parts = [str(item[k]) for k in ("authority", "assurance", "selection_reason") if item.get(k)]
     return f" _({'; '.join(parts)})_" if parts else ""
@@ -82,7 +95,13 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         f" budget {usage.get('max_output_tokens', '?')} tokens_"
     )
     if packet.get("reason"):
-        lines.extend(["", f"**Blocked:** {packet['reason']}. Decide, do not truncate."])
+        lines.extend(
+            [
+                "",
+                f"**Blocked:** {packet['reason']}. Decide, do not truncate."
+                + _missing_fields(packet),
+            ]
+        )
     constraints = packet.get("constraints", [])
     if constraints:
         lines.extend(["", "## Must follow"])
@@ -135,8 +154,17 @@ def render_resume(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         f" revision {checkpoint.get('revision', '?')} by {checkpoint.get('writer', '?')}"
         f" at {_stamp(checkpoint.get('created_ms'))} · receipt {packet.get('receipt', '?')}_"
     )
+    unresolved = packet.get("reason") == "applicability_unknown"
     if packet.get("reason"):
-        lines.extend(["", f"**Blocked:** {packet['reason']}."])
+        lines.extend(["", f"**Blocked:** {packet['reason']}." + _missing_fields(packet)])
+    if unresolved and checkpoint:
+        lines.extend(
+            [
+                "",
+                "_Your own saved state is shown below. Mandatory constraints could not be"
+                " resolved, so do not assume none apply._",
+            ]
+        )
     summary = packet.get("summary")
     if isinstance(summary, dict) and summary.get("text"):
         lines.extend(["", "## Where this left off", "", str(summary["text"])])
@@ -151,8 +179,10 @@ def render_resume(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         lines.extend(f"{n}. {a}" for n, a in enumerate(state["next_actions"], 1))
     constraints = packet.get("constraints", [])
     hard = state.get("hard_constraints", [])
-    if constraints or hard:
+    if constraints or hard or (unresolved and checkpoint):
         lines.extend(["", "## Must follow"])
+        if unresolved and checkpoint:
+            lines.append("- **Mandatory constraints: unresolved** (applicability unknown).")
         lines.extend(f"- {h}" for h in hard)
         for number, item in enumerate(constraints, 1):
             tag = f"c{number}"
@@ -193,12 +223,16 @@ def render_resume(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
             )
     gaps = list(packet.get("recovery_gaps") or [])
     capture = state.get("capture") or {}
+    unrecorded = [f"defaulted:{s}" for s in packet.get("unrecorded_sections") or []]
     for gap in capture.get("gaps", []):
-        if gap not in gaps:
+        if gap not in gaps and gap not in unrecorded:
             gaps.append(gap)
     if gaps:
         lines.extend(["", "## Gaps"])
         lines.extend(f"- {g}" for g in gaps)
+    if unrecorded:
+        lines.extend(["", "## Never written down (not a recovery gap)"])
+        lines.extend(f"- {g}" for g in unrecorded)
     caveats = [WARNING_NOTES.get(w, w) for w in packet.get("warnings", [])]
     if caveats:
         lines.extend(["", "## Caveats"])

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,13 @@ from memoryking.adapters.postgres_admin import (
     provision_roles,
 )
 from memoryking.adapters.postgres_pool import create_pool
-from memoryking.adapters.postgres_recovery import backup, end_maintenance, restore
+from memoryking.adapters.postgres_recovery import (
+    backup,
+    end_maintenance,
+    pending_journal,
+    restore,
+    rotate_owner,
+)
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_http import create_app
 from memoryking.adapters.shared_service import SharedService
@@ -61,6 +68,8 @@ def parser() -> argparse.ArgumentParser:
         "backup",
         "restore",
         "end-maintenance",
+        "rotate-owner",
+        "journal-pending",
     ):
         item = commands.add_parser(name)
         item.add_argument("--dsn-file", type=Path, required=True)
@@ -71,11 +80,21 @@ def parser() -> argparse.ArgumentParser:
                 required=True,
                 help="Private directory with mk_migration, mk_runtime, mk_worker, mk_backup password files",
             )
-        if name in {"init-tenant", "serve", "worker-once", "backup", "restore"}:
+        if name == "journal-pending":
+            item.add_argument("--control", type=Path, required=True)
+        if name in {"init-tenant", "serve", "worker-once", "backup", "restore", "rotate-owner"}:
             item.add_argument("--content", type=Path, required=True)
             item.add_argument("--control", type=Path, required=True)
             item.add_argument("--audience", default="memoryking-shared")
-        if name in {"init-tenant", "worker-once", "backup", "restore", "end-maintenance"}:
+        if name in {
+            "init-tenant",
+            "worker-once",
+            "backup",
+            "restore",
+            "end-maintenance",
+            "rotate-owner",
+            "journal-pending",
+        }:
             item.add_argument("--tenant", required=True)
         if name == "end-maintenance":
             item.add_argument("--control", type=Path, required=True)
@@ -246,6 +265,7 @@ def run(args: Any) -> dict[str, Any]:
                 from memoryking.adapters.egress_policy import EgressPolicy
 
                 service.egress_policy = EgressPolicy.load(args.egress_policy)
+            threading.Thread(target=service.warm, name="journal-warm", daemon=True).start()
             app = create_app(
                 service,
                 hosts=args.host,
@@ -264,6 +284,13 @@ def run(args: Any) -> dict[str, Any]:
                 ssl_keyfile=str(args.tls_key) if args.tls_key else None,
             )
             return {"status": "stopped"}
+        if args.command == "journal-pending":
+            return pending_journal(pool, args.control, args.tenant)
+        if args.command == "rotate-owner":
+            path = rotate_owner(
+                pool, args.content, args.control, args.tenant, audience=args.audience
+            )
+            return {"credential_file": str(path), "rotated": True}
         credential = secret(args.credential)
         with PostgresStore(
             pool, args.content, args.control, args.tenant, credential, audience=args.audience

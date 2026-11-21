@@ -20,6 +20,9 @@ class ExecutionTests(unittest.TestCase):
     command = working_helpers.WorkingTests.command
     execute = working_helpers.WorkingTests.execute
     save = working_helpers.WorkingTests.save
+    intent = working_helpers.WorkingTests.intent
+    transition = working_helpers.WorkingTests.transition
+    long_history = working_helpers.WorkingTests.long_history
 
     def view(self, credential=None, offset=0):
         with self.store.transaction() as decision:
@@ -135,6 +138,14 @@ class ExecutionTests(unittest.TestCase):
         summary = self.view()["tasks"][0]["summary"]
         self.assertEqual(summary["revision"], saved["revision"])
         self.assertIn("Working on", summary["text"])
+
+    def test_snapshot_of_a_long_task_lists_open_operations_and_flags_truncation(self):
+        self.save()
+        self.long_history()
+        task = self.view()["tasks"][0]
+        self.assertEqual(len(task["operations"]), 32)
+        self.assertTrue(task["operations_truncated"])
+        self.assertIn("open-first", [op["id"] for op in task["operations"]])
 
     def test_heartbeat_uses_recorded_time_and_current_checkpoint_without_progress(self):
         saved = self.save()

@@ -81,7 +81,7 @@
           "budget": {
             "type": "integer",
             "minimum": 256,
-            "maximum": 100000,
+            "maximum": 65536,
             "description": "Token budget for the briefing. Default 6000."
           },
           "task": {
@@ -116,7 +116,7 @@
     },
     {
       "name": "save_progress",
-      "description": "Save where a task stands before you stop or hand over. Objective and current state are enough; add next actions, findings, failed attempts and blockers as you have them. Sections you leave out are recorded as gaps, not as empty facts.",
+      "description": "Save where a task stands before you stop or hand over. Objective and current state are enough; add next actions, findings, failed attempts and blockers as you have them. A section you leave out keeps what the task's latest save recorded (or is noted as never written when there is none); a section you send replaces it, and an empty list clears it. Findings are saved as hypotheses until evidence is attached by other means.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -261,7 +261,7 @@
           "budget": {
             "type": "integer",
             "minimum": 256,
-            "maximum": 100000,
+            "maximum": 65536,
             "description": "Token budget. Default 12000."
           }
         },

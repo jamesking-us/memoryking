@@ -6,12 +6,13 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from memoryking import __version__
-from memoryking.__main__ import doctor, duration_ms, render_grants, render_status
+from memoryking.__main__ import doctor, duration, duration_ms, render_grants, render_status
 from memoryking.adapters.local_ipc import Server
 from memoryking.adapters.local_store import LocalStore
 from memoryking.domain.local import LocalError
@@ -281,6 +282,66 @@ class OperatorCommandTests(unittest.TestCase):
             expect=2,
         )
 
+    def test_doctor_says_how_far_ahead_a_recorded_clock_jump_is(self):
+        from memoryking.adapters.local_files import Control
+
+        controller = Control(self.control_dir)
+        anchor = controller.read_anchor()
+        original = anchor["last_utc"]
+        self.assertEqual("2 d 3 h 4 min 5 s", duration(((2 * 24 + 3) * 60 + 4) * 60_000 + 5_000))
+        try:
+            anchor["last_utc"] = int(time.time() * 1000) + 3 * 3_600_000 + 5 * 60_000 + 30_000
+            controller.anchor(anchor)
+            ((level, _, detail),) = [
+                item
+                for item in doctor(self.store_dir, self.control_dir, None, None)
+                if item[1] == "clock"
+            ]
+            self.assertEqual("fail", level)
+            self.assertIn("3 h 5 min", detail)
+            self.assertIn("clock_untrusted", detail)
+        finally:
+            anchor["last_utc"] = original
+            controller.anchor(anchor)
+        levels = {n: lv for lv, n, _ in doctor(self.store_dir, self.control_dir, None, None)}
+        self.assertEqual("ok", levels["clock"])
+
+    def test_credential_rotation_flags_and_rotate_owner_needs_a_stopped_daemon(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        issue = ["credential", "issue", "agent-r", "--project", "demo", "--capabilities", "read"]
+        files = [Path(self.temp.name) / name for name in ("a", "b", "c")]
+        self.cli(*issue, "--output", str(files[0]), *common)
+        self.cli(*issue, "--output", str(files[1]), *common)
+        self.assertEqual(files[0].read_text(), files[1].read_text())
+        self.cli(*issue, "--rotate", "--output", str(files[2]), *common)
+        self.assertNotEqual(files[0].read_text(), files[2].read_text())
+        status = ["status", "--socket", str(self.server.path), "--credential"]
+        self.cli(*status, str(files[0]), expect=2)  # refused: credential_replaced
+        self.cli(*status, str(files[2]), expect=2)  # status needs admin; the grant is read only
+        listed = json.loads(self.cli("credential", "list", "--json", *common))["items"]
+        agent = next(i for i in listed if i["principal"] == "agent-r")
+        self.assertEqual(["read"], agent["capabilities"])
+        # The daemon holds the store, so the offline owner rotation refuses and changes nothing.
+        before = self.credential.read_text()
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking",
+                "credential",
+                "rotate-owner",
+                "--store",
+                str(self.store_dir),
+                "--control",
+                str(self.control_dir),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(2, run.returncode, run.stdout + run.stderr)
+        self.assertIn("owner_busy_or_unsafe", run.stdout + run.stderr)
+        self.assertEqual(before, self.credential.read_text())
+
     def test_doctor_reports_a_healthy_store_and_a_missing_daemon_query(self):
         findings = doctor(self.store_dir, self.control_dir, self.server.path, self.credential)
         levels = {name: level for level, name, _ in findings}
@@ -365,6 +426,15 @@ class ProfileTests(OperatorCommandTests):
         self.assertEqual(run.returncode, expect, run.stdout + run.stderr)
         return run.stdout
 
+    def test_profile_keeps_session_bindings_and_refuses_unknown_keys(self):
+        base = ["profile", "add", "scoped", "--store", str(self.store_dir)]
+        base += ["--control", str(self.control_dir)]
+        self.cli(*base, "--binding", "environment=prod", "--binding", "role=implement")
+        self.assertIn(
+            "bindings = {'environment': 'prod', 'role': 'implement'}", self.cli("profile", "list")
+        )
+        self.cli(*base, "--binding", "colour=blue", expect=2)
+
     def test_profile_fills_paths_and_explicit_flags_still_win(self):
         self.cli(
             "profile",
@@ -438,6 +508,100 @@ class ProfileTests(OperatorCommandTests):
 
 
 class CaptureCommandTests(OperatorCommandTests):
+    def test_draft_proposals_files_drafts_through_the_daemon(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        for source, text in (
+            ("a", "Scoped the deadline per request in payments/retry.py yesterday."),
+            ("b", "Review note: payments/retry.py now retries once per request."),
+        ):
+            self.cli("capture", "--project", "demo", "--source", source, "--text", text, *common)
+        report = json.loads(
+            self.cli("draft-proposals", "--project", "demo", "--key", "k1", "--json", *common)
+        )
+        self.assertEqual(len(report["drafted"]), 1)
+        self.assertEqual(report["drafted"][0]["topic"], "payments/retry.py")
+        text = self.cli("draft-proposals", "--project", "demo", "--key", "k1", *common)
+        self.assertIn("1 draft(s) filed for review", text)  # same key: replayed, not refiled
+        again = json.loads(
+            self.cli("draft-proposals", "--project", "demo", "--key", "k2", "--json", *common)
+        )
+        self.assertEqual(again["drafted"], [])
+
+    def test_trust_and_egress_audit_reach_the_daemon(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        self.cli(
+            "trust",
+            "set",
+            "--project",
+            "demo",
+            "--source",
+            "scraper-*",
+            "--level",
+            "untrusted",
+            "--key",
+            "rule-1",
+            *common,
+        )
+        listed = self.cli("trust", "list", "--project", "demo", *common)
+        self.assertIn("scraper-*", listed)
+        self.assertIn("untrusted", listed)
+        audit = json.loads(self.cli("egress-audit", "--project", "demo", "--json", *common))
+        self.assertIsInstance(audit, dict)
+
+    def test_trust_default_keys_are_valid_for_globs_and_stable_for_plain_sources(self):
+        from memoryking.__main__ import default_trust_key
+
+        self.assertEqual(
+            default_trust_key("demo", "scraper", "untrusted"), "trust-demo-scraper-untrusted"
+        )
+        glob = default_trust_key("demo", "scraper-*", "untrusted")
+        self.assertRegex(glob, r"^[A-Za-z0-9_-]{1,96}$")
+        self.assertEqual(glob, default_trust_key("demo", "scraper-*", "untrusted"))
+        self.assertNotEqual(glob, default_trust_key("demo", "scraper-?", "untrusted"))
+        self.assertNotEqual(glob, default_trust_key("demo", "scraper-*", "trusted"))
+        self.assertRegex(default_trust_key("*", "x", "trusted"), r"^[A-Za-z0-9_-]{1,96}$")
+        self.assertRegex(default_trust_key("demo", "s" * 200, "trusted"), r"^[A-Za-z0-9_-]{1,96}$")
+
+    def test_trust_set_held_and_release_reach_the_daemon_without_explicit_keys(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        rule = ["trust", "set", "--project", "demo", "--source", "scraper-*"]
+        rule += ["--level", "untrusted", "--json", *common]
+        first = json.loads(self.cli(*rule))
+        self.assertEqual(first["status"], "recorded")
+        self.assertTrue(json.loads(self.cli(*rule))["replayed"])
+        self.assertIn("scraper-*", self.cli("trust", "list", "--project", "demo", *common))
+        token = self.credential.read_text()
+        held = self.store.capture(
+            token,
+            self.store.namespace(token, "demo"),
+            "scrape-1",
+            {
+                "version": 1,
+                "project": "demo",
+                "source": "scraper-web",
+                "source_event": "scrape-1",
+                "text": "Zebra retry hint from a web page",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        self.assertTrue(held["held"])
+        queue = json.loads(self.cli("trust", "held", "--project", "demo", "--json", *common))
+        self.assertEqual([i["observation"] for i in queue["held"]], [held["observation"]])
+        self.assertIn(held["observation"], self.cli("trust", "held", "--project", "demo", *common))
+        released = json.loads(
+            self.cli(
+                "trust", "release", held["observation"], "--project", "demo", "--json", *common
+            )
+        )
+        self.assertEqual(released["status"], "released")
+        self.assertEqual(
+            json.loads(self.cli("trust", "held", "--project", "demo", "--json", *common))["held"],
+            [],
+        )
+        self.assertIn("No held captures", self.cli("trust", "held", "--project", "demo", *common))
+
     def test_capture_and_recall_through_the_cli_and_hooks(self):
         common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
         out = json.loads(

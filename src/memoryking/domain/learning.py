@@ -50,7 +50,9 @@ def adjust(
         # No relevance floor is crossed, and conflict groups remain indivisible.
         updated = max(1, score * (1000000 + delta) // 1000000) if score > 0 else 0
         result.append((updated, reference, group))
-    return sorted(result, key=lambda item: (-item[0], item[1]))
+    # Stable: equal scores keep the incoming order, which already breaks ties by authority and
+    # recency, so an adjustment that leaves two scores equal does not reshuffle them.
+    return sorted(result, key=lambda item: -item[0])
 
 
 def measure(selected: list[str], relevant: list[str]) -> dict[str, int]:

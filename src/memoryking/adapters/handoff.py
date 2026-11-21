@@ -13,6 +13,13 @@ from jsonschema import Draft202012Validator
 from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.token_count import counter
 from memoryking.adapters.working import Working
+from memoryking.application.retention import (
+    HANDOFF_LIMIT,
+    HANDOFF_VIEW_LIMIT,
+    live_handoff_views,
+    live_handoffs,
+    release_handoff_views,
+)
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.briefing import counted
@@ -117,7 +124,7 @@ class Handoff:
         )
         # Do not bind to the wall clock or unrelated receipt/event positions.
         policy = {k: v for k, v in policy.items() if k not in {"valid_ms", "recorded_position"}}
-        operations, deps = self.w._operations(recipient, args, at, include_all=True)
+        operations, deps, truncated = self.w._operations(recipient, args, at, include_all=True)
         deps.extend(self.r._dependencies([self.r._claim(item) for item in policy["items"]]))
         checkpoint = self.w._checkpoint(recipient, args, at)
         available = []
@@ -140,6 +147,8 @@ class Handoff:
                 "compiler_revision": "handoff-v1",
                 "policy": policy,
                 "operations": operations,
+                # Only when set, so stamps of existing complete views keep their value.
+                **({"operations_truncated": True} if truncated else {}),
                 "checkpoint_hash": checkpoint["body_hash"],
                 "stream_revision": row["stream_revision"],
                 "epochs": list(epoch),
@@ -312,13 +321,6 @@ class Handoff:
     def _prepare(
         self, who: dict[str, Any], args: dict[str, Any], stream: sqlite3.Row, at: int
     ) -> dict[str, Any]:
-        if (
-            self.db.execute(
-                "SELECT count(*) FROM handoffs WHERE tenant=?", (who["tenant"],)
-            ).fetchone()[0]
-            >= 4096
-        ):
-            raise LocalError("handoff_capacity")
         identifier = uid("hnd")
         scope = (
             who["tenant"],
@@ -332,6 +334,9 @@ class Handoff:
             "UPDATE handoffs SET state='superseded' WHERE tenant=? AND project=? AND task=? AND stream=? AND sender=? AND recipient=? AND state IN ('prepared','acknowledged')",
             scope,
         )
+        # Only live hand-offs count, and the one just superseded no longer does.
+        if live_handoffs(self.db, who["tenant"], at) >= HANDOFF_LIMIT:
+            raise LocalError("handoff_capacity")
         self.db.execute(
             "INSERT INTO handoffs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
@@ -446,13 +451,10 @@ class Handoff:
                 recipient, resume, decision, receipt, extras=extras, retain=False
             )
         body = json.loads(raw)
-        if (
-            self.db.execute(
-                "SELECT count(*) FROM handoff_views WHERE tenant=?", (who["tenant"],)
-            ).fetchone()[0]
-            >= 4096
-        ):
-            raise LocalError("handoff_view_capacity")
+        if live_handoff_views(self.db, who["tenant"]) >= HANDOFF_VIEW_LIMIT:
+            release_handoff_views(self.db, who["tenant"])
+            if live_handoff_views(self.db, who["tenant"]) >= HANDOFF_VIEW_LIMIT:
+                raise LocalError("handoff_view_capacity")
         self.db.execute(
             "INSERT INTO handoff_views VALUES (?,?,?,?,?,?,?,?,?)",
             (

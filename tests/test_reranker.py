@@ -130,6 +130,12 @@ class RerankCases:
         plain = self.run_r()
         default_order = self.order(plain)
         self.assertEqual(set(default_order) >= {alpha, beta, gamma}, True)
+        # The three notes tie on literal overlap, so the fused order between them is
+        # decided by their generated ids and differs from run to run. Favour the one
+        # that fused last, so the rerank always has to move something.
+        label = {alpha: "alpha", beta: "beta", gamma: "gamma"}
+        favourite = [r for r in default_order if r in label][-1]
+        other = [r for r in label if r != favourite][0]
         stage, diag = self.stage(plain)
         self.assertEqual(stage, {"stage": "rerank_v1", "state": "off_unless_requested"})
         self.assertNotIn("rerank_score_ppm", plain["guidance"][0])
@@ -137,14 +143,14 @@ class RerankCases:
         no_model = self.run_r(args=self.brief_args(rerank="on"))
         self.assertEqual(self.order(no_model), default_order)
         self.assertEqual(self.stage(no_model)[0]["state"], "unavailable_no_model")
-        self.store.reranker = FakeReranker("alpha")
+        self.store.reranker = FakeReranker(label[favourite])
         self.assertEqual(self.order(self.run_r()), default_order)  # still off by default
         on = self.run_r(args=self.brief_args(rerank="on"))
-        self.assertEqual(self.order(on)[0], alpha)
-        self.assertEqual(self.order(on)[1:], [r for r in default_order if r != alpha])
+        self.assertEqual(self.order(on)[0], favourite)
+        self.assertEqual(self.order(on)[1:], [r for r in default_order if r != favourite])
         scores = {i["reference"]: i["rerank_score_ppm"] for i in on["guidance"]}
-        self.assertEqual(scores[alpha], 900_000)
-        self.assertEqual(scores[gamma], 100_000)
+        self.assertEqual(scores[favourite], 900_000)
+        self.assertEqual(scores[other], 100_000)
         stage, diag = self.stage(on)
         self.assertEqual(stage["state"], "applied")
         self.assertEqual(stage["model"], "fake-reranker-fingerprint")

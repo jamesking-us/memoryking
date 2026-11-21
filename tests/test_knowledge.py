@@ -386,6 +386,55 @@ class KnowledgeTests(unittest.TestCase):
         self.assertEqual(self.constraints()["reason"], "applicability_unknown")
         self.assertEqual(self.constraints(task="other")["status"], "complete")
 
+    def test_unknown_applicability_names_only_the_unbound_fields(self):
+        scoped = self.propose(
+            self.body(
+                "Never deploy on Fridays",
+                kind="constraint",
+                authority="project",
+                rule_key="freeze",
+                effect="prohibit",
+                rule_value="deploy",
+                selector=sel(eq("environment", "prod"), eq("role", "implement")),
+            ),
+            key="scoped",
+        )
+        self.review(scoped)
+        blocked = self.constraints()
+        self.assertEqual(blocked["reason"], "applicability_unknown")
+        self.assertEqual(blocked["unbound_fields"], ["environment", "role"])
+        self.assertNotIn("Fridays", json.dumps(blocked))
+        # Only the missing field is named once the other is bound.
+        partial = self.constraints(bindings=[{"role": "implement"}])
+        self.assertEqual(partial["unbound_fields"], ["environment"])
+        # A field that decides the clause false is not missing.
+        elsewhere = self.constraints(bindings=[{"environment": "dev"}])
+        self.assertEqual(elsewhere["status"], "complete")
+        self.assertEqual(elsewhere["unbound_fields"], [])
+        complete = self.constraints(bindings=[{"environment": "prod", "role": "implement"}])
+        self.assertEqual(complete["status"], "complete")
+        self.assertEqual(len(complete["items"]), 1)
+        # A constraint the caller may not read never contributes a field name.
+        hidden = self.propose(
+            self.body(
+                "Owner only",
+                kind="constraint",
+                authority="project",
+                rule_key="hidden",
+                effect="require",
+                rule_value="x",
+                readers=["owner"],
+                selector=sel(eq("component_id", "secret-component")),
+            ),
+            key="hidden",
+        )
+        self.review(hidden)
+        reader = self.store.grant(self.owner, "reader", "p", ["read"])
+        denied = self.constraints(reader)
+        self.assertEqual(denied["reason"], "essential_policy_unavailable")
+        self.assertEqual(denied.get("unbound_fields", []), [])
+        self.assertNotIn("component_id", json.dumps(denied))
+
     def test_policy_selector_unknown_and_explicit_absence(self):
         c = self.propose(
             self.body(
@@ -592,6 +641,139 @@ class KnowledgeTests(unittest.TestCase):
         with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 1):
             self.assertEqual(self.constraints()["reason"], "constraint_resolution_incomplete")
 
+    def claim_body(self, kind, label):
+        """A distinct claim of `kind`; constraints get their own rule so none conflict."""
+        if kind == "knowledge":
+            return self.body(label)
+        return self.body(
+            label, kind=kind, authority="project", rule_key=label, effect="require", rule_value="x"
+        )
+
+    def retired_and_unreviewed(self, kind, count):
+        """File `count` revisions each of three states that must never count toward the bound."""
+        for index in range(count):
+            self.propose(self.claim_body(kind, f"unreviewed{index}"), key=f"{kind}-u{index}")
+            rejected = self.propose(
+                self.claim_body(kind, f"rejected{index}"), key=f"{kind}-x{index}"
+            )
+            self.review(rejected, decision="reject")
+            retired = self.review(
+                self.propose(self.claim_body(kind, f"retired{index}"), key=f"{kind}-d{index}")
+            )
+            self.review(retired, decision="deprecate")
+
+    def test_registry_bound_counts_only_revisions_accepted_at_the_queried_position(self):
+        from unittest.mock import patch
+
+        for kind, run in (("knowledge", self.query), ("constraint", self.constraints)):
+            with (
+                self.subTest(kind=kind),
+                patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3),
+            ):
+                accepted = [
+                    self.review(
+                        self.propose(self.claim_body(kind, f"live{i}"), key=f"{kind}-live{i}")
+                    )
+                    for i in range(3)
+                ]
+                before = self.store.status(self.owner, "p")["position"]
+                self.retired_and_unreviewed(kind, 4)  # 12 revisions beyond the bound of 3
+                result = run()
+                self.assertEqual(result["status"], "complete")
+                self.assertEqual(
+                    sorted(i["revision"] for i in result["items"]),
+                    sorted(a["revision"] for a in accepted),
+                )
+                if kind == "knowledge":
+                    # A historical query still sees the revisions that were accepted then, and
+                    # the reviewer diagnostic lists the newest revisions of any state in pages.
+                    self.assertEqual(len(run(recorded_position=before)["items"]), 3)
+                    listing = run(diagnostic=True)
+                    self.assertEqual(listing["status"], "complete")
+                    self.assertTrue(listing["truncated"])
+                    self.assertEqual(len(listing["items"]), 3)
+                # A fourth accepted revision does exceed the bound: nothing is dropped silently.
+                self.review(self.propose(self.claim_body(kind, "extra"), key=f"{kind}-extra"))
+                blocked = run()
+                self.assertEqual(blocked["status"], "blocked")
+                self.assertEqual(blocked["items"], [])
+                self.assertEqual(
+                    blocked["reason"],
+                    "constraint_resolution_incomplete"
+                    if kind == "constraint"
+                    else "knowledge_resolution_incomplete",
+                )
+
+    def test_accepted_claims_survive_hundreds_of_unreviewed_drafts(self):
+        accepted = [
+            self.review(self.propose(self.body(f"live {i}"), key=f"live{i}")) for i in range(3)
+        ]
+        for index in range(300):
+            self.propose(self.body(f"draft {index}"), key=f"draft{index}")
+        result = self.query()
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(
+            sorted(i["revision"] for i in result["items"]),
+            sorted(a["revision"] for a in accepted),
+        )
+
+    def test_reviewer_listing_pages_instead_of_blocking(self):
+        from unittest.mock import patch
+
+        with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3):
+            drafts = [
+                self.propose(self.body(f"draft {i}"), key=f"draft{i}")["revision"] for i in range(7)
+            ]
+            seen, pages, before = [], 0, None
+            while True:
+                page = self.query(
+                    diagnostic=True, **({} if before is None else {"before_position": before})
+                )
+                self.assertEqual(page["status"], "complete")
+                self.assertLessEqual(len(page["items"]), 3)
+                self.assertEqual({i["state"] for i in page["items"]}, {"proposed"})
+                seen = [i["revision"] for i in page["items"]] + seen
+                pages += 1
+                if not page["truncated"]:
+                    self.assertIsNone(page["next_before_position"])
+                    break
+                before = page["next_before_position"]
+            self.assertEqual((seen, pages), (drafts, 3))
+            # Without the diagnostic there is nothing accepted to resolve, and no paging.
+            plain = self.query()
+            self.assertEqual(
+                (plain["status"], plain["items"], plain["truncated"]), ("complete", [], False)
+            )
+
+    def test_reviewer_can_list_proposals_among_hundreds_of_drafts(self):
+        accepted = self.review(self.propose(self.body("live"), key="live"))
+        drafts = [
+            self.propose(self.body(f"draft {i}"), key=f"draft{i}")["revision"] for i in range(300)
+        ]
+        listing = self.query(diagnostic=True)
+        self.assertEqual(listing["status"], "complete")
+        self.assertTrue(listing["truncated"])
+        self.assertEqual(len(listing["items"]), 256)
+        revisions = [i["revision"] for i in listing["items"]]
+        self.assertEqual(revisions[-1], drafts[-1])  # the newest proposals are listed
+        self.assertEqual(revisions[0], drafts[300 - 256])
+        rest = self.query(diagnostic=True, before_position=listing["next_before_position"])
+        self.assertFalse(rest["truncated"])
+        self.assertEqual(
+            sorted(i["revision"] for i in rest["items"]),
+            sorted([accepted["revision"], *drafts[:44]]),
+        )
+
+    def test_purged_accepted_constraint_still_blocks_among_retired_revisions(self):
+        from unittest.mock import patch
+
+        with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3):
+            self.review(self.propose(self.claim_body("constraint", "kept"), key="kept"))
+            self.retired_and_unreviewed("constraint", 3)
+            self.assertEqual(self.constraints()["status"], "complete")
+            self.store.purge(self.owner, self.obs["observation"])
+            self.assertEqual(self.constraints()["reason"], "essential_policy_unavailable")
+
     def test_migration_preserves_version_one_capture(self):
         self.store.close()
         import sqlite3
@@ -613,7 +795,7 @@ class KnowledgeTests(unittest.TestCase):
         db.close()
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 13)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 16)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],

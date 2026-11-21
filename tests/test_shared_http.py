@@ -8,7 +8,9 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
+from unittest import mock
 
 import psycopg
 import uvicorn
@@ -69,9 +71,9 @@ class SharedHTTPTests(unittest.TestCase):
         self.listener.close()
         self.tmp.cleanup()
 
-    def raw(self, body, headers=None):
+    def raw(self, body, headers=None, tenant=None, timeout=5):
         request = urllib.request.Request(
-            self.url + f"/v1/tenants/{self.tenant}/operations",
+            self.url + f"/v1/tenants/{tenant or self.tenant}/operations",
             canonical_bytes(body),
             headers={
                 "Content-Type": "application/json",
@@ -80,7 +82,7 @@ class SharedHTTPTests(unittest.TestCase):
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
@@ -158,6 +160,61 @@ class SharedHTTPTests(unittest.TestCase):
             403, self.raw(read, {"Authorization": "", "Cookie": "session=anything"})[0]
         )
         self.assertEqual("invalid_request", self.raw({**read, "credential": reader})[1]["error"])
+
+    def test_missing_tenant_answers_like_a_bad_credential_for_an_existing_one(self):
+        read = {"version": 1, "operation": "context", "args": {"project": "demo"}}
+        with self.assertNoLogs("memoryking", level="ERROR"):
+            missing = self.raw(read, tenant="t_" + uuid.uuid4().hex)
+            wrong = self.raw(read, {"Authorization": "Bearer " + self.credential[:-4] + "0000"})
+        self.assertEqual(wrong, missing)
+        self.assertEqual(400, missing[0])
+        self.assertEqual("invalid_token", missing[1]["error"])
+
+    def test_database_lock_timeout_deadlock_and_cancel_answer_service_busy_429(self):
+        read = {"version": 1, "operation": "context", "args": {"project": "demo"}}
+        for error in (
+            psycopg.errors.LockNotAvailable,
+            psycopg.errors.QueryCanceled,
+            psycopg.errors.DeadlockDetected,
+            psycopg.errors.SerializationFailure,
+        ):
+            with (
+                self.subTest(error.__name__),
+                mock.patch.object(self.service, "execute", side_effect=error("SECRET sql text")),
+                self.assertLogs("memoryking", level="WARNING") as logs,
+            ):
+                status, body = self.raw(read)
+            self.assertEqual(429, status)
+            self.assertEqual("service_busy", body["error"])
+            self.assertNotIn("request_id", body)
+            self.assertEqual(["WARNING"], [record.levelname for record in logs.records])
+            self.assertNotIn("SECRET", logs.output[0])
+
+    def test_real_lock_wait_in_a_transaction_answers_service_busy_429(self):
+        with psycopg.connect(self.cluster.dsn(), autocommit=False) as blocker:
+            blocker.execute(
+                "SELECT 1 FROM memoryking.tenant_gates WHERE tenant=%s FOR UPDATE", (self.tenant,)
+            )
+            started = time.monotonic()
+            status, body = self.raw(
+                {"version": 1, "operation": "context", "args": {"project": "demo"}}, timeout=15
+            )
+            blocker.rollback()
+        self.assertEqual((429, "service_busy"), (status, body["error"]))
+        self.assertLess(time.monotonic() - started, 8)
+
+    def test_rotation_over_http_retires_the_old_credential_and_keeps_the_grant(self):
+        args = {"principal": "rotating", "project": "demo", "capabilities": ["read"]}
+        first = self.command("grant", args)["credential"]
+        self.assertEqual(first, self.command("grant", args)["credential"])
+        rotated = self.command("grant", {**args, "rotate": True})["credential"]
+        self.assertNotEqual(first, rotated)
+        context = self.command("context", {"project": "demo"}, rotated)
+        self.assertEqual("rotating", context["principal"])
+        with self.assertRaises(LocalError) as caught:
+            self.command("context", {"project": "demo"}, first)
+        self.assertEqual("credential_replaced", caught.exception.code)
+        self.assertEqual(rotated, self.command("grant", args)["credential"])
 
     def test_delegation_live_intersection_expiry_audience_and_context_switch(self):
         delegator = self.command(

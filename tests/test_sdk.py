@@ -43,6 +43,10 @@ def initialize():
 
 class SDKTests(unittest.TestCase):
     fails = retrieval_helpers.RetrievalTests.fails
+    run_k = knowledge_helpers.KnowledgeTests.run_k
+    body = knowledge_helpers.KnowledgeTests.body
+    propose = knowledge_helpers.KnowledgeTests.propose
+    review = knowledge_helpers.KnowledgeTests.review
 
     def setUp(self):
         knowledge_helpers.KnowledgeTests.setUp(self)
@@ -303,6 +307,246 @@ class SDKTests(unittest.TestCase):
         self.assertEqual(handed["status"], "prepared")
         self.assertTrue(LEAN_VALIDATORS["recall"].is_valid({"query": "x"}))
         self.assertFalse(LEAN_VALIDATORS["recall"].is_valid({"query": "x", "extra": 1}))
+
+    def test_lean_save_progress_over_stdio_takes_findings_merges_and_resumes_ready(self):
+        calls = [
+            (
+                "save_progress",
+                {
+                    "task": "merge-task",
+                    "objective": "Fix the retry deadline",
+                    "current_state": "Investigating",
+                    "next_actions": ["Run the regression"],
+                    "findings": ["Backoff exceeds the deadline"],
+                    "failed_attempts": [
+                        {"action": "Raise every timeout", "outcome": "Still failed"}
+                    ],
+                    "blockers": ["Need a full regression result"],
+                    "hard_constraints": ["Never touch the billing path"],
+                },
+            ),
+            (
+                "save_progress",
+                {
+                    "task": "merge-task",
+                    "objective": "Fix the retry deadline",
+                    "current_state": "Patch drafted",
+                    "blockers": [],
+                },
+            ),
+            ("resume", {"task": "merge-task"}),
+        ]
+        frames = [initialize(), {"jsonrpc": "2.0", "method": "notifications/initialized"}]
+        frames += [
+            rpc(10 + n, "tools/call", {"name": name, "arguments": arguments})
+            for n, (name, arguments) in enumerate(calls)
+        ]
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(self.credential),
+                "--project",
+                "p",
+                "--profile",
+                "lean",
+            ],
+            input=b"".join(canonical_bytes(frame) + b"\n" for frame in frames),
+            capture_output=True,
+            timeout=60,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        replies = {
+            r["id"]: r["result"] for r in map(json.loads, run.stdout.splitlines()) if "id" in r
+        }
+        for number in (10, 11, 12):
+            self.assertFalse(replies[number]["isError"], replies[number])
+        payload = {n: json.loads(replies[n]["content"][0]["text"]) for n in (10, 11, 12)}
+        self.assertEqual(payload[11]["revision"], 2)
+        text = payload[12]["text"]
+        state = self.client.tool(
+            "memory_resume",
+            {"action": "resume", "args": {"task": "merge-task", "checkpoint": None}},
+        )
+        self.assertEqual(state["status"], "ready")
+        self.assertNotIn("Blocked", text)
+        self.assertNotIn("_Status incomplete", text)
+        self.assertIn("Patch drafted", text)
+        # Omitted sections carried over; the supplied empty list cleared blockers.
+        self.assertIn("Run the regression", text)
+        self.assertIn("## Do not repeat", text)
+        self.assertIn("Never touch the billing path", text)
+        self.assertIn("Backoff exceeds the deadline", text)
+        self.assertNotIn("Need a full regression result", text)
+        self.assertIn("Never written down", text)
+        self.assertIn("defaulted:repository", text)
+        found = state["checkpoint"]["state"]["findings"]
+        self.assertEqual([f["kind"] for f in found], ["hypothesis"])
+
+    def lean_bridge(self, calls, *extra, env=None):
+        """Run the lean stdio bridge as a host would; the decoded tool replies, in order."""
+        frames = [initialize(), {"jsonrpc": "2.0", "method": "notifications/initialized"}]
+        frames += [
+            rpc(10 + n, "tools/call", {"name": name, "arguments": arguments})
+            for n, (name, arguments) in enumerate(calls)
+        ]
+        environment = {k: v for k, v in os.environ.items() if not k.startswith("MEMORYKING_")}
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(self.credential),
+                "--project",
+                "p",
+                "--profile",
+                "lean",
+                *extra,
+            ],
+            input=b"".join(canonical_bytes(frame) + b"\n" for frame in frames),
+            capture_output=True,
+            timeout=60,
+            env={**environment, **(env or {})},
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        replies = {
+            r["id"]: r["result"] for r in map(json.loads, run.stdout.splitlines()) if "id" in r
+        }
+        return [replies[10 + n] for n in range(len(calls))]
+
+    def scoped_constraint(self):
+        self.review(
+            self.propose(
+                self.body(
+                    "Never touch production data",
+                    kind="constraint",
+                    authority="project",
+                    rule_key="prod",
+                    effect="prohibit",
+                    rule_value="write",
+                    selector=knowledge_helpers.sel(knowledge_helpers.eq("environment", "prod")),
+                ),
+                key="prod-rule",
+            )
+        )
+
+    def test_lean_advertised_budget_maximum_is_accepted_through_the_bridge(self):
+        from memoryking import lean
+
+        for tool in lean.TOOLS:
+            budget = tool["inputSchema"]["properties"].get("budget")
+            if budget is not None:
+                self.assertEqual(budget["maximum"], 65536, tool["name"])
+        top = lean.BUDGET["maximum"]
+        save = {
+            "task": "budget",
+            "objective": "Check budgets",
+            "current_state": "Started",
+            "next_actions": ["Resume"],
+        }
+        saved, recalled, resumed = self.lean_bridge(
+            [
+                ("save_progress", save),
+                ("recall", {"query": "budgets", "budget": top}),
+                ("resume", {"task": "budget", "budget": top}),
+            ]
+        )
+        for reply in (saved, recalled, resumed):
+            self.assertFalse(reply["isError"], reply)
+
+    def test_lean_tools_with_a_scoped_constraint_block_without_a_binding_and_name_the_field(self):
+        self.scoped_constraint()
+        save = {
+            "task": "scoped",
+            "objective": "Fix the retry deadline",
+            "current_state": "Investigating",
+            "next_actions": ["Run the regression"],
+        }
+        calls = [
+            ("save_progress", save),
+            ("recall", {"query": "retry"}),
+            ("resume", {"task": "scoped"}),
+            ("save_progress", {**save, "current_state": "Patch drafted"}),
+            ("resume", {"task": "scoped"}),
+        ]
+        first, recalled, _, second, resumed = self.lean_bridge(calls)
+        # Saving works first time and, because the read of the caller's own state still
+        # succeeds, again over the unresolved stream.
+        self.assertFalse(first["isError"], first)
+        self.assertFalse(second["isError"], second)
+        self.assertEqual(json.loads(second["content"][0]["text"])["revision"], 2)
+        text = json.loads(recalled["content"][0]["text"])
+        self.assertEqual(text["status"], "blocked")
+        self.assertEqual(text["reason"], "applicability_unknown")
+        self.assertEqual(text["unbound_fields"], ["environment"])
+        self.assertIn("**Blocked:** applicability_unknown. Decide, do not truncate.", text["text"])
+        self.assertIn("Missing binding fields: `environment`", text["text"])
+        self.assertNotIn("Never touch production", text["text"])
+        note = json.loads(resumed["content"][0]["text"])
+        self.assertEqual(note["status"], "blocked")
+        self.assertIn("Missing binding fields: `environment`", note["text"])
+        self.assertIn("Mandatory constraints: unresolved", note["text"])
+        self.assertIn("Patch drafted", note["text"])
+        self.assertIn("Fix the retry deadline", note["text"])
+
+    def test_lean_session_binding_resolves_the_constraint_by_flag_and_environment(self):
+        self.scoped_constraint()
+        calls = [
+            ("save_progress", {"task": "bound", "objective": "Ship it", "current_state": "Ready"}),
+            ("recall", {"query": "production"}),
+            ("resume", {"task": "bound"}),
+        ]
+        sessions = {
+            "flag": self.lean_bridge(calls, "--binding", "environment=prod"),
+            "env": self.lean_bridge(calls, env={"MEMORYKING_BINDINGS": "environment=prod"}),
+        }
+        for name, (saved, recalled, resumed) in sessions.items():
+            with self.subTest(name):
+                self.assertFalse(saved["isError"], saved)
+                brief = json.loads(recalled["content"][0]["text"])
+                self.assertNotEqual(brief["status"], "blocked", brief["text"])
+                self.assertIn("Never touch production data", brief["text"])
+                note = json.loads(resumed["content"][0]["text"])
+                self.assertEqual(note["status"], "ready")
+                self.assertIn("Never touch production data", note["text"])
+        # A binding that rules the constraint out is just as good: the answer is known.
+        (_, dev, _) = self.lean_bridge(calls, "--binding", "environment=dev")
+        self.assertNotEqual(json.loads(dev["content"][0]["text"])["status"], "blocked")
+        # Keys come from the selector vocabulary; anything else is refused at start.
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking.adapters.stdio",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(self.credential),
+                "--project",
+                "p",
+                "--binding",
+                "colour=blue",
+            ],
+            input=b"",
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(run.returncode, 1)
+        self.assertIn(b"invalid_binding", run.stderr)
+
+    def test_lean_tool_schemas_take_no_bindings(self):
+        from memoryking import lean
+
+        for tool in lean.TOOLS:
+            self.assertNotIn("bindings", tool["inputSchema"]["properties"])
+            self.assertNotIn("binding", tool["inputSchema"]["properties"])
 
     def test_lean_bridge_lists_five_tools_over_stdio(self):
         frames = [

@@ -8,10 +8,14 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import test_knowledge as knowledge_helpers
 
 from memoryking import host_hooks
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import LocalStore
+from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError
 
 CLAUDE_LINES = [
@@ -99,11 +103,11 @@ class HostHookTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalError, "hook_event_invalid"):
             host_hooks.read_event("not json", {})
 
-    def test_transcript_tail_prefers_assistant_text_and_is_bounded(self):
+    def test_transcript_tail_keeps_turns_and_is_bounded(self):
         tail = host_hooks.transcript_tail(self.transcript)
         self.assertIn("scoped per request", tail)
         self.assertIn("Tests pass now.", tail)
-        self.assertNotIn("Fix the retry bug", tail)
+        self.assertIn("User: Fix the retry bug", tail)
         plain = self.root / "plain.txt"
         plain.write_text("x" * 50000 + "END")
         self.assertTrue(host_hooks.transcript_tail(plain, limit=100).endswith("END"))
@@ -135,10 +139,191 @@ class HostHookTests(unittest.TestCase):
         text = host_hooks.session_start(
             event, query="retry deadline", task="retry-fix", **self.where
         )
-        self.assertIn("# Resume: Session sess on demo", text)
+        self.assertIn("# Resume: Session sess on demo (hook capture)", text)
         self.assertIn("scoped per request", text)
         self.assertIn("# Briefing: retry deadline", text)
         self.assertIn("claude-compact", text)
+
+    def _event(self, name, session="sess", **extra):
+        return host_hooks.read_event(
+            json.dumps(
+                {
+                    "session_id": session,
+                    "transcript_path": str(self.transcript),
+                    "hook_event_name": name,
+                    "prompt_id": "p",
+                    **extra,
+                }
+            ),
+            {},
+        )
+
+    def _agent_checkpoint(self, task):
+        context = request(self.server.path, self.token(), "context", {"project": "demo"})
+        return request(
+            self.server.path,
+            self.token(),
+            "working",
+            {
+                "command": {
+                    "version": 1,
+                    "incarnation": context["incarnation"],
+                    "action": "save",
+                    "key": "agent-own-checkpoint",
+                    "args": {
+                        "project": "demo",
+                        "task": task,
+                        "run": None,
+                        "readers": None,
+                        "expected_revision": None,
+                        "checkpoint": complete(
+                            {
+                                "objective": "Agent objective",
+                                "current_state": "AGENT-AUTHORED-STATE",
+                            },
+                            0,
+                        ),
+                    },
+                }
+            },
+        )
+
+    def token(self):
+        return self.credential_file.read_text().strip()
+
+    def test_transcript_tail_never_reads_tool_inputs_and_scrubs_secrets(self):
+        lines = [
+            {"type": "user", "message": {"role": "user", "content": "Deploy with care"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Writing the config. Authorization: Bearer abcdefghijklmnopqrstuvwx",
+                        },
+                        {
+                            "type": "tool_use",
+                            "name": "Write",
+                            "input": {
+                                "file_path": "/w/.env",
+                                "content": "API_KEY=sk-live-PLANTEDSECRET1234567890\n",
+                                "text": "FILEBODYMARKER",
+                            },
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "content": "SUCCESSFUL-RESULT-BODY"},
+                        {
+                            "type": "tool_result",
+                            "is_error": True,
+                            "content": [
+                                {"type": "text", "text": "ENOENT while password=hunter2hunter2"}
+                            ],
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": "key AKIAIOSFODNN7EXAMPLE ghp_"
+                    + "a" * 36
+                    + " sk-ant-api03-"
+                    + "b" * 30,
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": "-----BEGIN RSA PRIVATE KEY-----\nMIIBOg\n-----END RSA PRIVATE KEY-----",
+                },
+            },
+        ]
+        path = self.root / "secrets.jsonl"
+        path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+        tail = host_hooks.transcript_tail(path)
+        self.assertIn("User: Deploy with care", tail)
+        self.assertIn("Tool error: ENOENT", tail)
+        for leaked in (
+            "PLANTEDSECRET",
+            "FILEBODYMARKER",
+            "SUCCESSFUL-RESULT-BODY",
+            "hunter2",
+            "abcdefghijklmnopqrstuvwx",
+            "AKIAIOSFODNN7EXAMPLE",
+            "ghp_",
+            "sk-ant",
+            "MIIBOg",
+        ):
+            self.assertNotIn(leaked, tail)
+        self.assertIn(host_hooks.REDACTED, tail)
+        event = host_hooks.read_event(
+            json.dumps(
+                {
+                    "session_id": "s",
+                    "transcript_path": str(path),
+                    "hook_event_name": "SessionEnd",
+                    "prompt_id": "p",
+                }
+            ),
+            {},
+        )
+        result = host_hooks.save(event, "session-end", task="t", **self.where)
+        self.assertGreaterEqual(result["redacted"], 5)
+        text = host_hooks.session_start(event, query="Deploy with care", task="t", **self.where)
+        self.assertIn("Deploy with care", text)
+        self.assertIn("secret-shaped value(s) redacted", text)
+        for leaked in ("PLANTEDSECRET", "hunter2", "AKIAIOSFODNN7EXAMPLE"):
+            self.assertNotIn(leaked, text)
+        plain = host_hooks.scrub('token_count=5 and password: s3cretpass api_key="abcd1234"')
+        self.assertEqual(plain[1], 2)
+        self.assertIn("token_count=5", plain[0])
+
+    def test_user_instruction_is_recalled_at_session_start(self):
+        lines = [
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "Always use pgbouncer transaction pooling"},
+            },
+            {"type": "assistant", "message": {"role": "assistant", "content": "Noted."}},
+        ]
+        self.transcript.write_text("".join(json.dumps(line) + "\n" for line in lines))
+        host_hooks.save(self._event("SessionEnd"), "session-end", **self.where)
+        text = host_hooks.session_start(
+            self._event("SessionStart"), query="pgbouncer pooling", **self.where
+        )
+        self.assertIn("pgbouncer transaction pooling", text)
+
+    def test_agent_checkpoint_survives_hooks_and_both_hooks_succeed(self):
+        self._agent_checkpoint("retry-fix")
+        compact = self._event("PreCompact", trigger="auto")
+        first = host_hooks.save(compact, "pre-compact", task="retry-fix", **self.where)
+        ended = host_hooks.save(
+            self._event("SessionEnd"), "session-end", task="retry-fix", **self.where
+        )
+        again = host_hooks.save(compact, "pre-compact", task="retry-fix", **self.where)
+        self.assertEqual((first["revision"], ended["revision"]), (1, 2))
+        self.assertEqual(again["checkpoint"], first["checkpoint"])
+        text = host_hooks.session_start(
+            self._event("SessionStart"), query="retry", task="retry-fix", **self.where
+        )
+        # The agent's own checkpoint (revision 1 of its stream) is still the first resume.
+        self.assertIn("# Resume: Agent objective", text)
+        self.assertIn("AGENT-AUTHORED-STATE", text)
+        self.assertIn("(hook capture)", text)
+        self.assertLess(text.index("AGENT-AUTHORED-STATE"), text.index("(hook capture)"))
+        self.assertEqual(host_hooks.hook_task("t"), "t--mkhook")
+        self.assertLessEqual(len(host_hooks.hook_task("x" * 96)), 96)
 
     def test_session_end_uses_the_last_message_and_start_without_a_task_still_briefs(self):
         event = host_hooks.read_event(
@@ -292,6 +477,39 @@ class HostHookTests(unittest.TestCase):
         with self.assertRaisesRegex(LocalError, "hook_config_invalid"):
             host_hooks.install(host="codex", **common)
 
+    def test_install_writes_bindings_into_each_command_and_stays_idempotent(self):
+        cwd, home = self.root / "repo", self.root / "home"
+        cwd.mkdir()
+        common = {
+            "scope": "project",
+            "project": "demo",
+            "cwd": cwd,
+            "home": home,
+            "profile": "home",
+            "task": "retry-fix",
+        }
+        path = cwd / ".claude/settings.json"
+        plain = host_hooks.install(host="claude", **common)
+        pairs = ["role=implement", "environment=prod"]
+        bound = host_hooks.install(host="claude", binding=pairs, **common)
+        self.assertNotEqual(plain["config"], bound["config"])
+        written = path.read_text()
+        for groups in json.loads(written)["hooks"].values():
+            self.assertEqual(len(groups), 1)  # replaced, never duplicated
+            command = groups[0]["hooks"][0]["command"]
+            self.assertTrue(
+                command.endswith('--binding "environment=prod" --binding "role=implement"'),
+                command,
+            )
+        # The same arguments, in any order, change nothing.
+        host_hooks.install(host="claude", binding=pairs[::-1], **common)
+        host_hooks.install(host="claude", binding=pairs, **common)
+        self.assertEqual(path.read_text(), written)
+        with self.assertRaisesRegex(LocalError, "invalid_binding"):
+            host_hooks.install(host="claude", binding=["colour=blue"], **common)
+        removed = host_hooks.install(host="claude", binding=pairs, remove=True, **common)
+        self.assertNotIn("hooks", removed["config"])
+
     def test_hook_checkpoint_is_readable_by_an_ordinary_resume(self):
         event = host_hooks.read_event(
             json.dumps(
@@ -318,7 +536,7 @@ class HostHookTests(unittest.TestCase):
                     "action": "resume",
                     "args": {
                         "project": "demo",
-                        "task": "retry-fix",
+                        "task": "retry-fix--mkhook",
                         "run": None,
                         "checkpoint": None,
                         "bindings": [{}],
@@ -329,7 +547,181 @@ class HostHookTests(unittest.TestCase):
             },
         )
         state = packet["checkpoint"]["state"]
-        self.assertEqual(state["objective"], "Session sess on demo")
+        self.assertEqual(state["objective"], "Session sess on demo (hook capture)")
         self.assertIn("scoped per request", state["current_state"])
         self.assertEqual(state["references"][0]["kind"], "observation")
         self.assertIn("defaulted:next_actions", state["capture"]["gaps"])
+
+
+class HookBindingTests(unittest.TestCase):
+    """Hooks and the CLI carry session bindings, so a scoped constraint does not lock them out."""
+
+    run_k = knowledge_helpers.KnowledgeTests.run_k
+    body = knowledge_helpers.KnowledgeTests.body
+    propose = knowledge_helpers.KnowledgeTests.propose
+    review = knowledge_helpers.KnowledgeTests.review
+
+    def setUp(self):
+        knowledge_helpers.KnowledgeTests.setUp(self)
+        self.credential = self.control / "owner.credential"
+        self.server = Server(self.store)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.where = {"socket": self.server.path, "credential": self.credential, "project": "p"}
+        self.review(
+            self.propose(
+                self.body(
+                    "Never touch production data",
+                    kind="constraint",
+                    authority="project",
+                    rule_key="prod",
+                    effect="prohibit",
+                    rule_value="write",
+                    selector=knowledge_helpers.sel(knowledge_helpers.eq("environment", "prod")),
+                ),
+                key="prod-rule",
+            )
+        )
+        token = self.credential.read_text().strip()
+        context = request(self.server.path, token, "context", {"project": "p"})
+        request(
+            self.server.path,
+            token,
+            "working",
+            {
+                "command": {
+                    "version": 1,
+                    "incarnation": context["incarnation"],
+                    "action": "save",
+                    "key": "own-checkpoint",
+                    "args": {
+                        "project": "p",
+                        "task": "retry-fix",
+                        "run": None,
+                        "readers": None,
+                        "expected_revision": None,
+                        "checkpoint": complete(
+                            {"objective": "Own objective", "current_state": "OWN-STATE"}, 0
+                        ),
+                    },
+                }
+            },
+        )
+        self.env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"PYTHONPATH", "PYTHONHOME"} and not k.startswith("MEMORYKING_")
+        }
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.thread.join(timeout=5)
+        self.server.server_close()
+        knowledge_helpers.KnowledgeTests.tearDown(self)
+
+    def test_session_start_names_the_missing_field_and_still_resumes_own_state(self):
+        with patch.dict(os.environ, self.env, clear=True):
+            text = host_hooks.session_start({}, query="retry", task="retry-fix", **self.where)
+        self.assertIn("# Resume: Own objective", text)
+        self.assertIn("OWN-STATE", text)
+        self.assertIn("Missing binding fields: `environment`", text)
+        self.assertIn("# Briefing: retry", text)
+        self.assertNotIn("Never touch production", text)
+
+    def test_memoryking_bindings_environment_resolves_the_constraint(self):
+        with patch.dict(os.environ, {**self.env, "MEMORYKING_BINDINGS": "environment=prod"}):
+            text = host_hooks.session_start({}, query="retry", task="retry-fix", **self.where)
+        self.assertNotIn("Blocked", text)
+        self.assertIn("Never touch production data", text)
+        self.assertIn("OWN-STATE", text)
+        # An explicit binding wins over the environment, key by key.
+        with patch.dict(os.environ, {**self.env, "MEMORYKING_BINDINGS": "environment=prod"}):
+            text = host_hooks.session_start(
+                {}, query="retry", binding=["environment=dev"], **self.where
+            )
+        self.assertNotIn("Never touch production data", text)
+        self.assertNotIn("Blocked", text)
+
+    def test_cli_hook_and_recall_accept_the_environment_variable_and_flag(self):
+        connected = [
+            "--project",
+            "p",
+            "--socket",
+            str(self.server.path),
+            "--credential",
+            str(self.credential),
+        ]
+
+        def run(*args, env=None):
+            done = subprocess.run(
+                [sys.executable, "-m", "memoryking", *args],
+                input="{}",
+                capture_output=True,
+                text=True,
+                env={**self.env, **(env or {})},
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return done.stdout
+
+        blocked = run("hook", "session-start", *connected, "--query", "retry")
+        self.assertIn("Missing binding fields: `environment`", blocked)
+        by_env = run(
+            "hook",
+            "session-start",
+            *connected,
+            "--query",
+            "retry",
+            env={"MEMORYKING_BINDINGS": "environment=prod"},
+        )
+        self.assertIn("Never touch production data", by_env)
+        self.assertNotIn("Blocked", by_env)
+        by_flag = run("recall", *connected, "--query", "retry", "--binding", "environment=prod")
+        self.assertIn("Never touch production data", by_flag)
+        self.assertIn("Missing binding fields", run("recall", *connected, "--query", "retry"))
+
+    def test_installed_command_resolves_the_constraint_like_the_bridge(self):
+        cwd = self.root / "repo"
+        cwd.mkdir()
+        install = [
+            sys.executable,
+            "-m",
+            "memoryking",
+            "hooks",
+            "install",
+            "--host",
+            "claude",
+            "--project",
+            "p",
+            "--socket",
+            str(self.server.path),
+            "--credential",
+            str(self.credential),
+            "--task",
+            "retry-fix",
+            "--query",
+            "retry",
+            "--cwd",
+            str(cwd),
+        ]
+
+        def installed(*extra):
+            done = subprocess.run([*install, *extra], capture_output=True, text=True, env=self.env)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            config = json.loads((cwd / ".claude/settings.json").read_text())
+            return config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+
+        def start(command):
+            done = subprocess.run(
+                command, shell=True, input="{}", capture_output=True, text=True, env=self.env
+            )
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return done.stdout
+
+        self.assertIn("Missing binding fields: `environment`", start(installed()))
+        command = installed("--binding", "environment=prod")
+        self.assertIn('--binding "environment=prod"', command)
+        text = start(command)
+        self.assertNotIn("Blocked", text)
+        self.assertIn("Never touch production data", text)
+        self.assertIn("OWN-STATE", text)
+        self.assertEqual(installed("--binding", "environment=prod"), command)

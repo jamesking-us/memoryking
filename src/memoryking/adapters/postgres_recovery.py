@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import os
 import re
 import secrets
 import threading
@@ -17,7 +19,16 @@ from typing import Any, Callable
 
 from psycopg import sql
 
-from memoryking.adapters.local_files import Ownership, atomic, private_dir, private_file, sync_dir
+from memoryking.adapters.local_files import (
+    Ownership,
+    atomic,
+    durable_sync,
+    private_dir,
+    private_file,
+    read_blob_index,
+    sync_dir,
+    write_blob_index,
+)
 from memoryking.adapters.local_store import LocalStore, identifier, recovery_admin, uid
 from memoryking.adapters.postgres_admin import Roles
 from memoryking.adapters.postgres_sql import PostgresSQL, record_factory
@@ -76,7 +87,11 @@ TABLES_V4 = TABLES_V3 + ("egress_audit", "session_summaries")
 # Schema 5 archives add source trust rules and observation holds.
 TABLES_V5 = TABLES_V4 + ("source_trust", "observation_holds")
 # Schema 6 archives add entity anchors.
-TABLES = TABLES_V5 + ("anchors",)
+TABLES_V6 = TABLES_V5 + ("anchors",)
+# Schema 8 archives add credential generations, so a restore knows which credentials were replaced.
+TABLES_V8 = TABLES_V6 + ("credential_generations",)
+# Schema 9 archives add the lexical statistics and the state of the lexical index.
+TABLES = TABLES_V8 + ("lexical_state", "lexical_projects", "lexical_terms")
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
@@ -125,6 +140,35 @@ def settings(connection: Any, tenant: str) -> None:
     connection.execute("SET LOCAL lock_timeout='5s'")
 
 
+def pending_journal(pool: Any, control: Path, tenant: str) -> dict[str, Any]:
+    """Journal records the tenant's database has not applied, without applying any.
+
+    Names the sequence, kind and tenant of each and the error from the last attempt to apply
+    it (recorded beside the journal), never record content. The journal is verified against
+    the anchor exactly as a request would, and nothing is skipped, altered or replayed.
+    """
+    from memoryking.adapters.postgres_pool import acquire
+
+    identifier(tenant)
+    private_dir(control / tenant)
+    controller = SharedControl(control / tenant)
+    connection = acquire(pool, timeout=5)
+    try:
+        with connection.transaction():
+            settings(connection, tenant)
+            row = connection.execute("SELECT value FROM meta WHERE key='journal'").fetchone()
+        applied = int(row[0]) if row is not None else 0
+    finally:
+        pool.putconn(connection)
+    with controller.locked():
+        anchor = controller.read_anchor()
+        held = controller.verified_count(anchor)
+        if applied > held:
+            raise LocalError("journal_rollback")
+        records = controller.records_after(anchor, applied)
+    return controller.describe_pending(records, applied, held)
+
+
 def backup(
     store: PostgresStore, backup_connection: Any, destination: Path, *, roles: Roles | None = None
 ) -> dict[str, Any]:
@@ -148,13 +192,13 @@ def backup(
         private_dir(destination, create=True)
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 6,
+            "schema": 9,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
             "tables": {},
-            "blobs": [],
         }
+        blobs: list[str] = []
         total = 0
         with backup_connection.transaction():
             backup_connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -184,9 +228,7 @@ def backup(
                             out.write(line)
                             count += 1
                     out.flush()
-                    import os
-
-                    os.fsync(out.fileno())
+                    durable_sync(out.fileno())
                 manifest["tables"][table] = {
                     "columns": names,
                     "rows": count,
@@ -208,8 +250,8 @@ def backup(
                 if total > ARCHIVE_LIMIT:
                     raise LocalError("backup_archive_limit")
                 atomic(destination / "blobs" / digest, raw)
-                manifest["blobs"].append(digest)
-        manifest["blobs"].sort()
+                blobs.append(digest)
+        manifest["blob_index"] = write_blob_index(destination, blobs)
         manifest["archive_bytes"] = total
         atomic(destination / "manifest", store.control.sign(manifest).encode())
         sync_dir(destination)
@@ -252,6 +294,13 @@ def restore(
     for directory in (root, control, control / tenant, archive):
         private_dir(directory)
     if connection.execute("SELECT current_user").fetchone()[0] != roles.migration:
+        raise LocalError("migration_role_required")
+    # Restore writes one tenant's rows; a role that bypasses row-level security would not
+    # be confined to them, so refuse it rather than trusting the role name alone.
+    attributes = connection.execute(
+        "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user"
+    ).fetchone()
+    if attributes is None or any(attributes):
         raise LocalError("migration_role_required")
     if connection.execute("SELECT pg_is_in_recovery()").fetchone()[0]:
         raise LocalError("primary_required")
@@ -299,11 +348,14 @@ def restore(
             3: TABLES_V3,
             4: TABLES_V4,
             5: TABLES_V5,
-            6: TABLES,
+            6: TABLES_V6,
+            7: TABLES_V6,
+            8: TABLES_V8,
+            9: TABLES,
         }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)
@@ -316,7 +368,13 @@ def restore(
                 raise LocalError("backup_invalid")
             if columns(connection, table) != manifest["tables"][table]["columns"]:
                 raise LocalError("schema_unsupported")
-        for digest in manifest["blobs"]:
+        # Archives before schema 7 embed the list; later ones commit to a separate index.
+        blobs = (
+            read_blob_index(archive, manifest["blob_index"])
+            if "blob_index" in manifest
+            else manifest["blobs"]
+        )
+        for digest in blobs:
             if (
                 not isinstance(digest, str)
                 or len(digest) != 64
@@ -345,7 +403,7 @@ def restore(
             hook("restore_fenced")
             directory = root / "blobs" / tenant
             private_dir(directory, create=True)
-            for digest in manifest["blobs"]:
+            for digest in blobs:
                 atomic(directory / digest, (archive / "blobs" / digest).read_bytes())
             for table in reversed(TABLES):
                 if table not in {"tenants", "tenant_gates"}:
@@ -406,42 +464,49 @@ def restore(
             recovery.db.execute(
                 "UPDATE meta SET value=? WHERE key='incarnation'", (recovery.incarnation,)
             )
-            recovery.db.execute("UPDATE retries SET result=NULL")
-            recovery.db.execute("DELETE FROM receipts")
+            recovery.db.execute("UPDATE retries SET result=NULL WHERE tenant=?", (tenant,))
+            recovery.db.execute("DELETE FROM receipts WHERE tenant=?", (tenant,))
             recovery.db.execute(
-                "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]'"
+                "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=?",
+                (tenant,),
             )
             recovery.db.execute(
-                "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]'"
+                "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]' WHERE tenant=?",
+                (tenant,),
             )
-            recovery.db.execute("UPDATE handoffs SET state='retired'")
-            recovery._retire_optional()
+            recovery.db.execute("UPDATE handoffs SET state='retired' WHERE tenant=?", (tenant,))
+            recovery._retire_optional(tenant)
             recovery._reindex(tenant)
             live = {
                 row[0]
                 for row in recovery.db.execute(
-                    "SELECT blob FROM observations WHERE blob IS NOT NULL"
+                    "SELECT blob FROM observations WHERE blob IS NOT NULL AND tenant=?", (tenant,)
                 )
             }
-            admin = recovery_admin(recovery.db, clock.utc_ms())
+            admin = recovery_admin(recovery.db, clock.utc_ms(), tenant)
             if admin is None:
                 raise LocalError("recovery_admin_missing")
-            position = recovery.db.execute("SELECT position FROM tenants").fetchone()[0]
+            # The generation as the restored database (archive plus replayed journal) records
+            # it, read in this transaction: the credential handed back must be the admin's
+            # current one, not a generation-0 credential that authorization would refuse.
+            generation = recovery._generation(tenant, admin[1])
+            position = recovery.db.execute(
+                "SELECT position FROM tenants WHERE tenant=?", (tenant,)
+            ).fetchone()[0]
             serial = int(
                 recovery.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[
                     0
                 ]
             )
         hook("restore_before_activation")
-        credential = controller.sign(
-            {
-                "kind": "credential",
-                "store": controller.store,
-                "incarnation": recovery.incarnation,
-                "tenant": tenant,
-                "principal": admin[1],
-                "audience": audience,
-            }
+        # Generation 0 is omitted from the token, so it stays byte-identical to one minted
+        # before credential generations existed.
+        credential = recovery._token(
+            "credential",
+            tenant=tenant,
+            principal=admin[1],
+            audience=audience,
+            generation=generation,
         )
         credential_path = control / tenant / "owner.credential"
         atomic(credential_path, credential.encode())
@@ -508,11 +573,25 @@ def end_maintenance(
             "SELECT capabilities,starts,expires FROM grants WHERE tenant=%s AND principal=%s AND project='*'",
             (tenant, principal),
         ).fetchone()
+        generation_row = connection.execute(
+            "SELECT generation FROM credential_generations WHERE tenant=%s AND principal=%s",
+            (tenant, principal),
+        ).fetchone()
     capabilities = row[0] if row is not None else []
     if isinstance(capabilities, str):
         capabilities = load_strict(capabilities.encode())
     if row is None or "admin" not in capabilities or not temporal_valid(at, row[1], row[2]):
         raise LocalError("denied")
+    # After the grant check, as in the stores' _auth: a principal without a current admin
+    # grant is refused exactly as before, and only a credential that would otherwise be
+    # accepted learns it was replaced. Compared as integers, never as token text.
+    presented = identity.get("generation", 0)
+    if (
+        not isinstance(presented, int)
+        or isinstance(presented, bool)
+        or presented != (int(generation_row[0]) if generation_row is not None else 0)
+    ):
+        raise LocalError("credential_replaced")
     with controller.locked():
         anchor = controller.read_anchor()
         if identity.get("incarnation") != anchor["incarnation"]:
@@ -523,3 +602,92 @@ def end_maintenance(
         anchor.pop("maintenance_operation")
         controller.anchor(anchor)
     return {"status": "active", "tenant": tenant, "operation": operation}
+
+
+def rotate_owner(
+    pool: Any,
+    root: Path,
+    control: Path,
+    tenant: str,
+    *,
+    audience: str = "memoryking-shared",
+    clock: Clock | None = None,
+    fault: Callable[[str], None] | None = None,
+) -> Path:
+    """Replace the tenant's operator credential file with one of the next generation.
+
+    The operator holds `control/<tenant>/owner.credential` (written by `init-tenant` and
+    `restore`). The rotation is the same journaled grant restatement that makes any
+    rotation, restating the admin's current capabilities (which the `grant` operation
+    cannot, since it never grants `admin`), so a restore replays it. The new credential is
+    made durable as `owner.credential.next` before the generation commits and is then
+    moved over `owner.credential`; a failure in between leaves the working credential in
+    the `.next` file and a repeat run completes the rename instead of rotating a second
+    time. The previous credential stops working at the commit. A running service needs no
+    stop: the rotation is one ordinary tenant transaction.
+    """
+    identifier(tenant)
+    directory = control / tenant
+    private_dir(directory)
+    target, pending = directory / "owner.credential", directory / "owner.credential.next"
+    private_file(target)
+    # Only decoded to open the store; authorization below needs a current admin grant.
+    held = target.read_text().strip()
+    with PostgresStore(
+        pool, root, control, tenant, held, audience=audience, clock=clock, fault=fault
+    ) as store:
+        principal = store.principal
+        with store.transaction() as decision:
+            generation = store._generation(tenant, principal)
+            resumed = False
+            if pending.exists() or pending.is_symlink():
+                private_file(pending)
+                try:
+                    body = store.control.verify(pending.read_text().strip())
+                except LocalError:
+                    body = {}
+                resumed = (
+                    body.get("kind") == "credential"
+                    and body.get("incarnation") == store.incarnation
+                    and body.get("tenant") == tenant
+                    and body.get("principal") == principal
+                    and body.get("audience") == audience
+                    and body.get("generation", 0) == generation > 0
+                )
+                if not resumed:
+                    pending.unlink()
+            if not resumed:
+                row = store.db.execute(
+                    "SELECT capabilities,starts,expires FROM grants "
+                    "WHERE tenant=? AND principal=? AND project='*'",
+                    (tenant, principal),
+                ).fetchone()
+                capabilities = row["capabilities"] if row is not None else []
+                if isinstance(capabilities, str):
+                    capabilities = json.loads(capabilities)
+                if (
+                    row is None
+                    or "admin" not in capabilities
+                    or not temporal_valid(decision.evaluated_ms, row["starts"], row["expires"])
+                ):
+                    raise LocalError("administrative_operation_required")
+                record = store._journal(
+                    {
+                        "kind": "grant",
+                        "actor": "operator",
+                        "tenant": tenant,
+                        "principal": principal,
+                        "project": "*",
+                        "capabilities": capabilities,
+                        "starts": row["starts"],
+                        "expires": row["expires"],
+                        "rotate": True,
+                    }
+                )
+                store._apply(record, decision.evaluated_ms)
+                token = store._token("credential", tenant=tenant, principal=principal)
+                atomic(pending, token.encode())
+        store._expose()
+        os.replace(pending, target)
+        sync_dir(directory)
+    return target

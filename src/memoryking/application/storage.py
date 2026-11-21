@@ -18,6 +18,10 @@ UPSERTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("tenant", "principal", "project", "capabilities", "starts", "expires"),
         ("tenant", "principal", "project"),
     ),
+    "credential_generations": (
+        ("tenant", "principal", "generation"),
+        ("tenant", "principal"),
+    ),
     "projection_items": (
         (
             "tenant",
@@ -90,6 +94,17 @@ class Dialect(Protocol):
         """A predicate over the `lexical` table with one `?` bound to the query string."""
         ...
 
+    def lexical_boolean(self) -> str:
+        """A predicate over `lexical` with one `?` bound to a `lexical_expression` string."""
+        ...
+
+    def lexical_expression(self, groups: list[list[str]]) -> str:
+        """Every group must match; a group matches when any of its words does.
+
+        Words are lowercase letter-and-digit tokens from the lexicon, so quoting is the
+        only escaping an engine needs."""
+        ...
+
     def byte_length(self, expression: str) -> str:
         """The byte length of a text column."""
         ...
@@ -100,6 +115,15 @@ class SQLiteDialect:
 
     def lexical_match(self) -> str:
         return "lexical MATCH ?"
+
+    def lexical_boolean(self) -> str:
+        return "lexical MATCH ?"
+
+    def lexical_expression(self, groups: list[list[str]]) -> str:
+        return " AND ".join(
+            "(" + " OR ".join('"' + word.replace('"', '""') + '"' for word in group) + ")"
+            for group in groups
+        )
 
     def byte_length(self, expression: str) -> str:
         return f"length(CAST({expression} AS BLOB))"
@@ -112,6 +136,15 @@ class PostgresDialect:
         # Retrieval sends quoted terms joined by OR; websearch_to_tsquery keeps that
         # meaning (any term matches) where phraseto_tsquery would demand the phrase.
         return "to_tsvector('simple',text) @@ websearch_to_tsquery('simple',?)"
+
+    def lexical_boolean(self) -> str:
+        return "to_tsvector('simple',text) @@ to_tsquery('simple',?)"
+
+    def lexical_expression(self, groups: list[list[str]]) -> str:
+        return " & ".join(
+            "(" + " | ".join("'" + word.replace("'", "''") + "'" for word in group) + ")"
+            for group in groups
+        )
 
     def byte_length(self, expression: str) -> str:
         return f"octet_length({expression})"

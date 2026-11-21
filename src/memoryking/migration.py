@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from memoryking.adapters.legacy_snapshot import MAX_DATABASE, digest_file, inspect
-from memoryking.adapters.local_files import atomic, private_dir, private_file, sync_dir
+from memoryking.adapters.local_files import (
+    atomic,
+    durable_sync,
+    private_dir,
+    private_file,
+    sync_dir,
+)
 from memoryking.application.legacy_import import apply_batch, make_plan, reconcile, summary
 from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.local import LocalError
@@ -57,7 +63,7 @@ def freeze(source: Path, directory: Path) -> Path:
         os.chmod(target, 0o600)
         shutil.copyfileobj(incoming, outgoing)
         outgoing.flush()
-        os.fsync(outgoing.fileno())
+        durable_sync(outgoing.fileno())
     sync_dir(directory)
     if digest_file(target) != before or digest_file(source) != before:
         raise LocalError("legacy_source_changed")

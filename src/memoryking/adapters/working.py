@@ -18,6 +18,12 @@ from memoryking.adapters.local_store import (
 )
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.token_count import counter
+from memoryking.application.retention import (
+    CHECKPOINT_BYTES_LIMIT,
+    CHECKPOINT_LIMIT,
+    live_checkpoints,
+    release_checkpoints,
+)
 from memoryking.application.storage import insert_ignore
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, canonical_hash
@@ -231,14 +237,15 @@ class Working:
             elif action.startswith("operation_"):
                 result = self._write_operation(who, command, at)
             elif action == "operations":
-                result = {"operations": self._operations(who, args, at)[0]}
+                operations, _, truncated = self._operations(who, args, at)
+                result = {"operations": operations, "operations_truncated": truncated}
             elif action == "adapter_resume":
                 from memoryking.adapters.adapter_state import resume
 
                 raw, deps = resume(self, who, args, decision, receipt)
                 result = json.loads(raw)
             else:
-                raw, deps = self._resume(who, args, decision, receipt)
+                raw, deps = self._resume(who, args, decision, receipt, own_state=True)
                 result = json.loads(raw)
             if action in MUTATIONS and old is None and not action.startswith("operation_"):
                 self.db.execute(
@@ -298,15 +305,14 @@ class Working:
             if args["run"] is not None:
                 raise LocalError("plan_task_stream_required")
             validate(args["checkpoint"]["plan"], previous.get("plan") if previous else None)
-        total, size = self.db.execute(
-            "SELECT count(*),coalesce(sum("
-            + self.s.dialect.byte_length("body")
-            + "),0) FROM checkpoints WHERE tenant=?",
-            (who["tenant"],),
-        ).fetchone()
         body = canonical_bytes(args["checkpoint"])
-        if total >= 4096 or size + len(body) > 268435456:
-            raise LocalError("checkpoint_capacity")
+        total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
+        if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
+            # Release at write time: old revisions of ordinary streams stop counting.
+            release_checkpoints(self.db, who["tenant"])
+            total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
+            if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
+                raise LocalError("checkpoint_capacity")
         identifier, digest = uid("ckpt"), hashlib.sha256(body).hexdigest()
         position = self.s._event(
             who["tenant"], "checkpoint_saved", identifier, at, who["principal"]
@@ -374,7 +380,7 @@ class Working:
         deps: list[dict[str, str]] = [{"kind": "checkpoint", "id": row["id"]}]
         if args["source"] == "extractive":
             observations = self._recent_observations(who, args["project"], row["position"], at)
-            operations, _ = self._operations(who, args, at, include_all=True)
+            operations, _, _ = self._operations(who, args, at, include_all=True)
             text, method = compose(body, observations, operations), METHOD
             deps.extend({"kind": "observation", "id": o["id"]} for o in observations)
         else:
@@ -585,21 +591,40 @@ class Working:
 
     def _operations(
         self, who: dict[str, Any], args: dict[str, Any], at: int, *, include_all: bool = False
-    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]], bool]:
+        """Return the stream's operations, their evidence dependencies and a truncation flag.
+
+        Every open operation is returned, however many there are: an intent that may or may not
+        have run is safety-relevant and must never be hidden. Resolved history fills the rest of
+        the INTENT_SCOPE_LIMIT window with the newest operations, and `truncated` says older
+        resolved ones were left out. Resolved history is never an error.
+        """
         stream = self._stream(who, args)
         all_writers = include_all or (
             stream is not None
             and stream["writer"] == who["principal"]
             and stream["incarnation"] == self.s.incarnation
         )
-        rows = self.db.execute(
+        scope = (
             "SELECT * FROM operation_intents WHERE tenant=? AND project=? AND task=? AND stream=?"
             + ("" if all_writers else " AND principal=?")
-            + " ORDER BY created,id LIMIT 33",
-            self._scope(who, args) if all_writers else (*self._scope(who, args), who["principal"]),
+        )
+        bound = (
+            self._scope(who, args) if all_writers else (*self._scope(who, args), who["principal"])
+        )
+        # Open means the outcome is unknown or not yet reconciled in this incarnation.
+        pending = "(state IN ('intent_recorded','dispatching','unknown') OR COALESCE(reconciled_incarnation,incarnation)<>?)"
+        rows = self.db.execute(
+            scope + " AND " + pending + " ORDER BY created,id",
+            (*bound, self.s.incarnation),
         ).fetchall()
-        if len(rows) > 32:
-            raise LocalError("operation_limit")
+        room = max(INTENT_SCOPE_LIMIT - len(rows), 0)
+        newest = self.db.execute(
+            scope + " AND NOT " + pending + " ORDER BY created DESC,id DESC LIMIT ?",
+            (*bound, self.s.incarnation, room + 1),
+        ).fetchall()
+        truncated = len(newest) > room
+        rows = sorted([*rows, *newest[:room]], key=lambda row: (row["created"], row["id"]))
         result, deps = [], []
         for row in rows:
             evidence = json.loads(row["evidence"])
@@ -641,7 +666,7 @@ class Working:
             )
             if not evidence_available:
                 result[-1]["result_hash"] = None
-        return result, deps
+        return result, deps, truncated
 
     def _resume(
         self,
@@ -652,7 +677,13 @@ class Working:
         *,
         extras: dict[str, Any] | None = None,
         retain: bool = True,
+        own_state: bool = False,
     ) -> tuple[bytes, list[dict[str, str]]]:
+        """`own_state` is set only for the caller reading its own stream (action `resume`): when
+        the sole blocker is that mandatory-constraint applicability is unknown, the checkpoint the
+        caller is already authorized to read is returned beside the blocked status, with no
+        constraints, with the stream's operations and latest summary. Every other consumer
+        (handoff, adapter, summaries) still gets nothing."""
         at = decision.evaluated_ms
         row = self._checkpoint(who, args, at)
         body = json.loads(row["body"])
@@ -714,6 +745,7 @@ class Working:
             checkpoint=None,
             summary=None,
             operations=[],
+            operations_truncated=False,
             context_binding={
                 "store": self.s.store_id,
                 "tenant": who["tenant"],
@@ -726,9 +758,36 @@ class Working:
         )
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
-            deps = []
+            if mandatory.get("unbound_fields"):
+                base["unbound_fields"] = mandatory["unbound_fields"]
+            if own_state and mandatory["reason"] == "applicability_unknown":
+                # The operations and summary the reader may see come with it: an earlier tool
+                # effect that is still uncertain must not be hidden because constraints are not
+                # resolved. Their dependencies are recorded as for an ordinary resume.
+                operations, operation_deps, operations_truncated = self._operations(
+                    who, args, at, include_all=True
+                )
+                deps.extend(operation_deps)
+                base.update(
+                    checkpoint={
+                        "id": row["id"],
+                        "revision": row["revision"],
+                        "writer": row["writer"],
+                        "created_ms": row["created"],
+                        "body_hash": row["body_hash"],
+                        "compiler_revision": "checkpoint-v1",
+                        "state": body,
+                    },
+                    operations=operations,
+                    operations_truncated=operations_truncated,
+                    summary=self.latest_summary(who, row["id"], at),
+                )
+            else:
+                deps = []
         else:
-            operations, operation_deps = self._operations(who, args, at, include_all=True)
+            operations, operation_deps, operations_truncated = self._operations(
+                who, args, at, include_all=True
+            )
             deps.extend(operation_deps)
             base.update(
                 checkpoint={
@@ -741,11 +800,18 @@ class Working:
                     "state": body,
                 },
                 operations=operations,
+                operations_truncated=operations_truncated,
                 constraints=[self.r._claim(i) for i in mandatory["items"]],
                 summary=self.latest_summary(who, row["id"], at),
             )
             deps.extend(self.r._dependencies(base["constraints"]))
-            gaps = list(body["capture"]["gaps"])
+            # A section nobody wrote is a note on the packet; every other gap is a
+            # recovery gap that blocks trust until reconciled.
+            declared = list(body["capture"]["gaps"])
+            gaps = [g for g in declared if not g.startswith("defaulted:")]
+            unrecorded = sorted(g[len("defaulted:") :] for g in declared if g not in gaps)
+            if unrecorded:
+                base["unrecorded_sections"] = unrecorded
             if repository_snapshot is not None:
                 artifacts = {a["path"]: a for a in repository["artifacts"]}
                 for path in repository_snapshot["dirty_paths"]:
@@ -806,6 +872,7 @@ class Working:
                 minimum_required_tokens=minimum,
             )
             base.pop("recovery_gaps", None)
+            base.pop("unrecorded_sections", None)
             base["usage"]["budget_compliant"] = False
             raw, used = counted(base, count)
             deps = []

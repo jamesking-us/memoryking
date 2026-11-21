@@ -174,7 +174,9 @@ def exercise(client, directory):
     latest = execute("record", {"kind": "outcome", "record": outcome["record"]}, False)
     assert latest["body"]["result"] == "unknown" and latest["body"]["input_tokens"] is None
     packet = brief(16)
-    target = packet["guidance"][-1]["reference"]
+    # The runner-up: a bounded adjustment lifts a record past a near neighbour, not past
+    # one that term rarity and length already ranked far above it.
+    target = packet["guidance"][1]["reference"]
     vote = client.tool(
         "memory_feedback",
         command(

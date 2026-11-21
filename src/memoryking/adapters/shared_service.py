@@ -10,6 +10,7 @@ from typing import Any
 from memoryking.adapters.local_contract import VALIDATOR
 from memoryking.adapters.local_ipc import StoreOperations
 from memoryking.adapters.postgres_store import PostgresStore
+from memoryking.adapters.shared_control import SharedControl
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure
@@ -28,6 +29,28 @@ class SharedService:
 
     egress_policy: Any | None = None
 
+    def warm(self) -> None:
+        """Verify every tenant's control journal once, so no request pays for a cold start.
+
+        Runs in the background after start. It only fills the same verified-journal cache a
+        request would, under the same control lock and against the same anchor; a tenant
+        whose journal does not verify is reported without a reason beyond the error type and
+        stays refused by the request path.
+        """
+        try:
+            directories = sorted(
+                path for path in self.control.iterdir() if (path / "identity.json").is_file()
+            )
+        except OSError:
+            return
+        for directory in directories:
+            try:
+                control = SharedControl(directory)
+                with control.locked():
+                    control.verified_count(control.read_anchor())
+            except Exception as exc:
+                failure("shared_service", exc, action="warm")
+
     HOUSEKEEPING_S = 3600
 
     def _retention(self, tenant: str, store: PostgresStore) -> None:
@@ -39,6 +62,7 @@ class SharedService:
             self._housekeeping[tenant] = now
         try:
             store.expire_results()
+            store.rebuild_lexical(wall_ms=2000)  # finishes an unfinished lexical rebuild in batches
         except LocalError:
             pass
         except Exception as exc:

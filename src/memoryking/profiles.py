@@ -1,7 +1,8 @@
 """Named store profiles so commands take `--profile work` instead of four absolute paths.
 
 The file is `~/.memoryking/config.toml` (override with `MEMORYKING_CONFIG`). It holds
-paths only, never secrets: a credential entry is the path of a private credential file.
+paths, settings and optional session `bindings`, never secrets: a credential entry is the
+path of a private credential file.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ FIELDS = (
     "backup_dir",
     "backup_every",
     "backup_keep",
+    "bindings",
 )
 PATH_FIELDS = (
     "store",
@@ -83,6 +85,10 @@ def validate(name: str, values: Any) -> dict[str, Any]:
         ):
             raise LocalError("profile_config_invalid")
         clean["backup_every"] = values["backup_every"]
+    if "bindings" in values:
+        from memoryking import session_bindings
+
+        clean["bindings"] = session_bindings.validate(values["bindings"])
     if "backup_keep" in values:
         keep = values["backup_keep"]
         if isinstance(keep, bool) or not isinstance(keep, int) or not 1 <= keep <= 1000:
@@ -142,6 +148,12 @@ def render(profiles: dict[str, dict[str, Any]]) -> str:
                 value = profiles[name][field]
                 # JSON string escaping is valid TOML basic-string escaping: a path with a
                 # quote, backslash or control character reads back exactly.
+                if isinstance(value, dict):
+                    pairs = ", ".join(
+                        f"{json.dumps(k)} = {json.dumps(v)}" for k, v in sorted(value.items())
+                    )
+                    lines.append(f"{field} = {{ {pairs} }}")
+                    continue
                 lines.append(
                     f"{field} = {value}"
                     if isinstance(value, int)

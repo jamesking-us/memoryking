@@ -8,6 +8,7 @@ from typing import Any
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_store import uid
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.retention import EXPERIENCE_LIMIT, live_experience
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError
@@ -37,6 +38,23 @@ class ExperienceRecords:
         except LocalError:
             return False
         return True
+
+    def _rows(self, tenant: str) -> int:
+        return int(
+            self.db.execute(
+                "SELECT count(*) FROM experience_records WHERE tenant=?", (tenant,)
+            ).fetchone()[0]
+        )
+
+    def _replaces_live(
+        self, who: dict[str, Any], project: str, kind: str, key: str, current: int
+    ) -> bool:
+        """A new revision of a record that still has its body adds no live record."""
+        latest = self.db.execute(
+            "SELECT body FROM experience_records WHERE tenant=? AND project=? AND principal=? AND incarnation=? AND kind=? AND logical_key=? AND revision=?",
+            (who["tenant"], project, who["principal"], self.s.incarnation, kind, key, current),
+        ).fetchone()
+        return latest is not None and latest["body"] is not None
 
     def get(self, who: dict[str, Any], project: str, reference: str, kind: str, at: int) -> Any:
         row = self.db.execute(
@@ -74,11 +92,11 @@ class ExperienceRecords:
         )
         if current != expected:
             raise LocalError("experience_revision_conflict")
+        # The row count bounds the live count from above, so the exact count is rarely needed.
         if (
-            self.db.execute(
-                "SELECT count(*) FROM experience_records WHERE tenant=?", (who["tenant"],)
-            ).fetchone()[0]
-            >= 10000
+            self._rows(who["tenant"]) >= EXPERIENCE_LIMIT
+            and live_experience(self.db, who["tenant"], self.s.incarnation) >= EXPERIENCE_LIMIT
+            and not self._replaces_live(who, project, kind, key, current)
         ):
             raise LocalError("experience_capacity")
         for dep in deps:

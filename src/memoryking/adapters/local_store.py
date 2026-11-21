@@ -23,9 +23,12 @@ from memoryking.adapters.local_files import (
     Control,
     Ownership,
     atomic,
+    durable_sync,
     private_dir,
     private_file,
+    read_blob_index,
     sync_dir,
+    write_blob_index,
 )
 from memoryking.application.storage import SQLiteDialect
 from memoryking.application.store_core import (  # noqa: F401
@@ -61,10 +64,17 @@ from memoryking.observability_metrics import Metrics
 # are pruned. `status` reports utilisation for every entry of CAPACITY_LIMITS.
 
 
-def recovery_admin(db: Any, at: int) -> tuple[str, str] | None:
-    """The first tenant-wide grant that holds a currently valid admin capability."""
+def recovery_admin(db: Any, at: int, tenant: str | None = None) -> tuple[str, str] | None:
+    """The first tenant-wide grant that holds a currently valid admin capability.
+
+    The local restore searches every tenant; the shared restore names its own.
+    """
+    scope, bound = (" AND tenant=?", (tenant,)) if tenant else ("", ())
     for row in db.execute(
-        "SELECT tenant,principal,capabilities,starts,expires FROM grants WHERE project='*' ORDER BY tenant,principal"
+        "SELECT tenant,principal,capabilities,starts,expires FROM grants WHERE project='*'"
+        + scope
+        + " ORDER BY tenant,principal",
+        bound,
     ).fetchall():
         capabilities = row["capabilities"]
         if isinstance(capabilities, str):
@@ -121,7 +131,7 @@ __all__ = [
 ]
 
 
-SCHEMA_VERSION = 13  # the SQLite user_version the daemon migrates every store to
+SCHEMA_VERSION = 16  # the SQLite user_version the daemon migrates every store to
 
 
 class LocalStore(StoreCore):
@@ -221,6 +231,12 @@ class LocalStore(StoreCore):
             self.db.executescript(Path(__file__).with_name("trust_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}:
             self.db.executescript(Path(__file__).with_name("anchor_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}:
+            self.db.executescript(Path(__file__).with_name("position_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}:
+            self.db.executescript(Path(__file__).with_name("credential_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}:
+            self.db.executescript(Path(__file__).with_name("lexical_schema.sql").read_text())
         elif version != SCHEMA_VERSION:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
@@ -308,6 +324,124 @@ class LocalStore(StoreCore):
         sync_dir(control.parent)
         return control / "owner.credential"
 
+    @classmethod
+    def pending_journal(cls, root: Path, control: Path) -> dict[str, Any]:
+        """Offline: journal records the database has not applied, without applying any.
+
+        Takes the ownership locks, so it refuses while a daemon holds the store, and opens the
+        database read-only. Each entry names the sequence, kind and tenant and the error from
+        the last attempt to apply it; record content is never printed, and no record is
+        skipped or altered. The journal and anchor are verified exactly as at open.
+        """
+        paths(root, control)
+        private_dir(root)
+        private_dir(control)
+        owner = Ownership(root)
+        try:
+            control_owner = Ownership(control)
+            try:
+                controller = Control(control)
+                anchor = controller.read_anchor()
+                held = controller.verified_count(anchor)
+                with sqlite3.connect(f"file:{root / 'store.sqlite'}?mode=ro", uri=True) as db:
+                    applied = int(
+                        db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
+                    )
+                if applied > held:
+                    raise LocalError("journal_rollback")
+                return controller.describe_pending(
+                    controller.records_after(anchor, applied), applied, held
+                )
+            finally:
+                control_owner.close()
+        finally:
+            owner.close()
+
+    @classmethod
+    def rotate_owner(
+        cls,
+        root: Path,
+        control: Path,
+        *,
+        clock: Clock | None = None,
+        fault: Callable[[str], None] | None = None,
+    ) -> Path:
+        """Offline: replace the owner credential with one of the next generation.
+
+        The operator owns the store directories, so the daemon must be stopped (the
+        ownership locks refuse otherwise). The rotation is the same journaled grant restatement
+        that `credential issue --rotate` makes, so a restore replays it. The new credential is
+        made durable as `owner.credential.next` before the generation commits, and is moved
+        over `owner.credential` (an atomic rename) afterwards: a failure in between leaves the
+        working credential in the `.next` file, and running the command again completes the
+        rename instead of rotating a second time. The previous credential stops working at
+        the commit; the new one is on disk from before it.
+        """
+        target, pending = control / "owner.credential", control / "owner.credential.next"
+        with cls(root, control, clock=clock, fault=fault) as store:
+            at = store.clock.utc_ms()
+            tenant = principal = None
+            try:
+                private_file(target)
+                identity = store.control.verify(target.read_text().strip())
+                tenant, principal = identity["tenant"], identity["principal"]
+            except (OSError, KeyError, LocalError):
+                admin = recovery_admin(store.db, at)
+                if admin is not None:
+                    tenant, principal = admin
+            if tenant is None or principal is None:
+                raise LocalError("recovery_admin_missing")
+            if pending.exists() or pending.is_symlink():
+                private_file(pending)
+                try:
+                    body = store.control.verify(pending.read_text().strip())
+                except LocalError:
+                    body = {}
+                if (
+                    body.get("kind") == "credential"
+                    and body.get("incarnation") == store.incarnation
+                    and body.get("tenant") == tenant
+                    and body.get("principal") == principal
+                    and body.get("generation", 0) == store._generation(tenant, principal) > 0
+                ):
+                    # An earlier rotation committed but did not finish moving its file.
+                    os.replace(pending, target)
+                    sync_dir(control)
+                    return target
+                pending.unlink()
+            with store.transaction() as decision:
+                row = store.db.execute(
+                    "SELECT capabilities,starts,expires FROM grants WHERE tenant=? AND principal=? AND project='*'",
+                    (tenant, principal),
+                ).fetchone()
+                capabilities = json.loads(row["capabilities"]) if row is not None else []
+                if (
+                    row is None
+                    or "admin" not in capabilities
+                    or not temporal_valid(decision.evaluated_ms, row["starts"], row["expires"])
+                ):
+                    raise LocalError("administrative_operation_required")
+                record = store._journal(
+                    {
+                        "kind": "grant",
+                        "actor": "operator",
+                        "tenant": tenant,
+                        "principal": principal,
+                        "project": "*",
+                        "capabilities": capabilities,
+                        "starts": row["starts"],
+                        "expires": row["expires"],
+                        "rotate": True,
+                    }
+                )
+                store._apply(record, decision.evaluated_ms)
+                token = store._token("credential", tenant=tenant, principal=principal)
+                atomic(pending, token.encode())
+            store._expose()
+            os.replace(pending, target)
+            sync_dir(control)
+        return target
+
     def close(self) -> None:
         self.db.close()
         self.control_owner.close()
@@ -361,7 +495,7 @@ class LocalStore(StoreCore):
             self.db.commit()
             self.fault("after_commit")
             decision.check(self.clock)
-        except BaseException:
+        except BaseException as exc:
             try:
                 self.db.rollback()
                 applied = int(
@@ -369,6 +503,22 @@ class LocalStore(StoreCore):
                 )
                 if self.anchor["journal_sequence"] > applied:
                     self.healthy = False
+                    if (
+                        isinstance(exc, LocalError)
+                        and exc.code == "release_expired"
+                        and all(
+                            record["action"]["kind"] != "operation"
+                            for record in self.control.records_after(self.anchor, applied)
+                        )
+                    ):
+                        # A policy record was journalled and only ran out of its request
+                        # budget (a long purge): apply it now, without one, instead of staying
+                        # fenced until a restart would do exactly that. The caller still gets
+                        # the expiry. Operation records keep the fence: a tool effect whose
+                        # acknowledgment was lost must be reconciled after a restart, and any
+                        # other failure also leaves the fence in place.
+                        self._replay_journal()
+                        self.healthy = True
             except Exception:
                 # Never let cleanup mask the original failure; fail closed instead.
                 self.healthy = False
@@ -396,20 +546,38 @@ class LocalStore(StoreCore):
             raise
 
     def _replay_journal(self) -> None:
-        records = self.control.journal(self.anchor)
-        self.db.execute("BEGIN IMMEDIATE")
-        try:
-            for record in records:
+        applied = int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0])
+        held = self.control.verified_count(self.anchor)
+        # Journal first, database second, anchor third: the database can never have applied
+        # more records than the verified journal holds. A larger position means the journal
+        # tail was lost or this database was paired with another control tree; replay would
+        # skip those records silently, so the store stays closed.
+        if applied > held:
+            raise LocalError("journal_rollback")
+        # Each record commits on its own, with no request budget, so a record that takes
+        # long (a purge) can finish, and progress survives an interruption or a later failure.
+        # A record that fails is noted for the operator and raised; none is ever skipped.
+        for record in self.control.records_after(self.anchor, applied):
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
                 self._apply(record, self.clock.utc_ms())
-            self.db.commit()
-        except Exception:
-            self.db.rollback()
-            raise
-        if records:
-            self.anchor["journal_sequence"] = records[-1]["sequence"]
-            self.anchor["journal_head"] = hashlib.sha256(
-                self.control.sign(records[-1]).encode()
-            ).hexdigest()
+                self.db.commit()
+            except BaseException as exc:
+                self.db.rollback()
+                self.control.note_apply_failure(record, exc)
+                raise
+            if self.anchor["journal_sequence"] < record["sequence"]:
+                self.anchor["journal_sequence"] = record["sequence"]
+                self.anchor["journal_head"] = hashlib.sha256(
+                    self.control.sign(record).encode()
+                ).hexdigest()
+                self.control.anchor(self.anchor)
+            self.control.clear_apply_failure(record["sequence"])
+        if self.anchor["journal_sequence"] < held:
+            # An append that crashed before its anchor write: the records verified, so the
+            # anchor is moved over them now, as a replay always did.
+            self.anchor["journal_sequence"] = held
+            self.anchor["journal_head"] = self.control.head(held)
             self.control.anchor(self.anchor)
 
     def gc(self) -> int:
@@ -452,7 +620,7 @@ class LocalStore(StoreCore):
             finally:
                 target.close()
             with (destination / "store.sqlite").open("rb") as stream:
-                os.fsync(stream.fileno())
+                durable_sync(stream.fileno())
             private_dir(destination / "blobs", create=True)
             blobs: list[str] = []
             for tenant, digest in self.db.execute(
@@ -466,14 +634,14 @@ class LocalStore(StoreCore):
                 atomic(destination / relative, raw)
                 blobs.append(relative)
             manifest = {
-                "schema": 8,
+                "schema": 11,
                 "store": self.store_id,
                 "incarnation": self.incarnation,
                 "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
                 "database_sha256": hashlib.sha256(
                     (destination / "store.sqlite").read_bytes()
                 ).hexdigest(),
-                "blobs": sorted(blobs),
+                "blob_index": write_blob_index(destination, blobs),
             }
             atomic(destination / "manifest", self.control.sign(manifest).encode())
             sync_dir(destination)
@@ -532,14 +700,20 @@ class LocalStore(StoreCore):
             controller.journal(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")
             data = (backup / "store.sqlite").read_bytes()
             if hashlib.sha256(data).hexdigest() != manifest["database_sha256"]:
                 raise LocalError("backup_invalid")
-            for relative in manifest["blobs"]:
+            # Backups before schema 9 embed the list; later ones commit to a separate index.
+            blobs = (
+                read_blob_index(backup, manifest["blob_index"])
+                if "blob_index" in manifest
+                else manifest["blobs"]
+            )
+            for relative in blobs:
                 if not re.fullmatch(r"blobs/[A-Za-z0-9_-]{1,96}/[a-f0-9]{64}", relative):
                     raise LocalError("backup_invalid")
                 if (
@@ -555,7 +729,7 @@ class LocalStore(StoreCore):
             for suffix in ("-wal", "-shm"):
                 (root / ("store.sqlite" + suffix)).unlink(missing_ok=True)
             atomic(root / "store.sqlite", data)
-            for relative in manifest["blobs"]:
+            for relative in blobs:
                 private_dir((root / relative).parent, create=True)
                 atomic(root / relative, (backup / relative).read_bytes())
             # Build an unavailable instance under the already-held ownership locks.
@@ -620,13 +794,21 @@ class LocalStore(StoreCore):
             if controller_owner:
                 controller_owner.close()
 
-    def _retire_optional(self) -> None:
-        """A restored history cannot reuse projected vectors, leases or adapter bases."""
-        self.db.execute("UPDATE ranking_state SET configuration=NULL,version=version+1")
-        self.db.execute("DELETE FROM adapter_bases")
-        self.db.execute("DELETE FROM embedding_items")
-        self.db.execute("DELETE FROM embedding_jobs")
+    def _retire_optional(self, tenant: str | None = None) -> None:
+        """A restored history cannot reuse projected vectors, leases or adapter bases.
+
+        A local restore replaces the whole store's history, so it passes no tenant and the
+        statements cover every tenant; the shared restore names its tenant in each one.
+        """
+        scope, bound = (" WHERE tenant=?", (tenant,)) if tenant else ("", ())
         self.db.execute(
-            "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0",
-            (self.incarnation,),
+            "UPDATE ranking_state SET configuration=NULL,version=version+1" + scope, bound
+        )
+        self.db.execute("DELETE FROM adapter_bases" + scope, bound)
+        self.db.execute("DELETE FROM embedding_items" + scope, bound)
+        self.db.execute("DELETE FROM embedding_jobs" + scope, bound)
+        self.db.execute(
+            "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0"
+            + scope,
+            (self.incarnation, *bound),
         )

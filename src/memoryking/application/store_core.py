@@ -14,6 +14,7 @@ import json
 import re
 import secrets
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,6 +22,19 @@ from typing import Any, Self, cast
 
 from memoryking.adapters.local_contract import validate_capture
 from memoryking.adapters.local_files import atomic, private_dir, private_file, sync_dir
+from memoryking.application import lexical_index
+from memoryking.application.retention import (
+    CHECKPOINT_BYTES_LIMIT,
+    CHECKPOINT_LIMIT,
+    EXPERIENCE_LIMIT,
+    HANDOFF_LIMIT,
+    HANDOFF_VIEW_LIMIT,
+    live_checkpoints,
+    live_experience,
+    live_handoff_views,
+    live_handoffs,
+    release_all,
+)
 from memoryking.application.storage import Dialect, insert_ignore, upsert
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import Clock, Decision, LocalError, Released, temporal_valid
@@ -49,6 +63,12 @@ RETRY_MS = 30 * 24 * 60 * 60 * 1000
 
 
 QUEUE_LIMIT = 1000
+DRAIN_BUDGET_MS = 2000  # one drain pass stays well inside the five-second transaction deadline
+# Work waiting on the queue. A pending job with a nonzero fence was reset by a reindex or
+# restore (or already attempted): it is backlog the drain rebuilds, not growth to refuse.
+QUEUED_JOBS = (
+    "SELECT count(*) FROM jobs WHERE tenant=? AND (state='leased' OR (state='pending' AND fence=0))"
+)
 
 
 CONCURRENCY_LIMIT = 4
@@ -84,6 +104,11 @@ CAPACITY_LIMITS = {
     "rendered_bytes": ARTIFACT_BYTES_LIMIT,
     "operation_intents": INTENT_LIMIT,
     "processing_usage": USAGE_LIMIT,
+    "checkpoints": CHECKPOINT_LIMIT,
+    "checkpoint_bytes": CHECKPOINT_BYTES_LIMIT,
+    "handoffs": HANDOFF_LIMIT,
+    "handoff_views": HANDOFF_VIEW_LIMIT,
+    "experience_records": EXPERIENCE_LIMIT,
 }
 
 
@@ -99,6 +124,9 @@ def uid(prefix: str) -> str:
 
 class StoreCore:
     """What every backend shares; the attributes below are supplied by the backend."""
+
+    # Set by a store bound to one tenant (the shared profile); None for the local store.
+    tenant: str | None = None
 
     db: Any
     dialect: Dialect
@@ -122,6 +150,7 @@ class StoreCore:
     reranker: Any | None = None
     summary_idle_ms = 0
     _last_housekeeping = 0
+    _lexical_pending: bool | None = None
     _last_summary_scan = 0
 
     # The operator's egress policy; None means the local recorder is the only provider.
@@ -160,7 +189,31 @@ class StoreCore:
         self.last_utc = now
         return Decision(now, self.clock.monotonic_ms(), now + 5000)
 
+    def _generation(self, tenant: str, principal: str) -> int:
+        """The principal's current credential generation; 0 until one is advanced."""
+        row = self.db.execute(
+            "SELECT generation FROM credential_generations WHERE tenant=? AND principal=?",
+            (tenant, principal),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def _advance_generation(self, tenant: str, principal: str) -> None:
+        """Retire every credential issued for the principal so far (policy; replayed on restore)."""
+        self.db.execute(
+            upsert("credential_generations"),
+            (tenant, principal, self._generation(tenant, principal) + 1),
+        )
+
     def _token(self, kind: str, **fields: Any) -> str:
+        if kind == "credential":
+            # Generation 0 is omitted, so a credential that was never rotated is byte-identical
+            # to one issued before generations existed. An internal caller that mints a
+            # credential for a principal gets the current generation unless it names one.
+            generation = fields.pop("generation", None)
+            if generation is None:
+                generation = self._generation(fields["tenant"], fields["principal"])
+            if generation:
+                fields["generation"] = generation
         return str(
             self.control.sign(
                 {"kind": kind, "store": self.store_id, "incarnation": self.incarnation, **fields}
@@ -190,6 +243,16 @@ class StoreCore:
             for row in rows
         ):
             raise LocalError("denied")
+        # After the grant check, so a principal without a current grant is refused exactly as
+        # before; only a credential that would otherwise be accepted learns it was replaced.
+        generation = identity.get("generation", 0)
+        if (
+            not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation != self._generation(identity["tenant"], identity["principal"])
+        ):
+            # Revoked, rotated or replaced: only the principal's current credential is accepted.
+            raise LocalError("credential_replaced")
         return identity
 
     def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
@@ -291,13 +354,11 @@ class StoreCore:
                         "held": Trust(self).held(tenant, occurrence["id"]),
                     }
                 else:
-                    count = self.db.execute(
-                        "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')",
-                        (tenant,),
-                    ).fetchone()[0]
+                    count = self.db.execute(QUEUED_JOBS, (tenant,)).fetchone()[0]
                     if count >= QUEUE_LIMIT:
                         raise LocalError("queue_full")
                     blob = self._blob(tenant, request["text"].encode())
+                    lexical_index.ensure(self.db, tenant)
                     obs = uid("obs")
                     position = self._event(
                         tenant, "observation_captured", obs, decision.evaluated_ms, who["principal"]
@@ -320,9 +381,7 @@ class StoreCore:
                             request["observed_at_ms"],
                         ),
                     )
-                    self.db.execute(
-                        "INSERT INTO lexical VALUES (?,?,?)", (tenant, obs, request["text"])
-                    )
+                    lexical_index.add(self.db, tenant, request["project"], obs, request["text"])
                     self._index_anchors(tenant, obs, request["text"])
                     from memoryking.adapters.trust import Trust
 
@@ -562,7 +621,13 @@ class StoreCore:
         *,
         starts: int | None = None,
         expires: int | None = None,
+        rotate: bool = False,
     ) -> str:
+        """Grant (or restate) access and return the principal's credential.
+
+        With `rotate`, the principal's credential generation advances in the same journaled
+        decision, so every credential issued before it stops working.
+        """
         identifier(principal)
         identifier(project)
         if not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
@@ -582,10 +647,13 @@ class StoreCore:
                 "starts": starts,
                 "expires": expires,
             }
+            if rotate:
+                action["rotate"] = True
             record = self._journal(action)
             self._apply(record, decision.evaluated_ms)
+            token = self._token("credential", tenant=who["tenant"], principal=principal)
         self._expose()
-        return self._token("credential", tenant=who["tenant"], principal=principal)
+        return token
 
     def grants(self, credential: str) -> list[dict[str, Any]]:
         """Every grant in the caller's tenant, for operators; needs admin rights."""
@@ -781,11 +849,27 @@ class StoreCore:
                     action["expires"],
                 ),
             )
+            if action.get("rotate"):
+                self._advance_generation(tenant, action["principal"])
         elif kind == "revoke":
+            held = self.db.execute(
+                "SELECT 1 FROM grants WHERE tenant=? AND principal=? AND project=?",
+                (tenant, action["principal"], action["project"]),
+            ).fetchone()
             self.db.execute(
                 "DELETE FROM grants WHERE tenant=? AND principal=? AND project=?",
                 (tenant, action["principal"], action["project"]),
             )
+            if (
+                held is not None
+                and self.db.execute(
+                    "SELECT 1 FROM grants WHERE tenant=? AND principal=?",
+                    (tenant, action["principal"]),
+                ).fetchone()
+                is None
+            ):
+                # The principal lost its last grant: a later grant must not revive old credentials.
+                self._advance_generation(tenant, action["principal"])
         elif kind == "purge":
             obs = action["observation"]
             self.db.execute(
@@ -796,7 +880,7 @@ class StoreCore:
                 "UPDATE observations SET deleted=1,blob=NULL,readers=NULL,revision=revision+1 WHERE tenant=? AND id=?",
                 (tenant, obs),
             )
-            self.db.execute("DELETE FROM lexical WHERE tenant=? AND id=?", (tenant, obs))
+            lexical_index.remove(self.db, tenant, obs)
             self.db.execute("DELETE FROM anchors WHERE tenant=? AND id=?", (tenant, obs))
             self.db.execute(
                 "DELETE FROM projection_items WHERE tenant=? AND observation=?", (tenant, obs)
@@ -863,28 +947,39 @@ class StoreCore:
         self.db.execute("UPDATE meta SET value=? WHERE key='journal'", (str(record["sequence"]),))
 
     def expire_results(self) -> int:
+        # A tenant-bound store (shared profile) states its tenant in every statement rather
+        # than relying on row-level security alone; the local store is single-tenant
+        # housekeeping over every tenant it holds, so it adds no predicate.
+        scope, bound = (" AND tenant=?", (self.tenant,)) if self.tenant else ("", ())
         with self.transaction() as decision:
+            now = decision.evaluated_ms
             count = self.db.execute(
-                "UPDATE retries SET result=NULL WHERE result IS NOT NULL AND expires<=?",
-                (decision.evaluated_ms,),
+                "UPDATE retries SET result=NULL WHERE result IS NOT NULL AND expires<=?" + scope,
+                (now, *bound),
             ).rowcount
             self.db.execute(
-                "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?",
-                (decision.evaluated_ms,),
+                "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?"
+                + scope,
+                (now, *bound),
             )
             # Usage rows keep their 30-day retention; expired rows release capacity.
-            self.db.execute(
-                "DELETE FROM processing_usage WHERE expires<=?", (decision.evaluated_ms,)
-            )
+            self.db.execute("DELETE FROM processing_usage WHERE expires<=?" + scope, (now, *bound))
             # Access receipts are evidence for 30 days; the dashboard writes one per poll.
             self.db.execute(
-                "DELETE FROM receipts WHERE evaluated<=?", (decision.evaluated_ms - RETRY_MS,)
+                "DELETE FROM receipts WHERE evaluated<=?" + scope, (now - RETRY_MS, *bound)
             )
             # Egress audit records outlive purge (the delivery happened) but not retention.
-            self.db.execute("DELETE FROM egress_audit WHERE expires<=?", (decision.evaluated_ms,))
-            self.db.execute(
-                "DELETE FROM session_summaries WHERE expires<=?", (decision.evaluated_ms,)
+            self.db.execute("DELETE FROM egress_audit WHERE expires<=?" + scope, (now, *bound))
+            self.db.execute("DELETE FROM session_summaries WHERE expires<=?" + scope, (now, *bound))
+            # Old checkpoint revisions, orphaned hand-off views and superseded experience
+            # revisions are released here, and at write time when a bound is reached.
+            tenants = (
+                self.db.execute("SELECT tenant FROM tenants WHERE tenant=?", bound).fetchall()
+                if self.tenant
+                else self.db.execute("SELECT tenant FROM tenants").fetchall()
             )
+            for (tenant,) in tenants:
+                release_all(self.db, tenant, self.incarnation)
         return int(count)
 
     def housekeeping(self, interval_ms: int = 3_600_000) -> bool:
@@ -894,6 +989,16 @@ class StoreCore:
         operator remembering to run `gc`.
         """
         now = self.clock.utc_ms()
+        if self._lexical_pending is None:
+            with self.lock:
+                self._lexical_pending = (
+                    self.db.execute(
+                        "SELECT 1 FROM lexical_state WHERE state='rebuilding' LIMIT 1"
+                    ).fetchone()
+                    is not None
+                )
+        if self._lexical_pending:
+            self.rebuild_lexical()
         if self.backup_policy is not None:
             self.backup_policy.maybe_run(self, now)
         if self.summary_idle_ms and now - self._last_summary_scan >= 60_000:
@@ -914,9 +1019,12 @@ class StoreCore:
             return 0
         try:
             credential = credential_file.read_text().strip()
-            return Working(self).idle_summaries(
-                credential, self.summary_idle_ms, self.clock.utc_ms() if now is None else now
-            )
+            # The daemon calls this on its service thread while request threads share the
+            # one connection: the scan's reads must not interleave with their statements.
+            with self.lock:
+                return Working(self).idle_summaries(
+                    credential, self.summary_idle_ms, self.clock.utc_ms() if now is None else now
+                )
         except (OSError, LocalError):
             return 0
 
@@ -1147,6 +1255,7 @@ class StoreCore:
                     )
                 ),
                 "capacity": self._capacity(tenant),
+                "lexical": lexical_index.describe(self.db, tenant),
             }
         self._expose()
         return result
@@ -1161,16 +1270,20 @@ class StoreCore:
             "SELECT count(*),coalesce(sum(length(body)),0) FROM rendered_artifacts WHERE tenant=? AND state='retained'",
             (tenant,),
         ).fetchone()
+        checkpoints, checkpoint_bytes = live_checkpoints(self.db, self.dialect, tenant)
         used = {
-            "jobs": count(
-                "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('pending','leased')"
-            ),
+            "jobs": count(QUEUED_JOBS),
             "rendered_artifacts": int(artifacts),
             "rendered_bytes": int(artifact_bytes),
             "operation_intents": count(
                 "SELECT count(*) FROM operation_intents WHERE tenant=? AND state IN ('intent_recorded','dispatching','unknown')"
             ),
             "processing_usage": count("SELECT count(*) FROM processing_usage WHERE tenant=?"),
+            "checkpoints": checkpoints,
+            "checkpoint_bytes": checkpoint_bytes,
+            "handoffs": live_handoffs(self.db, tenant, self.clock.utc_ms()),
+            "handoff_views": live_handoff_views(self.db, tenant),
+            "experience_records": live_experience(self.db, tenant, self.incarnation),
         }
         return {
             name: {"used": used[name], "limit": limit, "warning": used[name] * 5 >= limit * 4}
@@ -1191,7 +1304,7 @@ class StoreCore:
                 idle = (
                     self.healthy
                     and self.db.execute(
-                        "SELECT 1 FROM jobs WHERE state='pending' AND available<=? LIMIT 1",
+                        "SELECT 1 FROM tenants t WHERE EXISTS (SELECT 1 FROM jobs j WHERE j.tenant=t.tenant AND j.state='pending' AND j.available<=?) LIMIT 1",
                         (self.clock.utc_ms(),),
                     ).fetchone()
                     is None
@@ -1213,6 +1326,9 @@ class StoreCore:
                     (tenant, at, MAX_ATTEMPTS, limit - completed),
                 ).fetchall()
                 for row in rows:
+                    if self.clock.monotonic_ms() - decision.monotonic_ms > DRAIN_BUDGET_MS:
+                        limit = completed  # the rest waits for the next pass
+                        break
                     path = self.root / "blobs" / tenant / row["blob"]
                     try:
                         private_file(path)
@@ -1260,22 +1376,66 @@ class StoreCore:
             self._expose()
         return completed
 
-    def reindex(self, credential: str) -> None:
+    def reindex(self, credential: str) -> dict[str, Any]:
+        """Rebuild the projections now and the lexical index in bounded batches.
+
+        The projection reset is one short transaction. The lexical rewrite runs in batches
+        that each fit the deadline and resume where they stopped; this call works for a few
+        seconds and the daemon's housekeeping finishes the rest, so captures are never
+        blocked behind a whole-corpus transaction."""
         with self.transaction() as decision:
             who = self._auth(credential, "admin", "*", decision.evaluated_ms)
-            self._reindex(who["tenant"])
+            tenant = who["tenant"]
+            self._reset_projections(tenant)
+            lexical_index.begin(self.db, tenant)
+        self._lexical_pending = True
         self._expose()
+        self.rebuild_lexical(tenant, wall_ms=3000)
+        with self.transaction():
+            result = lexical_index.describe(self.db, tenant)
+        return result
+
+    def rebuild_lexical(self, tenant: str | None = None, wall_ms: int = 1500) -> bool:
+        """Advance any unfinished lexical rebuild by whole batches until the wall budget is
+        spent; True when no tenant in scope has work left. Each batch is its own transaction."""
+        started = time.monotonic()
+        scope = tenant or self.tenant
+        while True:
+            with self.transaction():
+                names = (
+                    [scope]
+                    if scope
+                    else [r[0] for r in self.db.execute("SELECT tenant FROM tenants").fetchall()]
+                )
+                pending = [
+                    name
+                    for name in names
+                    if lexical_index.state(self.db, name)[0] == lexical_index.REBUILDING
+                ]
+                if not pending:
+                    self._lexical_pending = False
+                    return True
+                name = pending[0]
+                lexical_index.step(
+                    self.db, name, lambda row, n=name: lexical_index.blob_text(self.root, row, n)
+                )
+            if (time.monotonic() - started) * 1000 >= wall_ms:
+                return False
 
     def _reindex(self, tenant: str) -> None:
+        """Whole rebuild inside the caller's transaction (restore, where nothing else runs)."""
+        self._reset_projections(tenant)
+        lexical_index.begin(self.db, tenant)
+        while not lexical_index.step(
+            self.db,
+            tenant,
+            lambda row: lexical_index.blob_text(self.root, row, tenant),
+            budget_ms=10**9,
+        ):
+            pass
+
+    def _reset_projections(self, tenant: str) -> None:
         self.db.execute("DELETE FROM projection_items WHERE tenant=?", (tenant,))
-        # Anchors are derived from the retained text, so a reindex rebuilds them too:
-        # stores created before anchors existed gain them without a re-capture.
-        self.db.execute("DELETE FROM anchors WHERE tenant=?", (tenant,))
-        for row in self.db.execute(
-            "SELECT l.id,l.text FROM lexical l JOIN observations o ON o.tenant=l.tenant AND o.id=l.id WHERE l.tenant=? AND o.deleted=0",
-            (tenant,),
-        ).fetchall():
-            self._index_anchors(tenant, row["id"], row["text"])
         self.db.execute(
             "UPDATE projections SET incarnation=?,generation=generation+1,frontier=0 WHERE tenant=?",
             (self.incarnation, tenant),

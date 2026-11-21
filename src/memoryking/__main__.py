@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -12,20 +14,49 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__, profiles
+from memoryking import __version__, profiles, session_bindings
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
-from memoryking.domain.local import LocalError
+from memoryking.domain.local import LocalError, SystemClock
 from memoryking.observability import LEVELS, configure, event
 
 
 def bar(used: int, limit: int, width: int = 12) -> str:
     filled = min(width, round(width * used / limit)) if limit else 0
     return "[" + "#" * filled + "." * (width - filled) + "]"
+
+
+def lexical_findings(db: Any, version: int) -> list[tuple[str, str, int]]:
+    """(tenant, state, observations not yet in the current lexical format) from a read-only
+    connection; a store older than schema 16 has every populated tenant on the old format."""
+    found: list[tuple[str, str, int]] = []
+    for (tenant,) in db.execute("SELECT tenant FROM tenants").fetchall():
+        row = (
+            db.execute(
+                "SELECT state,cursor FROM lexical_state WHERE tenant=?", (tenant,)
+            ).fetchone()
+            if version >= 16
+            else None
+        )
+        total = db.execute(
+            "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0", (tenant,)
+        ).fetchone()[0]
+        if row is None:
+            if total:
+                found.append((tenant, "legacy", total))
+        elif row[0] != "current":
+            left = db.execute(
+                "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0 AND position>?",
+                (tenant, max(row[1], 0)),
+            ).fetchone()[0]
+            found.append((tenant, row[0], left))
+        else:
+            found.append((tenant, "current", 0))
+    return found
 
 
 def render_status(result: dict[str, Any], version: str) -> str:
@@ -47,6 +78,15 @@ def render_status(result: dict[str, Any], version: str) -> str:
             else "none"
         ),
     ]
+    lexical = result.get("lexical")
+    if lexical:
+        line = f"Lexical    {lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
+        if lexical.get("state") != "current":
+            line += (
+                f"; {lexical.get('remaining_observations', '?')} observations to rewrite for "
+                f"{lexical.get('target_configuration', '?')}. {lexical.get('action', '')}"
+            )
+        lines.append(line)
     capacity = result.get("capacity", {})
     if capacity:
         lines.append("Capacity")
@@ -54,7 +94,7 @@ def render_status(result: dict[str, Any], version: str) -> str:
             used, limit = value["used"], value["limit"]
             shown = (
                 f"{used / 1048576:.1f} / {limit // 1048576} MiB"
-                if name == "rendered_bytes"
+                if name in {"rendered_bytes", "checkpoint_bytes"}
                 else f"{used:,} / {limit:,}"
             )
             flag = "  warning" if value.get("warning") else ""
@@ -81,13 +121,30 @@ SUMMARY_INSTRUCTION = (
 )
 
 
+BINDING_HELP = (
+    "Where this session works, such as environment=prod; repeatable. Also "
+    "MEMORYKING_BINDINGS and the named profile's bindings"
+)
+
+
+def add_binding(parser: Any) -> None:
+    parser.add_argument(
+        "--binding", action="append", default=[], metavar="KEY=VALUE", help=BINDING_HELP
+    )
+
+
 def summarize(args: Any) -> dict[str, Any]:
     """Extractive by default; with --provider, a policy adapter writes it through the audited path."""
     import uuid
 
     from memoryking.sdk import LocalClient
 
-    client = LocalClient(args.socket, args.credential, args.project)
+    client = LocalClient(
+        args.socket,
+        args.credential,
+        args.project,
+        bindings=session_bindings.resolve(args.binding, profile=args.profile, config=args.config),
+    )
     incarnation = client.context()["incarnation"]
     source, text, permit = "extractive", None, None
     if args.provider:
@@ -109,7 +166,7 @@ def summarize(args: Any) -> dict[str, Any]:
                     "task": args.task,
                     "run": args.run,
                     "checkpoint": None,
-                    "bindings": [{}],
+                    "bindings": client.bindings,
                     "max_output_tokens": 6000,
                     "tokenizer": "utf8-byte-estimate-v1",
                     "format": "text",
@@ -214,6 +271,17 @@ def read_credential(path: Path) -> str:
     return path.read_text().strip()
 
 
+def duration(ms: int) -> str:
+    """A whole-number span such as '2 d 3 h 4 min 5 s', for operator messages."""
+    seconds, parts = max(0, ms) // 1000, []
+    for unit, size in (("d", 86400), ("h", 3600), ("min", 60)):
+        if seconds >= size:
+            parts.append(f"{seconds // size} {unit}")
+            seconds %= size
+    parts.append(f"{seconds} s")
+    return " ".join(parts)
+
+
 def doctor(
     store: Path,
     control: Path,
@@ -264,8 +332,10 @@ def doctor(
     database = store / "store.sqlite"
     if database.exists():
         try:
+            lexical_state: list[tuple[str, str, int]] = []
             with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
                 version = db.execute("PRAGMA user_version").fetchone()[0]
+                lexical_state = lexical_findings(db, version)
             record(
                 "ok" if version == SCHEMA_VERSION else "warn",
                 "schema",
@@ -276,6 +346,18 @@ def doctor(
                     else f"; the daemon migrates to {SCHEMA_VERSION} on next start"
                 ),
             )
+            for tenant, state, remaining in lexical_state:
+                if state == "current":
+                    record("ok", "lexical index", f"{tenant}: current (lexical-v2)")
+                else:
+                    record(
+                        "warn",
+                        "lexical index",
+                        f"{tenant}: {state}, still on the previous configuration (lexical-v1) with "
+                        f"{remaining} observations to rewrite; run a reindex "
+                        "(`memoryking request` with the operation reindex and empty args); "
+                        "the daemon finishes it in batches and captures keep working",
+                    )
         except sqlite3.Error as exc:
             record("fail", "schema", f"cannot read {database}: {type(exc).__name__}")
     else:
@@ -286,6 +368,18 @@ def doctor(
         records = controller.journal(anchor)
         detail = f"{len(records)} records, state {anchor['state']}"
         record("ok" if anchor["state"] == "active" else "warn", "journal", detail)
+        ahead_ms = anchor.get("last_utc", 0) - SystemClock().utc_ms()
+        if ahead_ms > 0:
+            record(
+                "fail",
+                "clock",
+                f"the latest time this store recorded is {duration(ahead_ms)} ahead of the system "
+                "clock, so every request fails with clock_untrusted until the clock reaches it "
+                "(a clock that jumped forward and was corrected leaves this); see the deployment "
+                "guide, Clock recovery",
+            )
+        else:
+            record("ok", "clock", "system clock is at or after the latest recorded time")
     except LocalError as exc:
         record("fail", "journal", f"{exc.code}; stay offline and use the recovery guide")
     except OSError as exc:
@@ -450,6 +544,19 @@ def render_health(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def default_trust_key(project: str, source: str, level: str) -> str:
+    """The retry key for a trust rule: readable when it is valid, else a stable hash.
+
+    A glob such as `scraper-*` (or the project `*`) is outside the key alphabet, and a
+    long source exceeds its length, so those derive from a digest of the rule instead.
+    """
+    key = f"trust-{project}-{source}-{level}"
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,96}", key):
+        return key
+    digest = hashlib.sha256(canonical_bytes([project, source, level])).hexdigest()
+    return f"trust-{digest[:32]}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
@@ -477,6 +584,9 @@ def main() -> int:
     adder.add_argument("--backup-dir", type=Path)
     adder.add_argument("--backup-every", help="Such as 12h or 1d")
     adder.add_argument("--backup-keep", type=int)
+    adder.add_argument(
+        "--binding", action="append", default=[], metavar="KEY=VALUE", help=BINDING_HELP
+    )
     prof_commands.add_parser("list")
     prof_commands.add_parser("remove").add_argument("name")
     for name in ("init", "serve", "backup", "restore", "gc", "control-checkpoint"):
@@ -556,8 +666,25 @@ def main() -> int:
     doc.add_argument("--reranker-model", type=Path, help="Reranker directory to verify")
     doc.add_argument("--backup-dir", type=Path, help="Scheduled backup directory to check")
     doc.add_argument("--backup-every", help="Backup policy interval the directory should meet")
+    journal = commands.add_parser(
+        "journal", help="Inspect the control journal (offline; stop the daemon first)"
+    )
+    journal_commands = journal.add_subparsers(dest="journal_command", required=True)
+    pending = journal_commands.add_parser(
+        "pending",
+        help="List journal records the database has not applied: sequence, kind, tenant and "
+        "the error from the last attempt, never record content",
+    )
+    pending.add_argument("--store", type=Path)
+    pending.add_argument("--control", type=Path)
     cred = commands.add_parser("credential", help="Issue, list and revoke agent credentials")
     cred_commands = cred.add_subparsers(dest="credential_command", required=True)
+    rotate_owner = cred_commands.add_parser(
+        "rotate-owner",
+        help="Offline: replace the owner credential file with a new credential; stop the daemon first",
+    )
+    rotate_owner.add_argument("--store", type=Path)
+    rotate_owner.add_argument("--control", type=Path)
     for name in ("issue", "list", "revoke"):
         item = cred_commands.add_parser(name)
         item.add_argument("--socket", type=Path)
@@ -570,6 +697,11 @@ def main() -> int:
                 "--capabilities", required=True, help="Comma-separated, for example capture,read"
             )
             item.add_argument("--expires", help="Validity such as 45m, 12h or 30d")
+            item.add_argument(
+                "--rotate",
+                action="store_true",
+                help="Replace the principal's credential: every earlier one stops working",
+            )
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
@@ -585,6 +717,7 @@ def main() -> int:
     summ.add_argument("--provider", help="Write the summary with this policy adapter")
     summ.add_argument("--model", help="A model the policy allows for that provider")
     summ.add_argument("--json", action="store_true")
+    add_binding(summ)
     audit = commands.add_parser(
         "egress-audit",
         help="List what left this store for a model provider, and whether it arrived",
@@ -648,6 +781,7 @@ def main() -> int:
         help="Let the daemon's local cross-encoder reorder the top candidates (needs serve --reranker-model)",
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
+    add_binding(rec)
     dr = commands.add_parser(
         "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
     )
@@ -723,6 +857,7 @@ def main() -> int:
     hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
     hk.add_argument("--query", help="Briefing query at session start; default: task or project")
     hk.add_argument("--budget", type=int, default=6000)
+    add_binding(hk)
     hk.add_argument(
         "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
     )
@@ -737,6 +872,7 @@ def main() -> int:
     inst.add_argument("--task", help="Task the hooks resume and checkpoint")
     inst.add_argument("--query", help="Fixed briefing query for session start")
     inst.add_argument("--cwd", type=Path, help="Project directory; default: current")
+    add_binding(inst)
     inst.add_argument("--print", action="store_true", help="Show the merged config, write nothing")
     inst.add_argument("--remove", action="store_true", help="Remove MemoryKing's hooks")
     rpc = commands.add_parser(
@@ -773,6 +909,8 @@ def main() -> int:
                 for field in ("dashboard_port", "backup_every", "backup_keep"):
                     if getattr(args, field) is not None:
                         values[field] = getattr(args, field)
+                if args.binding:
+                    values["bindings"] = session_bindings.parse_pairs(args.binding)
                 path = profiles.save(args.name, values, args.config)
                 print(json.dumps({"profile": args.name, "config": str(path)}))
             elif args.profile_command == "remove":
@@ -893,9 +1031,12 @@ def main() -> int:
                 as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
                 salience=args.salience,
                 rerank=args.rerank,
+                binding=args.binding,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
+                profile=args.profile,
+                config=args.config,
             )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(packet) + b"\n")
@@ -917,7 +1058,12 @@ def main() -> int:
                 if args.kind == "session-start":
                     sys.stdout.write(
                         host_hooks.session_start(
-                            payload, query=args.query, task=args.task, budget=args.budget, **where
+                            payload,
+                            query=args.query,
+                            task=args.task,
+                            budget=args.budget,
+                            binding=args.binding,
+                            **where,
                         )
                     )
                 else:
@@ -945,6 +1091,7 @@ def main() -> int:
                 credential=args.credential if args.profile is None else None,
                 task=args.task,
                 query=args.query,
+                binding=args.binding,
                 remove=args.remove,
                 write=not args.print,
             )
@@ -973,6 +1120,11 @@ def main() -> int:
             failed = sum(level == "fail" for level, _, _ in findings)
             print(f"{len(findings)} checks, {failed} failed")
             return 1 if failed else 0
+        elif args.command == "journal":
+            print(json.dumps(LocalStore.pending_journal(args.store, args.control)))
+        elif args.command == "credential" and args.credential_command == "rotate-owner":
+            path = LocalStore.rotate_owner(args.store, args.control)
+            print(json.dumps({"owner_credential": str(path), "rotated": True}))
         elif args.command == "credential":
             credential = read_credential(args.credential)
             if args.credential_command == "list":
@@ -998,6 +1150,8 @@ def main() -> int:
                     "project": args.project,
                     "capabilities": sorted(set(args.capabilities.split(","))),
                 }
+                if args.rotate:
+                    grant["rotate"] = True
                 if args.expires:
                     grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
                 result = request(args.socket, credential, "grant", grant)
@@ -1092,7 +1246,9 @@ def main() -> int:
             }
             if args.trust_command == "set":
                 command["args"].update(source=args.source, level=args.level)
-                command["key"] = args.key or f"trust-{args.project}-{args.source}-{args.level}"
+                command["key"] = args.key or default_trust_key(
+                    args.project, args.source, args.level
+                )
             elif args.trust_command == "release":
                 command["args"]["observation"] = args.observation
                 command["key"] = args.key or f"release-{args.observation}"

@@ -161,6 +161,23 @@ class RankingCases:
         self.assertEqual(self.inspect()["version"], 3)
         self.assertFalse(self.inspect()["automatic_online_learning"])
 
+    def test_records_a_configuration_depends_on_survive_revision_release(self):
+        self.seed()
+        brief = self.run_r(args=self.brief_args(top_k=2))
+        for version in range(1, 11):
+            self.feedback(brief, version, reference=self.target, use="used", usefulness="helpful")
+        self.store.expire_results()
+        revisions = [
+            row[0]
+            for row in self.store.db.execute(
+                "SELECT revision FROM experience_records WHERE kind='feedback' ORDER BY revision"
+            ).fetchall()
+        ]
+        # Revision 1 is named by the configuration, so it stays beside the newest eight.
+        self.assertEqual(revisions, [1, *range(4, 12)])
+        self.assertEqual(self.get_record(self.config)["revision"], 1)
+        self.activate(self.evaluate())
+
     def test_no_incremental_value_or_regression_cannot_activate(self):
         self.seed()
         for index, relevant in enumerate([[self.original], [self.original, self.target]]):

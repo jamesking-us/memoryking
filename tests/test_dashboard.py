@@ -61,6 +61,51 @@ class DashboardTests(unittest.TestCase):
         self.cookie = result[1]["Set-Cookie"].split(";")[0]
         return issued
 
+    def rotate_owner(self):
+        """Advance the owner's credential generation; returns the replaced credential."""
+        from memoryking.application.store_core import CAPABILITIES
+
+        old = self.owner
+        with self.store.transaction() as decision:
+            who = self.store._decode(old, "credential")
+            record = self.store._journal(
+                {
+                    "kind": "grant",
+                    "actor": "operator",
+                    "tenant": who["tenant"],
+                    "principal": who["principal"],
+                    "project": "*",
+                    "capabilities": sorted(CAPABILITIES),
+                    "starts": None,
+                    "expires": None,
+                    "rotate": True,
+                }
+            )
+            self.store._apply(record, decision.evaluated_ms)
+            self.owner = self.store._token(
+                "credential", tenant=who["tenant"], principal=who["principal"]
+            )
+        self.store._expose()
+        return old
+
+    def test_a_rotated_credential_cannot_sign_in_or_keep_a_session(self):
+        # A code issued before the rotation cannot be exchanged after it.
+        stale_code = self.web.issue(self.owner)["code"]
+        # A session opened before the rotation stops working with it.
+        self.login()
+        self.assertEqual(200, self.call("GET", "/api/snapshot")[0])
+        old = self.rotate_owner()
+        self.assertEqual(403, self.call("GET", "/api/snapshot")[0])
+        self.cookie = None
+        headers = {"Origin": self.web.origin}
+        self.assertEqual(403, self.call("POST", "/api/bootstrap", {"code": stale_code}, headers)[0])
+        with self.assertRaises(LocalError) as caught:
+            self.web.issue(old)
+        self.assertEqual("credential_replaced", caught.exception.code)
+        # The current credential signs in.
+        self.login()
+        self.assertEqual(200, self.call("GET", "/api/snapshot")[0])
+
     def test_structured_plan_list_and_detail_are_session_bound_reads(self):
         from test_plans import plan
 
@@ -753,6 +798,11 @@ class DashboardTests(unittest.TestCase):
                 "rendered_bytes",
                 "operation_intents",
                 "processing_usage",
+                "checkpoints",
+                "checkpoint_bytes",
+                "handoffs",
+                "handoff_views",
+                "experience_records",
             },
         )
         self.assertEqual(capacity["jobs"]["limit"], 1000)

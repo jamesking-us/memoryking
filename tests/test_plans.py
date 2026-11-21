@@ -3,11 +3,13 @@
 import copy
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import test_knowledge as knowledge
 import test_postgres_parity as pg
 
+from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.working import MUTATIONS, Working
 from memoryking.domain.local import LocalError
 
@@ -308,6 +310,100 @@ class PlanCases:
         self.assertEqual(result["plans"], [])
         self.save_plan(revision=2)
         self.assertEqual(self.get_plan()["progress"]["completed"], 0)
+
+    def ordinary_save(self, task, revision):
+        checkpoint = json.loads(
+            (Path(__file__).resolve().parents[1] / "fixtures/contracts/checkpoint.json").read_text()
+        )
+        return self.execute(
+            self.command(
+                "save",
+                {
+                    "task": task,
+                    "run": None,
+                    "expected_revision": revision,
+                    "readers": ["owner"],
+                    "checkpoint": checkpoint,
+                },
+            )
+        )
+
+    def resume_packet(self, task):
+        return self.execute(
+            self.command(
+                "resume",
+                {
+                    "task": task,
+                    "run": None,
+                    "checkpoint": None,
+                    "bindings": [{}],
+                    "max_output_tokens": 6000,
+                    "tokenizer": "cl100k_base",
+                },
+            ),
+        )
+
+    def replay(self, receipt):
+        output = []
+        Retrieval(self.store).execute(
+            self.owner,
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "replay",
+                "args": {"project": "p", "receipt": receipt},
+            },
+        ).emit(output.append)
+        return output[0]
+
+    def test_five_thousand_saves_across_tasks_keep_plan_history_and_receipts(self):
+        """5,000 real saves: the old refusal came at the 4,097th."""
+        self.save_plan()
+        self.step()
+        revisions = dict.fromkeys(range(10), 0)
+        old_receipt = old_checkpoint = None
+        for number in range(5000):
+            task = number % 10
+            saved = self.ordinary_save(f"task{task}", revisions[task])
+            revisions[task] += 1
+            if number == 0:
+                old_checkpoint = saved["checkpoint"]
+                old_receipt = self.resume_packet("task0")["receipt"]
+        old_bytes = self.replay(old_receipt)
+        self.assertEqual(json.loads(old_bytes)["receipt"], old_receipt)
+        self.store.expire_results()
+        capacity = self.store.status(self.owner, "p")["capacity"]["checkpoints"]
+        # Ten ordinary streams keep 130 revisions each, the cited first revision stays
+        # for its receipt, and the plan keeps both of its revisions.
+        self.assertEqual(capacity["used"], 10 * 130 + 1 + 2)
+        rows = self.store.db.execute("SELECT count(*) FROM checkpoints").fetchone()[0]
+        self.assertEqual(rows, 5002)
+        states = dict(
+            self.store.db.execute(
+                "SELECT revision,state FROM checkpoints WHERE task='task0'"
+            ).fetchall()
+        )
+        self.assertEqual((states[1], states[2], states[3]), ("available", "retired", "retired"))
+        self.assertEqual(
+            self.store.db.execute(
+                "SELECT state FROM checkpoints WHERE id=?", (old_checkpoint,)
+            ).fetchone()[0],
+            "available",
+        )
+        # The retained receipt still replays byte for byte, and so does a fresh one.
+        self.assertEqual(self.replay(old_receipt), old_bytes)
+        fresh = self.resume_packet("task0")
+        self.assertEqual(json.loads(self.replay(fresh["receipt"]))["receipt"], fresh["receipt"])
+        # Plan history still verifies: nothing of it was retired.
+        plan_rows = self.store.db.execute(
+            "SELECT state FROM checkpoints WHERE task='checkout'"
+        ).fetchall()
+        self.assertEqual([r[0] for r in plan_rows], ["available", "available"])
+        current = self.get_plan()
+        self.assertTrue(current["history_complete"])
+        self.assertEqual(current["progress"]["completed"], 1)
+        self.assertEqual(current["plan"]["steps"][0]["status"], "done")
+        self.assertEqual(self.get_plan(revision=1)["progress"]["completed"], 0)
 
 
 class LocalPlanTests(PlanCases, unittest.TestCase):

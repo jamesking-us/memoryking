@@ -18,12 +18,13 @@ from starlette.routing import Route
 from memoryking.adapters.dashboard import ASSETS, SAFE_HEADERS, STATIC, workspace_snapshot
 from memoryking.adapters.execution import Execution
 from memoryking.adapters.local_store import identifier, uid
+from memoryking.adapters.postgres_pool import busy_sqlstate
 from memoryking.adapters.retrieval import Retrieval
 from memoryking.adapters.shared_service import SharedService
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
 from memoryking.domain.http_status import http_status
 from memoryking.domain.local import LocalError, Released
-from memoryking.observability import failure, trace, tracing
+from memoryking.observability import busy, failure, trace, tracing
 
 
 def stable(value: Any) -> Any:
@@ -520,6 +521,9 @@ class SharedDashboard:
         except LocalError as exc:
             return error(exc.code, http_status(exc.code, 403))
         except Exception as exc:
+            if (state := busy_sqlstate(exc)) is not None:
+                busy("shared_dashboard", state)
+                return error("service_busy", 429)
             return error("dashboard_unavailable", 503, failure("shared_dashboard", exc))
 
     async def events(self, session: str, cursor: str | None) -> Response:

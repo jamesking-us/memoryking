@@ -18,6 +18,7 @@ from memoryking.domain.local import LocalError
 from tools.postgres_dev_cluster import DevCluster
 
 BIN = Path(os.environ.get("MEMORYKING_PG_BIN", "tmp/postgres-dev/runtime/bin")).resolve()
+LATER_TABLES = {"credential_generations", "lexical_state", "lexical_projects", "lexical_terms"}
 
 
 @unittest.skipUnless((BIN / "pg_ctl").is_file(), "native PostgreSQL runtime not configured")
@@ -386,6 +387,215 @@ class PostgresStoreTests(unittest.TestCase):
                     self.pool, self.root, self.control, self.tenant, credential, clock=self.clock
                 )
 
+    def test_restore_refuses_a_migration_role_that_bypasses_row_security(self):
+        from memoryking.adapters.postgres_recovery import backup, restore
+
+        self.capture()
+        archive = self.base / (self.tenant + "-bypass")
+        with (
+            self.store() as store,
+            psycopg.connect(self.cluster.dsn("mk_backup"), autocommit=True) as connection,
+        ):
+            backup(store, connection, archive)
+        with psycopg.connect(self.cluster.dsn(), autocommit=True) as admin:
+            for attribute, undo in (("BYPASSRLS", "NOBYPASSRLS"), ("SUPERUSER", "NOSUPERUSER")):
+                admin.execute(f"ALTER ROLE mk_migration {attribute}")
+                try:
+                    with psycopg.connect(
+                        self.cluster.dsn("mk_migration"), autocommit=True
+                    ) as connection:
+                        with self.assertRaises(LocalError) as caught:
+                            restore(
+                                connection,
+                                self.root,
+                                self.control,
+                                self.tenant,
+                                archive,
+                                clock=self.clock,
+                            )
+                    self.assertEqual("migration_role_required", caught.exception.code)
+                finally:
+                    admin.execute(f"ALTER ROLE mk_migration {undo}")
+        self.capture(2)  # The refused restore changed nothing.
+
+    def test_expire_results_states_its_tenant_in_every_write(self):
+        from unittest import mock
+
+        from memoryking.adapters.postgres_sql import PostgresSQL
+
+        self.capture()
+        seen = []
+        original = PostgresSQL.execute
+
+        def record(db, statement, parameters=()):
+            seen.append((statement, tuple(parameters)))
+            return original(db, statement, parameters)
+
+        with self.store() as store, mock.patch.object(PostgresSQL, "execute", record):
+            store.expire_results()
+        writes = [item for item in seen if item[0].startswith(("UPDATE retries", "DELETE FROM"))]
+        self.assertGreaterEqual(len(writes), 5)
+        for statement, parameters in writes:
+            self.assertIn("tenant=?", statement)
+            self.assertIn(self.tenant, parameters)
+
+    def test_restore_leaves_other_tenants_rows_alone(self):
+        from memoryking.adapters.postgres_recovery import backup, restore
+
+        other = "t_" + uuid.uuid4().hex
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as migration:
+            other_credential = initialize_tenant(
+                migration, self.root, self.control, other
+            ).read_text()
+        with PostgresStore(
+            self.pool, self.root, self.control, other, other_credential, clock=self.clock
+        ) as store:
+            other_namespace = store.namespace(other_credential, "demo")
+            store.capture(other_credential, other_namespace, "key1", observation(1))
+        self.capture()
+        archive = self.base / (self.tenant + "-isolation")
+        with (
+            self.store() as store,
+            psycopg.connect(self.cluster.dsn("mk_backup"), autocommit=True) as connection,
+        ):
+            backup(store, connection, archive)
+        counts = (
+            "SELECT (SELECT count(*) FROM memoryking.retries WHERE tenant=%(t)s AND result IS NOT NULL),"
+            "(SELECT count(*) FROM memoryking.receipts WHERE tenant=%(t)s),"
+            "(SELECT count(*) FROM memoryking.tenant_meta WHERE tenant=%(t)s AND key='incarnation' AND value=%(i)s)"
+        )
+        with psycopg.connect(self.cluster.dsn(), autocommit=True) as admin:
+            incarnation = admin.execute(
+                "SELECT value FROM memoryking.tenant_meta WHERE tenant=%s AND key='incarnation'",
+                (other,),
+            ).fetchone()[0]
+            before = admin.execute(counts, {"t": other, "i": incarnation}).fetchone()
+        self.assertEqual(1, before[0])
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+            restore(connection, self.root, self.control, self.tenant, archive, clock=self.clock)
+        with psycopg.connect(self.cluster.dsn(), autocommit=True) as admin:
+            self.assertEqual(
+                before, admin.execute(counts, {"t": other, "i": incarnation}).fetchone()
+            )
+
+    def test_a_delegated_token_dies_when_its_issuer_or_its_subject_is_rotated(self):
+        # Decision: a delegated token carries the subject's generation (it acts as the
+        # subject) and the issuer's generation at delegation, so rotating either retires it.
+        def usable(token):
+            try:
+                with PostgresStore(
+                    self.pool, self.root, self.control, self.tenant, token, clock=self.clock
+                ) as store:
+                    with store.transaction() as decision:
+                        store._auth(token, "read", "demo", decision.evaluated_ms)
+            except LocalError as exc:
+                return exc.code
+            return None
+
+        def delegate(issuer):
+            with PostgresStore(
+                self.pool, self.root, self.control, self.tenant, issuer, clock=self.clock
+            ) as store:
+                return store.delegate("subject", "demo", ["read"], 60_000)
+
+        with self.store() as store:
+            issuer = store.grant(self.credential, "issuer", "demo", ["read", "capture"])
+            subject = store.grant(self.credential, "subject", "demo", ["read"])
+        delegated = delegate(issuer)
+        self.assertIsNone(usable(delegated))
+        with self.store() as store:
+            issuer = store.grant(
+                self.credential, "issuer", "demo", ["read", "capture"], rotate=True
+            )
+        self.assertEqual("credential_replaced", usable(delegated))
+        # The rotated issuer delegates again; the new token works.
+        delegated = delegate(issuer)
+        self.assertIsNone(usable(delegated))
+        with self.store() as store:
+            subject = store.grant(self.credential, "subject", "demo", ["read"], rotate=True)
+        self.assertEqual("credential_replaced", usable(delegated))
+        self.assertIsNone(usable(subject))
+        delegated = delegate(issuer)
+        self.assertIsNone(usable(delegated))
+        # Revoking the issuer's access retires the delegation as well.
+        with self.store() as store:
+            store.revoke(self.credential, "issuer", "demo")
+        self.assertEqual("denied", usable(delegated))
+
+    def test_archive_commits_to_a_blob_index_and_legacy_embedded_list_restores(self):
+        from memoryking.adapters.local_files import atomic
+        from memoryking.adapters.postgres_recovery import backup, restore
+
+        self.capture(1, text="first distinct body")
+        self.capture(2, text="second distinct body")
+        archive = self.base / (self.tenant + "-index-backup")
+        with (
+            self.store() as store,
+            psycopg.connect(self.cluster.dsn("mk_backup"), autocommit=True) as connection,
+        ):
+            manifest = backup(store, connection, archive)
+            control = store.control
+        self.assertEqual(2, manifest["blob_index"]["count"])
+        self.assertNotIn("blobs", manifest)
+        self.assertEqual(9, manifest["schema"])
+        index = (archive / "blob-index").read_bytes()
+        digests = index.decode().splitlines()
+
+        def restore_archive():
+            with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+                return restore(
+                    connection, self.root, self.control, self.tenant, archive, clock=self.clock
+                ).read_text()
+
+        atomic(archive / "blob-index", "".join(d + "\n" for d in digests[:1]).encode())
+        with self.assertRaises(LocalError) as caught:
+            restore_archive()
+        self.assertEqual("backup_invalid", caught.exception.code)
+        atomic(archive / "blob-index", index)
+        blob = archive / "blobs" / digests[0]
+        original = blob.read_bytes()
+        atomic(blob, original + b"x")
+        with self.assertRaises(LocalError) as caught:
+            restore_archive()
+        self.assertEqual("backup_invalid", caught.exception.code)
+        atomic(blob, original)
+        # The layout of the previous release: the list embedded in the signed manifest.
+        legacy = dict(manifest)
+        legacy.pop("blob_index")
+        legacy.update(schema=6, blobs=digests)
+        legacy["tables"] = {
+            name: meta for name, meta in manifest["tables"].items() if name not in LATER_TABLES
+        }
+        atomic(archive / "manifest", control.sign(legacy).encode())
+        (archive / "blob-index").unlink()
+        self.credential = restore_archive()
+        with self.store() as store:
+            self.namespace = store.namespace(self.credential, "demo")
+            self.assertEqual(2, len(delivered(store.read(self.credential, "demo"))["items"]))
+
+    def test_job_position_index_exists_and_reindex_backlog_does_not_refuse_capture(self):
+        from memoryking.application import store_core
+
+        with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as connection:
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT 1 FROM pg_indexes WHERE schemaname='memoryking' "
+                    "AND indexname='jobs_position'"
+                ).fetchone()
+            )
+        original, store_core.QUEUE_LIMIT = store_core.QUEUE_LIMIT, 3
+        try:
+            for number in (1, 2, 3):
+                self.capture(number)
+            with self.assertRaises(LocalError) as caught:
+                self.capture(4)
+            self.assertEqual("queue_full", caught.exception.code)
+            with self.store() as store:
+                store.reindex(self.credential)
+            self.capture(4)  # the reindexed jobs are backlog, not new captures
+        finally:
+            store_core.QUEUE_LIMIT = original
+
     def test_restore_interruption_stays_fenced_then_explicit_retry_recovers(self):
         from memoryking.adapters.postgres_recovery import backup, restore
 
@@ -421,6 +631,20 @@ class PostgresStoreTests(unittest.TestCase):
             ).read_text()
         with self.store() as store:
             self.assertEqual(1, len(delivered(store.read(self.credential, "demo"))["items"]))
+
+    def test_database_ahead_of_the_control_journal_fails_closed(self):
+        control = self.control / self.tenant
+        stale = {name: (control / name).read_bytes() for name in ("journal", "anchor")}
+        with self.store() as store:
+            store.grant(self.credential, "reader", "demo", ["read"])
+        # A journal tail lost after the database commit, or a control tree copied from
+        # before it: the database has applied a record the journal does not hold.
+        for name, data in stale.items():
+            (control / name).write_bytes(data)
+        with self.assertRaises(LocalError) as caught:
+            with self.store() as store:
+                store.status(self.credential, "demo")
+        self.assertEqual("journal_rollback", caught.exception.code)
 
     def test_lost_anchor_requires_independently_retained_current_journal_head(self):
         from memoryking.adapters.postgres_recovery import backup, restore

@@ -148,6 +148,58 @@ class WorkingTests(unittest.TestCase):
     def operations(self):
         return self.execute(self.command("operations", self.scope()))["operations"]
 
+    def long_history(self, resolved=40):
+        """One open intent recorded first, then `resolved` succeeded operations after it."""
+        self.intent(operation="open-first")
+        for number in range(resolved):
+            name = f"done{number:02d}"
+            self.intent(operation=name)
+            self.transition("dispatching", 1, operation=name)
+            self.transition("succeeded", 2, operation=name)
+
+    def tenant_id(self):
+        return self.store.db.execute("SELECT tenant FROM tenants").fetchone()[0]
+
+    def fabricate_checkpoints(self, streams, revisions, prefix="bulk"):
+        """Insert `streams` ordinary streams of `revisions` available checkpoints each.
+
+        Direct rows stand in for thousands of real saves: the capacity and release rules
+        read these tables, and the real-save path is exercised by the tests around them.
+        """
+        tenant, body = self.tenant_id(), json.dumps(checkpoint(), sort_keys=True)
+        with self.store.transaction():
+            for number in range(streams):
+                task = f"{prefix}{number}"
+                for revision in range(1, revisions + 1):
+                    ident = f"ckpt_{task}_{revision}"
+                    self.store.db.execute(
+                        "INSERT INTO checkpoints VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            tenant,
+                            ident,
+                            "p",
+                            task,
+                            "task",
+                            revision,
+                            "owner",
+                            self.store.incarnation,
+                            1,
+                            body if revision == revisions else "{}",
+                            "0" * 64,
+                            '["owner"]',
+                            "[]",
+                            "available",
+                            1,
+                        ),
+                    )
+                self.store.db.execute(
+                    "INSERT INTO checkpoint_streams VALUES (?,?,?,?,?,?,?,?)",
+                    (tenant, "p", task, "task", "owner", revisions, self.store.incarnation, ident),
+                )
+
+    def checkpoint_capacity(self):
+        return self.store.status(self.owner, "p")["capacity"]["checkpoints"]
+
     def restart(self):
         self.store.close()
         self.store = LocalStore(self.data, self.control)
@@ -265,6 +317,24 @@ class WorkingTests(unittest.TestCase):
                 "SELECT text FROM session_summaries WHERE id=?", (result["receipt"],)
             ).fetchone()
         )
+
+    def test_idle_summary_scan_holds_the_store_lock_it_shares_with_requests(self):
+        # The daemon runs the scan on its service thread while request threads use the
+        # same connection; an unlocked scan made the first request fail with `denied`.
+        self.store.summary_idle_ms = 1000
+        held = []
+        original = Working.idle_summaries
+
+        def watch(working, *args):
+            held.append(self.store.lock._is_owned())
+            return original(working, *args)
+
+        Working.idle_summaries = watch
+        try:
+            self.store.idle_summaries(self.clock().utc)
+        finally:
+            Working.idle_summaries = original
+        self.assertEqual(held, [True])
 
     def test_idle_summaries_are_derived_once_by_the_owner_between_requests(self):
         clock = self.clock()
@@ -479,6 +549,55 @@ class WorkingTests(unittest.TestCase):
         body["acceptance"] *= 2
         self.fails("duplicate_criterion", lambda: self.save(body))
 
+    def test_unknown_constraint_applicability_still_returns_the_callers_own_checkpoint(self):
+        self.save()
+        self.intent(operation="uncertain")
+        self.transition("dispatching", 1, operation="uncertain")
+        derived = self.summarize(key="before-block")
+        self.constraint(
+            "Never touch production data",
+            selector={
+                "selector_version": "1",
+                "any_of": [{"all_of": [{"field": "environment", "op": "eq", "value": "prod"}]}],
+            },
+        )
+        packet = self.resume()
+        self.assertEqual(packet["status"], "blocked")
+        self.assertEqual(packet["reason"], "applicability_unknown")
+        self.assertEqual(packet["unbound_fields"], ["environment"])
+        self.assertEqual(packet["checkpoint"]["revision"], 1)
+        self.assertEqual(packet["constraints"], [])
+        self.assertNotIn("Never touch production", json.dumps(packet))
+        # An effect that may or may not have happened is shown beside the blocked checkpoint,
+        # with the latest summary the reader may see.
+        self.assertEqual(
+            [(o["id"], o["state"], o["reconciliation_required"]) for o in packet["operations"]],
+            [("uncertain", "dispatching", True)],
+        )
+        self.assertFalse(packet["operations_truncated"])
+        self.assertEqual(packet["summary"]["receipt"], derived["receipt"])
+        text = self.resume(format="text")
+        self.assertIn("## Open operations", text["text"])
+        self.assertIn("uncertain: dispatching **reconcile before repeating**", text["text"])
+        self.assertIn("## Where this left off", text["text"])
+        self.assertEqual(text["status"], "blocked")
+        self.assertIn("Missing binding fields: `environment`", text["text"])
+        self.assertIn("Mandatory constraints: unresolved", text["text"])
+        self.assertIn(checkpoint()["objective"], text["text"])
+        # Bound, the same stream resumes ready with the constraint resolved.
+        ready = self.resume(bindings=[{"environment": "prod"}])
+        # (incomplete, not ready, only because the operation above is still uncertain).
+        self.assertEqual(ready["status"], "incomplete")
+        self.assertEqual(ready["reason"], "recovery_reconciliation_required")
+        self.assertEqual(ready["operations"], packet["operations"])
+        self.assertEqual(ready["constraints"][0]["text"], "Never touch production data")
+        self.assertNotIn("unbound_fields", ready)
+        # Other consumers of the same state still get no checkpoint from a blocked read.
+        summary = self.summarize(key="blocked-summary")
+        self.assertNotIn("Never touch production", json.dumps(summary))
+        # And a save over the unresolved stream is an ordinary revision.
+        self.assertEqual(self.save(revision=1, key="second")["revision"], 2)
+
     def test_hidden_policy_blocks_and_expiry_uses_persisted_instant(self):
         reader = self.store.grant(self.owner, "reader", "p", ["read"])
         self.save(readers=["owner", "reader"])
@@ -688,7 +807,7 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
                 db.execute("DROP TABLE " + table)
             historical_inventory(db, 3)
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 13)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 16)
         self.assertEqual(
             self.store.db.execute("SELECT id FROM observations").fetchone()[0],
             self.obs["observation"],
@@ -738,6 +857,50 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
             self.store.status(self.owner, "p")["capacity"]["operation_intents"]["used"], 32
         )
 
+    def test_a_long_task_resumes_with_every_open_operation_and_the_newest_resolved(self):
+        self.save()
+        self.long_history()  # 41 recorded operations: past the 32 a stream may hold open
+        listed = self.execute(self.command("operations", self.scope()))
+        self.assertEqual(len(listed["operations"]), 32)
+        self.assertTrue(listed["operations_truncated"])
+        # The oldest operation is still unresolved, so truncation can never hide it.
+        ids = [op["id"] for op in listed["operations"]]
+        self.assertIn("open-first", ids)
+        self.assertEqual(
+            [op["state"] for op in listed["operations"] if op["id"] == "open-first"],
+            ["intent_recorded"],
+        )
+        self.assertEqual(sum(op["state"] == "succeeded" for op in listed["operations"]), 31)
+        self.assertIn("done39", ids)
+        self.assertNotIn("done00", ids)
+        packet = self.resume(max_output_tokens=16000)
+        self.assertEqual(len(packet["operations"]), 32)
+        self.assertTrue(packet["operations_truncated"])
+        self.assertIn("open-first", [op["id"] for op in packet["operations"]])
+        summary = self.summarize()
+        self.assertEqual(summary["method"], "extractive-v1")
+
+    def test_every_open_operation_is_returned_even_when_they_fill_the_window(self):
+        self.save()
+        for number in range(32):
+            self.intent(operation=f"open{number:02d}")
+        packet = self.resume(max_output_tokens=16000)
+        self.assertEqual(len(packet["operations"]), 32)
+        self.assertFalse(packet["operations_truncated"])
+        # Resolve one, add resolved history past the bound: all 31 open stay, no error.
+        self.transition("dispatching", 1, operation="open00")
+        self.transition("succeeded", 2, operation="open00")
+        for number in range(3):
+            name = f"later{number}"
+            self.intent(operation=name)
+            self.transition("dispatching", 1, operation=name)
+            self.transition("succeeded", 2, operation=name)
+        listed = self.execute(self.command("operations", self.scope()))
+        self.assertTrue(listed["operations_truncated"])
+        ids = {op["id"] for op in listed["operations"]}
+        self.assertEqual({f"open{n:02d}" for n in range(1, 32)} - ids, set())
+        self.assertEqual(len(listed["operations"]), 32)
+
     def test_unacknowledged_dispatch_is_recovered_as_ambiguous_after_deadline(self):
         self.save()
         self.intent()
@@ -764,3 +927,57 @@ Working(store).execute((Path(sys.argv[2])/'owner.credential').read_text(),json.l
             "SELECT state,body FROM rendered_artifacts WHERE id=?", (old["receipt"],)
         ).fetchone()
         self.assertEqual(tuple(row), ("expired", None))
+
+    def test_status_reports_the_bounds_that_hold_history(self):
+        capacity = self.store.status(self.owner, "p")["capacity"]
+        for name, limit in {
+            "checkpoints": 4096,
+            "checkpoint_bytes": 268435456,
+            "handoffs": 4096,
+            "handoff_views": 4096,
+            "experience_records": 10000,
+        }.items():
+            self.assertEqual(capacity[name], {"used": 0, "limit": limit, "warning": False}, name)
+        self.save()
+        self.assertEqual(self.checkpoint_capacity()["used"], 1)
+
+    def test_old_revisions_stop_counting_and_a_full_tenant_checkpoints_again(self):
+        self.fabricate_checkpoints(8, 512)  # 4,096 rows: the old refusal point
+        full = self.checkpoint_capacity()
+        self.assertEqual((full["used"], full["warning"]), (4096, True))
+        self.save()  # refused as checkpoint_capacity before live counting and release
+        self.assertEqual(self.checkpoint_capacity()["used"], 8 * 130 + 1)
+        rows = self.store.db.execute("SELECT count(*) FROM checkpoints").fetchone()[0]
+        self.assertEqual(rows, 4097)  # retired revisions stay as tombstones
+        old, newest = (
+            self.store.db.execute(
+                "SELECT state,body,revision FROM checkpoints WHERE id=?", (f"ckpt_bulk0_{n}",)
+            ).fetchone()
+            for n in (382, 383)
+        )
+        self.assertEqual(tuple(old), ("retired", None, 382))
+        self.assertEqual(tuple(newest)[0], "available")  # 512 - 129 is the oldest kept
+        # The stream's revision number was never freed: compare-and-set still counts on.
+        self.assertEqual(self.save(checkpoint(), 512, task="bulk0")["revision"], 513)
+        self.fails("checkpoint_revision_conflict", lambda: self.save(revision=1, task="bulk0"))
+
+    def test_housekeeping_retires_old_revisions_without_waiting_for_the_cap(self):
+        self.fabricate_checkpoints(2, 200)
+        self.assertEqual(self.checkpoint_capacity()["used"], 400)
+        self.store.expire_results()
+        self.assertEqual(self.checkpoint_capacity()["used"], 260)
+        self.store.expire_results()
+        self.assertEqual(self.checkpoint_capacity()["used"], 260)
+
+    def test_a_restored_tenant_that_was_at_the_cap_checkpoints_again(self):
+        from recovery_helpers import backup_fixture, restore_fixture
+
+        self.fabricate_checkpoints(8, 128)  # 1,024 rows; ordinary streams under the window
+        self.fabricate_checkpoints(24, 128, prefix="more")  # 4,096 live in all
+        self.assertEqual(self.checkpoint_capacity()["used"], 4096)
+        self.fails("checkpoint_capacity", lambda: self.save())
+        archive = backup_fixture(self)
+        restore_fixture(self, archive)
+        self.assertEqual(self.checkpoint_capacity()["used"], 0)
+        self.assertEqual(self.save()["revision"], 1)
+        self.assertEqual(self.checkpoint_capacity()["used"], 1)
