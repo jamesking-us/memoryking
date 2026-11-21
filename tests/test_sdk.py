@@ -257,15 +257,28 @@ class SDKTests(unittest.TestCase):
             )
         self.assertEqual("invalid_tool_arguments", caught.exception.code)
 
-    def test_lean_profile_round_trip_through_five_flat_tools(self):
+    def test_lean_profile_round_trip_through_nine_flat_tools(self):
         from memoryking import lean
         from memoryking.adapters.stdio import LEAN_VALIDATORS
 
         self.assertEqual(
             [t["name"] for t in lean.TOOLS],
-            ["remember", "recall", "save_progress", "resume", "hand_off"],
+            [
+                "remember",
+                "recall",
+                "save_progress",
+                "resume",
+                "hand_off",
+                "propose",
+                "confirm",
+                "correct",
+                "forget",
+            ],
         )
-        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 8192)
+        # Nine flat tools: the original five stayed under 8 KiB; propose, confirm, correct
+        # and forget add about 2.7 KB, so the ceiling is 10 KiB (still a few hundred tokens
+        # per tool, no oneOf).
+        self.assertLess(len(json.dumps(lean.CATALOG, separators=(",", ":"))), 10240)
         for tool in lean.TOOLS:
             self.assertNotIn("oneOf", json.dumps(tool["inputSchema"]))
         first = lean.call(
@@ -548,7 +561,7 @@ class SDKTests(unittest.TestCase):
             self.assertNotIn("bindings", tool["inputSchema"]["properties"])
             self.assertNotIn("binding", tool["inputSchema"]["properties"])
 
-    def test_lean_bridge_lists_five_tools_over_stdio(self):
+    def test_lean_bridge_lists_its_tools_over_stdio(self):
         frames = [
             initialize(),
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -579,7 +592,7 @@ class SDKTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         replies = [json.loads(line) for line in run.stdout.splitlines()]
         listed = next(r for r in replies if r.get("id") == 2)["result"]["tools"]
-        self.assertEqual(len(listed), 5)
+        self.assertEqual(len(listed), 9)
         recalled = next(r for r in replies if r.get("id") == 4)["result"]
         self.assertFalse(recalled["isError"])
         self.assertIn("from the lean bridge", json.loads(recalled["content"][0]["text"])["text"])

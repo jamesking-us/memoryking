@@ -195,6 +195,7 @@ HINTS: dict[str, str] = {
     "hook_event_invalid": "The host sent something other than one JSON object on stdin; run the hook from the host, not by hand.",
     "hook_config_invalid": "The host's hook config file is not a JSON object; fix or remove it before installing.",
     "host_unsupported": "Hooks are generated for claude, codex or grok; other hosts can run the same `memoryking hook` commands by hand.",
+    "chat_review_disabled": "Confirming in chat is off for this bridge; ask the user to run `memoryking review accept` or start the bridge with --allow-chat-review.",
     "trust_level_invalid": "A source is trusted or untrusted; nothing else.",
     "vault_missing": "The vault directory has no `<project>` folder; export first, or pass the directory that holds it.",
     "hold_unavailable": "No held capture with that id in this project; it was released, purged, or never held.",

@@ -354,6 +354,10 @@ class StoreCore:
                         "held": Trust(self).held(tenant, occurrence["id"]),
                     }
                 else:
+                    if request.get("supersedes"):
+                        from memoryking.adapters.corrections import Corrections
+
+                        Corrections(self).earlier(who, request, decision.evaluated_ms)
                     count = self.db.execute(QUEUED_JOBS, (tenant,)).fetchone()[0]
                     if count >= QUEUE_LIMIT:
                         raise LocalError("queue_full")
@@ -383,6 +387,10 @@ class StoreCore:
                     )
                     lexical_index.add(self.db, tenant, request["project"], obs, request["text"])
                     self._index_anchors(tenant, obs, request["text"])
+                    if request.get("supersedes"):
+                        from memoryking.adapters.corrections import Corrections
+
+                        Corrections(self).link(who, request, obs, position)
                     from memoryking.adapters.trust import Trust
 
                     trust = Trust(self)
@@ -908,6 +916,9 @@ class StoreCore:
             self.db.execute(
                 "UPDATE tenants SET purge_epoch=purge_epoch+1 WHERE tenant=?", (tenant,)
             )
+            from memoryking.adapters.corrections import Corrections
+
+            Corrections(self).purged(tenant, obs, action.get("actor", "system"), at)
         elif kind == "ranking":
             from memoryking.adapters.ranking import Ranking
 
@@ -928,6 +939,10 @@ class StoreCore:
             from memoryking.adapters.trust import Trust
 
             Trust(self).apply_policy(action, at)
+        elif kind in {"pin", "retirement"}:
+            from memoryking.adapters.corrections import Corrections
+
+            Corrections(self).apply_policy(action, at)
         else:
             raise LocalError("journal_invalid")
         if kind == "purge":
