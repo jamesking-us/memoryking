@@ -351,6 +351,10 @@ class StoreCore:
         with self.transaction(), self._control_guard():
             return int(self.control.operations.compact(self.anchor, coverage, resolved))
 
+    def _lease_writable(self) -> bool:
+        """Whether this store's database role may write the lease row (see `_hold_lease`)."""
+        return True
+
     def _hold_lease(self, at: int, *, writer: bool = True) -> None:
         """Claim, renew or be refused the instance lease for this store (see `lease_holder`).
 
@@ -358,26 +362,28 @@ class StoreCore:
         processes sharing one control tree co-hold. Another holder is refused while the
         recorded renewal is younger than LEASE_EXPIRY_MS. Renewal is written at most every
         LEASE_RENEW_MS, and only by a transaction that may write; a tenant with no row claims
-        it on its first writing transaction.
+        it on its first writing transaction. A transaction whose role may not write the lease
+        (the shared worker) compares like a reader and leaves claiming and renewal to the next
+        runtime writer.
         """
         key = self.tenant or "*"
         row = self.db.execute(
             "SELECT holder,renewed_ms FROM instance_lease WHERE tenant=?", (key,)
         ).fetchone()
         if row is None:
-            if writer:
+            if writer and self._lease_writable():
                 self.db.execute(
                     "INSERT INTO instance_lease(tenant,holder,renewed_ms) VALUES (?,?,?)",
                     (key, self.lease, at),
                 )
             return
         if hmac.compare_digest(str(row["holder"]).encode(), self.lease.encode()):
-            if writer and at - row["renewed_ms"] >= LEASE_RENEW_MS:
+            if writer and at - row["renewed_ms"] >= LEASE_RENEW_MS and self._lease_writable():
                 self.db.execute("UPDATE instance_lease SET renewed_ms=? WHERE tenant=?", (at, key))
             return
         if at - row["renewed_ms"] < LEASE_EXPIRY_MS:
             raise LocalError("control_lease_held")
-        if writer:
+        if writer and self._lease_writable():
             self.db.execute(
                 "UPDATE instance_lease SET holder=?,renewed_ms=? WHERE tenant=?",
                 (self.lease, at, key),

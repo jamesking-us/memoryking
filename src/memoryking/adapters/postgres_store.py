@@ -392,6 +392,15 @@ class PostgresStore(StoreCore):
             if record.get("log") != "operations":
                 self.control.clear_apply_failure(record["sequence"])
 
+    def _lease_writable(self) -> bool:
+        # The grants decide: the runtime role writes the lease, the worker and backup roles
+        # only read it. Asked only when a claim or renewal is due, inside the open transaction.
+        row = self.connection.execute(
+            "SELECT has_table_privilege('memoryking.instance_lease','INSERT') "
+            "AND has_table_privilege('memoryking.instance_lease','UPDATE')"
+        ).fetchone()
+        return bool(row[0])
+
     @contextmanager
     def transaction(self) -> Iterator[Decision]:
         with self.lock:
