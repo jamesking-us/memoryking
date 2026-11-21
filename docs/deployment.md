@@ -239,7 +239,7 @@ The daemon can schedule its own backups (`serve --backup-dir`, above). For a man
 .venv/bin/python -m memoryking restore --store "$HOME/.memoryking-data" --control "$HOME/.memoryking-control" --backup "$HOME/.memoryking-backup-001"
 ```
 
-Backup uses SQLite's backup API, referenced blobs and a signed integrity manifest. It excludes credentials and the independent control tree. Retain the **current** control identity/journal/anchor separately; do not restore old control files alongside old content. Retain the emitted current journal checkpoint independently if lost-anchor recovery is required.
+Backup uses SQLite's backup API, referenced blobs, a `blob-index` file listing them and a signed integrity manifest that commits to the index by SHA-256 and count (the signing profile bounds a document at 1 MiB, so the manifest never embeds the list, and a store of any size can be backed up). Restore verifies the manifest signature, the index against its committed hash and every blob against the index. Backups written by earlier releases, which embed the list, still restore. A scheduled backup that fails for any reason is logged, removes its partial directory and waits before retrying. It excludes credentials and the independent control tree. Retain the **current** control identity/journal/anchor separately; do not restore old control files alongside old content. Retain the emitted current journal checkpoint independently if lost-anchor recovery is required.
 
 Restore verifies the archive, replays current revocations/deletions and creates a new history and owner credential. Old credentials, request namespaces, watermarks and handles are retired. Reconcile acknowledged work that is absent from the backup before issuing new retries. Optional indexes, adapter bases, procedure activation and ranking need their documented fresh-history rebuild/reconciliation.
 
@@ -252,11 +252,11 @@ Shared backup uses the runtime and separate backup DSNs plus current tenant owne
 .venv/bin/python -m memoryking.shared restore --help
 ```
 
-The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. It bounds rows at 1 MiB, the manifest at 16 MiB and payload at 16 GiB. Backup briefly fences the tenant. Interrupted restore remains fenced until explicit recovery succeeds. Other tenants retain their own state.
+The signed per-tenant archive is not a PostgreSQL physical backup/PITR stream. It bounds rows at 1 MiB, the signed manifest at 1 MiB (the blob list lives in a hash-committed `blob-index` file, which is not bounded) and payload at 16 GiB. Backup briefly fences the tenant. Interrupted restore remains fenced until explicit recovery succeeds. Other tenants retain their own state.
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 13 and PostgreSQL 8 (archive schema 6). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 14 and PostgreSQL 9 (archive schema 7). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 

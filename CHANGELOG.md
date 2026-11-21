@@ -4,7 +4,10 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
-Nothing yet.
+### Fixes
+
+- Backups work at any store size. The signed backup manifest no longer lists every blob (which failed past about 13,000 observations); it commits to a separate `blob-index` file by hash, and restore verifies the index and every blob. Backups from earlier releases still restore. A scheduled backup that fails for any reason now removes its partial directory and records the failure.
+- Captures no longer slow down or stall as the store grows. A new `jobs(tenant,position)` index (SQLite schema 14, shared schema 9, applied by the normal migrations) serves the job-frontier lookup, the drain idle probe is per tenant, a drain pass stops before the transaction deadline, and jobs reset by a `reindex` or restore no longer count toward the 1,000-job capture limit.
 
 ## 0.1.0 (2026-11-09)
 

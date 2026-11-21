@@ -17,7 +17,15 @@ from typing import Any, Callable
 
 from psycopg import sql
 
-from memoryking.adapters.local_files import Ownership, atomic, private_dir, private_file, sync_dir
+from memoryking.adapters.local_files import (
+    Ownership,
+    atomic,
+    private_dir,
+    private_file,
+    read_blob_index,
+    sync_dir,
+    write_blob_index,
+)
 from memoryking.adapters.local_store import LocalStore, identifier, recovery_admin, uid
 from memoryking.adapters.postgres_admin import Roles
 from memoryking.adapters.postgres_sql import PostgresSQL, record_factory
@@ -148,13 +156,13 @@ def backup(
         private_dir(destination, create=True)
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 6,
+            "schema": 7,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
             "tables": {},
-            "blobs": [],
         }
+        blobs: list[str] = []
         total = 0
         with backup_connection.transaction():
             backup_connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -208,8 +216,8 @@ def backup(
                 if total > ARCHIVE_LIMIT:
                     raise LocalError("backup_archive_limit")
                 atomic(destination / "blobs" / digest, raw)
-                manifest["blobs"].append(digest)
-        manifest["blobs"].sort()
+                blobs.append(digest)
+        manifest["blob_index"] = write_blob_index(destination, blobs)
         manifest["archive_bytes"] = total
         atomic(destination / "manifest", store.control.sign(manifest).encode())
         sync_dir(destination)
@@ -300,10 +308,11 @@ def restore(
             4: TABLES_V4,
             5: TABLES_V5,
             6: TABLES,
+            7: TABLES,
         }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)
@@ -316,7 +325,13 @@ def restore(
                 raise LocalError("backup_invalid")
             if columns(connection, table) != manifest["tables"][table]["columns"]:
                 raise LocalError("schema_unsupported")
-        for digest in manifest["blobs"]:
+        # Archives before schema 7 embed the list; later ones commit to a separate index.
+        blobs = (
+            read_blob_index(archive, manifest["blob_index"])
+            if "blob_index" in manifest
+            else manifest["blobs"]
+        )
+        for digest in blobs:
             if (
                 not isinstance(digest, str)
                 or len(digest) != 64
@@ -345,7 +360,7 @@ def restore(
             hook("restore_fenced")
             directory = root / "blobs" / tenant
             private_dir(directory, create=True)
-            for digest in manifest["blobs"]:
+            for digest in blobs:
                 atomic(directory / digest, (archive / "blobs" / digest).read_bytes())
             for table in reversed(TABLES):
                 if table not in {"tenants", "tenant_gates"}:

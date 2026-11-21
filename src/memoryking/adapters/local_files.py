@@ -61,6 +61,44 @@ def atomic(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+BLOB_INDEX = "blob-index"
+
+
+def write_blob_index(directory: Path, entries: list[str]) -> dict[str, Any]:
+    """Write the sorted blob list as its own file; the signed manifest carries only its hash.
+
+    The canonical signing profile bounds a document at 1 MiB, far below a large store's blob
+    list, so the manifest commits to the list by digest and count instead of embedding it.
+    """
+    data = "".join(entry + "\n" for entry in sorted(entries)).encode()
+    atomic(directory / BLOB_INDEX, data)
+    return {"sha256": hashlib.sha256(data).hexdigest(), "count": len(entries)}
+
+
+def read_blob_index(directory: Path, committed: Any) -> list[str]:
+    """The blob list, accepted only if it is exactly the file the signed manifest committed to."""
+    if (
+        not isinstance(committed, dict)
+        or set(committed) != {"sha256", "count"}
+        or not isinstance(committed["sha256"], str)
+        or not isinstance(committed["count"], int)
+    ):
+        raise LocalError("backup_invalid")
+    path = directory / BLOB_INDEX
+    private_file(path)
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != committed["sha256"]:
+        raise LocalError("backup_invalid")
+    try:
+        lines = data.decode().split("\n")
+    except UnicodeDecodeError as exc:
+        raise LocalError("backup_invalid") from exc
+    entries, tail = lines[:-1], lines[-1]
+    if tail != "" or len(entries) != committed["count"] or entries != sorted(set(entries)):
+        raise LocalError("backup_invalid")
+    return entries
+
+
 class Ownership:
     def __init__(self, directory: Path):
         self.pid = os.getpid()
