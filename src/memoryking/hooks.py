@@ -76,15 +76,23 @@ def capture(
     observed_ms: int | None = None,
     namespace: str = "hooks",
     supersedes: str | None = None,
+    scope: str = "project",
     **where: Any,
 ) -> dict[str, Any]:
     """Capture one observation; the text is truncated to the capture limit with a marker.
+
+    With `scope="user"` it goes to the user scope the credential acts for instead of the
+    project: durable facts and preferences about the user, shared by all their projects.
 
     A replayed capture must send identical bytes, so the default observed time is the
     current day rather than the millisecond; the store's event log records the exact
     moment of the capture itself. Pass `observed_ms` to keep a precise time.
     """
     socket, token, project = connection(**where)
+    if scope == "user":
+        project = request(socket, token, "user", {"action": "scope"})["project"]
+    elif scope != "project":
+        raise LocalError("invalid_request")
     # Unpaired surrogates (e.g. from a decoded traceback) become replacement characters.
     text = text.encode("utf-8", "replace").decode("utf-8")
     if len(text.encode()) > TEXT_LIMIT:
@@ -141,6 +149,22 @@ def as_of_ms(value: str) -> int:
     return int(parsed.timestamp() * 1000)
 
 
+def range_ms(value: str, *, end: bool) -> int:
+    """An end of a `--from`/`--to` range: Unix ms, a date, or an ISO date-time (UTC default).
+
+    A bare date is the start of that day for `--from` and the end of it for `--to`, so
+    `--from 2026-03-01 --to 2026-03-31` covers all of March."""
+    from datetime import datetime, timezone
+
+    if value.strip().isdigit() or end or len(value.strip()) != 10:
+        return as_of_ms(value)
+    try:
+        parsed = datetime.fromisoformat(value.strip()).replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise LocalError("invalid_request") from exc
+    return int(parsed.timestamp() * 1000)
+
+
 def start(
     *,
     budget: int = 6000,
@@ -161,7 +185,7 @@ def start(
         "project": project,
         "bindings": points,
         "max_output_tokens": budget,
-        "tokenizer": "utf8-byte-estimate-v1",
+        "tokenizer": "chars-estimate-v1",
     }
     if text:
         args["format"] = "text"
@@ -188,9 +212,12 @@ def recall(
     salience: bool = False,
     rerank: bool = False,
     binding: list[str] | None = None,
+    time_range: dict[str, int] | None = None,
     **where: Any,
 ) -> dict[str, Any]:
     """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms.
+
+    `time_range` (`from_ms` and/or `to_ms`) restricts the search to records observed in it.
 
     `binding` is a list of `key=value` strings; with none, `MEMORYKING_BINDINGS` and the
     named profile's `bindings` apply (see `session_bindings`)."""
@@ -204,7 +231,7 @@ def recall(
         "query": query,
         "bindings": points,
         "max_output_tokens": budget,
-        "tokenizer": "utf8-byte-estimate-v1",
+        "tokenizer": "chars-estimate-v1",
     }
     if text:
         args["format"] = "text"
@@ -216,6 +243,8 @@ def recall(
         args["salience"] = "on"
     if rerank:
         args["rerank"] = "on"
+    if time_range:
+        args["time_range"] = time_range
     command = {
         "version": 1,
         "incarnation": context["incarnation"],

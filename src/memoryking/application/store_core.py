@@ -46,7 +46,18 @@ from memoryking.application.retention import (
 )
 from memoryking.application.storage import Dialect, insert_ignore, upsert
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
-from memoryking.domain.local import Clock, Decision, LocalError, Released, temporal_valid
+from memoryking.domain.local import (
+    USER_AGENT_CAPABILITIES,
+    USER_OWNER_CAPABILITIES,
+    Clock,
+    Decision,
+    LocalError,
+    Released,
+    is_user_project,
+    project_owner,
+    temporal_valid,
+    user_project,
+)
 
 Row = Any
 
@@ -77,6 +88,10 @@ LEASE_EXPIRY_MS = 60_000
 
 QUEUE_LIMIT = 1000
 DRAIN_BUDGET_MS = 2000  # one drain pass stays well inside the five-second transaction deadline
+# The reindex call's own slice of the rebuild, and the size of store small enough to be rebuilt
+# inside it; the rest is batched housekeeping (see `reindex`).
+REINDEX_CALL_MS = 200
+REINDEX_INLINE_LIMIT = 2000
 # Work waiting on the queue. A pending job with a nonzero fence was reset by a reindex or
 # restore (or already attempted): it is backlog the drain rebuilds, not growth to refuse.
 QUEUED_JOBS = "SELECT count(*) FROM jobs WHERE tenant=? AND state IN ('leased','pending') AND (state='leased' OR fence=0)"
@@ -184,6 +199,7 @@ class StoreCore:
     # Set by the serving daemon: its (limit, in use) figures for the metrics endpoint.
     concurrency_gauge: Callable[[], dict[str, tuple[int, int]]] | None = None
     _lexical_pending: bool | None = None
+    _lexical_rate: float | None = None  # observations per second over recent rebuild batches
     _last_summary_scan = 0
 
     # The operator's egress policy; None means the local recorder is the only provider.
@@ -263,8 +279,12 @@ class StoreCore:
 
     def _auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
         identity = self._decode(token, "credential")
+        # A user scope is private to the user and the agents that act for them: a `*` grant,
+        # administrators' included, never reaches it.
         rows = self.db.execute(
-            "SELECT * FROM grants WHERE tenant=? AND principal=? AND project IN (?, '*')",
+            "SELECT * FROM grants WHERE tenant=? AND principal=? AND project=?"
+            if is_user_project(project)
+            else "SELECT * FROM grants WHERE tenant=? AND principal=? AND project IN (?, '*')",
             (identity["tenant"], identity["principal"], project),
         ).fetchall()
         if not any(
@@ -287,6 +307,39 @@ class StoreCore:
             # Revoked, rotated or replaced: only the principal's current credential is accepted.
             raise LocalError("credential_replaced")
         return identity
+
+    def user_scope(self, who: dict[str, Any], capability: str, at: int) -> str | None:
+        """The user scope this principal acts for with `capability` now, if any.
+
+        A principal acts for at most one user, so the answer is unambiguous. Decided from the
+        principal's own grants, so it never names a scope the caller cannot already use. A
+        delegated credential (a narrowed token for one project) acts for no user."""
+        if who.get("delegation"):
+            return None
+        for row in self.db.execute(
+            "SELECT project,capabilities,starts,expires FROM grants WHERE tenant=? AND principal=? AND substr(project,1,6)=? ORDER BY project",
+            (who["tenant"], who["principal"], user_project("")),
+        ).fetchall():
+            capabilities = row["capabilities"]
+            if isinstance(capabilities, str):
+                capabilities = json.loads(capabilities)
+            if capability in capabilities and temporal_valid(at, row["starts"], row["expires"]):
+                return cast(str, row["project"])
+        return None
+
+    def user_authority(self, token: str, project: str, at: int) -> dict[str, Any]:
+        """Authority over a user scope's membership and contents: the user, or an administrator.
+
+        An administrator can administer (link, unlink, purge) but cannot read; see `_auth`."""
+        try:
+            return self._auth(token, "admin", "*", at)
+        except LocalError as exc:
+            if exc.code != "denied":
+                raise
+        who = self._auth(token, "policy", project, at)
+        if who["principal"] != project_owner(project):
+            raise LocalError("denied")
+        return who
 
     def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
         """Internal intersection check; never an alternate transport credential entry point."""
@@ -738,20 +791,44 @@ class StoreCore:
         starts: int | None = None,
         expires: int | None = None,
         rotate: bool = False,
+        for_user: str | None = None,
     ) -> str:
         """Grant (or restate) access and return the principal's credential.
 
         With `rotate`, the principal's credential generation advances in the same journaled
-        decision, so every credential issued before it stops working.
+        decision, so every credential issued before it stops working. With `for_user` (a
+        user principal, or `@self` for the caller) the principal also acts for that user:
+        it gets the agent capabilities in the user's scope, one more journaled grant.
+        A grant on a user scope itself (`_user_<principal>`) is the same record.
         """
         identifier(principal)
         identifier(project)
-        if not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
+        scoped = is_user_project(project)
+        if scoped:
+            allowed = (
+                USER_OWNER_CAPABILITIES
+                if principal == project_owner(project)
+                else USER_AGENT_CAPABILITIES
+            )
+            if not capabilities or not set(capabilities) <= allowed:
+                raise LocalError("invalid_capabilities")
+            identifier(project_owner(project))
+        elif not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
             raise LocalError("invalid_capabilities")
+        if for_user is not None and for_user != "@self":
+            identifier(user_project(for_user))
         if starts is not None and expires is not None and starts >= expires:
             raise LocalError("invalid_interval")
         with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
+            at = decision.evaluated_ms
+            who = (
+                self.user_authority(credential, project, at)
+                if scoped
+                else self._auth(credential, "admin", "*", at)
+            )
+            owner = who["principal"] if for_user == "@self" else for_user
+            if scoped:
+                self._link_checked(who, principal, project, at)
             # Replacement can reduce authority, so every change goes to the current journal.
             action = {
                 "kind": "grant",
@@ -766,10 +843,73 @@ class StoreCore:
             if rotate:
                 action["rotate"] = True
             record = self._journal(action)
-            self._apply(record, decision.evaluated_ms)
+            self._apply(record, at)
+            if owner is not None and not scoped:
+                self._link_user(
+                    credential, who, principal, owner, capabilities, starts, expires, at
+                )
             token = self._token("credential", tenant=who["tenant"], principal=principal)
         self._expose()
         return token
+
+    def _link_checked(self, who: dict[str, Any], principal: str, project: str, at: int) -> None:
+        """A principal acts for one user only: refuse a second scope for the same principal."""
+        other = self.db.execute(
+            "SELECT 1 FROM grants WHERE tenant=? AND principal=? AND substr(project,1,6)=? AND project<>?",
+            (who["tenant"], principal, user_project(""), project),
+        ).fetchone()
+        if other is not None:
+            raise LocalError("user_link_conflict")
+
+    def _link_user(
+        self,
+        credential: str,
+        who: dict[str, Any],
+        principal: str,
+        owner: str,
+        requested: list[str],
+        starts: int | None,
+        expires: int | None,
+        at: int,
+    ) -> None:
+        """Make `principal` act for `owner`, creating the owner's own scope grant first.
+
+        The link carries only what the credential was issued with, and only what an agent may
+        hold in a user scope; a credential with neither `capture` nor `read` acts for nobody."""
+        project = user_project(owner)
+        allowed = USER_OWNER_CAPABILITIES if principal == owner else USER_AGENT_CAPABILITIES
+        capabilities = sorted(set(requested) & allowed)
+        if not capabilities:
+            return
+        # Authority over that scope is checked for this very call, not inherited from the
+        # grant it accompanies: only an administrator or the user may link anyone to it.
+        self.user_authority(credential, project, at)
+        self._link_checked(who, principal, project, at)
+        steps: list[tuple[str, list[str], int | None, int | None]] = []
+        if (
+            principal != owner
+            and self.db.execute(
+                "SELECT 1 FROM grants WHERE tenant=? AND principal=? AND project=?",
+                (who["tenant"], owner, project),
+            ).fetchone()
+            is None
+        ):
+            steps.append((owner, sorted(USER_OWNER_CAPABILITIES), None, None))
+        steps.append((principal, capabilities, starts, expires))
+        for name, capabilities, start, end in steps:
+            record = self._journal(
+                {
+                    "kind": "grant",
+                    "actor": who["principal"],
+                    "tenant": who["tenant"],
+                    "principal": name,
+                    "project": project,
+                    "capabilities": capabilities,
+                    "starts": start,
+                    "expires": end,
+                }
+            )
+            self._apply(record, at)
 
     def grants(self, credential: str) -> list[dict[str, Any]]:
         """Every grant in the caller's tenant, for operators; needs admin rights."""
@@ -857,7 +997,21 @@ class StoreCore:
 
     def _policy(self, credential: str, action: dict[str, Any]) -> None:
         with self.transaction() as decision:
-            who = self._auth(credential, "admin", "*", decision.evaluated_ms)
+            at = decision.evaluated_ms
+            tenant = self._decode(credential, "credential")["tenant"]
+            project = action.get("project")
+            if action["kind"] == "purge":
+                found = self.db.execute(
+                    "SELECT project FROM observations WHERE tenant=? AND id=?",
+                    (tenant, action["observation"]),
+                ).fetchone()
+                project = found[0] if found is not None else None
+            who = (
+                # In a user scope the user decides, and an administrator may still purge it.
+                self.user_authority(credential, project, at)
+                if isinstance(project, str) and is_user_project(project)
+                else self._auth(credential, "admin", "*", at)
+            )
             action["tenant"] = who["tenant"]
             action["actor"] = who["principal"]
             record = self._journal(action)
@@ -1031,16 +1185,26 @@ class StoreCore:
                 "DELETE FROM grants WHERE tenant=? AND principal=? AND project=?",
                 (tenant, action["principal"], action["project"]),
             )
-            if (
-                held is not None
-                and self.db.execute(
-                    "SELECT 1 FROM grants WHERE tenant=? AND principal=?",
-                    (tenant, action["principal"]),
-                ).fetchone()
-                is None
-            ):
-                # The principal lost its last grant: a later grant must not revive old credentials.
-                self._advance_generation(tenant, action["principal"])
+            if held is not None:
+                left = [
+                    row[0]
+                    for row in self.db.execute(
+                        "SELECT project FROM grants WHERE tenant=? AND principal=?",
+                        (tenant, action["principal"]),
+                    ).fetchall()
+                ]
+                # Links to a user's scope are not grants of their own: an agent whose project
+                # access ended no longer acts for anyone, so they end with it.
+                if all(
+                    is_user_project(p) and project_owner(p) != action["principal"] for p in left
+                ):
+                    self.db.execute(
+                        "DELETE FROM grants WHERE tenant=? AND principal=?",
+                        (tenant, action["principal"]),
+                    )
+                    # The principal lost its last grant: a later grant must not revive old
+                    # credentials.
+                    self._advance_generation(tenant, action["principal"])
         elif kind == "purge":
             obs = action["observation"]
             self.db.execute(
@@ -1455,7 +1619,21 @@ class StoreCore:
                     )
                 ),
                 "capacity": self._capacity(tenant),
-                "lexical": lexical_index.describe(self.db, tenant),
+                "lexical": lexical_index.describe(self.db, tenant, self._lexical_rate),
+                # Counts only: an administrator sees that user memory exists, never what it says.
+                "user_scopes": dict(
+                    zip(
+                        ("scopes", "observations"),
+                        (
+                            int(n)
+                            for n in self.db.execute(
+                                "SELECT count(DISTINCT project),count(*) FROM observations WHERE tenant=? AND deleted=0 AND substr(project,1,6)=?",
+                                (tenant, user_project("")),
+                            ).fetchone()
+                        ),
+                        strict=True,
+                    )
+                ),
             }
         self._expose()
         return result
@@ -1577,25 +1755,38 @@ class StoreCore:
         return completed
 
     def reindex(self, credential: str) -> dict[str, Any]:
-        """Rebuild the projections now and the lexical index in bounded batches.
+        """Start the rebuild of the projections and the lexical index.
 
-        The projection reset is one short transaction. The lexical rewrite runs in batches
-        that each fit the deadline and resume where they stopped; this call works for a few
-        seconds and the daemon's housekeeping finishes the rest, so captures are never
-        blocked behind a whole-corpus transaction."""
+        The call's own work does not grow with the corpus: it moves the projection
+        generation on and marks the lexical index as rebuilding. A store of at most
+        `REINDEX_INLINE_LIMIT` observations also runs a short first slice, so a small store
+        finishes at once. Everything proportional to the corpus runs afterwards in bounded
+        batches, each its own transaction and resumable from the stored cursor: the daemon's
+        housekeeping, or `rebuild_lexical` called by an operator waiting on it. Each batch
+        also resets the projection jobs of the positions it covers."""
         with self.transaction() as decision:
             who = self._auth(credential, "admin", "*", decision.evaluated_ms)
             tenant = who["tenant"]
-            self._reset_projections(tenant)
+            self._begin_projection_reset(tenant)
             lexical_index.begin(self.db, tenant)
+            small = (
+                self.db.execute(
+                    "SELECT count(*) FROM (SELECT 1 FROM observations WHERE tenant=? AND deleted=0 LIMIT ?) AS found",
+                    (tenant, REINDEX_INLINE_LIMIT + 1),
+                ).fetchone()[0]
+                <= REINDEX_INLINE_LIMIT
+            )
         self._lexical_pending = True
         self._expose()
-        self.rebuild_lexical(tenant, wall_ms=3000)
+        if small:
+            self.rebuild_lexical(tenant, wall_ms=REINDEX_CALL_MS, step_ms=REINDEX_CALL_MS)
         with self.transaction():
-            result = lexical_index.describe(self.db, tenant)
+            result = lexical_index.describe(self.db, tenant, self._lexical_rate, counts=False)
         return result
 
-    def rebuild_lexical(self, tenant: str | None = None, wall_ms: int = 1500) -> bool:
+    def rebuild_lexical(
+        self, tenant: str | None = None, wall_ms: int = 1500, step_ms: int = lexical_index.STEP_MS
+    ) -> bool:
         """Advance any unfinished lexical rebuild by whole batches until the wall budget is
         spent; True when no tenant in scope has work left. Each batch is its own transaction."""
         started = time.monotonic()
@@ -1616,8 +1807,23 @@ class StoreCore:
                     self._lexical_pending = False
                     return True
                 name = pending[0]
+                batch_started = time.monotonic()
+                counted: dict[str, int] = {"documents": 0}
                 lexical_index.step(
-                    self.db, name, lambda row, n=name: lexical_index.blob_text(self.root, row, n)
+                    self.db,
+                    name,
+                    lambda row, n=name: lexical_index.blob_text(self.root, row, n),
+                    budget_ms=step_ms,
+                    reset=lambda low, high, n=name: self._reset_jobs(n, low, high),
+                    stats=counted,
+                )
+            took = time.monotonic() - batch_started
+            if counted["documents"] and took > 0:
+                sample = counted["documents"] / took
+                self._lexical_rate = (
+                    sample
+                    if self._lexical_rate is None
+                    else 0.7 * self._lexical_rate + 0.3 * sample
                 )
             if (time.monotonic() - started) * 1000 >= wall_ms:
                 return False
@@ -1633,6 +1839,68 @@ class StoreCore:
             budget_ms=10**9,
         ):
             pass
+
+    def _begin_projection_reset(self, tenant: str) -> None:
+        """Move the projection generation on; jobs and items follow in batches.
+
+        Constant work. Jobs of the old generation are reset by `_reset_jobs` as the rebuild
+        passes their positions, and the frontier cannot advance past one until it is, because
+        it only counts jobs of the current generation."""
+        self.db.execute(
+            "UPDATE projections SET incarnation=?,generation=generation+1,frontier=0 WHERE tenant=?",
+            (self.incarnation, tenant),
+        )
+
+    def _reset_jobs(self, tenant: str, low: int, high: int) -> None:
+        """Reset the jobs at event positions in (low, high] to the current generation, and
+        drop the projection items of the observations there (they are rebuilt by the drain)."""
+        generation = self.db.execute(
+            "SELECT generation FROM projections WHERE tenant=?", (tenant,)
+        ).fetchone()[0]
+        epoch = self.db.execute(
+            "SELECT purge_epoch FROM tenants WHERE tenant=?", (tenant,)
+        ).fetchone()[0]
+        self.db.execute(
+            "DELETE FROM projection_items WHERE tenant=? AND observation IN (SELECT id FROM observations WHERE tenant=? AND position>? AND position<=?)",
+            (tenant, tenant, low, high),
+        )
+        self.db.execute(
+            "UPDATE jobs SET incarnation=?,generation=?,fence=fence+1,attempts=0,lease_until=0,available=0,purge_epoch=?,state=CASE WHEN observation IS NULL OR observation IN (SELECT id FROM observations WHERE tenant=? AND position>? AND position<=? AND deleted=1) THEN 'noop' ELSE 'pending' END WHERE tenant=? AND position>? AND position<=? AND generation<>?",
+            (self.incarnation, generation, epoch, tenant, low, high, tenant, low, high, generation),
+        )
+        # Finished jobs behind the frontier are deleted (see retention), so the rebuild creates the
+        # missing ones in this range: one per event position, pending while its observation is live.
+        last = low
+        while True:
+            missing = self.db.execute(
+                "SELECT e.position,o.id AS observation,o.deleted,o.revision,o.principal FROM events e"
+                " LEFT JOIN jobs j ON j.tenant=e.tenant AND j.position=e.position"
+                " LEFT JOIN observations o ON o.tenant=e.tenant AND o.position=e.position"
+                " WHERE e.tenant=? AND e.position>? AND e.position<=? AND j.id IS NULL"
+                " ORDER BY e.position LIMIT 5000",
+                (tenant, last, high),
+            ).fetchall()
+            if not missing:
+                break
+            for row in missing:
+                live = row["observation"] is not None and not row["deleted"]
+                self.db.execute(
+                    "INSERT INTO jobs(tenant,id,position,observation,incarnation,generation,state,fence,purge_epoch,revision,principal) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        tenant,
+                        uid("job"),
+                        row["position"],
+                        row["observation"],
+                        self.incarnation,
+                        generation,
+                        "pending" if live else "noop",
+                        1,
+                        epoch,
+                        row["revision"] or 1,
+                        row["principal"] or "system",
+                    ),
+                )
+            last = missing[-1]["position"]
 
     def _reset_projections(self, tenant: str) -> None:
         self.db.execute("DELETE FROM projection_items WHERE tenant=?", (tenant,))

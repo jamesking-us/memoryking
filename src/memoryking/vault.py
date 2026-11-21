@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking.adapters.local_files import private_dir
+from memoryking.adapters.local_files import private_dir, private_file
+from memoryking.adapters.local_ipc import request
 from memoryking.domain.local import LocalError
 from memoryking.memory_tool import (
     CLAIMS,
@@ -32,8 +33,16 @@ from memoryking.memory_tool import (
 from memoryking.sdk import LocalClient
 
 
-def connect(*, socket: Path | None, credential: Path | None, project: str | None) -> LocalClient:
-    """A client from explicit paths, else the environment (`MEMORYKING_*`)."""
+def connect(
+    *,
+    socket: Path | None,
+    credential: Path | None,
+    project: str | None,
+    scope: str = "project",
+) -> LocalClient:
+    """A client from explicit paths, else the environment (`MEMORYKING_*`).
+
+    With `scope="user"` it is bound to the user scope the credential acts for."""
     socket = socket or (
         Path(os.environ["MEMORYKING_SOCKET"]) if os.environ.get("MEMORYKING_SOCKET") else None
     )
@@ -47,6 +56,11 @@ def connect(*, socket: Path | None, credential: Path | None, project: str | None
         raise LocalError("socket_required")
     if credential is None:
         raise LocalError("credential_required")
+    if scope == "user":
+        private_file(credential)
+        project = request(socket, credential.read_text().strip(), "user", {"action": "scope"})[
+            "project"
+        ]
     if not project:
         raise LocalError("project_required")
     return LocalClient(socket, credential, project, namespace="vault")
@@ -65,10 +79,14 @@ def write(path: Path, data: bytes) -> None:
         raise
 
 
-def export(directory: Path, client: LocalClient) -> dict[str, Any]:
-    """Write every visible observation (newest version per file) and claim as Markdown."""
+def export(
+    directory: Path, client: LocalClient, directory_name: str | None = None
+) -> dict[str, Any]:
+    """Write every visible observation (newest version per file) and claim as Markdown.
+
+    The folder is the project's name, or `directory_name` (the user scope is written as `user`)."""
     files = Files(client)
-    root = directory / client.project
+    root = directory / (directory_name or client.project)
     private_dir(directory, create=True)
     private_dir(root, create=True)
     grouped = files.group(files.pages("observations", text=True))
@@ -104,10 +122,16 @@ def export(directory: Path, client: LocalClient) -> dict[str, Any]:
     }
 
 
-def import_(directory: Path, client: LocalClient, *, dry_run: bool = False) -> dict[str, Any]:
+def import_(
+    directory: Path,
+    client: LocalClient,
+    *,
+    dry_run: bool = False,
+    directory_name: str | None = None,
+) -> dict[str, Any]:
     """Capture changed or new files as versions and claim files as proposals."""
     files = Files(client)
-    root = directory / client.project
+    root = directory / (directory_name or client.project)
     if not root.is_dir():
         raise LocalError("vault_missing")
     captured: list[dict[str, Any]] = []

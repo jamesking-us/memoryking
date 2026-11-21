@@ -22,6 +22,7 @@ import test_knowledge
 import test_repository
 import test_retrieval
 import test_team
+import test_user_scope
 import test_working
 
 from memoryking.adapters.execution import Execution
@@ -290,6 +291,21 @@ class PostgresWorkingParity(NativeFixture):
 
 
 adopt(PostgresWorkingParity, test_working.WorkingTests)
+
+
+class PostgresUserScopeParity(NativeFixture):
+    def setUp(self):
+        super().setUp()
+        self.arrange()
+
+
+reuse(
+    PostgresUserScopeParity,
+    test_user_scope.UserScopeTests,
+    "arrange user_op put claim accept constraint brief",
+)
+reuse(PostgresUserScopeParity, test_retrieval.RetrievalTests, "fails")
+adopt(PostgresUserScopeParity, test_user_scope.UserScopeTests)
 
 
 class PostgresHandoffParity(NativeFixture):

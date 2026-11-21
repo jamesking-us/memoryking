@@ -19,6 +19,7 @@ from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
+from memoryking.application.lexical_index import RATE_PER_SECOND
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, SystemClock
@@ -61,6 +62,35 @@ def lexical_findings(db: Any, version: int) -> list[tuple[str, str, int]]:
     return found
 
 
+def lexical_line(lexical: dict[str, Any]) -> str:
+    """One line for the lexical index: state, and for a rebuild its progress and estimate."""
+    line = f"{lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
+    if lexical.get("state") == "current":
+        return line
+    left, total = lexical.get("remaining_observations"), lexical.get("total_observations")
+    if left is not None and total is not None:
+        line += (
+            f"; {lexical.get('percent_complete', 0)}% rebuilt into "
+            f"{lexical.get('target_configuration', '?')} ({total - left:,} of {total:,} observations"
+        )
+        if left:
+            line += f", about {duration(int(lexical.get('estimated_seconds', 0)) * 1000)} left"
+        line += ")"
+    return line + f". {lexical.get('action', '')}"
+
+
+def lexical_total(database: Path, tenant: str) -> int:
+    """Live observations of a tenant, from a read-only connection (for the doctor's percent)."""
+    import sqlite3
+
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
+        return int(
+            db.execute(
+                "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0", (tenant,)
+            ).fetchone()[0]
+        )
+
+
 def render_status(result: dict[str, Any], version: str) -> str:
     """A human summary of the status operation; `--json` prints the raw result instead."""
     projection = result.get("projection", {})
@@ -82,13 +112,7 @@ def render_status(result: dict[str, Any], version: str) -> str:
     ]
     lexical = result.get("lexical")
     if lexical:
-        line = f"Lexical    {lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
-        if lexical.get("state") != "current":
-            line += (
-                f"; {lexical.get('remaining_observations', '?')} observations to rewrite for "
-                f"{lexical.get('target_configuration', '?')}. {lexical.get('action', '')}"
-            )
-        lines.append(line)
+        lines.append("Lexical    " + lexical_line(lexical))
     capacity = result.get("capacity", {})
     if capacity:
         lines.append("Capacity")
@@ -101,6 +125,12 @@ def render_status(result: dict[str, Any], version: str) -> str:
             )
             flag = "  warning" if value.get("warning") else ""
             lines.append(f"  {name:<20}{shown:>22}  {bar(used, limit)}{flag}")
+    scopes = result.get("user_scopes")
+    if scopes and scopes["scopes"]:
+        lines.append(
+            f"User memory {scopes['observations']:,} observations in {scopes['scopes']} user scope(s)"
+            " (counts only; readable by each user and their agents)"
+        )
     if result.get("satisfied") is not None:
         lines.append(f"Watermark  {'satisfied' if result['satisfied'] else 'not yet reached'}")
     return "\n".join(lines)
@@ -177,6 +207,66 @@ def lean_command(args: Any) -> dict[str, Any]:
     return lean.call(LocalClient(socket, credential, project, bindings=bindings), name, arguments)
 
 
+def user_command(args: Any) -> int:
+    """`memoryking user show|export|purge`: the user's own memory across projects."""
+    from memoryking import vault as vault_module
+
+    credential = read_credential(args.credential)
+
+    def ask(**body: Any) -> dict[str, Any]:
+        return request(args.socket, credential, "user", body)
+
+    if args.user_command == "export":
+        client = vault_module.connect(
+            socket=args.socket, credential=args.credential, project=None, scope="user"
+        )
+        report = vault_module.export(args.dir, client, "user")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"Exported {report['observations']} file(s) from {report['versions']} "
+                f"observation(s) and {report['claims']} claim(s) to {report['directory']}"
+            )
+    elif args.user_command == "purge":
+        if not args.yes:
+            print(
+                "This erases the user memory and everything built from it, and cannot be"
+                " undone. Run again with --yes.",
+                file=sys.stderr,
+            )
+            return 2
+        body = {"user": args.user} if args.user else {}
+        total = 0
+        while True:
+            report = ask(action="purge", **body)
+            total += report["purged"]
+            if not report["remaining"] or not report["purged"]:
+                break
+        report["purged"] = total
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(f"Erased {total} observation(s) and what was built from them.")
+    else:
+        try:
+            ask(action="ensure")  # the owner is the default user; a no-op for anyone else
+        except LocalError:
+            pass
+        report = ask(action="show")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"User memory of {report['user']}: {report['observations']} observation(s), "
+                f"{report['claims']} claim(s), {report['constraints']} constraint(s), "
+                f"{report['held']} held"
+            )
+            for agent in report["agents"]:
+                print(f"  acts for you: {agent['principal']} ({','.join(agent['capabilities'])})")
+    return 0
+
+
 def summarize(args: Any) -> dict[str, Any]:
     """Extractive by default; with --provider, a policy adapter writes it through the audited path."""
     import uuid
@@ -212,7 +302,7 @@ def summarize(args: Any) -> dict[str, Any]:
                     "checkpoint": None,
                     "bindings": client.bindings,
                     "max_output_tokens": 6000,
-                    "tokenizer": "utf8-byte-estimate-v1",
+                    "tokenizer": "chars-estimate-v1",
                     "format": "text",
                 },
             }
@@ -624,13 +714,24 @@ def doctor(
                         "(`memoryking request` with the operation reindex and empty args)",
                     )
                 else:
+                    total = lexical_total(database, tenant)
+                    done = (
+                        f"{(total - remaining) * 100 // total}% rebuilt, about "
+                        f"{duration((remaining // RATE_PER_SECOND + 1) * 1000)} left at the reference rate; "
+                        if total
+                        else ""
+                    )
                     record(
                         "warn",
                         "lexical index",
                         f"{tenant}: {state}, still on the previous configuration (lexical-v1) with "
-                        f"{remaining} observations to rewrite; run a reindex "
-                        "(`memoryking request` with the operation reindex and empty args); "
-                        "the daemon finishes it in batches and captures keep working",
+                        f"{remaining} observations to rewrite; {done}"
+                        + (
+                            "run `memoryking reindex`; "
+                            if state == "legacy"
+                            else "`memoryking reindex --wait` shows progress; "
+                        )
+                        + "the daemon finishes it in batches and captures keep working",
                     )
         except sqlite3.Error as exc:
             record("fail", "schema", f"cannot read {database}: {type(exc).__name__}")
@@ -662,7 +763,11 @@ def doctor(
         encoding()
         record("ok", "tokenizer", "exact cl100k_base available")
     except LocalError:
-        record("warn", "tokenizer", "exact tokenizer missing; byte estimate is used and disclosed")
+        record(
+            "warn",
+            "tokenizer",
+            "exact tokenizer missing; a characters-per-token estimate is used and disclosed",
+        )
     from importlib.util import find_spec
 
     if find_spec("onnxruntime") is not None:
@@ -981,6 +1086,17 @@ def main() -> int:
     status.add_argument("--credential", type=Path)
     status.add_argument("--project", default="main")
     status.add_argument("--json", action="store_true", help="Print the raw status result")
+    reindex = commands.add_parser(
+        "reindex",
+        help="Start the rebuild into the current lexical configuration; --wait shows progress",
+    )
+    reindex.add_argument("--socket", type=Path)
+    reindex.add_argument("--credential", type=Path, help="An admin credential file")
+    reindex.add_argument("--project", default="main", help="Project used to read the progress")
+    reindex.add_argument(
+        "--wait", action="store_true", help="Show progress until the rebuild completes"
+    )
+    reindex.add_argument("--json", action="store_true", help="Print the raw result")
     doc = commands.add_parser("doctor", help="Check the installation and report fixes")
     doc.add_argument("--store", type=Path)
     doc.add_argument("--control", type=Path)
@@ -1029,9 +1145,41 @@ def main() -> int:
                 action="store_true",
                 help="Replace the principal's credential: every earlier one stops working",
             )
+            who = item.add_mutually_exclusive_group()
+            who.add_argument(
+                "--for-user",
+                metavar="USER",
+                help="The user this agent acts for, so it reads and writes their own memory "
+                "across projects; default: the issuing owner",
+            )
+            who.add_argument(
+                "--no-user",
+                action="store_true",
+                help="Do not let this credential see anyone's user memory",
+            )
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
+    usr = commands.add_parser(
+        "user", help="Your own memory across projects: show, export or erase it"
+    )
+    usr_commands = usr.add_subparsers(dest="user_command", required=True)
+    for name, text in (
+        ("show", "What your user memory holds and which agents act for you"),
+        ("export", "Write your user memory as Markdown files"),
+        ("purge", "Erase your user memory and everything built from it"),
+    ):
+        sub = usr_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--json", action="store_true")
+        if name == "export":
+            sub.add_argument("--dir", type=Path, required=True, help="Directory to write")
+        if name == "purge":
+            sub.add_argument(
+                "--user", help="Administrators only: purge this user's scope without reading it"
+            )
+            sub.add_argument("--yes", action="store_true", help="Confirm: this cannot be undone")
     summ = commands.add_parser(
         "summarize", help="Derive a 'where this left off' summary of a task, with its own receipt"
     )
@@ -1107,6 +1255,13 @@ def main() -> int:
         help="Observation time in Unix ms; default is today to the day so a rerun replays",
     )
     cap.add_argument(
+        "--scope",
+        choices=("project", "user"),
+        default="project",
+        help="`user` saves a durable fact or preference about you that applies in every "
+        "project (never project facts or secrets)",
+    )
+    cap.add_argument(
         "--supersedes",
         metavar="OBSERVATION",
         help="An earlier observation you can read that this one replaces; it stays as evidence "
@@ -1127,6 +1282,16 @@ def main() -> int:
     rec.add_argument("--task")
     rec.add_argument(
         "--as-of", help="Brief as the project stood then: a date, ISO date-time, or Unix ms"
+    )
+    rec.add_argument(
+        "--from",
+        dest="from_time",
+        help="Only records observed at or after this: a date, ISO date-time, or Unix ms",
+    )
+    rec.add_argument(
+        "--to",
+        dest="to_time",
+        help="Only records observed at or before this (a bare date means the end of the day)",
     )
     rec.add_argument(
         "--salience",
@@ -1255,6 +1420,12 @@ def main() -> int:
         sub.add_argument("--socket", type=Path)
         sub.add_argument("--credential", type=Path)
         sub.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        sub.add_argument(
+            "--scope",
+            choices=("project", "user"),
+            default="project",
+            help="`user` is your own memory across projects, as the `user` folder",
+        )
         sub.add_argument("--dir", type=Path, required=True, help="The vault directory")
         sub.add_argument("--json", action="store_true")
         if name == "import":
@@ -1480,6 +1651,7 @@ def main() -> int:
                 classification=args.classification,
                 observed_ms=args.observed_ms,
                 supersedes=args.supersedes,
+                scope=args.scope,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
@@ -1513,6 +1685,19 @@ def main() -> int:
                     text=not args.json,
                     task=args.task,
                     as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
+                    time_range={
+                        **(
+                            {"from_ms": hooks.range_ms(args.from_time, end=False)}
+                            if args.from_time
+                            else {}
+                        ),
+                        **(
+                            {"to_ms": hooks.range_ms(args.to_time, end=True)}
+                            if args.to_time
+                            else {}
+                        ),
+                    }
+                    or None,
                     salience=args.salience,
                     rerank=args.rerank,
                     binding=args.binding,
@@ -1633,12 +1818,16 @@ def main() -> int:
                 }
                 if args.rotate:
                     grant["rotate"] = True
+                if not args.no_user and {"capture", "read"} & set(grant["capabilities"]):
+                    grant["for_user"] = args.for_user or "@self"
                 if args.expires:
                     grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
                 result = request(args.socket, credential, "grant", grant)
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command == "user":
+            return user_command(args)
         elif args.command in {"save-progress", "resume"}:
             result = lean_command(args)
             if args.json:
@@ -1719,12 +1908,18 @@ def main() -> int:
             from memoryking import vault as vault_module
 
             client = vault_module.connect(
-                socket=args.socket, credential=args.credential, project=args.project
+                socket=args.socket,
+                credential=args.credential,
+                project=args.project,
+                scope=args.scope,
             )
+            folder = "user" if args.scope == "user" else None
             if args.vault_command == "export":
-                report = vault_module.export(args.dir, client)
+                report = vault_module.export(args.dir, client, folder)
             else:
-                report = vault_module.import_(args.dir, client, dry_run=args.dry_run)
+                report = vault_module.import_(
+                    args.dir, client, dry_run=args.dry_run, directory_name=folder
+                )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
             elif args.vault_command == "export":
@@ -1879,6 +2074,24 @@ def main() -> int:
                 sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
             else:
                 print(render_status(result, __version__))
+        elif args.command == "reindex":
+            private_file(args.credential)
+            token = args.credential.read_text().strip()
+            started = request(args.socket, token, "reindex", {})
+            lexical = started.get("lexical", {})
+            if not args.json:
+                print("Reindex started: " + lexical_line(lexical))
+            while args.wait and lexical.get("state") != "current":
+                time.sleep(1)
+                lexical = request(args.socket, token, "status", {"project": args.project})[
+                    "lexical"
+                ]
+                if not args.json:
+                    print("Lexical    " + lexical_line(lexical), flush=True)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes({"lexical": lexical}) + b"\n")
+            elif args.wait:
+                print("Reindex complete.")
         elif args.command == "request":
             private_file(args.credential)
             body = load_strict(sys.stdin.buffer.read(262145))

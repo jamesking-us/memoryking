@@ -291,7 +291,7 @@ def session_start(
                                 "checkpoint": None,
                                 "bindings": points,
                                 "max_output_tokens": share,
-                                "tokenizer": "utf8-byte-estimate-v1",
+                                "tokenizer": "chars-estimate-v1",
                                 "format": "text",
                             },
                         }
