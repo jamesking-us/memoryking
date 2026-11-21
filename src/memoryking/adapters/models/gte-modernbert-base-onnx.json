@@ -1,0 +1,33 @@
+{
+  "schema": "embedding-model-v1",
+  "id": "gte-modernbert-base-onnx",
+  "provider": "local-onnx",
+  "repository": "Alibaba-NLP/gte-modernbert-base",
+  "revision": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+  "license": "apache-2.0",
+  "dimensions": 768,
+  "max_input_tokens": 512,
+  "pooling": "cls-v1",
+  "normalization": "l2-then-round-1e6-v1",
+  "files": [
+    {
+      "path": "tokenizer.json",
+      "url": "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/resolve/e7f32e3c00f91d699e8c43b53106206bcc72bb22/tokenizer.json",
+      "bytes": 3583228,
+      "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+    },
+    {
+      "path": "onnx/model.onnx",
+      "url": "https://huggingface.co/Alibaba-NLP/gte-modernbert-base/resolve/e7f32e3c00f91d699e8c43b53106206bcc72bb22/onnx/model.onnx",
+      "bytes": 596392315,
+      "sha256": "947f31df7effaeec4edb57c50e4ed7e0f2034d9336063f92615b92e3e0d24d78"
+    }
+  ],
+  "runtime": {
+    "onnxruntime": "1.23.2",
+    "numpy": "2.5.4",
+    "tokenizers": "0.23.3"
+  },
+  "activation": "experimental-off-by-default",
+  "remote_code": false
+}

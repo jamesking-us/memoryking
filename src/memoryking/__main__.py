@@ -77,6 +77,26 @@ def lexical_line(lexical: dict[str, Any]) -> str:
     return line + f". {lexical.get('action', '')}"
 
 
+def semantic_line(semantic: dict[str, Any]) -> str:
+    """One line for the semantic index: the model, and how far each project has got."""
+    if not semantic.get("loaded"):
+        return (
+            "off (no model loaded; `memoryking semantic enable` installs one and turns it on)"
+            if not semantic.get("partitions")
+            else "no model loaded in the daemon; briefings use lexical search only"
+        )
+    parts = []
+    for item in semantic.get("partitions", []):
+        if not item["current_model"] or item["state"] != "experimental":
+            continue
+        done = item["percent_indexed"]
+        parts.append(
+            f"{item['project']} {item['vectors']:,} vectors"
+            + ("" if done >= 100 else f", {done}% indexed")
+        )
+    return f"{semantic.get('model')}: " + ("; ".join(parts) if parts else "no project enabled yet")
+
+
 def lexical_total(database: Path, tenant: str) -> int:
     """Live observations of a tenant, from a read-only connection (for the doctor's percent)."""
     import sqlite3
@@ -111,6 +131,9 @@ def render_status(result: dict[str, Any], version: str) -> str:
     lexical = result.get("lexical")
     if lexical:
         lines.append("Lexical    " + lexical_line(lexical))
+    semantic = result.get("semantic")
+    if semantic:
+        lines.append("Semantic   " + semantic_line(semantic))
     capacity = result.get("capacity", {})
     if capacity:
         lines.append("Capacity")
@@ -777,9 +800,10 @@ def doctor(
         )
     if embedding_model is not None:
         try:
-            from memoryking.adapters.local_embeddings import model_files
+            from memoryking import semantic
+            from memoryking.adapters.local_embeddings import model_files, model_manifest
 
-            model_files(embedding_model)
+            model_files(embedding_model, model_manifest(semantic.name_of(embedding_model)))
             record("ok", "embedding model", f"{embedding_model} verified")
         except (LocalError, OSError) as exc:
             code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
@@ -789,11 +813,21 @@ def doctor(
                 f"{embedding_model}: {code}; run `python -m memoryking.model_install --destination DIR`",
             )
     else:
-        record(
-            "warn",
-            "embedding model",
-            "no model configured; `serve --embedding-model DIR` after installing one enables semantic search",
-        )
+        from memoryking import semantic
+
+        if semantic.verified():
+            record(
+                "ok",
+                "embedding model",
+                f"{semantic.MODEL} installed in {semantic.models_dir()}; the daemon loads it without a flag",
+            )
+        else:
+            record(
+                "warn",
+                "embedding model",
+                "no model installed; `memoryking semantic enable` installs and turns it on, "
+                "and until then briefings are lexical",
+            )
     if reranker_model is not None:
         try:
             from memoryking.adapters.local_embeddings import RERANKER, model_files, model_manifest
@@ -940,6 +974,102 @@ def default_trust_key(project: str, source: str, level: str) -> str:
     return f"trust-{digest[:32]}"
 
 
+def semantic_configure(args: Any, token: str, project: str, state: str) -> dict[str, Any]:
+    """Create, enable or disable the project's semantic partition for the default model."""
+    from memoryking import semantic
+
+    context = request(args.socket, token, "context", {"project": project})
+    fp = semantic.fingerprint_of()
+
+    def call(action: str, extra: dict[str, Any], key: str | None = None) -> Any:
+        command: dict[str, Any] = {
+            "version": 1,
+            "incarnation": context["incarnation"],
+            "action": action,
+            "args": {"project": project, **extra},
+        }
+        if key:
+            command["key"] = key
+        return request(args.socket, token, "embedding", {"command": command})
+
+    try:
+        current = call("status", {"fingerprint": fp})
+    except LocalError as exc:
+        if exc.code != "embedding_partition_unavailable":
+            raise
+        current = {}
+    generation = int(current.get("generation") or 0)
+    if current.get("state") == state:
+        return {**current, "already": state}
+    if not current and state == "disabled":
+        return {"project": project, "already": "disabled"}
+    result: dict[str, Any] = call(
+        "configure",
+        {"model": semantic.MODEL, "state": state, "expected_generation": generation},
+        key=f"{state}-{generation}",
+    )
+    return result
+
+
+def semantic_command(args: Any) -> int:
+    """`semantic enable|disable|status`: the whole job of turning semantic search on."""
+    from memoryking import model_install, semantic
+
+    token = read_credential(args.credential)
+
+    def say(text: str) -> None:
+        print(text, flush=True)
+
+    if args.semantic_command == "status":
+        result = request(args.socket, token, "status", {"project": "main"})
+        say("Semantic   " + semantic_line(result.get("semantic", {})))
+        return 0
+    project = args.project or os.environ.get("MEMORYKING_PROJECT")
+    if args.semantic_command == "disable":
+        if not project:
+            raise LocalError("project_required")
+        semantic_configure(args, token, project, "disabled")
+        say(f"Semantic search is off for project {project}; its vectors are kept until reindexed.")
+        return 0
+    problem = semantic.runtime_problem()
+    if problem is not None:
+        say(f"Semantic search is not enabled: {problem}.")
+        say("Install the extra, then run `memoryking semantic enable` again.")
+        say("Search stays lexical until then.")
+        return 1
+    if semantic.verified():
+        say(f"Model {semantic.MODEL} is already installed and verified.")
+    else:
+        say(semantic.consent())
+        outcome = model_install.install(semantic.model_dir(), semantic.MODEL)
+        say(f"Model {outcome['status'].replace('_', ' ')} in {semantic.model_dir()}.")
+    status = request(args.socket, token, "status", {"project": "main"})
+    if status.get("semantic", {}).get("model") != semantic.MODEL:
+        if args.profile:
+            profile = profiles.resolve(args.profile, args.config)
+            daemon.stop(profile)
+            try:
+                daemon.ensure(args.profile, args.config)
+                say("Restarted the daemon so that it loads the model.")
+            except LocalError:
+                say(
+                    f"Start the daemon again (`{daemon.start_hint(args.profile)}`) to load the model."
+                )
+                return 0
+        else:
+            say("Restart `memoryking serve` so that the daemon loads the model.")
+            return 0
+    if project:
+        semantic_configure(args, token, project, "experimental")
+        say(f"Semantic search is on for project {project}.")
+    else:
+        say("The daemon turns semantic search on for every project that has memory.")
+    status = request(args.socket, token, "status", {"project": "main"})
+    say("Semantic   " + semantic_line(status.get("semantic", {})))
+    say("Indexing runs in the background; `memoryking status` shows its progress.")
+    return 0
+
+
 def autostart(args: Any) -> None:
     """Start the profile's daemon when a command needs its socket and the profile allows it."""
     if (
@@ -1021,6 +1151,11 @@ def main() -> int:
                 type=Path,
                 help="Installed local model directory; the daemon then embeds queries and "
                 "indexes every enabled project itself (a profile may set it)",
+            )
+            cmd.add_argument(
+                "--no-semantic",
+                action="store_true",
+                help="Do not load an installed embedding model on your own",
             )
             cmd.add_argument(
                 "--reranker-model",
@@ -1136,6 +1271,11 @@ def main() -> int:
         help="Also serve the loopback dashboard on this port (0 chooses one); needs a daemon restart",
     )
     setup.add_argument("--no-hooks", action="store_true", help="Register the MCP bridge only")
+    setup.add_argument(
+        "--no-semantic",
+        action="store_true",
+        help="Do not install or turn on semantic search even when its runtime is installed",
+    )
     setup.add_argument("--dry-run", action="store_true", help="Print every change, make none")
     setup.add_argument("--remove", action="store_true", help="Undo this host's registration")
     add_binding(setup)
@@ -1294,6 +1434,23 @@ def main() -> int:
         item.add_argument("--socket", type=Path)
         item.add_argument("--credential", type=Path, help="Admin credential")
         item.add_argument("--project", required=True)
+    sem = commands.add_parser(
+        "semantic", help="Semantic search: install the local model, load it and turn it on"
+    )
+    sem_commands = sem.add_subparsers(dest="semantic_command", required=True)
+    for name, text in (
+        ("enable", "Install and verify the pinned model, then turn semantic search on"),
+        ("disable", "Turn semantic search off for a project"),
+        ("status", "Show the semantic index"),
+    ):
+        item = sem_commands.add_parser(name, help=text)
+        item.add_argument("--socket", type=Path)
+        item.add_argument("--credential", type=Path, help="Admin credential")
+        if name != "status":
+            item.add_argument(
+                "--project",
+                help="Project to switch (enable: default every project; disable: required)",
+            )
     cap = commands.add_parser("capture", help="Save one observation from text or stdin")
     cap.add_argument("--socket", type=Path)
     cap.add_argument("--credential", type=Path)
@@ -1667,6 +1824,8 @@ def main() -> int:
             )
             atomic(args.output, json.dumps(result).encode())
             print(json.dumps({"bootstrap_file": str(args.output), "url": result["url"]}))
+        elif args.command == "semantic":
+            return semantic_command(args)
         elif args.command == "embeddings":
             from memoryking.adapters.local_embeddings import model_manifest
             from memoryking.domain.embeddings import fingerprint
@@ -2220,11 +2379,21 @@ def main() -> int:
                         store.backup_policy = Policy(
                             args.backup_dir, args.backup_every or "1d", args.backup_keep or 14
                         )
+                    from memoryking import semantic
+                    from memoryking.embedding_loop import EmbeddingLoop
+
                     if args.embedding_model is not None:
                         from memoryking.adapters.local_embeddings import LocalOnnxEmbedding
-                        from memoryking.embedding_loop import EmbeddingLoop
 
-                        store.embedder = LocalOnnxEmbedding(args.embedding_model)
+                        store.embedder = LocalOnnxEmbedding(
+                            args.embedding_model, semantic.name_of(args.embedding_model)
+                        )
+                    elif not args.no_semantic:
+                        # An installed, verified model is used without a flag; none installed
+                        # (or no runtime) leaves briefings lexical, which they say.
+                        store.embedder = semantic.load_installed()
+                        if store.embedder is not None:
+                            event("serve", "semantic_loaded", model=store.embedder.name)
                     if args.reranker_model is not None:
                         from memoryking.adapters.local_embeddings import LocalOnnxReranker
 

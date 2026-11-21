@@ -32,6 +32,7 @@ class SetupTests(unittest.TestCase):
         self.env = {
             **{k: v for k, v in os.environ.items() if not k.startswith("MEMORYKING_")},
             "HOME": str(self.home),
+            "MEMORYKING_SEMANTIC": "off",  # these tests stay offline
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         self.env.pop("PYTHONPATH", None)
@@ -107,7 +108,8 @@ class SetupTests(unittest.TestCase):
         (codex / "config.toml").write_bytes(original)
 
         first = self.mk("setup", "codex", "--project", "demo", "--task", "t1")
-        self.assertEqual(5, len([row for row in first.stdout.splitlines() if row.strip()]))
+        self.assertEqual(6, len([row for row in first.stdout.splitlines() if row.strip()]))
+        self.assertIn("semantic search: skipped", first.stdout)
         self.assertIn("no expiry", first.stdout)
         block = (codex / "config.toml").read_text()
         self.assertIn("[mcp_servers.memoryking]", block)

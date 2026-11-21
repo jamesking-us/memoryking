@@ -342,8 +342,8 @@ class LocalRetentionTests(RetentionCases, unittest.TestCase):
         self.store.db.execute("PRAGMA user_version=18")
         self.store.close()
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(20, SCHEMA_VERSION)
-        self.assertEqual(20, self.store.db.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(21, SCHEMA_VERSION)
+        self.assertEqual(21, self.store.db.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(before, self.count("receipt_observations"))
         names = {
             r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='index'")

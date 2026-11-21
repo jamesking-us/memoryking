@@ -1,0 +1,33 @@
+{
+  "schema": "reranker-model-v1",
+  "id": "mxbai-rerank-base-v1-onnx",
+  "provider": "local-onnx",
+  "repository": "mixedbread-ai/mxbai-rerank-base-v1",
+  "revision": "800f24c113213a187e65bde9db00c15a2bb12738",
+  "license": "apache-2.0",
+  "kind": "cross-encoder",
+  "max_input_tokens": 512,
+  "truncation": "only-second-v1",
+  "scoring": "sigmoid-logit-round-1e6-v1",
+  "files": [
+    {
+      "path": "tokenizer.json",
+      "url": "https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v1/resolve/800f24c113213a187e65bde9db00c15a2bb12738/tokenizer.json",
+      "bytes": 8649139,
+      "sha256": "305674b4d785287feecfb5f73f24aa75e9b57c87c579cfe24fbd207987d4b4c4"
+    },
+    {
+      "path": "onnx/model.onnx",
+      "url": "https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v1/resolve/800f24c113213a187e65bde9db00c15a2bb12738/onnx/model.onnx",
+      "bytes": 738560113,
+      "sha256": "acd44aff3ed526079ed44cffac2e549ce70805ea193d70973c98b67e09efec1a"
+    }
+  ],
+  "runtime": {
+    "onnxruntime": "1.23.2",
+    "numpy": "2.5.4",
+    "tokenizers": "0.23.3"
+  },
+  "activation": "experimental-off-by-default",
+  "remote_code": false
+}

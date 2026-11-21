@@ -13,6 +13,7 @@ written with `--dry-run`.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import json
@@ -341,6 +342,13 @@ def run(args: Any) -> int:
     else:
         path, text = hook_changes(args, agent_profile, home, cwd)
         say["hooks"] = f"{files.write(path, text)} {path}, run as the same principal as the bridge"
+    if args.dry_run or args.no_semantic:
+        semantic_step(name, args, profile, say)
+    else:
+        try:
+            semantic_step(name, args, profile, say)
+        except LocalError as exc:  # the rest of setup stands; semantic search can be retried
+            say["semantic"] = f"not enabled ({exc.code}); retry with `memoryking semantic enable`"
     files.save()
     summary(args, say, printed, files)
     return 0
@@ -399,6 +407,46 @@ def remove(args: Any, files: Files, home: Path, cwd: Path) -> int:
     return 0
 
 
+def semantic_step(name: str, args: Any, profile: dict[str, Any], say: dict[str, str]) -> None:
+    """Turn semantic search on when the optional runtime is installed; say what it did.
+
+    This is the one place `setup` may fetch anything: the pinned model, with what is fetched
+    and from where printed first. Without the runtime nothing is downloaded and the summary
+    says how to get there. `--no-semantic` (or MEMORYKING_SEMANTIC=off) skips all of it."""
+    from memoryking import model_install, semantic
+    from memoryking.__main__ import semantic_configure
+
+    if args.no_semantic or os.environ.get("MEMORYKING_SEMANTIC") == "off":
+        say["semantic"] = "skipped (--no-semantic)"
+        return
+    problem = semantic.runtime_problem()
+    if problem is not None:
+        say["semantic"] = (
+            f"off, search stays lexical: {problem}. "
+            "Install it, then run `memoryking semantic enable`"
+        )
+        return
+    if args.dry_run:
+        say["semantic"] = "would install and enable the local model. " + semantic.consent()
+        return
+    if not semantic.verified():
+        print(semantic.consent(), flush=True)
+        model_install.install(semantic.model_dir(), semantic.MODEL)
+    socket = Path(profile["socket"])
+    token = (Path(profile["control"]) / "owner.credential").read_text().strip()
+    if (
+        request(socket, token, "status", {"project": args.project}).get("semantic", {}).get("model")
+        != semantic.MODEL
+    ):
+        daemon.stop(profile)  # the daemon loads an installed model when it starts
+        daemon.ensure(name)
+    semantic_configure(argparse.Namespace(socket=socket), token, args.project, "experimental")
+    say["semantic"] = (
+        f"on for project {args.project} with {semantic.MODEL}; indexing runs in the background "
+        "and `memoryking status` shows its progress"
+    )
+
+
 def summary(args: Any, say: dict[str, str], printed: list[str], files: Files) -> None:
     prefix = "[dry run] " if args.dry_run else ""
     lines = [
@@ -406,6 +454,7 @@ def summary(args: Any, say: dict[str, str], printed: list[str], files: Files) ->
         f"{prefix}agent credential: {say['credential']}",
         f"{prefix}MCP bridge: {say['mcp']}",
         f"{prefix}session hooks: {say['hooks']}",
+        f"{prefix}semantic search: {say['semantic']}",
         f"undo: memoryking setup {args.host} --project {args.project} --remove",
     ]
     for path, text in files.pending:

@@ -133,7 +133,7 @@ __all__ = [
 ]
 
 
-SCHEMA_VERSION = 20  # the SQLite user_version the daemon migrates every store to
+SCHEMA_VERSION = 21  # the SQLite user_version the daemon migrates every store to
 
 
 class LocalStore(StoreCore):
@@ -257,6 +257,8 @@ class LocalStore(StoreCore):
             self.db.executescript(Path(__file__).with_name("retention_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}:
             self.db.executescript(Path(__file__).with_name("consolidation_schema.sql").read_text())
+        if version in set(range(1, 21)):
+            self.db.executescript(Path(__file__).with_name("vectors_schema.sql").read_text())
         elif version != SCHEMA_VERSION:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
@@ -1058,6 +1060,8 @@ class LocalStore(StoreCore):
         )
         self.db.execute("DELETE FROM adapter_bases" + scope, bound)
         self.db.execute("DELETE FROM embedding_items" + scope, bound)
+        self.db.execute("DELETE FROM embedding_vectors" + scope, bound)
+        self.db.execute("DELETE FROM embedding_skips" + scope, bound)
         self.db.execute("DELETE FROM embedding_jobs" + scope, bound)
         self.db.execute(
             "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0"

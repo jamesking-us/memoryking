@@ -11,7 +11,7 @@ import test_knowledge as knowledge
 import test_postgres_parity as pg
 
 from memoryking.adapters.local_embeddings import (
-    RERANK_PAIRS,
+    RERANK_MAX_PAIRS,
     RERANKER,
     LocalOnnxReranker,
     model_files,
@@ -73,7 +73,7 @@ class RerankerModelTests(unittest.TestCase):
         # A text longer than the window is cut, the query never is, and the call still scores.
         long = reranker.score(query, [texts[1] + " filler" * 2000])
         self.assertEqual(len(long), 1)
-        for bad in ([], ["x"] * (RERANK_PAIRS + 1), [""], ["y" * 16385]):
+        for bad in ([], ["x"] * (RERANK_MAX_PAIRS + 1), [""], ["y" * 16385]):
             with self.assertRaisesRegex(LocalError, "reranker_input_limit"):
                 reranker.score(query, bad)
         with self.assertRaisesRegex(LocalError, "reranker_input_limit"):
