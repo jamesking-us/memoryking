@@ -297,6 +297,15 @@ Consolidation lets a model read recent observations and propose claims, under ru
 
 **Is it worth it.** `memoryking health --project demo` counts drafts by method (`repeated_evidence_v1`, `model_consolidation_v1`, `repeated_outcome_v1`): drafted, accepted, rejected, waiting, and the share accepted. A method whose drafts are mostly rejected is costing review time.
 
+## Remembering things about the user
+
+Some things are true of the person, not of the project: how they like work done, tools they want used or avoided, the language to reply in. Save those to the **user scope**, and every project their agents work in will hear about them. Use `remember` with `scope: "user"` (CLI: `memoryking capture --scope user`). Never put project facts, code or secrets there, because the scope is shared with all of that user's agents.
+
+- Example: the user says "I prefer small commits, one concern each". Call `remember` with `text` "The user prefers small commits, one concern each", `source` `chat` and `scope` `user`. Later, in another repository, `recall` or the session start shows it, labelled "from your own user memory".
+- Example: the build in this repository fails on Node 18. That is a project fact: call `remember` without a scope. The user scope is for what stays true when the repository changes.
+
+Writing takes the `capture` capability in the user's scope, which an agent has when it acts for the user (`credential issue --for-user`). What you save is a note, not an order: it becomes a standing claim or constraint only when the user accepts a proposal made from it. Users see, export and erase their own scope with `memoryking user show`, `user export --dir DIR` and `user purge --yes`. If a user rule and a project rule disagree, the briefing is blocked with an unresolved conflict and both are shown; decide with the user rather than picking one.
+
 ## Reviewing and correcting memory
 
 **Review from the terminal.** `memoryking review list --project demo` shows the proposals waiting for a decision, oldest first, ten to a page (`--limit`, `--after`; `--kind constraint` lists proposed constraints), each with its id, text, how it was filed (`repeated_evidence_v1` for a draft, `agent_proposal_v1` for one an agent filed), how many observations support it and the sentences it cites, then the retirement requests waiting (below). `review show ID` prints one in full with the scope it would apply to, `review accept ID --reason "why"` accepts it, `review reject ID --reason "why"` rejects it, and `review accept ID --as constraint [--effect prohibit]` files and accepts a mandatory constraint with the same words and evidence and closes the draft (a constraint accepted this way has no machine rule beyond its text). Accepting confirms that you read the scope `show` prints. The reason is free text kept with the decision (the `note` field); the identifier `reason` stays a machine code. These commands send the existing `review` action with your own credential, so the same capabilities apply: `review` for knowledge, `policy` for a constraint. The dashboard's Review view shows the same queue.

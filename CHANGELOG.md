@@ -4,6 +4,11 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Memory about the user
+
+- A user scope (`_user_<principal>`) holds a person's standing preferences and instructions, readable from every project their agents work in. Briefings and the session start add the user's accepted constraints (resolved with the project's; a disagreement is an unresolved conflict, never a silent override), accepted claims and matching observations, labelled "from your own user memory", with the same budget and receipts. Only the user and the agents recorded as acting for them can read it: `*` grants and project grants never reach it, and an administrator can link or purge a scope but not read it.
+- `memoryking capture --scope user`, the lean `remember` tool's `scope: "user"`, `credential issue --for-user/--no-user`, `memoryking user show|export|purge` and `vault export --scope user`; the dashboard lists the scope for its owner and `status` counts it.
+
 ### Budgets
 
 - A token budget counts what the model receives. For `format: "text"` (the default of `recall`, the hooks and the lean tools) the budget now governs the rendered Markdown, not the JSON envelope that is never read; before, a 6,000-token text briefing delivered about 1,200 real tokens. The receipt records what was counted (`budget_count_scope: rendered_text`, `usage.counted`), and replay is byte-exact as before. A text briefing that left matches out says so ("Showing 3 of 8 matches; 5 omitted for budget. A budget of about 1,150 tokens would include them."), tells "nothing matched" from "matched but did not fit", and a `budget_insufficient` text names the minimum. The text shows each item's authority label, source and time and no longer the assurance, selection reason and byte span (still in the structured form). The smallest advertised budget, 256 tokens, now works for an empty and a small briefing.

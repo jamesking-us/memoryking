@@ -1045,6 +1045,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `usage_record_invalid` | The usage record is malformed. |
 | `usage_retention_limit` | 100,000 usage attempts are retained; expired rows are pruned automatically, otherwise wait for retention to pass. |
 
+## user
+
+| Code | What to do |
+| --- | --- |
+| `user_evidence_scope` | A user-scope claim may cite only that scope's own observations, and a project claim may not cite them; capture the fact in the claim's own scope. |
+| `user_link_conflict` | An agent acts for one user. End its link to the other user first (`credential revoke <agent> --project _user_<name>`). |
+
 ## vault
 
 | Code | What to do |

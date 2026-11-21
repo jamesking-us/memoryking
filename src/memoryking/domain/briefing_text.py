@@ -23,6 +23,7 @@ START_HEADINGS = {
     "last_checkpoint": "Where the last session left off",
     "recent_decision": "Recent decisions",
     "user_decision": "Recent decisions",
+    "user_memory": "From your own user memory",
 }
 # Warnings that stay in the structured envelope and add nothing a model must read.
 UNRENDERED_WARNINGS = {"host_and_protocol_tokens_excluded"}
@@ -105,6 +106,8 @@ def _omitted(packet: dict[str, Any]) -> str:
 
 def _qualifier(item: dict[str, Any]) -> str:
     parts = [str(item["authority"])] if item.get("authority") else []
+    if item.get("scope") == "user":
+        parts.append("from your own user memory")
     if item.get("retirement_requested"):
         parts.append("retirement requested")
     return f" _({'; '.join(parts)})_" if parts else ""

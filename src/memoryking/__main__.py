@@ -123,6 +123,12 @@ def render_status(result: dict[str, Any], version: str) -> str:
             )
             flag = "  warning" if value.get("warning") else ""
             lines.append(f"  {name:<20}{shown:>22}  {bar(used, limit)}{flag}")
+    scopes = result.get("user_scopes")
+    if scopes and scopes["scopes"]:
+        lines.append(
+            f"User memory {scopes['observations']:,} observations in {scopes['scopes']} user scope(s)"
+            " (counts only; readable by each user and their agents)"
+        )
     if result.get("satisfied") is not None:
         lines.append(f"Watermark  {'satisfied' if result['satisfied'] else 'not yet reached'}")
     return "\n".join(lines)
@@ -197,6 +203,66 @@ def lean_command(args: Any) -> dict[str, Any]:
     )
     bindings = session_bindings.resolve(args.binding, profile=args.profile, config=args.config)
     return lean.call(LocalClient(socket, credential, project, bindings=bindings), name, arguments)
+
+
+def user_command(args: Any) -> int:
+    """`memoryking user show|export|purge`: the user's own memory across projects."""
+    from memoryking import vault as vault_module
+
+    credential = read_credential(args.credential)
+
+    def ask(**body: Any) -> dict[str, Any]:
+        return request(args.socket, credential, "user", body)
+
+    if args.user_command == "export":
+        client = vault_module.connect(
+            socket=args.socket, credential=args.credential, project=None, scope="user"
+        )
+        report = vault_module.export(args.dir, client, "user")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"Exported {report['observations']} file(s) from {report['versions']} "
+                f"observation(s) and {report['claims']} claim(s) to {report['directory']}"
+            )
+    elif args.user_command == "purge":
+        if not args.yes:
+            print(
+                "This erases the user memory and everything built from it, and cannot be"
+                " undone. Run again with --yes.",
+                file=sys.stderr,
+            )
+            return 2
+        body = {"user": args.user} if args.user else {}
+        total = 0
+        while True:
+            report = ask(action="purge", **body)
+            total += report["purged"]
+            if not report["remaining"] or not report["purged"]:
+                break
+        report["purged"] = total
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(f"Erased {total} observation(s) and what was built from them.")
+    else:
+        try:
+            ask(action="ensure")  # the owner is the default user; a no-op for anyone else
+        except LocalError:
+            pass
+        report = ask(action="show")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"User memory of {report['user']}: {report['observations']} observation(s), "
+                f"{report['claims']} claim(s), {report['constraints']} constraint(s), "
+                f"{report['held']} held"
+            )
+            for agent in report["agents"]:
+                print(f"  acts for you: {agent['principal']} ({','.join(agent['capabilities'])})")
+    return 0
 
 
 def summarize(args: Any) -> dict[str, Any]:
@@ -1069,9 +1135,41 @@ def main() -> int:
                 action="store_true",
                 help="Replace the principal's credential: every earlier one stops working",
             )
+            who = item.add_mutually_exclusive_group()
+            who.add_argument(
+                "--for-user",
+                metavar="USER",
+                help="The user this agent acts for, so it reads and writes their own memory "
+                "across projects; default: the issuing owner",
+            )
+            who.add_argument(
+                "--no-user",
+                action="store_true",
+                help="Do not let this credential see anyone's user memory",
+            )
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
+    usr = commands.add_parser(
+        "user", help="Your own memory across projects: show, export or erase it"
+    )
+    usr_commands = usr.add_subparsers(dest="user_command", required=True)
+    for name, text in (
+        ("show", "What your user memory holds and which agents act for you"),
+        ("export", "Write your user memory as Markdown files"),
+        ("purge", "Erase your user memory and everything built from it"),
+    ):
+        sub = usr_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--json", action="store_true")
+        if name == "export":
+            sub.add_argument("--dir", type=Path, required=True, help="Directory to write")
+        if name == "purge":
+            sub.add_argument(
+                "--user", help="Administrators only: purge this user's scope without reading it"
+            )
+            sub.add_argument("--yes", action="store_true", help="Confirm: this cannot be undone")
     summ = commands.add_parser(
         "summarize", help="Derive a 'where this left off' summary of a task, with its own receipt"
     )
@@ -1145,6 +1243,13 @@ def main() -> int:
         "--observed-ms",
         type=int,
         help="Observation time in Unix ms; default is today to the day so a rerun replays",
+    )
+    cap.add_argument(
+        "--scope",
+        choices=("project", "user"),
+        default="project",
+        help="`user` saves a durable fact or preference about you that applies in every "
+        "project (never project facts or secrets)",
     )
     cap.add_argument(
         "--supersedes",
@@ -1305,6 +1410,12 @@ def main() -> int:
         sub.add_argument("--socket", type=Path)
         sub.add_argument("--credential", type=Path)
         sub.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        sub.add_argument(
+            "--scope",
+            choices=("project", "user"),
+            default="project",
+            help="`user` is your own memory across projects, as the `user` folder",
+        )
         sub.add_argument("--dir", type=Path, required=True, help="The vault directory")
         sub.add_argument("--json", action="store_true")
         if name == "import":
@@ -1530,6 +1641,7 @@ def main() -> int:
                 classification=args.classification,
                 observed_ms=args.observed_ms,
                 supersedes=args.supersedes,
+                scope=args.scope,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
@@ -1696,12 +1808,16 @@ def main() -> int:
                 }
                 if args.rotate:
                     grant["rotate"] = True
+                if not args.no_user and {"capture", "read"} & set(grant["capabilities"]):
+                    grant["for_user"] = args.for_user or "@self"
                 if args.expires:
                     grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
                 result = request(args.socket, credential, "grant", grant)
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command == "user":
+            return user_command(args)
         elif args.command in {"save-progress", "resume"}:
             result = lean_command(args)
             if args.json:
@@ -1782,12 +1898,18 @@ def main() -> int:
             from memoryking import vault as vault_module
 
             client = vault_module.connect(
-                socket=args.socket, credential=args.credential, project=args.project
+                socket=args.socket,
+                credential=args.credential,
+                project=args.project,
+                scope=args.scope,
             )
+            folder = "user" if args.scope == "user" else None
             if args.vault_command == "export":
-                report = vault_module.export(args.dir, client)
+                report = vault_module.export(args.dir, client, folder)
             else:
-                report = vault_module.import_(args.dir, client, dry_run=args.dry_run)
+                report = vault_module.import_(
+                    args.dir, client, dry_run=args.dry_run, directory_name=folder
+                )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
             elif args.vault_command == "export":

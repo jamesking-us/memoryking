@@ -200,6 +200,14 @@ To move a tenant to the current lexical ranking after an upgrade, run `.venv/bin
 
 Shared `request` accepts `--url`, `--tenant`, `--project`, `--credential` and optional `--ca-file`. Its stdin envelope is `{"version":1,"operation":"NAME","args":{...}}`. Grant/delegate output requires a new `--credential-output`; dashboard bootstrap requires `--bootstrap-output`. The [shared demo](../tools/shared_demo.py) is a complete disposable operator/client example.
 
+### Tying agents to a user
+
+Memory about a user lives in its own scope (`_user_<principal>`) and only the user and the agents that act for them can read it; see the design guide. An agent acts for a user when it holds a grant on that scope, which is a journaled grant like any other.
+
+- **Local store.** The owner is the default user. Every credential the owner issues with `credential issue` acts for the owner when it holds `capture` or `read`. Pass `--for-user NAME` to make an agent act for someone else, or `--no-user` to keep a credential away from user memory. `memoryking user show` lists who acts for you.
+- **Shared service.** Add `"for_user": "NAME"` to the `grant` request (or grant the principal on `_user_NAME` with `capture`, `read` and `export`). The user's own principal holds the scope with `review` and `policy` and can link and unlink their agents with their own credential. An agent acts for one user; a second link is refused (`user_link_conflict`).
+- **Administrators.** A `*` grant never reaches a user scope. Administrators can link agents and can erase a scope with `memoryking user purge --user NAME --yes`, without being able to read it. To end an agent's access: `memoryking credential revoke AGENT --project _user_NAME`.
+
 ### Rotating credentials
 
 A credential is a signed document naming the store, history, tenant and principal (and, in the shared profile, the service audience). Each principal also has a **generation**, stored with its grants and carried in the credential once it is above zero. A credential is accepted only when its generation is the principal's current one; otherwise it is refused with `credential_replaced`. The generation advances in two cases, both journaled in the signed control journal like every other policy change, so a restore replays them and they retire retained briefings the way a revoke does:
