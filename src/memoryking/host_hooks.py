@@ -451,9 +451,13 @@ def hook_command(
     task: str | None,
     query: str | None,
     bindings: dict[str, str] | None = None,
+    launcher: list[str] | None = None,
 ) -> str:
-    """The shell command a host runs; absolute paths so it works without the shell env."""
-    parts = [json.dumps(sys.executable), "-m", "memoryking"]
+    """The shell command a host runs; absolute paths so it works without the shell env.
+
+    `launcher` replaces the absolute interpreter with other shell words, such as
+    `["memoryking"]` when that name resolves on the host's PATH."""
+    parts = list(launcher) if launcher else [json.dumps(sys.executable), "-m", "memoryking"]
     if profile:
         parts += ["--profile", profile]
     parts += ["hook", kind, "--host", host, "--project", project]
@@ -549,6 +553,7 @@ def install(
     binding: list[str] | None = None,
     remove: bool = False,
     write: bool = True,
+    launcher: list[str] | None = None,
 ) -> dict[str, Any]:
     """Merge MemoryKing's three hooks into the host's config file (or show the result).
 
@@ -567,6 +572,7 @@ def install(
             task=task,
             query=query,
             bindings=bindings,
+            launcher=launcher,
         )
         for kind in KINDS
     }

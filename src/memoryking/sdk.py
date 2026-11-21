@@ -33,6 +33,14 @@ TOOL_VALIDATORS = {
 DEFAULT_BUDGET = 6000
 MUTATION_TOOLS = {"memory_checkpoint", "memory_handoff", "memory_feedback"}
 PLAN_MUTATIONS = {"plan_save", "plan_step"}
+# Nullable fields a call may leave out: null already means "none" or "the latest" (kept in
+# step with TOOL_DEFAULTED in tools/generate_stdio.py, which drops them from `required`).
+NULL_DEFAULTS = {
+    "memory_resume": ("checkpoint",),
+    "memory_handoff": ("run",),
+    "memory_plan": ("decision", "revision", "cursor"),
+    "memory_feedback": ("comment",),
+}
 
 
 def _resolve(node: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
@@ -302,6 +310,9 @@ class LocalClient(MemoryMethods):
                 args["checkpoint"] = complete(args["checkpoint"], int(time.time() * 1000))
         if name == "memory_resume" and action == "resume":
             args.setdefault("run", None)
+        for field in NULL_DEFAULTS.get(name, ()):
+            if field in fields:
+                args.setdefault(field, None)
         if "project" in fields:
             args.setdefault("project", self.project)
         if "bindings" in fields:

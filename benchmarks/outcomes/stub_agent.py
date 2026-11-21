@@ -107,7 +107,13 @@ class McpBridge:
 
     def call(self, name: str, arguments: dict) -> dict:
         result = self.request("tools/call", {"name": name, "arguments": arguments})
-        payload = json.loads(result["content"][0]["text"])
+        text = result["content"][0]["text"]
+        # Lean replies: the envelope is `structuredContent`, a briefing's Markdown the text.
+        payload = result.get("structuredContent")
+        if payload is None:
+            payload = json.loads(text)
+        elif payload.get("format") == "text":
+            payload = {**payload, "text": text}
         if result.get("isError"):
             raise SystemExit(f"MCP tool {name} failed: {payload}")
         return payload

@@ -13,8 +13,8 @@ Use the [agent guide](agent-guide.md) for workflows and [deployment guide](deplo
 | Python client | `memoryking.sdk.LocalClient` | Local Unix-socket client bound to identity/project/history. |
 | Shared CLI/client | `python -m memoryking.shared`, `memoryking.shared_sdk.SharedClient` | PostgreSQL operators and authenticated HTTP requests. |
 | Framework adapters | `memoryking.integrations.<name>` | Lean tools in the shape of OpenAI-compatible function calling, the Claude Agent SDK, the OpenAI Agents SDK, LangChain/LangGraph (with a `BaseStore`) and LlamaIndex (with a memory block); the framework is imported lazily and never installed. See the [agent guide](agent-guide.md#using-memoryking-from-agent-frameworks). |
-| MCP stdio | `python -m memoryking.adapters.stdio` | Nine model-facing memory tools; daemon must already run. |
-| Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp` | Authenticated Streamable HTTP transport. |
+| MCP stdio | `memoryking mcp` / `python -m memoryking.adapters.stdio` | The lean tool set by default, or the nine full tools with `--profile full`; starts the daemon when the store profile allows it. |
+| Shared MCP | `/v1/tenants/{tenant}/projects/{project}/mcp[?profile=full]` | Authenticated Streamable HTTP transport; lean by default. |
 | Reference agent | `python -m memoryking.reference_agent --help` | Create-file/readback task harness, checkpoint/recovery, the local recording provider or a policy adapter. |
 | Provider adapters | `memoryking.providers.adapter(policy, name, model)` | Anthropic, OpenAI-compatible and Vertex AI dispatch for `AuthorizedConversation`, built from the daemon's egress policy. |
 | Repository worker | `python -m memoryking.repository_worker --help` | One bounded passive repository validation job. |

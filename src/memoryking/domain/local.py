@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 
 class LocalError(Exception):
     """Stable non-disclosing error code; never embeds supplied content."""
 
-    def __init__(self, code: str, hint: str | None = None):
+    def __init__(self, code: str, hint: str | None = None, detail: dict[str, Any] | None = None):
         self.code = code
         self.hint = hint
+        # Public, non-content context for a reply (the failing field path, the capability an
+        # operation needs, the command that starts the daemon); never caller text or secrets.
+        self.detail = detail or {}
         super().__init__(code)
 
 

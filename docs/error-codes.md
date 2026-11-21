@@ -186,6 +186,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `cursor_context_changed` | The paging cursor belongs to another session or history; start over. |
 
+## daemon
+
+| Code | What to do |
+| --- | --- |
+| `daemon_start_failed` | The daemon did not start; read daemon.log in the store directory for the reason. |
+| `daemon_stop_failed` | The daemon did not stop on request; it may have been started outside this profile: stop its process by hand. |
+
 ## dashboard
 
 | Code | What to do |
@@ -407,6 +414,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `host_authorization_expired` | The host's authorization for this content expired; authorize again. |
 | `host_authorization_required` | Host-supplied content needs a host authorization with a source hash. |
+| `host_config_conflict` | The host's file already defines a memoryking server MemoryKing did not write; edit it by hand or remove that entry. |
 | `host_rejected` | The Host header is not one the service was started with; pass it with `--host` or use the configured name. |
 | `host_unsupported` | Hooks are generated for claude, codex or grok; other hosts can run the same `memoryking hook` commands by hand. |
 
@@ -504,7 +512,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `invalid_secret_file` | The secret file is missing, empty, not private, or not valid text; recreate it with mode 0600. |
 | `invalid_shared_url` | Use `https://host[:port]` with no path, query, fragment or embedded credentials. |
 | `invalid_token` | The token is malformed, signed by another store, or too long; obtain a fresh credential from this store. |
-| `invalid_tool_arguments` | The tool arguments do not match the catalog schema; compare with the tool's description. |
+| `invalid_tool_arguments` | A tool argument is wrong: `path`, `problem` and `expected` in this reply name the field; fix it and call again. |
 | `invalid_transition` | That lifecycle transition is not allowed from the current state. |
 | `invalid_usage` | Usage figures must be consistent non-negative integers. |
 
@@ -712,6 +720,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `profile_config_invalid` | The profiles file must hold `[profiles.NAME]` tables with absolute store and control paths. |
+| `profile_required` | Name the store with `--profile NAME` (or MEMORYKING_PROFILE) so the command knows which daemon to stop. |
 | `profile_unknown` | No profile with that name; run `memoryking profile list` or `profile add`. |
 
 ## project
@@ -905,6 +914,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `session_limit` | Sixteen dashboard sessions are already open; sign out of one or wait for expiry. |
 | `session_required` | Sign in to the dashboard first; the request carried no session cookie. |
 
+## setup
+
+| Code | What to do |
+| --- | --- |
+| `setup_config_unsupported` | Setup writes the default profiles file, ~/.memoryking/config.toml; unset MEMORYKING_CONFIG and --config, or register the bridge by hand. |
+
 ## shared
 
 | Code | What to do |
@@ -995,7 +1010,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `transport_unavailable` | The daemon socket is unreachable; is `memoryking serve` running? |
+| `transport_unavailable` | The daemon is not running; start it with the `start` command in this reply, or run `memoryking setup <host> --project P`, which makes it start on demand. |
 
 ## trust
 
@@ -1013,6 +1028,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `unknown_profile` | The MCP profile is `lean` (the default) or `full`; select it with `?profile=` on the endpoint URL. |
 | `unknown_tool` | No tool with that name; call tools/list for the catalog. |
 
 ## unrelated

@@ -210,7 +210,10 @@ class PostgresStore(StoreCore):
                 principal=delegation["on_behalf_of"],
                 generation=delegation["on_behalf_of_generation"],
             )
-            StoreCore._auth(self, recipient, capability, project, at)
+            try:
+                StoreCore._auth(self, recipient, capability, project, at)
+            except LocalError as exc:
+                raise LocalError(exc.code) from None  # nothing about the recipient's grants
         return super()._auth(token, capability, project, at)
 
     def _token(self, kind: str, **fields: Any) -> str:
@@ -225,12 +228,16 @@ class PostgresStore(StoreCore):
         return identity
 
     def _subject_auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
-        identity = self._decode(token, "credential")
-        if identity.get("tenant") != self.tenant:
-            raise LocalError("denied")
-        if identity.get("principal") == self.principal:
-            return self._auth(self.credential, capability, project, at)
-        return LocalStore._auth(self, token, capability, project, at)
+        try:
+            identity = self._decode(token, "credential")
+            if identity.get("tenant") != self.tenant:
+                raise LocalError("denied")
+            if identity.get("principal") == self.principal:
+                return self._auth(self.credential, capability, project, at)
+            return LocalStore._auth(self, token, capability, project, at)
+        except LocalError as exc:
+            # The subject may be another principal: never say which capability they lack.
+            raise LocalError(exc.code) from None
 
     def _context_details(
         self, who: dict[str, Any], capabilities: set[str], project: str, at: int
@@ -262,7 +269,10 @@ class PostgresStore(StoreCore):
             subject = self._token("credential", tenant=self.tenant, principal=principal)
             for capability in capabilities:
                 self._auth(self.credential, capability, project, decision.evaluated_ms)
-                LocalStore._auth(self, subject, capability, project, decision.evaluated_ms)
+                try:
+                    LocalStore._auth(self, subject, capability, project, decision.evaluated_ms)
+                except LocalError as exc:
+                    raise LocalError(exc.code) from None  # nothing about the subject's grants
             delegation = {
                 "id": uid("delegation"),
                 "by": self.principal,
