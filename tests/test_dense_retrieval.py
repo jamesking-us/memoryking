@@ -309,6 +309,51 @@ class DenseCases:
         self.assertEqual(first["guidance"], again["guidance"])
         self.assertEqual(first["guidance"][0]["reference"], self.obs["observation"])
 
+    def test_a_long_capture_is_embedded_passage_by_passage_and_found_by_a_late_one(self):
+        paragraphs = [f"Paragraph {n} says " + ("word " * 140) for n in range(3)]
+        long = self.store.capture(
+            self.owner,
+            self.ns,
+            "long",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "fixture",
+                "source_event": "long",
+                "text": "\n\n".join(paragraphs),
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        config = self.configure()
+        seen = []
+        for _ in range(16):
+            job = self.claim_e(config)
+            if job["job"] is None:
+                break
+            seen.append((job.get("kind"), job["observation"], job["start_byte"], job["end_byte"]))
+            late = job["observation"] == long["observation"] and job["start_byte"] > 0
+            self.complete_e(job, vector=([0, 1000000] if late else [1000000, 0]) + [0] * 382)
+        mine = [item for item in seen if item[1] == long["observation"]]
+        self.assertGreaterEqual(len(mine), 2)
+        self.assertEqual([m[0] for m in mine][:1], [None])
+        self.assertTrue(all(m[0] == "passage" for m in mine[1:]))
+        # Passages are contiguous views of the one observation.
+        self.assertEqual(mine[0][3], mine[1][2])
+        with self.store.transaction():
+            rows = self.store.db.execute(
+                "SELECT part,truncated FROM embedding_vectors WHERE subject=? ORDER BY part",
+                (long["observation"],),
+            ).fetchall()
+        self.assertEqual([r[0] for r in rows], list(range(len(mine))))
+        self.assertEqual([r[1] for r in rows][-1], 0)  # nothing follows the last one
+        args = self.dense_args(config)
+        args["dense"]["vector"] = [0, 1000000] + [0] * 382
+        found = self.run_r(args=args)
+        hit = [g for g in found["guidance"] if g["reference"] == long["observation"]]
+        self.assertEqual(hit[0]["dense_score_ppm"], 1000000)
+
 
 class DenseRetrievalTests(DenseCases, unittest.TestCase):
     setUp = knowledge.KnowledgeTests.setUp

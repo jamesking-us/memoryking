@@ -61,6 +61,7 @@ GATE = ROOT / "fixtures/evaluation/evidence-recall-gate.json"
 TEXT_LIMIT = 60000
 KS = (5, 10)
 BUDGET = 65536
+PASSAGES = True  # --no-passages embeds each observation's opening only (the earlier index)
 # Fusion presets for --fusion: the shipped default, weighted rank fusion and a convex
 # combination of normalised scores (the lexical score over the best lexical score, the
 # similarity min-max scaled over the dense candidates).
@@ -305,17 +306,41 @@ class CachedReranker:
             self.path.write_bytes(pickle.dumps(self.scores))
 
 
-def index_dense(store: Any, retrieval: Retrieval, embedder: CachedEmbedder, project: str) -> int:
+def index_dense(
+    store: Any,
+    retrieval: Retrieval,
+    embedder: CachedEmbedder,
+    project: str,
+    passages: bool = True,
+) -> int:
     """Enable the project's partition and write the vectors the indexing worker would have
-    written (one per observation), up to the store's current position."""
+    written, up to the store's current position: one per passage (`passages-v1`, as the
+    worker does) or, with `passages=False`, one per observation from its opening only."""
+    from memoryking.domain.passages import split
+
     rows = store.db.execute(
         "SELECT tenant,id,revision,blob,position FROM observations WHERE tenant='main' AND project=? AND deleted=0",
         (project,),
     ).fetchall()
-    texts = {r["id"]: retrieval._blob(r)[:16384].decode("utf-8", errors="ignore") for r in rows}
-    embedder.prepare(list(texts.values()))
+    units: dict[str, list[tuple[int, int, str]]] = {}
+    for r in rows:
+        text = retrieval._blob(r)[:16384].decode("utf-8", errors="ignore")
+        if passages:
+            found = split(text)
+            units[r["id"]] = [
+                (
+                    len(text[: p.start].encode()),
+                    len(text[: p.end].encode()),
+                    text[p.start : p.end],
+                )
+                for p in found
+            ] or [(0, len(text.encode()), text)]
+        else:
+            units[r["id"]] = [(0, len(text.encode()), text)]
+    embedder.prepare([u[2] for parts in units.values() for u in parts])
     position = store.db.execute("SELECT position FROM tenants WHERE tenant='main'").fetchone()[0]
     configuration = embedder.provider.configuration
+    count = 0
     with store.transaction() as decision:
         at = decision.evaluated_ms
         store.db.execute(
@@ -335,30 +360,31 @@ def index_dense(store: Any, retrieval: Retrieval, embedder: CachedEmbedder, proj
             ),
         )
         for r in rows:
-            text = texts[r["id"]]
-            store.db.execute(
-                "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    "main",
-                    project,
-                    embedder.fingerprint,
-                    1,
-                    "observation",
-                    r["id"],
-                    0,
-                    store.incarnation,
-                    r["revision"],
-                    r["blob"],
-                    canonical_hash(text),
-                    embedder.vectors[embedder.key("document", text)],
-                    0,
-                    len(text.encode()),
-                    None,
-                    0,
-                    r["position"],
-                ),
-            )
-    return len(rows)
+            for number, (start, end, text) in enumerate(units[r["id"]]):
+                count += 1
+                store.db.execute(
+                    "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "main",
+                        project,
+                        embedder.fingerprint,
+                        1,
+                        "observation",
+                        r["id"],
+                        number,
+                        store.incarnation,
+                        r["revision"],
+                        r["blob"],
+                        canonical_hash(text),
+                        embedder.vectors[embedder.key("document", text)],
+                        start,
+                        end,
+                        None,
+                        0,
+                        r["position"],
+                    ),
+                )
+    return count
 
 
 def run(
@@ -543,7 +569,7 @@ def run_group(
                 pass
             capture_seconds = time.perf_counter() - started_capture
             if embedder is not None:
-                index_dense(store, retrieval, embedder, project)
+                index_dense(store, retrieval, embedder, project, PASSAGES)
                 store.embedder = embedder
                 store.fusion = fusion
                 embedder.prepare([item["question"][:2048] for item in questions], "query")
@@ -745,6 +771,7 @@ def comparable(
 
 
 def main() -> int:
+    global PASSAGES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, help="LongMemEval-format JSON")
     parser.add_argument("--output", type=Path)
@@ -811,6 +838,11 @@ def main() -> int:
     parser.add_argument("--embedding-cache", type=Path, help="Directory for the vector cache")
     parser.add_argument("--embedding-threads", type=int, default=1)
     parser.add_argument(
+        "--no-passages",
+        action="store_true",
+        help="With --embedding: one vector per observation from its opening, not per passage",
+    )
+    parser.add_argument(
         "--fusion",
         choices=sorted(FUSIONS),
         default="convex50",
@@ -818,6 +850,8 @@ def main() -> int:
         "convex50 is the shipped default",
     )
     args = parser.parse_args()
+    if args.no_passages:
+        PASSAGES = False
     if args.text:
         REQUEST_EXTRAS.update(format="text", tokenizer="chars-estimate-v1")
     if args.tokenizer:
