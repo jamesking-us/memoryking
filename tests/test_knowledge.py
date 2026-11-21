@@ -592,7 +592,7 @@ class KnowledgeTests(unittest.TestCase):
         with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 1):
             self.assertEqual(self.constraints()["reason"], "constraint_resolution_incomplete")
 
-    def claim(self, kind, label):
+    def claim_body(self, kind, label):
         """A distinct claim of `kind`; constraints get their own rule so none conflict."""
         if kind == "knowledge":
             return self.body(label)
@@ -603,11 +603,13 @@ class KnowledgeTests(unittest.TestCase):
     def retired_and_unreviewed(self, kind, count):
         """File `count` revisions each of three states that must never count toward the bound."""
         for index in range(count):
-            self.propose(self.claim(kind, f"unreviewed{index}"), key=f"{kind}-u{index}")
-            rejected = self.propose(self.claim(kind, f"rejected{index}"), key=f"{kind}-x{index}")
+            self.propose(self.claim_body(kind, f"unreviewed{index}"), key=f"{kind}-u{index}")
+            rejected = self.propose(
+                self.claim_body(kind, f"rejected{index}"), key=f"{kind}-x{index}"
+            )
             self.review(rejected, decision="reject")
             retired = self.review(
-                self.propose(self.claim(kind, f"retired{index}"), key=f"{kind}-d{index}")
+                self.propose(self.claim_body(kind, f"retired{index}"), key=f"{kind}-d{index}")
             )
             self.review(retired, decision="deprecate")
 
@@ -620,7 +622,9 @@ class KnowledgeTests(unittest.TestCase):
                 patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3),
             ):
                 accepted = [
-                    self.review(self.propose(self.claim(kind, f"live{i}"), key=f"{kind}-live{i}"))
+                    self.review(
+                        self.propose(self.claim_body(kind, f"live{i}"), key=f"{kind}-live{i}")
+                    )
                     for i in range(3)
                 ]
                 before = self.store.status(self.owner, "p")["position"]
@@ -637,7 +641,7 @@ class KnowledgeTests(unittest.TestCase):
                     self.assertEqual(len(run(recorded_position=before)["items"]), 3)
                     self.assertEqual(run(diagnostic=True)["status"], "blocked")
                 # A fourth accepted revision does exceed the bound: nothing is dropped silently.
-                self.review(self.propose(self.claim(kind, "extra"), key=f"{kind}-extra"))
+                self.review(self.propose(self.claim_body(kind, "extra"), key=f"{kind}-extra"))
                 blocked = run()
                 self.assertEqual(blocked["status"], "blocked")
                 self.assertEqual(blocked["items"], [])
@@ -665,7 +669,7 @@ class KnowledgeTests(unittest.TestCase):
         from unittest.mock import patch
 
         with patch("memoryking.adapters.knowledge_store.REGISTRY_LIMIT", 3):
-            self.review(self.propose(self.claim("constraint", "kept"), key="kept"))
+            self.review(self.propose(self.claim_body("constraint", "kept"), key="kept"))
             self.retired_and_unreviewed("constraint", 3)
             self.assertEqual(self.constraints()["status"], "complete")
             self.store.purge(self.owner, self.obs["observation"])

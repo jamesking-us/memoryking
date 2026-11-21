@@ -247,7 +247,11 @@ def adopt(target, source):
             setattr(target, name, getattr(source, name))
 
 
-reuse(NativeFixture, test_knowledge.KnowledgeTests, "body propose review query constraints")
+reuse(
+    NativeFixture,
+    test_knowledge.KnowledgeTests,
+    "body propose review query constraints claim_body retired_and_unreviewed",
+)
 reuse(
     NativeFixture,
     test_retrieval.RetrievalTests,
@@ -256,7 +260,7 @@ reuse(
 reuse(
     NativeFixture,
     test_working.WorkingTests,
-    "scope command save resume assign intent transition operations summarize",
+    "scope command save resume assign intent transition operations summarize long_history",
 )
 reuse(NativeFixture, test_handoff.HandoffTests, "prepare view ack")
 
@@ -331,7 +335,7 @@ class PostgresExecutionParity(NativeFixture):
             return Execution(store).snapshot(who, "p", at)
 
 
-reuse(PostgresExecutionParity, test_execution.ExecutionTests, "passing event")
+reuse(PostgresExecutionParity, test_execution.ExecutionTests, "passing event long_history")
 adopt(PostgresExecutionParity, test_execution.ExecutionTests)
 
 
