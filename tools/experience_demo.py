@@ -31,6 +31,9 @@ def exercise(client, directory):
         return client.experience(command(action, args, mutation))
 
     text = "timeout recovery observed in a synthetic fixture"
+    # The second note says a different thing, so a briefing lists both (it would show two
+    # identical notes once).
+    texts = [text, "timeout recovery observed in another synthetic fixture"]
     observations = [
         client.capture(
             f"experience-{i}",
@@ -39,7 +42,7 @@ def exercise(client, directory):
                 "project": client.project,
                 "source": "synthetic-development",
                 "source_event": str(i),
-                "text": text,
+                "text": texts[i],
                 "readers": None,
                 "classification": "internal",
                 "observed_at_ms": 1,

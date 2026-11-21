@@ -9,6 +9,11 @@ ranking rewrite targets: word forms (an inflected note must be found by the base
 term rarity (the note with the one distinctive word must outrank notes with only common
 words), crowding (the only note with every term among hundreds of newer single-term notes)
 and tie order (a newer correction comes before the stale fact it replaces).
+Three more measure passages and one answer per fact: a long document (the answer sits in
+the middle of a 20-30 KB observation, which must be found and whose excerpt must contain
+it, and `fetch` of the excerpt's byte range must return exactly the excerpt), duplicates
+(five near-identical notes must come back as one item that names the other four) and
+versions (three versions of one file must come back as the newest, naming the older two).
 `--gate` compares the result with the thresholds in fixtures/evaluation/retrieval-gate.json
 and exits non-zero when any threshold is missed, so ranking changes are measured rather
 than assumed. Synthetic text only: this is a regression gate, not a quality claim.
@@ -100,9 +105,9 @@ def corpus(
 
 
 def labelled_cases(
-    store: Any, credential: str, namespace: str, brief: Any, seed: int, crowded: int
+    store: Any, credential: str, namespace: str, brief: Any, fetch: Any, seed: int, crowded: int
 ) -> dict[str, float]:
-    """Word forms, rarity, crowding and tie order; each metric is a fraction of its cases."""
+    """Word forms, rarity, crowding, tie order, long documents, duplicates and versions."""
     rng = random.Random(seed + 1)
     clock = [10_000_000]
 
@@ -181,6 +186,56 @@ def labelled_cases(
         )
         ties.append((f"{thing} limit", fresh, stale))
 
+    # Long documents: the answer is one sentence in the middle of a 20-30 KB capture, among
+    # short notes that each carry one query word.
+    long_cases: list[tuple[str, str, str]] = []
+    for number in range(8):
+        marker = word(rng) + f"l{number}"
+        other = word(rng) + f"m{number}"
+        sentence = f"The finding: the {marker} queue stalled because {other} held the lock."
+        size = rng.randint(20_000, 30_000)
+        text = ""
+        while len(text) < size // 2:
+            text += f"The service handled request {rng.randint(1, 999)} and {filler(5)}. "
+        text += sentence + " "
+        while len(text) < size:
+            text += f"The service handled request {rng.randint(1, 999)} and {filler(5)}. "
+        target = capture("longdoc", f"ld{number}", text)
+        for copy in range(3):
+            capture(
+                "longdoc", f"lx{number}-{copy}", f"Short note {copy} about {marker}. {filler(4)}"
+            )
+            capture(
+                "longdoc", f"ly{number}-{copy}", f"Short note {copy} about {other}. {filler(4)}"
+            )
+        long_cases.append((f"{marker} {other} queue", target, sentence))
+    # Duplicates: five near-identical notes and one different note on the same subject.
+    duplicate_cases: list[tuple[str, list[str], str]] = []
+    for number in range(8):
+        thing = word(rng) + f"d{number}"
+        notes = [
+            capture(
+                "dups",
+                f"dn{number}-{run}",
+                f"Flaky test test_{thing}_retry failed again on CI run {run}: AssertionError timeout.",
+            )
+            for run in range(5)
+        ]
+        different = capture(
+            "dups", f"dd{number}", f"test_{thing}_retry gets a longer timeout budget."
+        )
+        duplicate_cases.append((f"test_{thing}_retry AssertionError timeout", notes, different))
+    # Versions: a memory-tool file edited twice (`name`, `name__v2`, `name__v3`).
+    version_cases: list[tuple[str, list[str]]] = []
+    for number in range(8):
+        thing = word(rng) + f"v{number}"
+        versions = [
+            capture("versions", f"plan{number}", f"Release plan for {thing}: ship in March."),
+            capture("versions", f"plan{number}__v2", f"Release plan for {thing}: ship in April."),
+            capture("versions", f"plan{number}__v3", f"Release plan for {thing}: ship in June."),
+        ]
+        version_cases.append((f"release plan {thing}", versions))
+
     def hit_rate(cases: list[tuple[str, str]], project: str, top_k: int = 8) -> float:
         found = [target in brief(query, project)[0][:top_k] for query, target in cases]
         return round(sum(found) / len(found), 4) if found else 1.0
@@ -193,7 +248,37 @@ def labelled_cases(
             fresh in returned
             and (stale not in returned or returned.index(fresh) < returned.index(stale))
         )
+    quoted: list[bool] = []
+    for query, target, sentence in long_cases:
+        item = next((g for g in brief(query, "longdoc")[3] if g["reference"] == target), None)
+        exact = False
+        if item is not None and sentence in item["text"]:
+            exact = (
+                fetch(target, item["excerpt_start_byte"], item["excerpt_end_byte"]) == item["text"]
+            )
+        quoted.append(exact)
+    collapsed = []
+    for query, notes, different in duplicate_cases:
+        items = brief(query, "dups")[3]
+        kept = [g for g in items if g["reference"] in notes]
+        collapsed.append(
+            len(kept) == 1
+            and kept[0]["reference"] == notes[-1]
+            and kept[0].get("also_recorded_in", {}).get("count") == 4
+            and different not in kept[0]["also_recorded_in"]["references"]
+        )
+    newest = []
+    for query, versions in version_cases:
+        kept = [g for g in brief(query, "versions")[3] if g["reference"] in versions]
+        newest.append(
+            len(kept) == 1
+            and kept[0]["reference"] == versions[-1]
+            and set(kept[0].get("supersedes", {}).get("references", [])) == set(versions[:-1])
+        )
     return {
+        "long_document_quote_rate": round(sum(quoted) / len(quoted), 4),
+        "duplicates_collapsed_rate": round(sum(collapsed) / len(collapsed), 4),
+        "newest_version_rate": round(sum(newest) / len(newest), 4),
         "word_form_recall": hit_rate(forms, "forms", 3),
         "rare_first_rate": round(sum(rare_first) / len(rare_first), 4),
         "crowded_recall": hit_rate(crowd, "crowded", 3),
@@ -234,7 +319,9 @@ def run(seed: int, documents: int, queries: int, top_k: int, crowded: int = 1) -
                 ids.append(result["observation"])
             retrieval = Retrieval(store)
 
-            def brief(query: str, project: str = "bench") -> tuple[list[str], int, float]:
+            def brief(
+                query: str, project: str = "bench"
+            ) -> tuple[list[str], int, float, list[dict[str, Any]]]:
                 command = {
                     "version": 1,
                     "incarnation": store.incarnation,
@@ -257,11 +344,31 @@ def run(seed: int, documents: int, queries: int, top_k: int, crowded: int = 1) -
                     [g["reference"] for g in packet["guidance"]],
                     packet["usage"]["output_tokens"],
                     elapsed,
+                    packet["guidance"],
                 )
+
+            def fetch(reference: str, start: int, end: int) -> str:
+                command = {
+                    "version": 1,
+                    "incarnation": store.incarnation,
+                    "action": "fetch",
+                    "args": {
+                        "project": "longdoc",
+                        "reference": reference,
+                        "kind": "observation",
+                        "start_byte": start,
+                        "end_byte": end,
+                        "max_output_tokens": 6000,
+                        "tokenizer": "utf8-byte-estimate-v1",
+                    },
+                }
+                emitted: list[bytes] = []
+                retrieval.execute(credential, command).emit(emitted.append)
+                return str(json.loads(emitted[0])["excerpt"])
 
             for item in labelled:
                 relevant = {ids[i] for i in item["relevant"]}
-                returned, used, elapsed = brief(item["query"])
+                returned, used, elapsed, _ = brief(item["query"])
                 hits = [r for r in returned if r in relevant]
                 recalls.append(len(set(hits)) / len(relevant))
                 precisions.append(len(hits) / len(returned) if returned else 0.0)
@@ -271,9 +378,9 @@ def run(seed: int, documents: int, queries: int, top_k: int, crowded: int = 1) -
                 latencies.append(elapsed)
                 # A common word widens the candidate set past the window; recent relevant
                 # documents must still be found.
-                returned_common, _, _ = brief(item["query"] + " " + item["common"])
+                returned_common, _, _, _ = brief(item["query"] + " " + item["common"])
                 window_recalls.append(len(relevant & set(returned_common)) / len(relevant))
-            extra = labelled_cases(store, credential, namespace, brief, seed, crowded)
+            extra = labelled_cases(store, credential, namespace, brief, fetch, seed, crowded)
     return {
         "seed": seed,
         "documents": len(docs),

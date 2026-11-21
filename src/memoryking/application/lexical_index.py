@@ -8,14 +8,18 @@ terms and to order candidate searches, and no packet or trace carries a term's c
 
 `lexical_state` says which format a tenant's index is in:
 
-* current   - index text, statistics and capture, purge all in the lexical-v2 format
+* current   - index text, statistics and capture, purge all in one format: lexical-v3
+               (one statistics document per passage) or the earlier lexical-v2 (one per
+               whole observation), which is kept working until a `reindex`
 * rebuilding - a `reindex` is rewriting rows in batches; statistics are partial and are
                not used for ranking yet (briefings keep the previous ranking meanwhile)
 * legacy    - rows were indexed as raw text before this format; they stay searchable by
                exact token and briefings keep the previous ranking until `reindex`
 
-A tenant with no row that already holds observations is legacy; one without observations
-is current. While rebuilding, `cursor` is the position of the last observation rewritten
+In lexical-v3 the index row of an observation is its passages' index texts joined by a
+newline (a separator no analyzer treats as a word), so purge can undo each passage's
+contribution from the stored row alone. A tenant with no row that already holds
+observations is legacy; one without observations is current. While rebuilding, `cursor` is the position of the last observation rewritten
 (-1 while old statistics are being cleared); an observation at or below it is counted in
 the statistics, one above it is not yet, so capture and purge stay exact at any moment.
 """
@@ -24,19 +28,23 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections import Counter
 from typing import Any
 
 from memoryking.application.storage import insert_ignore
 from memoryking.domain.anchors import extract
 from memoryking.domain.lexicon import (
     INDEX_CONFIGURATION,
+    PREVIOUS_CONFIGURATION,
     Corpus,
     index_terms,
     index_text,
     plain_text,
 )
+from memoryking.domain.passages import split
 
 CURRENT, REBUILDING, LEGACY = "current", "rebuilding", "legacy"
+PASSAGE_BREAK = "\n"
 CHUNK = 200  # index terms per statement
 BATCH_DOCUMENTS = 64  # observations rewritten per step before the clock is consulted
 STEP_MS = 1000  # one rebuild step stops after about this long, well inside the deadline
@@ -50,6 +58,18 @@ def state(db: Any, tenant: str) -> tuple[str, int]:
     return (LEGACY, 0) if held is not None else (CURRENT, 0)
 
 
+def configuration(db: Any, tenant: str) -> str:
+    """The configuration whose ranking a briefing uses now: lexical-v3 or lexical-v2 for
+    a current tenant, lexical-v1 while the index is legacy or being rebuilt."""
+    found, _ = state(db, tenant)
+    if found != CURRENT:
+        return "lexical-v1"
+    row = db.execute("SELECT configuration FROM lexical_state WHERE tenant=?", (tenant,)).fetchone()
+    return (
+        str(row[0]) if row is not None and row[0] == PREVIOUS_CONFIGURATION else INDEX_CONFIGURATION
+    )
+
+
 def ensure(db: Any, tenant: str) -> None:
     """Record the tenant's state before its first row in this format is written."""
     found, _ = state(db, tenant)
@@ -59,51 +79,79 @@ def ensure(db: Any, tenant: str) -> None:
     )
 
 
-def _count(db: Any, tenant: str, project: str, indexed: str, sign: int) -> None:
-    terms, length = index_terms(indexed)
+def build(text: str, passages: bool = True) -> tuple[str, list[str]]:
+    """The index row for a text and the index text of each statistics document in it.
+
+    lexical-v3 documents are the text's passages (those with at least one word); a
+    lexical-v2 row is one document, the whole text, empty or not."""
+    if not passages:
+        row = index_text(text)
+        return row, [row]
+    parts = [index_text(text[p.start : p.end]) for p in split(text)]
+    parts = [part for part in parts if part]
+    return PASSAGE_BREAK.join(parts), parts
+
+
+def _count(db: Any, tenant: str, project: str, parts: list[str], sign: int) -> None:
+    """Add or take back the statistics of one observation's documents, in a few statements."""
+    documents, length = len(parts), 0
+    frequency: Counter[str] = Counter()
+    for part in parts:
+        terms, size = index_terms(part)
+        length += size
+        frequency.update(terms)
+    if documents == 0:
+        return
     if sign > 0:
         db.execute(
-            "INSERT INTO lexical_projects(tenant,project,documents,tokens) VALUES (?,?,1,?) "
-            "ON CONFLICT (tenant,project) DO UPDATE SET documents=lexical_projects.documents+1, "
+            "INSERT INTO lexical_projects(tenant,project,documents,tokens) VALUES (?,?,?,?) "
+            "ON CONFLICT (tenant,project) DO UPDATE SET documents=lexical_projects.documents+EXCLUDED.documents, "
             "tokens=lexical_projects.tokens+EXCLUDED.tokens",
-            (tenant, project, length),
+            (tenant, project, documents, length),
         )
     else:
         db.execute(
-            "UPDATE lexical_projects SET documents=documents-1,tokens=tokens-? WHERE tenant=? AND project=?",
-            (length, tenant, project),
+            "UPDATE lexical_projects SET documents=documents-?,tokens=tokens-? WHERE tenant=? AND project=?",
+            (documents, length, tenant, project),
         )
-    for start in range(0, len(terms), CHUNK):
-        chunk = terms[start : start + CHUNK]
-        if sign > 0:
-            db.execute(
-                "INSERT INTO lexical_terms(tenant,project,term,documents) VALUES "
-                + ",".join("(?,?,?,1)" for _ in chunk)
-                + " ON CONFLICT (tenant,project,term) DO UPDATE SET documents=lexical_terms.documents+1",
-                [value for term in chunk for value in (tenant, project, term)],
-            )
-        else:
-            marks = ",".join("?" for _ in chunk)
-            db.execute(
-                "UPDATE lexical_terms SET documents=documents-1 WHERE tenant=? AND project=? AND term IN ("
-                + marks
-                + ")",
-                (tenant, project, *chunk),
-            )
-            db.execute(
-                "DELETE FROM lexical_terms WHERE tenant=? AND project=? AND documents<=0 AND term IN ("
-                + marks
-                + ")",
-                (tenant, project, *chunk),
-            )
+    by_count: dict[int, list[str]] = {}
+    for term, number in frequency.items():
+        by_count.setdefault(number, []).append(term)
+    for number, terms in sorted(by_count.items()):
+        for start in range(0, len(terms), CHUNK):
+            chunk = terms[start : start + CHUNK]
+            if sign > 0:
+                db.execute(
+                    "INSERT INTO lexical_terms(tenant,project,term,documents) VALUES "
+                    + ",".join("(?,?,?,?)" for _ in chunk)
+                    + " ON CONFLICT (tenant,project,term) DO UPDATE SET documents=lexical_terms.documents+EXCLUDED.documents",
+                    [value for term in chunk for value in (tenant, project, term, number)],
+                )
+            else:
+                marks = ",".join("?" for _ in chunk)
+                db.execute(
+                    "UPDATE lexical_terms SET documents=documents-? WHERE tenant=? AND project=? AND term IN ("
+                    + marks
+                    + ")",
+                    (number, tenant, project, *chunk),
+                )
+                db.execute(
+                    "DELETE FROM lexical_terms WHERE tenant=? AND project=? AND documents<=0 AND term IN ("
+                    + marks
+                    + ")",
+                    (tenant, project, *chunk),
+                )
 
 
 def add(db: Any, tenant: str, project: str, observation: str, text: str) -> None:
     """Index a newly captured observation; count it when the statistics are live."""
-    indexed = index_text(text)
-    db.execute("INSERT INTO lexical VALUES (?,?,?)", (tenant, observation, indexed))
-    if state(db, tenant)[0] == CURRENT:
-        _count(db, tenant, project, indexed, 1)
+    current, _ = state(db, tenant)
+    # A tenant still in the earlier format keeps writing it until its reindex.
+    passages = not (current == CURRENT and configuration(db, tenant) == PREVIOUS_CONFIGURATION)
+    row, parts = build(text, passages)
+    db.execute("INSERT INTO lexical VALUES (?,?,?)", (tenant, observation, row))
+    if current == CURRENT:
+        _count(db, tenant, project, parts, 1)
 
 
 def remove(db: Any, tenant: str, observation: str) -> None:
@@ -120,7 +168,12 @@ def remove(db: Any, tenant: str, observation: str) -> None:
     current, cursor = state(db, tenant)
     counted = current == CURRENT or (current == REBUILDING and row["position"] <= cursor)
     if counted:
-        _count(db, tenant, row["project"], str(text[0]), -1)
+        stored = str(text[0])
+        if current == CURRENT and configuration(db, tenant) == PREVIOUS_CONFIGURATION:
+            parts = [stored]
+        else:
+            parts = [part for part in stored.split(PASSAGE_BREAK) if part.strip()]
+        _count(db, tenant, row["project"], parts, -1)
 
 
 def corpus(db: Any, tenant: str, project: str, keys: list[str]) -> Corpus:
@@ -169,13 +222,23 @@ def remaining(db: Any, tenant: str) -> int:
     )
 
 
+def count_observations(db: Any, tenant: str) -> int:
+    return int(
+        db.execute(
+            "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0", (tenant,)
+        ).fetchone()[0]
+    )
+
+
 def describe(db: Any, tenant: str) -> dict[str, Any]:
     current, cursor = state(db, tenant)
-    result: dict[str, Any] = {"state": current, "configuration": INDEX_CONFIGURATION}
-    if current != CURRENT:
-        result["configuration"] = "lexical-v1"  # the ranking in use until the rebuild finishes
+    result: dict[str, Any] = {"state": current, "configuration": configuration(db, tenant)}
+    if result["configuration"] != INDEX_CONFIGURATION:
+        # the ranking in use until the rebuild finishes
         result["target_configuration"] = INDEX_CONFIGURATION
-        result["remaining_observations"] = remaining(db, tenant)
+        result["remaining_observations"] = (
+            remaining(db, tenant) if current != CURRENT else count_observations(db, tenant)
+        )
         result["action"] = (
             "run reindex to rebuild the lexical index; the daemon finishes it in batches"
         )
@@ -223,12 +286,12 @@ def step(db: Any, tenant: str, text_of: Any, budget_ms: int = STEP_MS) -> bool:
                 "SELECT text FROM lexical WHERE tenant=? AND id=?", (tenant, row["id"])
             ).fetchone()
             text = plain_text(str(old[0])) if old else ""
-        indexed = index_text(text)
+        indexed, parts = build(text)
         done.append((tenant, row["id"], indexed))
         db.execute("DELETE FROM anchors WHERE tenant=? AND id=?", (tenant, row["id"]))
         for kind, anchor in extract(text):
             db.execute(insert_ignore("anchors", 4), (tenant, row["id"], anchor, kind))
-        _count(db, tenant, row["project"], indexed, 1)
+        _count(db, tenant, row["project"], parts, 1)
         last = row["position"]
         if (time.monotonic() - started) * 1000 > budget_ms:
             break

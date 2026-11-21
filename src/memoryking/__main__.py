@@ -37,7 +37,7 @@ def lexical_findings(db: Any, version: int) -> list[tuple[str, str, int]]:
     for (tenant,) in db.execute("SELECT tenant FROM tenants").fetchall():
         row = (
             db.execute(
-                "SELECT state,cursor FROM lexical_state WHERE tenant=?", (tenant,)
+                "SELECT state,cursor,configuration FROM lexical_state WHERE tenant=?", (tenant,)
             ).fetchone()
             if version >= 16
             else None
@@ -54,6 +54,8 @@ def lexical_findings(db: Any, version: int) -> list[tuple[str, str, int]]:
                 (tenant, max(row[1], 0)),
             ).fetchone()[0]
             found.append((tenant, row[0], left))
+        elif row[2] == "lexical-v2":
+            found.append((tenant, "passages_pending", total))
         else:
             found.append((tenant, "current", 0))
     return found
@@ -348,7 +350,15 @@ def doctor(
             )
             for tenant, state, remaining in lexical_state:
                 if state == "current":
-                    record("ok", "lexical index", f"{tenant}: current (lexical-v2)")
+                    record("ok", "lexical index", f"{tenant}: current (lexical-v3)")
+                elif state == "passages_pending":
+                    record(
+                        "warn",
+                        "lexical index",
+                        f"{tenant}: indexed per observation (lexical-v2) without passages, "
+                        f"{remaining} observations to rewrite; a reindex indexes passages "
+                        "(`memoryking request` with the operation reindex and empty args)",
+                    )
                 else:
                     record(
                         "warn",

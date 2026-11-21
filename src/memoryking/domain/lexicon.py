@@ -23,7 +23,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 
-INDEX_CONFIGURATION = "lexical-v2"  # the index text and statistics format
+INDEX_CONFIGURATION = "lexical-v3"  # index text and statistics per passage
+PREVIOUS_CONFIGURATION = "lexical-v2"  # the same index text and statistics per whole observation
 STEM_MARK = "xqz9"  # prefix of a stem token in index text; a real word does not start so
 MAX_DOC_TERMS = 4096  # distinct index tokens one document adds to the statistics
 QUERY_TERM_LIMIT = 32
@@ -333,3 +334,19 @@ def score(terms: list[Term], text: str, corpus: Corpus) -> int:
     if total <= 0 or ceiling <= 0:
         return 0
     return max(1, min(1_000_000, int(1_000_000 * total / ceiling)))
+
+
+BREADTH = 0.6  # damping of a passage score by the size of the observation it sits in
+
+
+def observation_score(passage_scores: list[int]) -> int:
+    """An observation's score from its passages' scores: the best passage, divided by
+    1 + BREADTH * ln(passages). One passage is not damped; an observation of 25 passages
+    keeps about a third of its best passage's score, so a long capture is not penalised as
+    a whole by BM25 length normalisation, yet a broad one does not beat a note that is about
+    the question. Measured on LongMemEval (see docs/design.md), the damping is what keeps
+    long assistant replies from crowding out the short turns that carry the answer."""
+    best = max(passage_scores, default=0)
+    if best <= 0 or len(passage_scores) <= 1:
+        return max(best, 0)
+    return max(1, int(best / (1.0 + BREADTH * math.log(len(passage_scores)))))
