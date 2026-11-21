@@ -110,6 +110,8 @@ A request namespace and idempotency key bind a mutation to its canonical payload
 
 A credential also carries its principal's **generation**; revoking the principal's last grant or rotating it advances the generation through the signed control journal, and every authorization refuses a credential that is not at the current one (a credential with no generation is generation 0). A restore replays those decisions, so it cannot bring a rotated-away credential back. A restored backup creates a **new history incarnation**. Old credentials, namespaces, watermarks, leases, resumable handles and adapter bases do not silently bind to replacement history. Restore replays current independently retained revocations/deletions before reopening access. Missing control evidence keeps the store unavailable.
 
+The control journal is verified once per process and then only from where the last verification ended, against the anchor every time; a record that cannot be applied is applied outside any request's budget, is listed to the operator without its content, and is never skipped. A cold process still verifies the whole journal, restore always does, and operation records still share the journal with policy records (see the [deployment guide](deployment.md#journal-cost-and-records-that-fail-to-apply)).
+
 External tool effects need their own operation records and reconciliation. A local transaction cannot guarantee exactly-once execution of an unrelated external system.
 
 ## Optional work stays subordinate to canonical evidence

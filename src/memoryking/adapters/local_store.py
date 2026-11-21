@@ -501,11 +501,20 @@ class LocalStore(StoreCore):
                 )
                 if self.anchor["journal_sequence"] > applied:
                     self.healthy = False
-                    if isinstance(exc, LocalError) and exc.code == "release_expired":
-                        # The record was journalled and only ran out of its request budget
-                        # (a long purge): apply it now, without one, instead of staying
-                        # fenced until a restart would do exactly that. The caller still
-                        # gets the expiry; any other failure leaves the fence in place.
+                    if (
+                        isinstance(exc, LocalError)
+                        and exc.code == "release_expired"
+                        and all(
+                            record["action"]["kind"] != "operation"
+                            for record in self.control.records_after(self.anchor, applied)
+                        )
+                    ):
+                        # A policy record was journalled and only ran out of its request
+                        # budget (a long purge): apply it now, without one, instead of staying
+                        # fenced until a restart would do exactly that. The caller still gets
+                        # the expiry. Operation records keep the fence: a tool effect whose
+                        # acknowledgment was lost must be reconciled after a restart, and any
+                        # other failure also leaves the fence in place.
                         self._replay_journal()
                         self.healthy = True
             except Exception:

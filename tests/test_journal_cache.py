@@ -77,6 +77,17 @@ class SharedJournalCacheTests(unittest.TestCase):
         full = SharedControl(self.control).journal(self.anchor)
         self.assertEqual(full, Control(self.control).journal(self.anchor))
 
+    def test_warming_fills_the_cache_so_the_first_request_verifies_nothing(self):
+        from memoryking.adapters.shared_service import SharedService
+
+        tenants = Path(self.temp.name) / "tenants"
+        tenants.mkdir(mode=0o700)
+        (tenants / "main").symlink_to(self.control)
+        (tenants / "stray").mkdir(mode=0o700)  # not a control tree: skipped, not fatal
+        SharedService(None, Path(self.temp.name) / "store", tenants).warm()
+        again = self.verified_lines(lambda: SharedControl(self.control).verified_count(self.anchor))
+        self.assertEqual(again, 0)
+
     def test_the_cache_is_per_signing_key(self):
         SharedControl(self.control).verified_count(self.anchor)
         # A different tree, even at an equal size, never reuses another tree's state.

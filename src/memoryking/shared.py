@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -264,6 +265,7 @@ def run(args: Any) -> dict[str, Any]:
                 from memoryking.adapters.egress_policy import EgressPolicy
 
                 service.egress_policy = EgressPolicy.load(args.egress_policy)
+            threading.Thread(target=service.warm, name="journal-warm", daemon=True).start()
             app = create_app(
                 service,
                 hosts=args.host,
