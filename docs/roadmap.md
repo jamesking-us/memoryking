@@ -9,7 +9,7 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 | Phase | Goal | State |
 | --- | --- | --- |
 | 0 | Remove the defects that stop normal use at modest size | done, unreleased |
-| 1 | Harden credentials, delegation and the control journal | planned |
+| 1 | Harden credentials, delegation and the control journal | in progress |
 | 2 | Find the right memory: ranking, word forms, passages, semantic search | planned |
 | 3 | Turn evidence into knowledge without a reviewer always present | planned |
 | 4 | Make it easy for agents and developers to adopt | planned |
@@ -33,12 +33,12 @@ Every change keeps the existing invariants: observations stay verbatim evidence,
 
 ## Phase 1: credentials, delegation and the journal
 
-- [ ] **P1-1 Credentials can be rotated.** A credential is derived only from the store, tenant and principal, so re-issuing after a revoke yields the same token. *Change:* a per-grant generation stored with the grant, checked at authorization, advanced by `credential issue --rotate` and by revoke; optional expiry enforced server-side. *Done when:* a revoked-then-reissued credential differs and the old one is refused.
+- [~] **P1-1 Credentials can be rotated.** A credential is derived only from the store, tenant and principal, so re-issuing after a revoke yields the same token. *Change:* a per-grant generation stored with the grant, checked at authorization, advanced by `credential issue --rotate` and by revoke; optional expiry enforced server-side. *Done when:* a revoked-then-reissued credential differs and the old one is refused.
 - [ ] **P1-2 A delegated token acts for its issuer.** Delegation returns a token whose acting principal is the named subject. *Change:* decide and document the intended model, then keep the delegator as the actor with "on behalf of" recorded, so reader lists, writer ownership and the event actor are evaluated against who really acted. *Done when:* a test shows a delegated token cannot read what only the subject may read.
-- [ ] **P1-3 The journal and the database cannot disagree silently.** *Change:* at open, fail closed when the database's journal position is ahead of the journal; use full-fsync semantics for control files where the platform has them; an instance lease in the database.
-- [ ] **P1-4 Journal cost stays flat.** The shared profile verifies the whole control journal on every transaction, and every operation intent appends to it. *Change:* cache verified state per tenant; signed journal checkpoints so only the tail is verified; move operation intents to their own compactable log.
+- [x] **P1-3 The journal and the database cannot disagree silently.** *Change:* at open, fail closed when the database's journal position is ahead of the journal; use full-fsync semantics for control files where the platform has them; an instance lease in the database. *Done: unreleased, except the instance lease, moved to P1-4; full-fsync selection is tested but real macOS flush behavior is not.*
+- [ ] **P1-4 Journal cost stays flat.** The shared profile verifies the whole control journal on every transaction, and every operation intent appends to it. *Change:* cache verified state per tenant; signed journal checkpoints so only the tail is verified; move operation intents to their own compactable log. An instance lease in the database, so a second process with a copied control tree cannot serve the same store.
 - [ ] **P1-5 A failing journal record can be repaired.** *Change:* apply journal records outside the request deadline; an operator command to inspect and resolve a record that cannot apply.
-- [ ] **P1-6 Smaller hardening.** Restore checks role attributes, not only the role name; a missing tenant and a bad token answer alike; lock and statement timeouts map to `service_busy`; every statement that relies on row-level security also carries a tenant predicate.
+- [x] **P1-6 Smaller hardening.** Restore checks role attributes, not only the role name; a missing tenant and a bad token answer alike; lock and statement timeouts map to `service_busy`; every statement that relies on row-level security also carries a tenant predicate. *Done: unreleased. The local daemon also no longer blocks its accept thread while connections wait, and `doctor` explains a clock that was set ahead.*
 
 ## Phase 2: find the right memory
 
