@@ -61,6 +61,9 @@ def same(*values):
 # ------------------------------------------------------------------- decoders
 
 
+TYPOGRAPHIC = {0xA0: " ", 0x202F: " ", 0x2009: " ", 0x2019: "'", 0x02BC: "'"}
+
+
 def _decode_date(raw: dict) -> dict:
     out = dict(raw)
     shown = raw.get("date_out")
@@ -72,7 +75,8 @@ def _decode_date(raw: dict) -> dict:
         ),
         "?",
     )
-    number = str(raw.get("number_out") or "")
+    # a typographic space or apostrophe is the same separator as the plain one
+    number = str(raw.get("number_out") or "").translate(TYPOGRAPHIC)
     out["thousands"] = number[1] if number.startswith("1") and number[2:5] == "234" else "?"
     return out
 
@@ -101,13 +105,20 @@ def money_apply(value: str, decimals: int, mode: str) -> str:
     return str(Decimal(value).quantize(Decimal(1).scaleb(-decimals), rounding=MODES[mode]))
 
 
+def _money_text(text) -> str:
+    """The sign of a zero is not a fact of the history: `-0.000` and `0.000` are one answer."""
+    text = str(text).strip()
+    return text[1:] if text.startswith("-") and not any(c in "123456789" for c in text) else text
+
+
 def _decode_money(raw: dict) -> dict:
     outs = raw.get("outputs")
     found = {"decimals": "?", "rounding": "?"}
     if isinstance(outs, list):
+        seen = [_money_text(o) for o in outs]
         for d in DECIMALS:
             for m in MODES:
-                if [money_apply(v, d, m) for v in MONEY_INPUTS] == outs:
+                if [_money_text(money_apply(v, d, m)) for v in MONEY_INPUTS] == seen:
                     found = {"decimals": str(d), "rounding": m}
     return found
 
@@ -121,7 +132,7 @@ def _decode_logfmt(raw: dict) -> dict:
 # ------------------------------------------------------------------- families
 
 SEP = pool(
-    (" | ", "a space, a pipe and a space (' | ')"),
+    (" >> ", "a space, two greater-than signs and a space (' >> ')"),
     (" :: ", "a space, two colons and a space (' :: ')"),
     (" ~ ", "a space, a tilde and a space (' ~ ')"),
     (" ; ", "a space, a semicolon and a space (' ; ')"),
@@ -158,13 +169,16 @@ add(
             'p = os.path.join(tempfile.mkdtemp(), "o.txt")\nwrite_orders([("A1", "5", "ok")], p)\n'
             # the file encoding and the quote character are other settled conventions of the
             # export (the history states them), so the probe reads any of them
-            'raw = open(p, "rb").read()\n'
+            'import re\nraw = open(p, "rb").read()\n'
             'if raw[:2] in (b"\\xff\\xfe", b"\\xfe\\xff"):\n    text = raw.decode("utf-16")\n'
+            'elif raw[:1] == b"\\x00":\n    text = raw.decode("utf-16-be", "replace")\n'
             'elif b"\\x00" in raw:\n    text = raw.decode("utf-16-le", "replace")\n'
             'else:\n    text = raw.decode("utf-8-sig", "replace")\n'
-            "lines = [x.translate({34: None, 39: None, 96: None}) for x in text.splitlines()]\n"
-            'd = lines[1][2:3] if len(lines) > 1 and lines[1][:2] == "A1" else None\n'
-            'print(json.dumps({"delimiter": d, "header": lines[0].split(d)[0] if d else None}))\n'
+            "lines = [x.translate({34: None, 39: None, 96: None}) for x in text.splitlines() if x.strip()]\n"
+            # spaces around the delimiter or the fields are not a fact of the history either
+            'm = re.match(r" *A1 *([^ \\t])", lines[1]) if len(lines) > 1 else None\n'
+            "d = m.group(1) if m else None\n"
+            'print(json.dumps({"delimiter": d, "header": lines[0].split(d)[0].strip() if d else None}))\n'
         ),
         slots=(
             Slot(
@@ -217,7 +231,7 @@ add(
         ),
         probe=(
             "import json\nfrom ledger.money import round_amount\n"
-            'print(json.dumps({"outputs": [round_amount(v) for v in __INPUTS__]}))\n'
+            'print(json.dumps({"outputs": [str(round_amount(v)) for v in __INPUTS__]}))\n'
         ),
         slots=(
             Slot(
@@ -232,7 +246,7 @@ add(
                 "rounding mode",
                 pool(
                     ("ROUND_HALF_EVEN", "banker's rounding (half to even)"),
-                    ("ROUND_HALF_UP", "half up"),
+                    ("ROUND_HALF_UP", "half up, so ties go away from zero"),
                     ("ROUND_DOWN", "truncation toward zero"),
                     ("ROUND_CEILING", "rounding up toward positive infinity"),
                 ),
@@ -262,7 +276,7 @@ add(
         probe=(
             "import json, re\nfrom ledger.ids import new_id\n"
             # the separator is not one of the task's facts: any one character, or none, is read
-            'm = re.match(r"([A-Za-z]+)[-_:. ]?(\\d+)$", str(new_id(42)))\n'
+            'm = re.match(r"([A-Za-z]+)[^A-Za-z0-9]{0,3}(\\d+)$", str(new_id(42)))\n'
             'print(json.dumps({"prefix": m.group(1) if m else None, '
             '"width": len(m.group(2)) if m else None}))\n'
         ),
@@ -385,8 +399,9 @@ add(
         prompt=(
             "In gateway-client, implement `load(env)` in `gwc/settings.py`: `env` is a dict of "
             "environment variables; return a dict with the listen port as an integer under "
-            "`port`. The port can be overridden from the environment. Follow the conventions "
-            "this team has already settled for the gateway client settings."
+            "`port`. The port can be overridden by the environment variable `PORT` with the "
+            "team's prefix in front of the name. Follow the conventions this team has already "
+            "settled for the gateway client settings."
         ),
         stub='def load(env):\n    """The settings dict."""\n    raise NotImplementedError\n',
         oracle=(
@@ -443,10 +458,18 @@ add(
             "        return True\n"
         ),
         probe=(
-            "import json\nfrom edge.limiter import Limiter\nnow = [0]\nl = Limiter(lambda: now[0])\n"
-            'n = 0\nwhile n < 200 and l.allow("k"):\n    n += 1\nwindow = None\n'
-            'for t in range(1, 400):\n    now[0] = t\n    if l.allow("k"):\n        window = t\n'
-            '        break\nprint(json.dumps({"limit": n, "window": window}))\n'
+            # how the limiter counts (a sliding log, a fixed window, a token bucket) is not a
+            # fact of the history: the limit is what one instant allows, and the window is the
+            # first half second at which a key that used its whole limit may use it all again
+            "import json\nfrom edge.limiter import Limiter\n\n\ndef fresh():\n"
+            "    now = [0.0]\n    return now, Limiter(lambda: now[0])\n\n\n"
+            "def used(l):\n    n = 0\n"
+            '    while n < 200 and l.allow("k"):\n        n += 1\n    return n\n\n\n'
+            "now, l = fresh()\nn = used(l)\nwindow = None\n"
+            "for step in range(1, 801 if n else 1):\n"
+            "    now, l = fresh()\n    used(l)\n    now[0] = step / 2\n"
+            '    if all(l.allow("k") for _ in range(n)):\n        window = int(now[0])\n        break\n'
+            'print(json.dumps({"limit": n, "window": window}))\n'
         ),
         slots=(
             Slot(
@@ -486,10 +509,14 @@ add(
             '"title": level.title()}}[{level_case}]\n    return shown + {sep} + message\n'
         ),
         probe=(
-            'import json\nfrom edge.logfmt import format_line\nline = format_line("warn", "disk low")\n'
+            # the level is found by its own letters, wherever the line puts it and whatever the
+            # separator is (a forgotten separator leaves the code free to use another one)
+            "import json, re\nfrom edge.logfmt import format_line\n"
+            'line = format_line("warn", "disk low")\n'
             "sep = None\nfor cand in __POOL:sep__:\n    if cand in line:\n        sep = cand\n"
+            'found = re.search(r"warn\\w*", line, re.I)\n'
             'print(json.dumps({"line": line, "sep": sep, '
-            '"level_part": line.split(sep)[0] if sep else ""}))\n'
+            '"level_part": found.group(0) if found else ""}))\n'
         ),
         slots=(
             Slot("sep", "field separator", SEP, "decision", ("timestamp format", "field order")),
@@ -630,8 +657,14 @@ add(
         probe=(
             "import json, random\nfrom portal.batching import batches\n"
             'items = [{"ts": n} for n in range(1, 301)]\nrandom.Random(3).shuffle(items)\n'
-            'bs = batches(items)\nprint(json.dumps({"size": len(bs[0]), "order": '
-            '"oldest-first" if bs[0][0]["ts"] < bs[-1][0]["ts"] else "newest-first"}))\n'
+            # the order is that of the batches (the order inside one is not a fact), and every
+            # item has to be in some batch
+            "bs = batches(items)\n"
+            'mins = [min(i["ts"] for i in b) for b in bs]\n'
+            'covered = sorted(i["ts"] for b in bs for i in b) == list(range(1, 301))\n'
+            'order = "partial" if not covered else "oldest-first" if mins == sorted(mins) '
+            'else "newest-first" if mins == sorted(mins, reverse=True) else "unordered"\n'
+            'print(json.dumps({"size": max(len(b) for b in bs), "order": order}))\n'
         ),
         slots=(
             Slot(
@@ -676,7 +709,8 @@ add(
         ),
         probe=(
             "import json\nfrom portal.retention import archive_path, keep_days\n"
-            'print(json.dumps({"days": keep_days(), "archive_dir": archive_path("x.csv").split("/")[0]}))\n'
+            'parts = [p for p in archive_path("x.csv").split("/") if p not in ("", ".")]\n'
+            'print(json.dumps({"days": keep_days(), "archive_dir": parts[0] if len(parts) > 1 else None}))\n'
         ),
         slots=(
             Slot(
@@ -717,9 +751,12 @@ add(
             '{client_header}: "gwc"}}\n{trace_block}    return headers\n'
         ),
         probe=(
+            # header names are case-insensitive, and the value of the client header (and of
+            # the trace header) is not a fact of the history, only its name and presence
             'import json\nfrom gwc.headers import build_headers\nh = build_headers("tok")\n'
-            'client = None\nfor cand in __POOL:client_header__:\n    if h.get(cand) == "gwc":\n'
-            '        client = cand\nprint(json.dumps({"trace_header": "on" if "X-Trace-Id" in h else "off", '
+            "low = {str(k).lower() for k in h}\n"
+            "client = None\nfor cand in __POOL:client_header__:\n    if cand.lower() in low:\n"
+            '        client = cand\nprint(json.dumps({"trace_header": "on" if "x-trace-id" in low else "off", '
             '"client_header": client}))\n'
         ),
         slots=(
@@ -770,10 +807,14 @@ add(
             '    log({end_marker} + " " + name)\n'
         ),
         probe=(
-            'import json\nfrom edge.jobs import run_job\nlines = []\nrun_job("sync", lines.append)\n'
-            'ends = [l for l in lines if not l.startswith(("START", "AUDIT"))]\n'
-            'print(json.dumps({"audit_line": "on" if any(l.startswith("AUDIT") for l in lines) else "off", '
-            '"end_marker": ends[-1].split()[0] if ends else None}))\n'
+            # a prefix such as `[job]`, a colon after the marker, and the order of the lines are
+            # not facts of the history
+            'import json, re\nfrom edge.jobs import run_job\nlines = []\nrun_job("sync", lines.append)\n'
+            'audit = [l for l in lines if re.match(r"\\W*AUDIT\\b", str(l))]\n'
+            'ends = [l for l in lines if not re.match(r"\\W*(START|AUDIT)\\b", str(l))]\n'
+            'word = re.match(r"\\W*([A-Za-z]+)", str(ends[-1])) if ends else None\n'
+            'print(json.dumps({"audit_line": "on" if audit else "off", '
+            '"end_marker": word.group(1) if word else None}))\n'
         ),
         slots=(
             Slot(

@@ -5,8 +5,8 @@ The extractive rule for `notes` and `native` is fixed here, applied to every see
 the same way, and knows nothing about which facts a task needs:
 
 * for each session, oldest first, one heading with the date and the session id;
-* then each user turn cut to `TURN_CHARS` characters, and the session's last assistant turn
-  cut to `TURN_CHARS` characters, one bullet each (tool turns are dropped);
+* then each user turn and each assistant turn, in order, cut to `TURN_CHARS` characters, one
+  bullet each (tool turns are dropped);
 * the file is held to `NOTES_CAP` characters by dropping the oldest sessions first, and says
   how many were dropped (a notes file cannot grow without bound: it is read in full into the
   prompt).
@@ -21,7 +21,7 @@ from pathlib import Path
 from .base import HostConfig, Scope, SeedReport, Session, Turn
 
 TURN_CHARS = 300
-NOTES_CAP = 24_000
+NOTES_CAP = 30_000
 SESSIONS_FILE = "sessions.jsonl"
 FORGOTTEN_FILE = "forgotten.json"
 
@@ -59,11 +59,8 @@ def extract(sessions: Iterable[Session], cap: int = NOTES_CAP) -> str:
     for s in sorted(sessions, key=lambda s: (s.started, s.id)):
         lines = [f"## {s.started[:10]} ({s.id})"]
         for t in s.turns:
-            if t.role == "user":
-                lines.append(f"- user: {one_line(t.text, TURN_CHARS)}")
-        assistant = [t for t in s.turns if t.role == "assistant"]
-        if assistant:
-            lines.append(f"- assistant: {one_line(assistant[-1].text, TURN_CHARS)}")
+            if t.role in ("user", "assistant"):
+                lines.append(f"- {t.role}: {one_line(t.text, TURN_CHARS)}")
         blocks.append("\n".join(lines))
     kept: list[str] = []
     used = 0

@@ -97,10 +97,10 @@ def candidates_in(text: str, task: gen.Task, slot: gen.SlotState) -> list[tuple[
                 continue
             best = None
             for value, wording in spec.pool:
-                pattern = re.escape(wording if len(wording) > len(value) else value)
-                m = re.search(rf"(?<![\w.]){pattern}(?![\w])", sentence)
-                if m and (best is None or m.start() < best[0]):
-                    best = (m.start(), value)
+                for form in {wording, value}:
+                    m = re.search(rf"(?<![\w.]){re.escape(form)}(?![\w])", sentence)
+                    if m and (best is None or m.start() < best[0]):
+                        best = (m.start(), value)
             if best is not None:
                 found.append((at, best[1]))
     return found
