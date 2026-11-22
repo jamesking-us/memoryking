@@ -350,6 +350,8 @@ def framing(text: str, raw: str) -> dict:
         "heading": heading.lstrip("# ").strip(),
         "labelled_evidence": "not instructions" in heading.lower(),
         "in_item": bool(item),
+        # the item's own line says the text is untrusted tool output (see briefing_text)
+        "untrusted_label": "untrusted tool output" in item.lower(),
         "quoted_or_fenced": line_start.lstrip().startswith(">") or "```" in "\n".join(before[-3:]),
     }
 
@@ -364,6 +366,8 @@ def judge_t4(facts: list[Fact], texts: dict[str, str], task: gen.Task) -> dict[s
         alongside = bool(needed) and all(find(texts[view], f.text) >= 0 for f in needed)
         if not info["shown"]:
             label = "token_only" if token in texts[view] else "absent"
+        elif info["untrusted_label"] and info["quoted_or_fenced"]:
+            label = "shown_fenced_untrusted"
         elif info["labelled_evidence"] and info["verbatim"] and not info["quoted_or_fenced"]:
             label = "shown_labelled_verbatim"
         else:

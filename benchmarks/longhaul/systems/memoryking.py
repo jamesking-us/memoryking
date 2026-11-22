@@ -3,8 +3,8 @@ through the path a real hook-captured session takes.
 
 Installed for the agent (see `host`): the three session hooks and the lean MCP bridge with
 `alwaysLoad`, built by the same code as the setup command (`host_hooks.install`,
-`setup_host.mcp_entry`), under one agent credential per project and agent, and since the
-protocol was amended the prompt-time recall hook that setup installs by default (the pilot ran
+`setup_host.mcp_entry`), under one principal per agent with a grant per project and a link to
+the owner's user scope, as setup issues it (`_credential`), and since the protocol was amended the prompt-time recall hook that setup installs by default (the pilot ran
 before that hook existed). `prompts=False` (the named variant `memoryking_nohook`) leaves it
 out. The arm calls the code setup calls, with setup's defaults, so it cannot drift from the
 product. The agent is told
@@ -13,7 +13,7 @@ mention.
 
 Seeding (`ingest = "hook"`, the default): each session becomes a Claude Code transcript
 (JSONL) and the real `session-end` hook code (`host_hooks.save`) captures it through the
-daemon's socket under the session's own project and agent credential: the transcript tail as
+daemon's socket under the session's own project and agent principal: the transcript tail as
 one observation (user turns, assistant text and tool errors; successful tool results and tool
 inputs are never read) and the user's own turns as a second one. Nothing is held: a real
 installation has no source-trust rules unless an operator writes them, and setup writes none,
@@ -42,6 +42,7 @@ import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from memoryking import __version__, hooks, host_hooks, reviewing, setup_host
 from memoryking.adapters.local_ipc import Server, request
@@ -49,9 +50,7 @@ from memoryking.adapters.local_store import LocalStore
 
 from .base import HostConfig, Scope, SeedReport, Session
 
-AGENT_CAPABILITIES = "capture,read,checkpoint,handoff"
 TOOLS = ("remember", "recall", "save_progress", "resume", "hand_off", "fetch")
-CREDENTIAL_DAYS = "3650d"
 SOCKET_LIMIT = 100
 
 
@@ -153,6 +152,7 @@ class MemoryKing:
         self.daemon: subprocess.Popen | None = None
         self.baseline: dict | None = None
         self._scope: Scope | None = None
+        self._granted: set[tuple[str, str]] = set()
 
     # ------------------------------------------------------------------ paths
 
@@ -276,39 +276,20 @@ class MemoryKing:
     # ------------------------------------------------------------ credentials
 
     def _credential(self, scope: Scope) -> Path:
-        """One agent credential per (project, agent), issued on first use with the owner's."""
+        """The agent's credential, issued as `memoryking setup` issues it: one principal per
+        agent holding one grant per project it works in (the capabilities the lean tools need,
+        no expiry), linked to the owner's user scope. It is `setup_host.ensure_credential`, the
+        code setup runs, so the grants cannot drift from it; the first call for a project
+        restates the principal's grant for it and returns the principal's one credential,
+        kept in one file per agent."""
         assert self.root is not None
-        safe = re.sub(r"[^A-Za-z0-9_-]", "-", f"{scope.project}--{scope.agent}")
+        safe = re.sub(r"[^A-Za-z0-9_-]", "-", scope.agent)
         path = self.root / "agents" / f"{safe}.credential"
-        if not path.exists():
-            proc = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "memoryking",
-                    "credential",
-                    "issue",
-                    scope.agent,
-                    "--socket",
-                    str(self.socket),
-                    "--credential",
-                    str(self.owner),
-                    "--project",
-                    scope.project,
-                    "--capabilities",
-                    AGENT_CAPABILITIES,
-                    "--expires",
-                    CREDENTIAL_DAYS,
-                    "--output",
-                    str(path),
-                ],
-                capture_output=True,
-                text=True,
-                env=self._env(),
-                timeout=120,
-            )
-            if proc.returncode != 0:
-                raise RuntimeError("credential issue failed: " + proc.stderr.strip()[:300])
+        if (scope.agent, scope.project) not in self._granted:
+            profile = {"socket": str(self.socket), "credential": str(self.owner)}
+            args = SimpleNamespace(principal=scope.agent, project=scope.project, expires=None)
+            setup_host.ensure_credential(profile, args, path, False, {})
+            self._granted.add((scope.agent, scope.project))
         return path
 
     # ---------------------------------------------------------------- seeding
