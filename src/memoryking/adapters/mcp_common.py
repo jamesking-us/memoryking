@@ -107,12 +107,8 @@ def run_tool(
                 raise LocalError("unknown_tool")
             if (bad := invalid_arguments(validator, arguments)) is not None:
                 raise bad
-            text, structured = lean.invoke(client, name, arguments, chat_review=chat_review)
-            result: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
-            if structured is not None:
-                result["structuredContent"] = structured
-            result["isError"] = False
-            return result
+            text = lean.invoke(client, name, arguments, chat_review=chat_review)
+            return {"content": [{"type": "text", "text": text}], "isError": False}
         if name not in TOOL_VALIDATORS:
             raise LocalError("unknown_tool")
         if (bad := invalid_arguments(TOOL_VALIDATORS[name], arguments)) is not None:

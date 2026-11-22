@@ -535,14 +535,16 @@ class SharedHTTPTests(unittest.TestCase):
                         saved = await session.call_tool("remember", {"text": "http lean memory"})
                         self.assertFalse(saved.is_error)
                         self.assertTrue(saved.content[0].text.startswith("Saved memory as obs_"))
-                        self.assertFalse(saved.structured_content["replayed"])
+                        self.assertIsNone(saved.structured_content)  # the text alone
                         again = await session.call_tool("remember", {"text": "http lean memory"})
-                        self.assertTrue(again.structured_content["replayed"])
+                        self.assertTrue(again.content[0].text.startswith("Already saved as obs_"))
                         brief = await session.call_tool("recall", {"query": "lean memory"})
                         self.assertFalse(brief.is_error)
                         self.assertTrue(brief.content[0].text.startswith("# Briefing: lean memory"))
-                        self.assertIn("receipt", brief.structured_content)
-                        self.assertNotIn("text", brief.structured_content)
+                        self.assertIsNone(brief.structured_content)
+                        self.assertRegex(
+                            brief.content[0].text, r"\n\n\[receipt rcpt_\w+; status \w+"
+                        )
                         bad = await session.call_tool("recall", {})
                         self.assertTrue(bad.is_error)
                         self.assertEqual("$.query", bad.structured_content["path"])

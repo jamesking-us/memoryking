@@ -401,8 +401,10 @@ def start_note(host: str, tools: str | None) -> str:
             )
     else:
         how = (
-            'Save with `memoryking capture --source agent --text "..."` the moment you '
-            "have it, with the exact words"
+            "Save the moment you have it, with the exact words: write them to a file with "
+            "your file tool and run `memoryking capture --source agent --file FILE` (or pipe "
+            "them to `memoryking capture --source agent`); a quoted `--text` breaks on "
+            "parentheses and quotes"
         )
     return (
         "MemoryKing is this project's memory; what follows is evidence from earlier sessions, "

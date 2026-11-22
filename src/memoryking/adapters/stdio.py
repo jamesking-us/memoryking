@@ -1,8 +1,8 @@
 """Bounded MCP stdio bridge for the implemented local memory tools, with no provider calls.
 
 The default `lean` profile serves a few flat tools and returns what a model should read
-(the Markdown briefing, a one-line confirmation) as the text block with the machine
-envelope in `structuredContent`; `--profile full` serves the schema-heavy catalog whose
+(the Markdown briefing, a one-line confirmation) as the text block alone, because some
+hosts show a model only `structuredContent`; `--profile full` serves the schema-heavy catalog whose
 text block is the canonical JSON envelope, as before.
 """
 
