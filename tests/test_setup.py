@@ -181,9 +181,10 @@ class SetupTests(unittest.TestCase):
         self.assertIn("UserPromptSubmit", settings["hooks"])
         self.assertIn("recalls for each prompt", done.stdout)
         self.assertIn("MEMORYKING_PROMPT_HOOK=off", done.stdout)
-        # Only the start hook names the tools, so the model is told how to save.
+        # The start hook names the tools so the model is told how to save, and the prompt hook
+        # so that it can name `recall` as the way to ask for the records it did not show.
         self.assertEqual(
-            ["session-start"],
+            ["session-start", "prompt"],
             [c.split(" hook ")[1].split()[0] for c in commands if "--tools mcp" in c],
         )
         self.assertTrue(all("--credential" not in c and "service.sock" not in c for c in commands))
