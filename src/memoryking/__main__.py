@@ -1328,6 +1328,12 @@ def main() -> int:
         help="Create the store, daemon and agent credential only, and print them as JSON "
         "(the store side of a Windows setup)",
     )
+    setup.add_argument(
+        "--user-environment",
+        action="store_true",
+        help="Windows: also set MEMORYKING_RELAY and MEMORYKING_RELAY_PROFILE for your user, "
+        "so commands typed by hand reach the store (nothing secret; undone by --remove)",
+    )
     add_binding(setup)
     mcp = commands.add_parser(
         "mcp",

@@ -523,8 +523,10 @@ def summary(args: Any, say: dict[str, str], printed: list[str], files: Files) ->
         f"{prefix}MCP bridge: {say['mcp']}",
         f"{prefix}session hooks: {say['hooks']}",
         f"{prefix}semantic search: {say['semantic']}",
-        f"undo: memoryking setup {args.host} --project {args.project} --remove",
     ]
+    if "environment" in say:  # Windows: the per-user relay variables
+        lines.append(f"{prefix}user environment: {say['environment']}")
+    lines.append(f"undo: memoryking setup {args.host} --project {args.project} --remove")
     for path, text in files.pending:
         printed = [*printed, f"--- {path} would contain:", text.rstrip("\n")]
     print("\n".join(lines + [""] * bool(printed) + printed))

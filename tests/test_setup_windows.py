@@ -203,6 +203,52 @@ class UndoRecordTests(unittest.TestCase):
                 self.assertFalse((root / "new").exists())
                 self.assertFalse(record.exists())
 
+    def test_user_variables_are_recorded_and_put_back_unless_changed_since(self) -> None:
+        stored: dict[str, str] = {"MEMORYKING_RELAY_PROFILE": "mine"}
+        announced: list[int] = []
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.multiple(
+                setup_windows,
+                read_user_variable=lambda name: stored.get(name),
+                write_user_variable=lambda name, value: (
+                    stored.pop(name, None) if value is None else stored.__setitem__(name, value)
+                ),
+                announce_environment=lambda: announced.append(1),
+            ),
+            mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}),
+        ):
+            wanted = {"MEMORYKING_RELAY": "wsl:Ubuntu", "MEMORYKING_RELAY_PROFILE": "default"}
+            dry = setup_windows.WindowsRecord(dry=True)
+            self.assertEqual(sorted(dry.set_environment(wanted)), sorted(wanted))
+            dry.save()
+            self.assertEqual(stored, {"MEMORYKING_RELAY_PROFILE": "mine"})
+            self.assertFalse(setup_windows.record_path().exists())
+            files = setup_windows.WindowsRecord(dry=False)
+            files.set_environment(wanted)
+            files.save()
+            self.assertEqual(stored, wanted)
+            record = setup_windows.record_path().read_text(encoding="utf-8")
+            self.assertNotIn("credential", record)
+            again = setup_windows.WindowsRecord(dry=False)
+            self.assertEqual(again.set_environment(wanted), [])  # a second run changes nothing
+            stored["MEMORYKING_RELAY"] = "docker:memoryking"  # the user changed it since
+            undo = setup_windows.WindowsRecord(dry=False)
+            self.assertEqual(
+                sorted(undo.restore_environment()),
+                [
+                    "MEMORYKING_RELAY left as it is (changed since setup set it)",
+                    "MEMORYKING_RELAY_PROFILE restored",
+                ],
+            )
+            undo.save_removal()
+            self.assertEqual(
+                stored,
+                {"MEMORYKING_RELAY": "docker:memoryking", "MEMORYKING_RELAY_PROFILE": "mine"},
+            )
+            self.assertFalse(setup_windows.record_path().exists())
+            self.assertEqual(len(announced), 2)
+
     def test_a_dry_run_writes_no_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}):

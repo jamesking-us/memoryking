@@ -346,6 +346,46 @@ def neutral(config: dict[str, Any]) -> None:
                         raise LocalError("hook_command_unsafe", detail={"problem": word[:80]})
 
 
+# What `--user-environment` sets for commands typed by hand: where the store is, nothing
+# secret (the credential still comes only through the relay's handshake).
+ENVIRONMENT = ("MEMORYKING_RELAY", "MEMORYKING_RELAY_PROFILE")
+
+
+def read_user_variable(name: str) -> str | None:
+    """A per-user environment variable as stored (HKCU\\Environment), not this process's."""
+    import winreg  # type: ignore[import-not-found,unused-ignore]
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, name)
+    except FileNotFoundError:
+        return None
+    return str(value)
+
+
+def write_user_variable(name: str, value: str | None) -> None:
+    import winreg  # type: ignore[import-not-found,unused-ignore]
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
+        if value is None:
+            try:
+                winreg.DeleteValue(key, name)
+            except FileNotFoundError:
+                pass
+        else:
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+
+
+def announce_environment() -> None:
+    """Tell Explorer the user environment changed, so new terminals see it."""
+    import ctypes
+
+    result = ctypes.c_ulong()
+    ctypes.windll.user32.SendMessageTimeoutW(  # type: ignore[attr-defined,unused-ignore]
+        0xFFFF, 0x001A, 0, "Environment", 0x0002, 5000, ctypes.byref(result)
+    )
+
+
 def record_path() -> Path:
     base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
     return Path(base) / "MemoryKing" / "setup" / "claude-code.json"
@@ -361,8 +401,11 @@ class WindowsRecord(setup_host.Files):
     def __init__(self, dry: bool):
         super().__init__(record_path(), dry)
 
+    def kept(self) -> bool:
+        return bool(self.state["files"] or self.state.get("environment"))
+
     def save(self) -> None:
-        if self.dry or not self.state["files"]:
+        if self.dry or not self.kept():
             return
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps(self.state, indent=2) + "\n", encoding="utf-8")
@@ -370,10 +413,42 @@ class WindowsRecord(setup_host.Files):
     def save_removal(self) -> None:
         if self.dry:
             return
-        if self.state["files"]:
+        if self.kept():
             self.save()
         else:
             self.state_path.unlink(missing_ok=True)
+
+    def set_environment(self, wanted: dict[str, str]) -> list[str]:
+        """Set per-user variables, recording each one's value before setup first set it."""
+        recorded = self.state.setdefault("environment", {})
+        changed = []
+        for name, value in wanted.items():
+            current = read_user_variable(name)
+            if current == value:
+                continue
+            recorded.setdefault(name, {"original": current})["written"] = value
+            changed.append(name)
+            if not self.dry:
+                write_user_variable(name, value)
+        if not recorded:
+            self.state.pop("environment")
+        if changed and not self.dry:
+            announce_environment()
+        return changed
+
+    def restore_environment(self) -> list[str]:
+        """Put back each variable setup set, unless it was changed since; what was done."""
+        done = []
+        for name, record in self.state.pop("environment", {}).items():
+            if read_user_variable(name) != record["written"]:
+                done.append(f"{name} left as it is (changed since setup set it)")
+                continue
+            if not self.dry:
+                write_user_variable(name, record["original"])
+            done.append(f"{name} {'restored' if record['original'] is not None else 'removed'}")
+        if done and not self.dry:
+            announce_environment()
+        return done
 
 
 def check(spec: str, agent: str, project: str) -> str:
@@ -399,6 +474,8 @@ def run(args: Any) -> int:
     cwd = (args.cwd or Path.cwd()).resolve()
     files = WindowsRecord(args.dry_run)
     if args.remove:
+        for line in files.restore_environment():
+            print(("[dry run] " if args.dry_run else "") + "user environment: " + line)
         code = setup_host.remove(args, files, home, cwd)
         print(
             "The store side is kept as well. To remove it: in WSL2, `memoryking --profile "
@@ -461,6 +538,20 @@ def run(args: Any) -> int:
         path = Path(result["path"])
         text = json.dumps(result["config"], indent=2) + "\n"
         say["hooks"] = f"{files.write(path, text)} {path}; {form}"
+    owner = args.profile or "default"
+    typed = f"MEMORYKING_RELAY={spec} and MEMORYKING_RELAY_PROFILE={owner}"
+    if getattr(args, "user_environment", False):
+        changed = files.set_environment(dict(zip(ENVIRONMENT, (spec, owner), strict=True)))
+        say["environment"] = (
+            ("would set " if args.dry_run else "set ") + typed + " for your user (new terminals)"
+            if changed
+            else f"{typed} already set for your user"
+        )
+    else:
+        say["environment"] = (
+            f"not changed; for commands typed by hand set {typed}, or run setup again with "
+            "--user-environment"
+        )
     files.save()
     setup_host.summary(args, {**say, "store": f"{say['install']}; {say['store']}"}, printed, files)
     if not args.dry_run:
