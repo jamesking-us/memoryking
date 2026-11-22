@@ -148,7 +148,7 @@ def load(
     types: set[str] | None,
     per_type: int | None = None,
 ) -> list[dict[str, Any]]:
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         raise ValueError("expected a list of question instances")
     items = [d for d in data if not types or d["question_type"] in types]
@@ -524,7 +524,7 @@ def run_group(
     clock = StampClock(first_ms - 1)
     with tempfile.TemporaryDirectory(prefix="mk-evidence-", dir="/tmp") as directory:
         root = Path(directory)
-        credential = LocalStore.initialize(root / "db", root / "ctl").read_text()
+        credential = LocalStore.initialize(root / "db", root / "ctl").read_text(encoding="utf-8")
         with LocalStore(root / "db", root / "ctl", clock=clock) as store:
             store.reranker = reranker
             if hasattr(reranker, "clock"):
@@ -909,7 +909,11 @@ def main() -> int:
             report["embedding_seconds"] = round(embedder.seconds, 1)
             report["embedded_texts"] = embedder.embedded
         report["data"] = {"path": args.data.name, "sha256": hashlib.sha256(raw).hexdigest()}
-        report["gate"] = json.loads(args.gate_file.read_text()) if args.gate_file.exists() else {}
+        report["gate"] = (
+            json.loads(args.gate_file.read_text(encoding="utf-8"))
+            if args.gate_file.exists()
+            else {}
+        )
         report["failures"] = gate(report, report["gate"]) if args.gate else []
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2) + "\n")
@@ -919,11 +923,11 @@ def main() -> int:
             )
         )
     else:
-        report = json.loads(args.current.read_text())
+        report = json.loads(args.current.read_text(encoding="utf-8"))
         report["failures"] = []
     status = 1 if report["failures"] else 0
     if args.compare is not None:
-        baseline = json.loads(args.compare.read_text())
+        baseline = json.loads(args.compare.read_text(encoding="utf-8"))
         problems = comparable(baseline, report, args.vary_reranker)
         if problems:
             print("reports are not comparable: " + "; ".join(problems), file=sys.stderr)

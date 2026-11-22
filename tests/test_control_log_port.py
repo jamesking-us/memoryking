@@ -194,7 +194,7 @@ class CallersDependOnThePortTests(unittest.TestCase):
         for path in sorted(root.rglob("*.py")):
             if path.name in implementation:
                 continue
-            used, used_operations = control_attributes(ast.parse(path.read_text()))
+            used, used_operations = control_attributes(ast.parse(path.read_text(encoding="utf-8")))
             # Some modules keep the control directory (a path) in an attribute of the same name.
             used -= {"iterdir", "is_dir", "exists", "resolve", "mkdir"}
             self.assertEqual(set(), used - port, f"{path.name} reaches past the control-log port")

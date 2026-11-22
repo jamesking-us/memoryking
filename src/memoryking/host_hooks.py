@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from memoryking import hooks, session_bindings
-from memoryking.adapters.local_ipc import request
+from memoryking.adapters.local_client import request
 from memoryking.domain.briefing import terms
 from memoryking.domain.briefing_text import render_brief
 from memoryking.domain.checkpoint import complete
@@ -58,6 +58,7 @@ from memoryking.domain.provenance import (
     is_third_party,
     without_tool_errors,
 )
+from memoryking.hook_cli import light
 
 HOSTS = ("claude", "codex", "grok")
 KINDS = ("session-start", "pre-compact", "session-end", "prompt")
@@ -395,7 +396,7 @@ def session_start(
         "task": task,
         "binding": binding,
         "socket": socket,
-        "credential": Path(where["credential"]) if where.get("credential") else None,
+        "credential": _credential(where),
         "project": project,
         "profile": where.get("profile"),
         "config": where.get("config"),
@@ -409,6 +410,12 @@ def session_start(
     parts.append(str(packet.get("text", "")).rstrip())
     note = start_note(str(host or event.get("host") or ""), tools)
     return "\n\n".join(p for p in [note, *parts] if p) + "\n"
+
+
+def _credential(where: dict[str, Any]) -> Any:
+    """A credential path from the command line, or a relay's in-memory credential as it is."""
+    value = where.get("credential")
+    return Path(value) if isinstance(value, (str, os.PathLike)) else value
 
 
 def _normal(text: str) -> str:
@@ -982,7 +989,7 @@ def save(
         source=source,
         event=hooks.event_id(source, text, salt),
         socket=socket,
-        credential=Path(where["credential"]) if where.get("credential") else None,
+        credential=_credential(where),
         project=project,
         profile=where.get("profile"),
         config=where.get("config"),
@@ -1002,7 +1009,7 @@ def save(
             source=f"user-{name}",
             event=hooks.event_id(f"user-{name}", turns, str(event.get("session", ""))),
             socket=socket,
-            credential=Path(where["credential"]) if where.get("credential") else None,
+            credential=_credential(where),
             project=project,
             profile=where.get("profile"),
             config=where.get("config"),
@@ -1062,7 +1069,7 @@ def hook_command(
 
     `launcher` replaces the absolute interpreter with other shell words, such as
     `["memoryking"]` when that name resolves on the host's PATH."""
-    parts = list(launcher) if launcher else [json.dumps(sys.executable), "-m", "memoryking"]
+    parts = light(list(launcher) if launcher else [json.dumps(sys.executable), "-m", "memoryking"])
     if profile:
         parts += ["--profile", profile]
     parts += ["hook", kind, "--host", host, "--project", project]
@@ -1125,11 +1132,16 @@ def _entries(
     return entries
 
 
+def command_line(hook: dict[str, Any]) -> str:
+    """A hook's command and, in the shell-free form Claude Code also reads, its `args`."""
+    args = hook.get("args")
+    words = [str(word) for word in args] if isinstance(args, list) else []
+    return " ".join([str(hook.get("command", "")), *words])
+
+
 def _ours(group: dict[str, Any]) -> bool:
     return any(
-        isinstance(h, dict)
-        and MARK in str(h.get("command", ""))
-        and " hook " in str(h.get("command", ""))
+        isinstance(h, dict) and MARK in command_line(h) and " hook " in command_line(h)
         for h in group.get("hooks", [])
     )
 
@@ -1202,7 +1214,7 @@ def install(
     existing: dict[str, Any] = {}
     if path.exists():
         try:
-            loaded = json.loads(path.read_text())
+            loaded = json.loads(path.read_text(encoding="utf-8"))
         except ValueError as exc:
             raise LocalError("hook_config_invalid") from exc
         if not isinstance(loaded, dict):
@@ -1211,7 +1223,7 @@ def install(
     merged = merge(existing, _entries(host, commands, prompts), remove=remove)
     if write:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(merged, indent=2) + "\n")
+        path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return {
         "host": host,
         "path": str(path),

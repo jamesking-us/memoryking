@@ -76,7 +76,7 @@ class EvidenceRecallTests(unittest.TestCase):
         self.assertEqual(scores(["x"], set())["all_at_5"], 0.0)
 
     def test_regression_sample_is_large_stratified_and_gated(self):
-        data = json.loads(REGRESSION.read_text())
+        data = json.loads(REGRESSION.read_text(encoding="utf-8"))
         kinds: dict[str, int] = {}
         for item in data:
             kinds[item["question_type"]] = kinds.get(item["question_type"], 0) + 1
@@ -85,7 +85,7 @@ class EvidenceRecallTests(unittest.TestCase):
         self.assertGreaterEqual(len(data), 60)
         self.assertEqual(len(kinds), 6)
         self.assertGreaterEqual(min(kinds.values()), 10)
-        gate = json.loads(GATE.read_text())
+        gate = json.loads(GATE.read_text(encoding="utf-8"))
         self.assertEqual(gate["sample"], REGRESSION.name)
         self.assertEqual(
             set(gate["by_question_type_minimum"]["session_recall_any_at_10"]), set(kinds)
@@ -94,7 +94,7 @@ class EvidenceRecallTests(unittest.TestCase):
     def test_sample_builder_is_deterministic_and_stratified(self):
         from tools.build_recall_sample import select
 
-        data = json.loads(REGRESSION.read_text())
+        data = json.loads(REGRESSION.read_text(encoding="utf-8"))
         again = select(data, 12)
         self.assertEqual(
             [d["question_id"] for d in again], [d["question_id"] for d in select(again, 12)]
@@ -164,7 +164,7 @@ class EvidenceRecallTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-            report = json.loads(output.read_text())
+            report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["failures"], [])
             self.assertEqual(len(report["data"]["sha256"]), 64)
             self.assertNotIn("/", report["data"]["path"])
@@ -180,7 +180,7 @@ class EvidenceRecallTests(unittest.TestCase):
             self.assertEqual(failing.returncode, 1)
             # Compare the saved report with itself, with a worse copy, and with a foreign one.
             base = Path(directory) / "base.json"
-            base.write_text(output.read_text())
+            base.write_text(output.read_text(encoding="utf-8"))
             same = subprocess.run(
                 [*command, "--current", str(output), "--compare", str(base)],
                 cwd=ROOT,
@@ -189,7 +189,7 @@ class EvidenceRecallTests(unittest.TestCase):
             )
             self.assertEqual(same.returncode, 0, same.stdout + same.stderr)
             self.assertIn("no regression", same.stdout)
-            worse = json.loads(output.read_text())
+            worse = json.loads(output.read_text(encoding="utf-8"))
             worse["session_recall_any_at_5"] = 0.5
             current = Path(directory) / "current.json"
             current.write_text(json.dumps(worse))

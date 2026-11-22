@@ -3,6 +3,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -10,6 +11,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+# Steps that create a memory store, which Windows does not hold (it runs in WSL2 or the
+# container there): on Windows they are reported as not applicable, never as passed.
+STORE_STEPS = {
+    "tools/run_conformance.py",
+    "tools/evidence_recall.py",
+    "tools/retrieval_benchmark.py",
+    "tools/stale_facts_benchmark.py",
+}
+NOT_ON_WINDOWS = "needs the memory store, which does not run on Windows"
 
 STEP_TIMEOUT = 3600  # seconds per step; a hung step fails instead of blocking the run (the full test suite alone takes about 30 minutes with PostgreSQL on a loaded machine)
 
@@ -33,7 +44,10 @@ def main():
         [sys.executable, "-m", "mypy"],
         ["npm", "run", "format:check"],
         ["npm", "test"],
-        [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
+        # Windows has no store: its runner reports the store's refusal as a reasoned skip.
+        [sys.executable, "tools/windows_tests.py", "-v"]
+        if sys.platform == "win32"
+        else [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
         [sys.executable, "tools/run_conformance.py", "--output", "tmp/checks/scenarios.json"],
         [sys.executable, "tools/check_docs.py"],
         [
@@ -75,10 +89,22 @@ def main():
     failed = False
     tracked_before = tracked_state()
     for index, command in enumerate(commands, 1):
+        if sys.platform == "win32" and command[1:2] and command[1] in STORE_STEPS:
+            results.append({"command": command, "not_applicable": NOT_ON_WINDOWS})
+            print("N/A  " + " ".join(command) + f" ({NOT_ON_WINDOWS})", flush=True)
+            continue
         started = time.monotonic()
         try:
+            # npm is a .cmd file on Windows, which only a lookup (not CreateProcess) finds.
+            program = shutil.which(command[0]) or command[0]
             result = subprocess.run(
-                command, cwd=ROOT, env=env, capture_output=True, text=True, timeout=STEP_TIMEOUT
+                [program, *command[1:]],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=STEP_TIMEOUT,
             )
             returncode, output = result.returncode, result.stdout + result.stderr
         except subprocess.TimeoutExpired as exc:
@@ -89,7 +115,7 @@ def main():
                 + f"\nstep exceeded {STEP_TIMEOUT} seconds\n"
             )
         log = out / f"{index:02d}.log"
-        log.write_text(output)
+        log.write_text(output, encoding="utf-8")
         record = {
             "command": command,
             "exit_code": returncode,
@@ -108,7 +134,7 @@ def main():
         failed = True
     results.append({"command": ["tracked-files-unchanged"], "exit_code": int(failed)})
     (out / "results.json").write_text(
-        json.dumps({"checks": results, "passed": not failed}, indent=2) + "\n"
+        json.dumps({"checks": results, "passed": not failed}, indent=2) + "\n", encoding="utf-8"
     )
     raise SystemExit(1 if failed else 0)
 

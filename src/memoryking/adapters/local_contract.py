@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError
 
-SCHEMA = json.loads(Path(__file__).with_name("local_wire.schema.json").read_text())
+SCHEMA = json.loads(Path(__file__).with_name("local_wire.schema.json").read_text(encoding="utf-8"))
 VALIDATOR = Draft202012Validator(SCHEMA)
 
 

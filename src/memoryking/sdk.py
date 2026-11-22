@@ -10,8 +10,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from memoryking.adapters.local_client import Socket, request
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_ipc import request
 from memoryking.contracts.validation import (
     validate_embedding,
     validate_experience,
@@ -25,8 +25,11 @@ from memoryking.contracts.validation import (
 from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError, is_user_project
 from memoryking.memory_api import MemoryMethods
+from memoryking.relay_client import RelayCredential
 
-CATALOG = json.loads(Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text())
+CATALOG = json.loads(
+    Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text(encoding="utf-8")
+)
 TOOL_VALIDATORS = {
     item["name"]: Draft202012Validator(item["inputSchema"]) for item in CATALOG["tools"]
 }
@@ -97,8 +100,8 @@ class LocalClient(MemoryMethods):
 
     def __init__(
         self,
-        socket: Path,
-        credential_file: Path,
+        socket: Socket,
+        credential_file: Path | RelayCredential,
         project: str,
         namespace: str = "sdk",
         bindings: list[dict[str, Any]] | None = None,
@@ -122,6 +125,8 @@ class LocalClient(MemoryMethods):
         """Nothing to release: each request opens and closes its own connection."""
 
     def _credential(self) -> str:
+        if isinstance(self.credential_file, RelayCredential):
+            return self.credential_file.token
         private_file(self.credential_file)
         try:
             with self.credential_file.open("rb") as source:

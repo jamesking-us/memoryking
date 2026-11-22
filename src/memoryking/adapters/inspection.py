@@ -26,7 +26,7 @@ BACKLOG_ITEMS = 16  # oldest waiting proposals listed by the health report
 HEALTH_MIN_SAMPLE = 5  # votes or briefings before a ratio becomes a signal
 BACKLOG_ATTENTION_MS = 7 * DAY_MS  # a proposal waiting longer than this needs a reviewer
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("inspection.schema.json").read_text())
+    json.loads(Path(__file__).with_name("inspection.schema.json").read_text(encoding="utf-8"))
 )
 
 

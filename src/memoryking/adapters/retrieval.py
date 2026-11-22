@@ -103,7 +103,7 @@ ARCHIVAL_PENALTY = 4_000_000  # below any reachable score; archival stays search
 # on words but does decide between near-equal ones. A hard filter only on an explicit time_range.
 TIME_BOOST_PPM = 250_000
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("retrieval.schema.json").read_text())
+    json.loads(Path(__file__).with_name("retrieval.schema.json").read_text(encoding="utf-8"))
 )
 
 

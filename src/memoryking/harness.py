@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from memoryking.adapters.local_files import Ownership, atomic, private_dir, private_file, sync_dir
+from memoryking.adapters.platform_support import open_nofollow
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash, load_strict
 from memoryking.contracts.validation import validate_working
 from memoryking.domain.local import LocalError
@@ -46,7 +47,7 @@ class LocalFileTool:
     def create(self, name: str, data: bytes) -> None:
         target = self.target(name)
         try:
-            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            fd = open_nofollow(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError as exc:
             raise LocalError("tool_target_exists") from exc
         with os.fdopen(fd, "wb") as stream:

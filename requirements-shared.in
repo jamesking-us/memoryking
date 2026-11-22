@@ -2,3 +2,8 @@
 psycopg[binary]==3.3.6
 psycopg-pool==3.3.3
 mcp==2.3.0
+# Windows-only dependencies of the pins above. A lock compiled on macOS or Linux
+# drops requirements whose marker is false there, so compile the locks on Windows
+# (CONTRIBUTING.md); tests/test_locks.py fails if a lock lost them.
+pywin32==312 ; sys_platform == "win32"
+tzdata==2026.6 ; sys_platform == "win32"

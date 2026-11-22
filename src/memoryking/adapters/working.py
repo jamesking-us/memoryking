@@ -34,7 +34,7 @@ from memoryking.domain.checkpoint import dependencies, operation_transition, str
 from memoryking.domain.local import Decision, LocalError, Released
 
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("working.schema.json").read_text())
+    json.loads(Path(__file__).with_name("working.schema.json").read_text(encoding="utf-8"))
 )
 MUTATIONS = {
     "save",

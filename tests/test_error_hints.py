@@ -22,7 +22,9 @@ class HintTableTests(unittest.TestCase):
     def test_every_raised_code_has_an_exact_hint(self):
         codes = set()
         for path in (ROOT / "src/memoryking").rglob("*.py"):
-            codes.update(re.findall(r'LocalError\("([a-z0-9_]+)"', path.read_text()))
+            codes.update(
+                re.findall(r'LocalError\("([a-z0-9_]+)"', path.read_text(encoding="utf-8"))
+            )
         missing = sorted(code for code in codes if code not in HINTS)
         self.assertEqual(missing, [], "add these to memoryking.domain.hints")
         for code, text in HINTS.items():
@@ -59,8 +61,8 @@ class HintDeliveryTests(unittest.TestCase):
                         request(server.path, "not-a-credential", "read", {"project": "demo"})
                     self.assertEqual(caught.exception.code, "invalid_token")
                     self.assertEqual(caught.exception.hint, HINTS["invalid_token"])
-                    ns = store.namespace(credential.read_text(), "demo")
-                    store.capture(credential.read_text(), ns, "k", observation(1))
+                    ns = store.namespace(credential.read_text(encoding="utf-8"), "demo")
+                    store.capture(credential.read_text(encoding="utf-8"), ns, "k", observation(1))
                     run = subprocess.run(
                         [
                             sys.executable,

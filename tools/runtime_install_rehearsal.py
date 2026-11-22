@@ -101,6 +101,7 @@ def main():
             )
             for entry in [
                 "memoryking",
+                "memoryking-hook",
                 "memoryking-migrate",
                 "memoryking-reference-agent",
                 "memoryking-repository-worker",

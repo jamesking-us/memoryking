@@ -22,6 +22,12 @@ import test_longhaul_benchmark as tb  # noqa: E402  (sets LONGHAUL_T4_PORT_BASE 
 lb, PY, STUB, ROOT = tb.lb, tb.PY, tb.STUB, tb.ROOT
 from longhaul.systems import load as load_system  # noqa: E402
 
+if sys.platform == "win32":
+    raise unittest.SkipTest(
+        "the benchmark harness runs agents and task steps through POS"
+        "IX shell scripts and tools; it runs on Linux and macOS"
+    )
+
 
 def row(task, arm, passed, **extra):
     base = tb.ReportTests.row(None, task, arm, passed)

@@ -37,9 +37,13 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--per-type", type=int, default=PER_TYPE)
     args = parser.parse_args()
-    data = json.loads(args.data.read_text())
+    data = json.loads(args.data.read_text(encoding="utf-8"))
     items = select(data, args.per_type)
-    args.output.write_text(json.dumps(items, separators=(",", ":"), ensure_ascii=False) + "\n")
+    args.output.write_text(
+        json.dumps(items, separators=(",", ":"), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+        newline="\n",  # the committed sample's bytes, on every platform
+    )
     print(f"{len(items)} questions, {args.output.stat().st_size} bytes")
     return 0
 
