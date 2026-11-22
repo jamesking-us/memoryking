@@ -386,6 +386,7 @@ def setup_files(state: dict, workdir: Path) -> tuple[dict, dict]:
         credential=Path(state["agent_credential"]),
         tools="mcp",
         write=False,
+        prompts=False,  # the protocol was fixed with three hooks; the prompt hook is not part of it
     )
     command = [sys.executable, "-m", "memoryking", "mcp", *bridge_args(state)]
     return installed["config"], {"mcpServers": {"memoryking": setup_host.mcp_entry(command)}}

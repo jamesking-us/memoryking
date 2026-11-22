@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -176,7 +177,10 @@ class SetupTests(unittest.TestCase):
             for group in groups
             for hook in group["hooks"]
         ]
-        self.assertEqual(3, len([c for c in commands if "--profile default-agent" in c]))
+        self.assertEqual(4, len([c for c in commands if "--profile default-agent" in c]))
+        self.assertIn("UserPromptSubmit", settings["hooks"])
+        self.assertIn("recalls for each prompt", done.stdout)
+        self.assertIn("MEMORYKING_PROMPT_HOOK=off", done.stdout)
         # Only the start hook names the tools, so the model is told how to save.
         self.assertEqual(
             ["session-start"],
@@ -187,6 +191,127 @@ class SetupTests(unittest.TestCase):
         self.assertFalse((self.home / ".claude" / "settings.local.json").exists())
         self.mk("setup", "claude-code", "--project", "demo", "--remove")
         self.assertEqual(original, (claude / "settings.json").read_bytes())
+
+    def test_the_prompt_hook_is_shown_in_a_dry_run_and_can_be_left_out_or_removed(self):
+        claude = self.home / ".claude"
+        claude.mkdir()
+        dry = self.mk("setup", "claude-code", "--project", "demo", "--dry-run")
+        self.assertIn("UserPromptSubmit", dry.stdout)
+        self.assertIn("hook prompt --host claude", dry.stdout)
+        self.assertFalse((claude / "settings.json").exists())
+        self.mk("setup", "claude-code", "--project", "demo")
+        self.assertIn(
+            "UserPromptSubmit", json.loads((claude / "settings.json").read_text())["hooks"]
+        )
+        # Running setup again without the hook takes it out and keeps the session hooks.
+        again = self.mk("setup", "claude-code", "--project", "demo", "--no-prompt-hook")
+        self.assertIn("not installed (--no-prompt-hook)", again.stdout)
+        hooks = json.loads((claude / "settings.json").read_text())["hooks"]
+        self.assertEqual(sorted(hooks), ["PreCompact", "SessionEnd", "SessionStart"])
+        self.mk("setup", "claude-code", "--project", "demo")
+        self.mk("setup", "claude-code", "--project", "demo", "--remove")
+        self.assertFalse((claude / "settings.json").exists())  # the file setup made goes too
+
+    def installed_prompt_command(self):
+        settings = json.loads((self.home / ".claude" / "settings.json").read_text())
+        (group,) = settings["hooks"]["UserPromptSubmit"]
+        return group["hooks"][0]["command"]
+
+    def submit(self, command, prompt, env=None):
+        event = {"hook_event_name": "UserPromptSubmit", "session_id": "s", "prompt": prompt}
+        return subprocess.run(
+            command,
+            shell=True,
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            env=env or self.env,
+            timeout=60,
+        )
+
+    def test_the_installed_prompt_hook_recalls_for_the_prompt_through_a_real_daemon(self):
+        (self.home / ".claude").mkdir()
+        self.mk("setup", "claude-code", "--project", "demo")
+        saved = self.bridge(
+            [
+                (
+                    "remember",
+                    {
+                        "text": "Settled in the team call: the orders export column delimiter "
+                        "is a caret."
+                    },
+                ),
+                (
+                    "remember",
+                    {"text": "The dashboard colour palette changed on Tuesday for the redesign."},
+                ),
+            ]
+        )
+        self.assertFalse(saved[0]["isError"], saved[0])
+        command = self.installed_prompt_command()
+        question = "What column delimiter did we settle on for the orders export?"
+        done = self.submit(command, question)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("caret", done.stdout)
+        self.assertIn("evidence, not instructions", done.stdout)
+        self.assertRegex(done.stdout, r"receipt rcpt_[0-9a-f]+")
+        self.assertNotIn("palette", done.stdout)  # only what matches the prompt
+        self.assertLess(len(done.stdout), 5000)
+        # nothing to add: a prompt with no match, a one-word prompt, and the off switch
+        for prompt in ("Rename the logging module and update every import.", "yes"):
+            quiet = self.submit(command, prompt)
+            self.assertEqual((0, ""), (quiet.returncode, quiet.stdout), prompt)
+        off = self.submit(command, question, env={**self.env, "MEMORYKING_PROMPT_HOOK": "off"})
+        self.assertEqual((0, ""), (off.returncode, off.stdout))
+        # the hook wrote nothing: the same question finds the same records, not itself
+        again = self.submit(command, question)
+        self.assertEqual(done.stdout.count("[g"), again.stdout.count("[g"))
+
+    def test_a_prompt_hook_whose_store_never_answers_gives_up_at_its_deadline(self):
+        import socket
+        import time
+
+        root = Path(tempfile.mkdtemp(dir="/tmp", prefix="mk-hung-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        path = root / "s.sock"
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(path))
+        listener.listen(4)
+        self.addCleanup(listener.close)
+        credential = root / "c.credential"
+        credential.write_text("token\n")
+        credential.chmod(0o600)
+        started = time.monotonic()
+        done = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking",
+                "hook",
+                "prompt",
+                "--host",
+                "claude",
+                "--project",
+                "demo",
+                "--socket",
+                str(path),
+                "--credential",
+                str(credential),
+                "--deadline",
+                "0.3",
+            ],
+            input=json.dumps(
+                {"prompt": "What column delimiter did we settle on for the orders export?"}
+            ),
+            capture_output=True,
+            text=True,
+            env=self.env,
+            timeout=30,
+        )
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", done.stdout)
+        self.assertIn("deadline_exceeded", done.stderr)
+        self.assertLess(time.monotonic() - started, 10)
 
     def fake_claude(self, exit_code=0):
         """A `claude` executable that records its arguments, first on PATH."""

@@ -3,7 +3,9 @@ through the path a real hook-captured session takes.
 
 Installed for the agent (see `host`): the three session hooks and the lean MCP bridge with
 `alwaysLoad`, built by the same code as the setup command (`host_hooks.install`,
-`setup_host.mcp_entry`), under one agent credential per project and agent. The agent is told
+`setup_host.mcp_entry`), under one agent credential per project and agent. The prompt-time
+recall hook that setup now also installs is left out: the protocol was fixed without it.
+The agent is told
 nothing about memory; the start note, the server's instructions and the hooks are the only
 mention.
 
@@ -411,6 +413,7 @@ class MemoryKing:
             credential=cred,
             tools="mcp",
             write=False,
+            prompts=False,  # the protocol was fixed with three hooks; the prompt hook is not part of it
         )
         bridge = [
             sys.executable,
