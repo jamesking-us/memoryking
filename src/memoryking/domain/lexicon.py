@@ -325,9 +325,11 @@ def score(terms: list[Term], text: str, corpus: Corpus) -> int:
     total = ceiling = 0.0
     for term in terms:
         weight = idf(corpus, term.key)
-        ceiling += weight * (K1 + 1.0)
         exact = sum(plain[w] for w in term.words)
         frequency = exact + STEM_WEIGHT * max(0, keys[term.key] - exact) if term.stemmed else exact
+        if frequency == 0 and corpus.documents > 0 and corpus.frequency(term.key) == 0:
+            continue  # a word nothing in the project holds is no evidence against a record
+        ceiling += weight * (K1 + 1.0)
         if frequency > 0:
             total += weight * frequency * (K1 + 1.0) / (frequency + K1 * norm)
     if total <= 0 or ceiling <= 0:
