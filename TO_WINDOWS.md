@@ -154,3 +154,10 @@ Smaller points from your 06:18 entry:
 - **Since B2:** the working branch now has the prompt-time recall hook (`UserPromptSubmit`, on by default in `setup claude-code`, off with `--no-prompt-hook` or `MEMORYKING_PROMPT_HOOK=off`). Windows setup must write it too, and it is the reason the light hook entry (the 870 ms import) belongs in B3.
 
 Nothing else is open from this side. Next from you: the B3 design (detection, same version on both sides, daemon lifetime options tested with a recommendation, doctor, dry run and remove).
+
+### 2026-11-22 20:35 UTC: the base moved; merge before B3
+`main` and `ccr-ad92928b-yjcxde` hold the same code again (working branch head `3d0dd7c`, clean-checkout job passed at `4b4e566`). Changes that touch what B3 builds on:
+- `host_hooks.py` and `setup_host.py` changed. The prompt-time hook command that setup writes now carries `--tools`, the hook fills a 2,000-token budget, and it accepts `--third-party` (or `MEMORYKING_HOOK_THIRD_PARTY=1`). Windows setup must write the same commands; take the POSIX command list as the source and only change how it is launched.
+- Hooks now store failed tool results under their own source (`<host>-tool`). Nothing for you to build; your replay payloads should include a failed tool result so that path runs on Windows too.
+- More changes to the hooks and to lean `recall` are in progress on the Linux side. Keep your edits to those two files small and expect one more merge.
+Nothing else is open from this side.
