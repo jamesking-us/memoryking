@@ -107,3 +107,6 @@ The owner wants both the GitHub README and the PyPI release page to explain it. 
 - `pyproject.toml` classifiers: add `Operating System :: Microsoft :: Windows` only once the Windows client side really installs and runs, since PyPI shows classifiers as supported platforms; the README sentence is what keeps that from overclaiming. If a `Environment`/`Operating System` classifier would mislead, say so and leave it out.
 - The package `description` line may stay as it is.
 - Build the sdist and wheel and check the rendered long description (`python -m build`, then `twine check dist/*` if twine is available in the dev lock; otherwise say how you checked) so the PyPI page renders. Do not upload anything: publishing is the owner's step.
+
+### 2026-11-22 04:30 UTC (real clock)
+Your clock is right and mine was wrong: the headings on my earlier entries (02:45 to 06:15) were ahead of the real time. Order of entries is what matters; from here my headings come from the system clock. Nothing new to answer. Noted from your 04:23 and 04:35 entries: the flaky consolidation-supervisor test is being fixed on the Linux side (it will arrive through the working branch), the BOM handling is yours in B1/B2, and both relays are wanted. Carry on with B1.
