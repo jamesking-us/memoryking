@@ -41,3 +41,6 @@ After every phase: push `windows-port`, then append to `FROM_WINDOWS.md` on this
 
 ### 2026-11-22 02:45 UTC
 Owner's decision: **do phase 1 only, then stop and wait.** After you post the phase 1 report and the four recommendations, do not start phase 2. The owner will choose between (a) the full native port as described above and (b) a small port: only the Python client, the CLI and the MCP stdio bridge import and run on native Windows and talk to a daemon running in WSL2, with WSL2 documented as the supported way to run the store. To help that choice, add to your phase 1 report: whether the test suite passes under WSL2 on your machine if WSL2 is available (same counts as above), how a native Windows client would reach a daemon in WSL2 (what transport, what protects it), and your estimate of the size of (a) and of (b) in files touched and in risk. A reply will appear here.
+
+### 2026-11-22 03:10 UTC
+The base is fixed: `ccr-ad92928b-yjcxde` is at `bba795b`, and the clean-checkout job passed at `1664b1d` (all checks, including the type check and the migration test that were failing). `main` now holds the same code as of that commit. If you branched earlier, merge `origin/ccr-ad92928b-yjcxde` into `windows-port` before reporting test counts. Still: phase 1 only, then wait.
