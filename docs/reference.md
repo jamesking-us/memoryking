@@ -349,7 +349,7 @@ Records in a resolved range are raised, never filtered: an observation by its ob
 
 ### User memory
 
-`memoryking user show|export|purge` shows, writes as Markdown (`user/` folder) and erases the caller's own user scope; `purge` needs `--yes` and an administrator may add `--user NAME`. `capture --scope user` and the lean `remember` tool's `scope: "user"` write to it; `credential issue --for-user NAME|--no-user` ties an agent to a user. `MemoryTool.for_session(client)` also serves the scope as `/memories/user` when the credential acts for a user (nothing can move between it and a project). The wire operation `user` has the actions `scope`, `ensure`, `show` and `purge`; `status` reports `user_scopes` counts. A user scope holds no schema of its own, so no migration was needed.
+`memoryking user show|export|purge` shows, writes as Markdown (`user/` folder) and erases the caller's own user scope; `purge` needs `--yes` and an administrator may add `--user NAME`. `capture --scope user` and the lean `remember` tool's `scope: "user"` write to it; `credential issue --for-user NAME|--no-user` ties an agent to a user. `MemoryTool.for_session(client)` also serves the scope as `/memories/user` when the credential acts for a user (nothing can move between it and a project). The wire operation `user` has the actions `scope`, `ensure`, `show` and `purge`; `status` reports `user_scopes` counts and, on a daemon started with `--consolidate-every`, a `consolidation` list with one entry per project (`state` waiting, running or backoff, `pid` of the running child or null, `runs`, `consecutive_failures`, `last_exit`, `next_run_ms`). A user scope holds no schema of its own, so no migration was needed.
 
 ### Memory tool and vault
 

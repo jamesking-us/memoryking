@@ -25,7 +25,7 @@ Use `codex` instead of `claude-code` for Codex, or `generic` for any other host 
 
 1. creates a store under `~/.memoryking/default` (and a profile named `default`) if you have none, and starts the service in the background; from then on the bridge and the command line start it again whenever it is not running, so you never run `serve` yourself;
 2. issues one agent credential, `agent`, with the capabilities the memory tools use and no expiry: `capture` (remember, correct, propose, forget, feedback), `read` (recall, resume, fetch, recent), `checkpoint` (save_progress) and `handoff` (hand_off). It has no `review` or `admin`, so the agent cannot approve its own proposals or change policy;
-3. registers the small ("lean") MCP tool set with the host. For Codex that is a marked block in `~/.codex/config.toml`. For Claude Code the command to register it (`claude mcp add-json memoryking '{...}'`) is printed for you to run, because MemoryKing does not edit Claude Code's MCP file; it sets `alwaysLoad` so Claude Code keeps the memory tools in every prompt instead of listing them by name only and loading one when the model searches for it (a model that never searches would never save anything); for `generic` it prints the command and the `mcpServers` JSON;
+3. registers the small ("lean") MCP tool set with the host. For Codex that is a marked block in `~/.codex/config.toml`. For Claude Code the command to register it (`claude mcp add-json memoryking '{...}'`) is printed for you to run, because MemoryKing does not edit Claude Code's MCP file (add `--register` and, when the `claude` command is on your PATH, setup runs that command for you); it sets `alwaysLoad` so Claude Code keeps the memory tools in every prompt instead of listing them by name only and loading one when the model searches for it (a model that never searches would never save anything); for `generic` it prints the command and the `mcpServers` JSON;
 4. installs the session hooks (Claude Code and Codex) so a session starts briefed and saves before compaction and at its end without the model having to decide anything. The start briefing opens with a short note that names the memory tools and says to save an instruction, a decision, a fact it was told or a failed approach as soon as it has one, followed by what memory holds: the user's own recent words, how the last session ended, pins and constraints. The hooks run as the same agent as the tools, in your home directory's host settings rather than in the project's shared file. Because that file is per user, the hooks apply to every project you open on that host and save into `--project`; add `--scope project` to put them in this directory's host file instead, or `--no-hooks` to skip them;
 5. prints a five-line summary, including the command that undoes it.
 
@@ -71,9 +71,9 @@ When no browser can be opened from the terminal, request a code file instead:
 
 ```sh
 .venv/bin/python -m memoryking dashboard-login \
-  --socket "$HOME/.memoryking-data/service.sock" \
-  --credential "$HOME/.memoryking-control/owner.credential" \
-  --output "$HOME/.memoryking-control/browser-login-1.json"
+  --socket "$HOME/.memoryking/default/store/service.sock" \
+  --credential "$HOME/.memoryking/default/control/owner.credential" \
+  --output "$HOME/.memoryking/default/control/browser-login-1.json"
 ```
 
 Open the URL printed by the command. Read the private output file locally and enter its `code` in the page. Use the **one-use code**, never the owner credential. The code expires after 60 seconds; request a new file name for another attempt.
