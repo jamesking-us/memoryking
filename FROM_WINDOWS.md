@@ -403,3 +403,50 @@ B2 is complete apart from the two "ask first" answers (1, 2). B3 waits on answer
 9. May I open and close one interactive `claude` session with no prompt on this machine, given that I cannot rule out a request at start or exit on 2.1.101?
 
 Unless you say otherwise, I will build steps 1, 3, 4 (on-demand relay start), 5, 8, 9, 10 and 11 now. Those choices only affect files this command writes. I will hold the parts behind questions 5 to 8 until you answer.
+
+### 2026-11-22 16:31 UTC: B3 progress: Windows setup works end to end through WSL2 (replay level)
+`windows-port` is at `33b6bd6`, pushed. Since my design entry: `15c8809` (relay profiles), `6b47615`, `33b6bd6` (Windows setup, doctor, hook replay).
+
+#### Built (the parts the open questions do not touch)
+- **Relay profiles.**
+  - **Git Bash rewrites POSIX-looking arguments**, so no store-side path may appear in a Windows hook string. `memoryking relay --profile NAME` takes the socket and credential from the store side's own profile, and starts that profile's daemon on demand (existing autostart; a request that found no daemon is resent once after the start, safe because it never left).
+  - **Windows side:** `--relay-profile NAME` (`MEMORYKING_RELAY_PROFILE`). Without `--relay-python`, WSL2 runs setup's venv (`$HOME/.local/share/memoryking/venv/bin/python`), expanded by `sh` on that side.
+- **`memoryking setup claude-code --project P [--backend ...] [--wheel F | --image REF]` on Windows**, as designed:
+  - detection that never guesses;
+  - same-version install on the store side (with the tokenizers extra when this side has it);
+  - `setup --store-only` there, which refuses a foreign filesystem before creating anything and issues only the agent credential;
+  - hooks and the MCP bridge written here with relay flags only;
+  - a capture recalled through the relay as the final one-line check;
+  - `--dry-run`, idempotence and `--remove`.
+- **`memoryking doctor` on Windows:** reads the relay from Claude Code's own hook commands, checks the store side answers with the same version, and runs the ordinary doctor there under the owner profile.
+- **`memoryking doctor --replay-hooks`:** the replay from answer 3, as one command.
+- **New codes**, each with a hint under 150 characters: `store_backend_missing`, `store_backend_ambiguous`, `store_filesystem_unsupported`, `store_python_missing`, `store_install_failed`, `store_version_mismatch`, `store_image_required`, `store_extras_mismatch`, `hook_command_unsafe`, `setup_check_failed`.
+
+#### Exercised on this machine (WSL2, Ubuntu 20.04, from a locally built wheel)
+For the Windows side I used a temporary user profile and `--scope project` in a temporary folder, so this machine's real Claude Code settings were never touched.
+- **First run: 9.9 s, exit 0.** It installed 0.1.0 with the tokenizers extra into the distro, created the store at `~/.memoryking/default` there, started the daemon, issued `agent.credential`, wrote the four hooks (SessionStart, UserPromptSubmit, PreCompact, SessionEnd) and printed `MemoryKing works: wsl:Ubuntu, project wintest, version 0.1.0 on both sides`.
+- **Second run: 1.9 s.** Everything was "already" in place, and `settings.json` was byte-identical.
+- **`doctor`:** back end, relay reachable, versions equal, and the store side's 15 checks with 0 failed (3 warnings: embeddings not installed, no model, no backups).
+- **`doctor --replay-hooks`: 12/12 pass.** Two sessions in each shell: SessionStart, UserPromptSubmit, PreCompact, SessionEnd (with a transcript holding a fact no earlier session knew), then a second SessionStart and a second prompt, **both carrying that fact**. Medians per hook, the whole process including relay start:
+
+  | Shell | Per hook | Prompt hook |
+  | --- | --- | --- |
+  | Git Bash | 610 to 720 ms | 656 ms |
+  | Windows PowerShell 5.1 | 1.41 to 1.53 s | |
+
+  PowerShell's extra 0.8 s is `powershell.exe`'s own start-up, which Claude Code pays only where Git Bash is absent. The 1.5 s prompt deadline bounds the lookup inside the hook, and was never reached.
+- **The replay found a real bug:** the save hooks passed a relay credential to `Path()` (fixed, `33b6bd6`). B2's unit tests had missed it.
+- **`--remove`:** removed setup's hook entries. Without an undo record (question 6) it leaves an empty `{}` instead of deleting the file it created. It prints how to remove the store side.
+- **POSIX:** a targeted run at `33b6bd6` in WSL2 (`test_setup_windows`, `test_setup`, `test_relay`, `test_relay_client`, `test_host_hooks`, `test_hook_replay`, `test_platform_support`, `test_cli`, `test_error_hints`, `test_contracts`): 163 tests, all OK except the known missing-`node` error.
+
+#### Evidence level reached: **replay only**
+Real Claude Code has not yet run these hooks. Question 9 (one interactive `claude` session opened and closed without a prompt) is still open, so the exec form and the per-hook `shell` field stay unproven on 2.1.101, and the Windows default is the string form.
+
+#### Not done yet
+- **The Docker path of setup** is built and unit-tested but **not yet run against a real container**: Docker Desktop is not running on this machine since its reboot. I can start it and run the same three commands if you want that before B4.
+- **Hash-locked store-side install** (question 5): until it is answered, the store side installs from the wheel or the index with pip's own resolution. Only `jsonschema==4.26.0` and `tiktoken==0.12.0` are pinned, and they are not hash-checked.
+- **The byte-exact undo record** (question 6), **the `extras` handshake** (question 8) and **`--user-environment`** (design step 6): not built.
+- WSL2 timings for the light hook entry.
+- **This machine's distro** now holds a store-side install and store from these runs, under root's home: `~/.local/share/memoryking/venv` and `~/.memoryking/default`, besides my earlier `mk-*` test directories. None of it is in the repository.
+
+Questions 5 to 9 from my design entry are still open.
