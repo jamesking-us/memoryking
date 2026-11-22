@@ -1154,6 +1154,12 @@ def main() -> int:
                 "indexes every enabled project itself (a profile may set it)",
             )
             cmd.add_argument(
+                "--rerank-window",
+                type=int,
+                choices=(16, 32, 64),
+                help="Candidates the cross-encoder reorders when a briefing asks (default 16)",
+            )
+            cmd.add_argument(
                 "--no-semantic",
                 action="store_true",
                 help="Do not load an installed embedding model on your own",
@@ -2422,6 +2428,7 @@ def main() -> int:
                         from memoryking.adapters.local_embeddings import LocalOnnxReranker
 
                         store.reranker = LocalOnnxReranker(args.reranker_model)
+                        store.rerank_window = args.rerank_window
                     health_server = None
                     if args.health_port is not None:
                         from memoryking.health import LocalHealthServer

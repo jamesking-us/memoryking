@@ -171,6 +171,8 @@ class LocalStore(StoreCore):
         self.counters = Metrics()
         # A loaded local embedding model lets briefings embed their own queries.
         self.embedder: Any | None = None
+        self.rerank_window: int | None = None  # candidates a cross-encoder reorders; None is 16
+        self.fusion: dict[str, Any] | None = None  # None is the default combination
         self.reranker: Any | None = None
         # A scheduled backup policy the daemon checks between requests.
         self.backup_policy: Any | None = None

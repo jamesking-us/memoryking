@@ -123,6 +123,19 @@ class RerankCases:
     def order(self, result):
         return [item["reference"] for item in result["guidance"]]
 
+    def test_the_window_is_the_service_setting_and_the_trace_names_it(self):
+        for key in ("alpha", "beta", "gamma", "delta"):
+            self.capture(key, f"timeout {key}: a note about the timeout.")
+        self.store.reranker = FakeReranker("alpha")
+        self.store.rerank_window = 2
+        try:
+            on = self.run_r(args=self.brief_args(rerank="on"))
+        finally:
+            self.store.rerank_window = None
+        stage, _ = self.stage(on)
+        self.assertEqual((stage["window"], stage["candidates"]), (2, 2))
+        self.assertEqual(len(self.store.reranker.calls[-1][1]), 2)
+
     def test_rerank_reorders_only_the_fused_window_and_only_when_asked(self):
         alpha = self.capture("alpha", "timeout alpha: the first note about the timeout.")
         beta = self.capture("beta", "timeout beta: a later note about the timeout.")

@@ -171,6 +171,8 @@ class PostgresStore(StoreCore):
         self.counters = Metrics()
         self.timings = threading.local()
         self.embedder: Any | None = None
+        self.rerank_window: int | None = None  # candidates a cross-encoder reorders; None is 16
+        self.fusion: dict[str, Any] | None = None  # None is the default combination
         self.reranker: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
