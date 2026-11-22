@@ -102,7 +102,9 @@ TABLES_V9 = TABLES_V8 + ("lexical_state", "lexical_projects", "lexical_terms")
 TABLES_V10 = TABLES_V9 + ("supersessions", "retirement_requests", "pins")
 # Schema 12 archives add the consolidation runs and the unreviewed-tier policy (schema 11
 # archives hold the same tables as schema 10; they added the operations log's own files).
-TABLES = TABLES_V10 + ("consolidation_runs", "unreviewed_tier")
+TABLES_V12 = TABLES_V10 + ("consolidation_runs", "unreviewed_tier")
+# Schema 13 archives add the binary embedding vectors and the claims that could not be embedded.
+TABLES = TABLES_V12 + ("embedding_vectors", "embedding_skips")
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
@@ -225,7 +227,7 @@ def backup(
             fenced = False
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 12,
+            "schema": 13,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
@@ -469,11 +471,12 @@ def restore(
             9: TABLES_V9,
             10: TABLES_V10,
             11: TABLES_V10,
-            12: TABLES,
+            12: TABLES_V12,
+            13: TABLES,
         }.get(manifest.get("schema", 0), ())
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
             or set(manifest.get("tables", {})) != set(archive_tables)

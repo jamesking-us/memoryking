@@ -29,6 +29,8 @@ LATER_TABLES = {
     "pins",
     "consolidation_runs",
     "unreviewed_tier",
+    "embedding_vectors",
+    "embedding_skips",
 }
 
 

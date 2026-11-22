@@ -56,39 +56,64 @@ class PostgresStore(StoreCore):
     control: SharedControl
     tenant: str  # always bound; the local store leaves StoreCore.tenant None
 
-    def dense_exact(
-        self, statement: str, parameters: tuple[Any, ...], request: dict[str, Any], limit: int
-    ) -> dict[str, Any] | None:
-        """Explicit optional pgvector engine, with a materialized eligibility boundary.
-
-        No approximate index exists. Float32 cosine can differ by a rounding unit
-        from the portable integer-vector calculation; the receipt names the engine.
-        """
-        import json
+    def native_index(self) -> str | None:
+        """The pgvector version when the operator enabled it and built the converted table."""
+        from memoryking.adapters.postgres_admin import PGVECTOR_VERSIONS
 
         extension = self.db.execute(
             "SELECT e.extversion,n.nspname FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON e.extnamespace=n.oid WHERE e.extname='vector'"
         ).fetchone()
-        if extension is None or tuple(extension) != ("0.8.7", "memoryking_vector"):
+        if extension is None or extension[1] != "memoryking_vector":
             return None
-        prefix = "WITH eligible AS MATERIALIZED (" + statement + ") "
-        count = self.db.execute(prefix + "SELECT count(*) FROM eligible", parameters).fetchone()[0]
-        if count > limit:
-            return {"availability": "scan_limit", "candidate_limit_reached": True}
+        if extension[0] not in PGVECTOR_VERSIONS:
+            return None
+        built = self.db.execute("SELECT to_regclass('memoryking.embedding_native') IS NOT NULL")
+        return str(extension[0]) if built.fetchone()[0] else None
+
+    def dense_shortlist(
+        self,
+        version: str,
+        partition: Any,
+        vector: list[int],
+        eligibility: tuple[Any, ...],
+        shortlist: int,
+    ) -> list[Any]:
+        """Approximate nearest neighbours by the HNSW index, then the reader's eligibility.
+
+        The index only names candidates; tenant, project, deletion, audience and source
+        freshness are applied to them in this statement, and the caller rescores what
+        survives exactly from the stored vectors. A filtered approximate search can return
+        fewer rows than the reader could see, which the caller detects and answers with the
+        exact scan instead (see dense_search)."""
+        self.db.execute("SELECT set_config('hnsw.ef_search',?,true)", (str(shortlist),))
+        if tuple(int(part) for part in version.split(".")) >= (0, 8, 0):
+            # Keep scanning the index until enough rows pass the filter.
+            self.db.execute("SELECT set_config('hnsw.iterative_scan','relaxed_order',true)")
+            self.db.execute("SELECT set_config('hnsw.max_scan_tuples','100000',true)")
+        literal = "[" + ",".join(repr(value / 1_000_000) for value in vector) + "]"
+        key = (partition["tenant"], partition["project"], partition["fingerprint"])
         rows = self.db.execute(
-            prefix
-            + ", scored AS (SELECT observation,LEAST(1000000,GREATEST(-1000000,ROUND((1-(vector_json::memoryking_vector.vector OPERATOR(memoryking_vector.<=>) ?::memoryking_vector.vector))*1000000)))::bigint AS score FROM eligible) SELECT observation,score FROM scored WHERE score>=? ORDER BY score DESC,observation LIMIT 257",
+            "WITH cand AS MATERIALIZED (SELECT n.subject,n.part FROM embedding_native n "
+            "WHERE n.tenant=? AND n.project=? AND n.fingerprint=? AND n.generation=? AND n.kind='observation' "
+            "ORDER BY n.vec OPERATOR(memoryking_vector.<=>) ?::memoryking_vector.vector LIMIT ?) "
+            "SELECT v.subject,v.vector FROM cand c "
+            "JOIN embedding_vectors v ON v.tenant=? AND v.project=? AND v.fingerprint=? AND v.generation=? AND v.kind='observation' AND v.subject=c.subject AND v.part=c.part "
+            "JOIN observations o ON v.tenant=o.tenant AND v.subject=o.id AND v.project=o.project AND v.source_revision=o.revision AND v.blob_hash=o.blob "
+            "WHERE v.incarnation=? AND o.deleted=0 AND +o.position<=? "
+            "AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?))",
             (
-                *parameters,
-                json.dumps(request["vector"]),
-                request.get("minimum_similarity_ppm", 200000),
+                *key,
+                partition["generation"],
+                literal,
+                shortlist,
+                *key,
+                partition["generation"],
+                self.incarnation,
+                eligibility[1],  # recorded position
+                eligibility[0],  # reader
             ),
         ).fetchall()
-        return {
-            "scores": {row["observation"]: row["score"] for row in rows[:256]},
-            "eligible_vectors": count,
-            "candidate_limit_reached": len(rows) > 256,
-        }
+        return list(rows)
 
     def __init__(
         self,
@@ -146,6 +171,8 @@ class PostgresStore(StoreCore):
         self.counters = Metrics()
         self.timings = threading.local()
         self.embedder: Any | None = None
+        self.rerank_window: int | None = None  # candidates a cross-encoder reorders; None is 16
+        self.fusion: dict[str, Any] | None = None  # None is the default combination
         self.reranker: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only

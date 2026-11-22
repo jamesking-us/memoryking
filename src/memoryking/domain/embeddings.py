@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import struct
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,6 +36,23 @@ def quantize(values: list[float], dimensions: int) -> list[int]:
     vector = [round(value / norm * SCALE) for value in values]
     validate_vector(vector, dimensions)
     return vector
+
+
+# A stored vector is little-endian signed 16-bit integers: the millionths of the wire form
+# scaled onto the 16-bit range. A unit vector keeps about five significant digits, which moves
+# a cosine by well under a thousandth of a millionth of the scale used for ranking.
+PACK_SCALE = 32767
+
+
+def pack(vector: list[int]) -> bytes:
+    values = [round(value * PACK_SCALE / SCALE) for value in vector]
+    return struct.pack(f"<{len(values)}h", *values)
+
+
+def unpack(blob: bytes | memoryview, dimensions: int) -> list[int]:
+    if len(blob) != dimensions * 2:
+        raise LocalError("embedding_vector_invalid")
+    return [round(value * SCALE / PACK_SCALE) for value in struct.unpack(f"<{dimensions}h", blob)]
 
 
 def cosine_ppm(left: list[int], right: list[int]) -> int:

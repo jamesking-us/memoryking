@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator
 
 from memoryking.adapters.blobs import blob_path
 from memoryking.adapters.corrections import Corrections
+from memoryking.adapters.dense_search import claim_scores as dense_claim_scores
 from memoryking.adapters.dense_search import search as dense_search
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_files import private_file
@@ -58,6 +59,17 @@ from memoryking.domain.selectors import bindings
 from memoryking.domain.timeexpr import Understanding, in_ranges, resolve
 
 # Salience: a bounded, documented nudge from use, never a rewrite of the record.
+# How the lexical and semantic channels are combined; the receipt's rank stage names it.
+# Chosen on the pooled LongMemEval oracle set against equal-weight reciprocal-rank fusion
+# (`equal_channel_rrf60_v1`, still selectable); see docs/reference.md. A convex combination of
+# the lexical score over the best lexical score and the similarity scaled over the semantic
+# candidates, equal weights; ties break as before, so the order is deterministic.
+DEFAULT_FUSION: dict[str, Any] = {
+    "name": "convex_lex50_v1",
+    "method": "convex",
+    "lexical": 1,
+    "dense": 1,
+}
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
 RERANK_TEXT_BYTES = 16384  # the reranker's per-text limit
 SALIENCE_WEIGHT = (
@@ -249,13 +261,18 @@ class Retrieval:
         partition the briefing stays lexical, exactly as before.
         """
         embedder = self.s.embedder
-        if embedder is None or "dense" in args:
+        self.lexical_only = None
+        if "dense" in args:
+            return args
+        if embedder is None:
+            self.lexical_only = "no_model_loaded"
             return args
         row = self.db.execute(
             "SELECT 1 FROM embedding_partitions WHERE tenant=? AND project=? AND fingerprint=? AND state='experimental' AND incarnation=?",
             (who["tenant"], args["project"], embedder.fingerprint, self.s.incarnation),
         ).fetchone()
         if row is None:
+            self.lexical_only = "project_not_enabled"
             return args
         key = ("embed", embedder.fingerprint, args["query"])
         if self.models is not None and key not in self.models:
@@ -264,6 +281,7 @@ class Retrieval:
             self.models[key] if self.models is not None else self._embed(embedder, args["query"])
         )
         if vector is None:  # a model failure degrades to lexical retrieval, never a refusal
+            self.lexical_only = "query_embedding_failed"
             return args
         return {
             **args,
@@ -271,13 +289,19 @@ class Retrieval:
                 "fingerprint": embedder.fingerprint,
                 "query_hash": canonical_hash(args["query"]),
                 "vector": vector,
+                "origin": "service_model",
             },
         }
 
     @staticmethod
     def _embed(embedder: Any, query: str) -> list[int] | None:
         try:
-            return cast("list[int]", embedder.embed([query]).vectors[0])
+            batch = (
+                embedder.embed([query], kind="query")
+                if getattr(embedder, "kinds", False)
+                else embedder.embed([query])
+            )
+            return cast("list[int]", batch.vectors[0])
         except Exception:
             return None
 
@@ -1195,9 +1219,14 @@ class Retrieval:
         # observations), then newest recorded first, then the reference for determinism.
         tie: dict[str, tuple[int, int, str]] = {}
         visited: set[str] = set()
+        claim_dense: dict[str, int] = {}
+        if "dense" in args and by_id:
+            claim_dense = dense_claim_scores(
+                self.s, who, args, list(by_id), len(args["dense"]["vector"])
+            )
         for key_id, item in by_id.items():
             score = scorer(item["body"]["text"])
-            if not score or key_id in visited:
+            if (not score and key_id not in claim_dense) or key_id in visited:
                 continue
             group_ids, pending = set(), [key_id]
             while pending:
@@ -1214,8 +1243,12 @@ class Retrieval:
                 claim["conflict_resolution"] = (
                     "incomplete" if group_ids & unresolved else "complete"
                 )
+                if revision in claim_dense:
+                    claim["dense_score_ppm"] = claim_dense[revision]
                 if revision != key_id:
                     claim["selection_reason"] = "conflict_expansion"
+                elif not claim["lexical_score_ppm"]:
+                    claim["selection_reason"] = "semantic_similarity"
                 group.append(claim)
             score = max(scorer(by_id[i]["body"]["text"]) for i in group_ids)
             lead = min(group_ids)
@@ -1319,28 +1352,59 @@ class Retrieval:
                 )
         rank_key = lambda item: (-item[0], tie.get(item[1], (2, 0, item[1])))  # noqa: E731
         ranked.sort(key=rank_key)
+        fusion = getattr(self.s, "fusion", None) or DEFAULT_FUSION
         if "dense" in args:
-            # Equal-channel reciprocal-rank fusion; similarity never changes
-            # authority, policy completeness or registered conflict expansion.
+            # Similarity never changes authority, policy completeness or registered
+            # conflict expansion; it only orders what is already eligible.
+            dense_all = dict(dense_scores)
+            for _, reference, group in ranked:
+                best = max((c.get("dense_score_ppm", 0) for c in group), default=0)
+                if reference not in dense_all and best:
+                    dense_all[reference] = best
+            dense_order = {
+                reference: rank
+                for rank, reference in enumerate(
+                    sorted(dense_all, key=lambda r: (-dense_all[r], r)), 1
+                )
+            }
             lexical_order = {
                 reference: rank
                 for rank, (_, reference, _) in enumerate(
                     (item for item in ranked if item[0] > 0), 1
                 )
             }
-            dense_order = {reference: rank for rank, reference in enumerate(dense_scores, 1)}
-            ranked = [
-                (
-                    (
-                        1000000 // (60 + lexical_order[reference])
-                        if reference in lexical_order
-                        else 0
+            top_lexical = max((item[0] for item in ranked), default=0) or 1
+            d_low, d_high = min(dense_all.values(), default=0), max(dense_all.values(), default=0)
+            spread = (d_high - d_low) or 1
+            lexical_weight, dense_weight = fusion["lexical"], fusion["dense"]
+
+            def fused(score: int, reference: str) -> int:
+                return int(fuse(score, reference))
+
+            def fuse(score: int, reference: str) -> Any:
+                if fusion["method"] == "convex":
+                    lex = score / top_lexical if reference in lexical_order else 0.0
+                    sem = (
+                        (dense_all[reference] - d_low) / spread if reference in dense_order else 0.0
                     )
-                    + (1000000 // (60 + dense_order[reference]) if reference in dense_order else 0),
-                    reference,
-                    group,
+                    return round(
+                        1_000_000
+                        * (lexical_weight * lex + dense_weight * sem)
+                        / (lexical_weight + dense_weight)
+                    )
+                k = fusion["k"]
+                return round(
+                    (lexical_weight * 1_000_000 // (k + lexical_order[reference]))
+                    if reference in lexical_order
+                    else 0
+                ) + round(
+                    (dense_weight * 1_000_000 // (k + dense_order[reference]))
+                    if reference in dense_order
+                    else 0
                 )
-                for _, reference, group in ranked
+
+            ranked = [
+                (fused(score, reference), reference, group) for score, reference, group in ranked
             ]
             ranked.sort(key=rank_key)
         time_trace, ranked = self._time_boost(understanding, window, ranked, observed, rank_key)
@@ -1410,7 +1474,8 @@ class Retrieval:
             # a model failure keeps it too. Authority, policy and conflict expansion are
             # untouched: the model moves records, it never admits or removes one.
             started = self.s.clock.monotonic_ms()
-            head = ranked[:RERANK_WINDOW]
+            window = getattr(self.s, "rerank_window", None) or RERANK_WINDOW
+            head = ranked[:window]
             texts = [
                 (group[0].get("text") or reference)
                 .encode()[:RERANK_TEXT_BYTES]
@@ -1443,7 +1508,7 @@ class Retrieval:
                 rerank_trace.update(
                     state="applied",
                     model=reranker.fingerprint,
-                    window=RERANK_WINDOW,
+                    window=window,
                     candidates=len(head),
                     moved=sum(1 for new, old in enumerate(order) if new != old),
                     duration_ms=max(0, self.s.clock.monotonic_ms() - started),
@@ -1481,6 +1546,17 @@ class Retrieval:
                 "selected_groups": len(presented),
             },
         ]
+        if "dense" not in args and getattr(self, "lexical_only", None):
+            # No semantic channel this time, and the trace says why: briefings use it
+            # automatically whenever a model is loaded and the project is enabled.
+            trace.insert(
+                2,
+                {
+                    "stage": "dense",
+                    "availability": "unavailable",
+                    "reason": self.lexical_only,
+                },
+            )
         if "dense" in args:
             trace[1]["visible_candidates"] = len(lexical_order)
             trace.insert(
@@ -1491,9 +1567,15 @@ class Retrieval:
                     "candidate_limit_reached": dense["candidate_limit_reached"],
                     "availability": dense["availability"],
                     "max_candidates": 256,
+                    **{
+                        key: dense[key]
+                        for key in ("scan", "eligible_vectors", "scan_truncated", "scan_limit")
+                        if key in dense
+                    },
                 },
             )
-            trace[-1]["metric"] = "equal_channel_rrf60_v1"
+            trace[-1]["metric"] = fusion["name"]
+            trace[-1]["fusion"] = {k: v for k, v in fusion.items() if k != "name"}
         # The rank stage stays last among the fixed stages; salience and the reranker
         # sit before it, in the order they ran.
         trace.insert(len(trace) - 1, time_trace)

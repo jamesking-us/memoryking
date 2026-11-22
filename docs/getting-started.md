@@ -88,18 +88,18 @@ To explore a populated synthetic dashboard, install the [contributor environment
 
 The demo prints its loopback URL and a path to its private bootstrap file. Enter that file's one-use code and select project `demo`. Ctrl-C stops the demo and removes its temporary data. Its sample results are illustrative, not real agent work.
 
-## 6. Optional: semantic search
+## 6. Semantic search
 
-Lexical search works out of the box. For meaning-based recall, install the embeddings lock and the pinned model once, then tell the service where the model is:
+Lexical search works out of the box and makes no network request. Meaning-based recall is a two-step install, because the core install is deliberately free of models:
 
 ```sh
+# step 1: the optional runtime (onnxruntime, numpy, tokenizers), hash-pinned
 .venv/bin/python -I -m pip install --require-hashes -r requirements-embeddings.lock
-.venv/bin/python -m memoryking.model_install --destination "$HOME/.memoryking-model"
-.venv/bin/python -m memoryking profile add default --store "$HOME/.memoryking/default/store" --control "$HOME/.memoryking/default/control" --autostart --embedding-model "$HOME/.memoryking-model"
-.venv/bin/python -m memoryking --profile default embeddings enable --project demo
+# step 2: setup (or this command alone) installs the model and turns search on
+.venv/bin/python -m memoryking --profile default semantic enable
 ```
 
-Stop the service (`memoryking --profile default stop`) after adding the model to the profile; it restarts on demand with it. `profile add` replaces the whole profile, so repeat any other setting you want to keep. The same profile can schedule backups: add `--backup-dir "$HOME/.memoryking-backups" --backup-every 1d --backup-keep 14` to `profile add`, and `doctor` will tell you when the newest backup is stale. The service then indexes the project in the background and every briefing searches by meaning as well as by words; `doctor` reports both the runtime and the model. The model runs on your CPU and nothing leaves the machine.
+`semantic enable` states what it is about to download (the model's name, size, licence, host and pinned revision), fetches it into `~/.memoryking/models`, verifies every file against its SHA-256, restarts the daemon so it loads the model, and switches the project on (`--project P`, or every project that has memory). Indexing then runs in the background and `memoryking status` shows its progress on the `Semantic` line. `memoryking setup <host> --project P` does the same when the runtime is installed (skip it with `--no-semantic`); without the runtime it downloads nothing and tells you how to get there. From then on a daemon that finds the installed model loads it without any flag, a briefing uses the semantic channel whenever the project is ready, and falls back to lexical search, saying why in the receipt's trace, when it is not. `memoryking semantic disable --project P` turns a project off. The model runs on your CPU and nothing leaves the machine.
 
 ## Reference: doing it by hand
 

@@ -274,15 +274,15 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `embedding_batch_invalid` | The batch's items do not match the leased job. |
-| `embedding_disabled` | Embeddings are not configured for this project; configure a partition first. |
+| `embedding_disabled` | Semantic search is off for this project; `memoryking semantic enable --project P` turns it on. |
 | `embedding_dispatch_expired` | The embedding lease expired; claim again. |
 | `embedding_fingerprint_mismatch` | The model fingerprint differs from the partition's. |
 | `embedding_generation_conflict` | The partition moved to a new generation; claim again. |
 | `embedding_input_limit` | Embedding inputs are at most 16 KiB each. |
 | `embedding_model_checksum_mismatch` | The downloaded model does not match its manifest checksum. |
 | `embedding_model_invalid` | The model manifest is malformed. |
-| `embedding_model_not_installed` | Install the model with `python -m memoryking.model_install`. |
-| `embedding_model_unsupported` | Only the pinned model manifest is supported. |
+| `embedding_model_not_installed` | Run `memoryking semantic enable` to install and verify the pinned model. |
+| `embedding_model_unsupported` | That model has no pinned manifest; see `memoryking semantic enable`. |
 | `embedding_partition_limit` | Too many embedding partitions. |
 | `embedding_partition_unavailable` | No partition for this project and fingerprint. |
 | `embedding_provider_failure` | The embedding runtime failed; see the worker log. |
@@ -290,7 +290,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `embedding_query_mismatch` | The query vector's dimension or fingerprint does not match the partition. |
 | `embedding_release_invalid` | The embedding release is malformed. |
 | `embedding_runtime_mismatch` | The installed runtime differs from the pinned version. |
-| `embedding_runtime_unavailable` | Install the embeddings lock to run the local model. |
+| `embedding_runtime_unavailable` | Install the embeddings extra (requirements-embeddings.lock) to run the local model. |
 | `embedding_source_unavailable` | The observation to embed is missing or purged. |
 | `embedding_vector_invalid` | Vectors must have the model's dimension and finite values. |
 
@@ -843,7 +843,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `reranker_failure` | The reranker runtime failed on this request; the briefing fell back to the fused order. |
-| `reranker_input_limit` | The reranker scores at most 32 texts of at most 16 KiB each per call. |
+| `reranker_input_limit` | The reranker scores at most 64 texts of at most 16 KiB each per call. |
 | `reranker_model_checksum_mismatch` | The reranker files do not match the manifest checksums. |
 | `reranker_model_invalid` | The reranker model could not be loaded by the pinned runtime. |
 | `reranker_model_not_installed` | Install the reranker with `python -m memoryking.model_install --model reranker --destination DIR`. |

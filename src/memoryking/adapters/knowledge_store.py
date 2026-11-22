@@ -624,6 +624,10 @@ class Knowledge:
                 "UPDATE attestations SET statement=NULL WHERE tenant=? AND revision=?",
                 (tenant, revision),
             )
+            self.db.execute(
+                "DELETE FROM embedding_vectors WHERE tenant=? AND kind='claim' AND subject=?",
+                (tenant, revision),
+            )
         self.db.execute(
             "UPDATE knowledge_state SET generation=generation+1 WHERE tenant=?", (tenant,)
         )

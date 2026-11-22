@@ -13,7 +13,7 @@ from memoryking.adapters.local_embeddings import LocalOnnxEmbedding
 from memoryking.adapters.local_ipc import Server
 from memoryking.adapters.local_store import LocalStore
 from memoryking.contracts.canonical import canonical_hash
-from memoryking.domain.embeddings import cosine_ppm
+from memoryking.domain.embeddings import cosine_ppm, unpack
 from memoryking.domain.usage import UsageRecord, summarize
 from memoryking.embedding_worker import run_once
 from memoryking.sdk import LocalClient
@@ -81,10 +81,8 @@ def main():
                 assert all(item["status"] == "complete" for item in backfill[:-1])
                 assert backfill[-1]["ready"]
                 vectors = {
-                    ids[row["observation"]]: json.loads(row["vector_json"])
-                    for row in store.db.execute(
-                        "SELECT observation,vector_json FROM embedding_items"
-                    )
+                    ids[row["subject"]]: unpack(row["vector"], 384)
+                    for row in store.db.execute("SELECT subject,vector FROM embedding_vectors")
                 }
                 records = [
                     UsageRecord(

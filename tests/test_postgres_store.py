@@ -28,6 +28,8 @@ LATER_TABLES = {
     "pins",
     "consolidation_runs",
     "unreviewed_tier",
+    "embedding_vectors",
+    "embedding_skips",
 }
 
 
@@ -547,7 +549,7 @@ class PostgresStoreTests(unittest.TestCase):
             control = store.control
         self.assertEqual(2, manifest["blob_index"]["count"])
         self.assertNotIn("blobs", manifest)
-        self.assertEqual(12, manifest["schema"])
+        self.assertEqual(13, manifest["schema"])
         index = (archive / "blob-index").read_bytes()
         digests = index.decode().splitlines()
 
