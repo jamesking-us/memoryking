@@ -85,6 +85,22 @@ def install_mcp_memory(root: Path, force: bool) -> None:
     print("note: @modelcontextprotocol/server-memory needs Node 24 or later to run")
 
 
+def fetch_commit(repo: str, commit: str, dest: Path, env: dict) -> None:
+    """A shallow checkout of one commit (the plugin or hook sources a product's docs install)."""
+    dest.mkdir(parents=True)
+    env = {**env, "GIT_TERMINAL_PROMPT": "0"}
+    run(["git", "init", "-q"], cwd=dest, env=env)
+    run(["git", "fetch", "-q", "--depth", "1", repo, commit], cwd=dest, env=env)
+    run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=dest, env=env)
+
+
+# Plugin and hook sources, at the release tags that match the pinned packages.
+BASIC_MEMORY_REPO = "https://github.com/basicmachines-co/basic-memory.git"
+BASIC_MEMORY_PLUGIN_COMMIT = "c9bd187b83baba549d5cd16bacc180f8023d51c8"  # tag v1.0.0
+MMS_REPO = "https://github.com/doobidoo/mcp-memory-service.git"
+MMS_HOOKS_COMMIT = "d22f074da21d18385541bf2c77061d79518557b0"  # tag v13.0.0
+
+
 def install_basic_memory(root: Path, force: bool) -> None:
     t = root / "mk-lh-basic-memory"
     if not fresh(t, force):
@@ -106,6 +122,7 @@ def install_basic_memory(root: Path, force: bool) -> None:
         env=env,
     )
     run([t / "venv/bin/basic-memory", "--version"], env=env)
+    fetch_commit(BASIC_MEMORY_REPO, BASIC_MEMORY_PLUGIN_COMMIT, t / "src", env)
 
 
 def install_claude_mem(root: Path, force: bool) -> None:
@@ -149,6 +166,7 @@ def install_mcp_memory_service(root: Path, force: bool) -> None:
         ],
         env=env,
     )
+    fetch_commit(MMS_REPO, MMS_HOOKS_COMMIT, t / "src", env)
 
 
 def install_mem0(root: Path, force: bool) -> None:

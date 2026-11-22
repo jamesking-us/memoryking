@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -29,10 +30,15 @@ def _slug(text: str) -> str:
 
 
 class BasicMemory:
-    name = NAME
+    """`plugin=True` (the default, name `basic-memory`) is the MCP server plus the Claude Code plugin
+    the README tells a Claude Code user to install; `plugin=False` (name `basic-memory-mcp`) is
+    the MCP server alone."""
+
     needs_llm = False
 
-    def __init__(self) -> None:
+    def __init__(self, plugin: bool = True) -> None:
+        self.plugin = plugin
+        self.name = NAME if plugin else NAME + "-mcp"
         self.home = c.install_dir(NAME)
         self.bin = self.home / "venv/bin/basic-memory"
         self.version = c.dist_version(self.home / "venv", "basic_memory")
@@ -45,6 +51,16 @@ class BasicMemory:
     @staticmethod
     def installed() -> bool:
         return (c.install_dir(NAME) / "venv/bin/basic-memory").is_file()
+
+    @staticmethod
+    def plugin_dir() -> Path:
+        return c.install_dir(NAME) / "src/plugins/claude-code"
+
+    @staticmethod
+    def plugin_available() -> bool:
+        return (BasicMemory.plugin_dir() / "hooks/hooks.json").is_file() and bool(
+            shutil.which("uv")
+        )
 
     # -- lifecycle -------------------------------------------------------------
     def _env_vars(self) -> dict[str, str]:
@@ -167,18 +183,55 @@ class BasicMemory:
         )
 
     # -- host ------------------------------------------------------------------
+    def _hooks_settings(self) -> dict:
+        """The plugin's own hooks.json: `${CLAUDE_PLUGIN_ROOT}` filled in and `uv` given as an
+        absolute path. The hooks are PEP 723 scripts run with `uv run --script`."""
+        plugin = self.plugin_dir()
+        uv = shutil.which("uv") or "uv"
+        text = (plugin / "hooks/hooks.json").read_text()
+        text = text.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin)).replace('"uv run ', f'"{uv} run ')
+        return {"hooks": json.loads(text)["hooks"]}
+
+    def _plugin_files(self) -> dict[str, str]:
+        plugin = self.plugin_dir()
+        files: dict[str, str] = {}
+        # The plugin's skills (a plugin's skills are namespaced `basic-memory:`; as project
+        # skills they carry their own names). The `basic-memory` output style is documented as
+        # opt-in and is not enabled.
+        for f in sorted((plugin / "skills").rglob("*")):
+            if f.is_file():
+                files[f".claude/skills/{f.relative_to(plugin / 'skills').as_posix()}"] = (
+                    f.read_text()
+                )
+        # Where the hooks read their configuration: a `basicMemory` block in project settings.
+        files[".claude/settings.json"] = json.dumps(
+            {"basicMemory": {"primaryProject": PROJECT, "captureFolder": "sessions"}}, indent=2
+        )
+        return files
+
     def host(self, workdir: Path, scope: Scope) -> HostConfig:
         env = self._env_vars()
+        mcp = {
+            "mcpServers": {"basic-memory": {"command": str(self.bin), "args": ["mcp"], "env": env}}
+        }
+        if not (self.plugin and self.plugin_available()):
+            return HostConfig(
+                mcp=mcp,
+                settings={},
+                files={},
+                allowed_tools=["mcp__basic-memory"],
+                env={},
+                prompt_note="",
+            )
         return HostConfig(
-            mcp={
-                "mcpServers": {
-                    "basic-memory": {"command": str(self.bin), "args": ["mcp"], "env": env}
-                }
-            },
-            settings={},
-            files={},
-            allowed_tools=["mcp__basic-memory"],
-            env={},
+            mcp=mcp,
+            settings=self._hooks_settings(),
+            files=self._plugin_files(),
+            allowed_tools=["mcp__basic-memory", "Skill"],
+            # BM_BIN is the plugin's documented override: the hooks run the pinned binary against
+            # this instance instead of resolving basic-memory again; UV_CACHE_DIR keeps uv's cache
+            # out of the home directory.
+            env={**env, "BM_BIN": str(self.bin), "UV_CACHE_DIR": str(self.home / "uvcache")},
             prompt_note="",
         )
 
@@ -250,8 +303,12 @@ class BasicMemory:
         return c.dir_size(self.root) if self.root else 0
 
 
-def make() -> BasicMemory:
-    return BasicMemory()
+def make(plugin: bool = True) -> BasicMemory:
+    return BasicMemory(plugin)
+
+
+def make_mcp_only() -> BasicMemory:
+    return BasicMemory(plugin=False)
 
 
 def installed() -> bool:

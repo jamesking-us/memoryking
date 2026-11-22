@@ -4,14 +4,18 @@ local memory server for coding agents.
 SQLite with sqlite-vec, a local ONNX embedding model, no chat model needed for storing or
 searching. Seeding uses its own session tool, `memory_store_session(turns, session_id, tags,
 metadata, agent_id)`, over MCP stdio; search is `memory_search`; deletion is `memory_delete` by
-content hash. Its Claude Code quick start is one command, `claude mcp add memory -- memory
-server`; the optional session hooks (`claude-hooks/`, installed from a repository checkout) are not
-part of that quick start and are not included here; SYSTEMS.md says so.
+content hash. Its `claude-hooks/README.md` recommends installing it as a Claude Code plugin
+(`claude-hooks/PLUGIN.md`: an MCP server entry plus SessionStart, SessionEnd, UserPromptSubmit and
+Stop hooks that talk to the service's HTTP API), so the default variant (`mcp-memory-service`)
+returns that; `mcp-memory-service-mcp` is the MCP server alone (the main README's one-line quick
+start).
 """
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Iterable
@@ -23,10 +27,12 @@ NAME = "mcp-memory-service"
 
 
 class McpMemoryService:
-    name = NAME
     needs_llm = False
 
-    def __init__(self) -> None:
+    def __init__(self, plugin: bool = True) -> None:
+        self.plugin = plugin
+        self.name = NAME if plugin else NAME + "-mcp"
+        self.http_port = 0
         self.home = c.install_dir(NAME)
         self.bin = self.home / "venv/bin/memory"
         self.version = c.dist_version(self.home / "venv", "mcp_memory_service")
@@ -39,6 +45,16 @@ class McpMemoryService:
     @staticmethod
     def installed() -> bool:
         return (c.install_dir(NAME) / "venv/bin/memory").is_file()
+
+    @staticmethod
+    def hooks_source() -> Path:
+        return c.install_dir(NAME) / "src/claude-hooks"
+
+    @staticmethod
+    def plugin_available() -> bool:
+        return (McpMemoryService.hooks_source() / ".claude-plugin/hooks.json").is_file() and bool(
+            shutil.which("node")
+        )
 
     def _vars(self) -> dict[str, str]:
         assert self.root is not None
@@ -55,6 +71,56 @@ class McpMemoryService:
         (self.root / "home").mkdir(parents=True, exist_ok=True)
         self.procs = c.Procs(self.root)
         self.reads = self.writes = 0
+        if self.plugin and self.plugin_available():
+            self._start_plugin_side()
+
+    def _start_plugin_side(self) -> None:
+        """What the plugin's SessionStart hook (`ensure-server.js`) would otherwise start: the HTTP
+        server the hooks talk to, on this instance's database; and a copy of the hook package whose
+        bundled config.json (the fallback the hooks use when `~/.claude/hooks/config.json` does
+        not exist) names this instance's endpoint."""
+        assert self.root is not None and self.procs is not None
+        self.http_port = c.free_port()
+        # The README's local-use form is `MCP_ALLOW_ANONYMOUS_ACCESS=true memory server --http`
+        # (loopback only); the hooks' `apiKey: auto-detect` placeholder is not a key.
+        env = c.clean_env(
+            {**self._vars(), "MCP_ALLOW_ANONYMOUS_ACCESS": "true"}, home=self.root / "home"
+        )
+        self.procs.start(
+            [
+                str(self.bin),
+                "server",
+                "--http",
+                "--http-host",
+                "127.0.0.1",
+                "--http-port",
+                str(self.http_port),
+            ],
+            env=env,
+            cwd=self.root,
+            log=self.root / "http.log",
+        )
+        deadline = time.monotonic() + 300
+        while True:
+            try:
+                c.http_json(f"http://127.0.0.1:{self.http_port}/api/health", timeout=3)
+                break
+            except Exception:
+                if time.monotonic() > deadline:
+                    raise RuntimeError(
+                        f"memory HTTP server did not start; see {self.root}/http.log"
+                    ) from None
+                time.sleep(0.5)
+        dest = self.root / "plugin"
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(
+            self.hooks_source(),
+            dest,
+            ignore=shutil.ignore_patterns("tests", "test-*.js", "debug-*.js", "*.ps1"),
+        )
+        cfg = json.loads((dest / "config.json").read_text())
+        cfg["memoryService"]["http"]["endpoint"] = f"http://127.0.0.1:{self.http_port}"
+        (dest / "config.json").write_text(json.dumps(cfg, indent=2))
 
     def _client(self) -> c.McpStdio:
         if self.client is None:
@@ -109,17 +175,55 @@ class McpMemoryService:
         )
 
     # -- host ------------------------------------------------------------------
+    def _hooks_settings(self) -> dict:
+        """`.claude-plugin/hooks.json` with the plugin root filled in and `node` absolute."""
+        assert self.root is not None
+        node = shutil.which("node") or "node"
+        text = (self.hooks_source() / ".claude-plugin/hooks.json").read_text()
+        text = text.replace("${CLAUDE_PLUGIN_ROOT}", str(self.root / "plugin")).replace(
+            '"node ', f'"{node} '
+        )
+        return json.loads(text)
+
     def host(self, workdir: Path, scope: Scope) -> HostConfig:
+        env = self._vars()
+        if not (self.plugin and self.plugin_available() and self.http_port):
+            return HostConfig(
+                mcp={
+                    "mcpServers": {
+                        "memory": {"command": str(self.bin), "args": ["server"], "env": env}
+                    }
+                },
+                settings={},
+                files={},
+                allowed_tools=["mcp__memory"],
+                env={},
+                prompt_note="",
+            )
+        # The plugin's .mcp.json runs `python -m mcp_memory_service.server` with the hybrid
+        # backend, which syncs to Cloudflare (an account); the local sqlite-vec backend is used
+        # instead, on the same database the HTTP server and the hooks use.
+        py = self.home / "venv/bin/python"
+        skill = (self.hooks_source() / "skills/remember-session/SKILL.md").read_text()
         return HostConfig(
             mcp={
                 "mcpServers": {
-                    "memory": {"command": str(self.bin), "args": ["server"], "env": self._vars()}
+                    "memory": {
+                        "command": str(py),
+                        "args": ["-m", "mcp_memory_service.server"],
+                        "env": env,
+                    }
                 }
             },
-            settings={},
-            files={},
-            allowed_tools=["mcp__memory"],
-            env={},
+            settings=self._hooks_settings(),
+            files={".claude/skills/remember-session/SKILL.md": skill},
+            allowed_tools=["mcp__memory", "Skill"],
+            # ensure-server.js only probes this endpoint; the adapter keeps the server up.
+            env={
+                **env,
+                "MCP_MEMORY_ENDPOINT": f"http://127.0.0.1:{self.http_port}",
+                "ENSURE_SERVER_NO_SPAWN": "1",
+            },
             prompt_note="",
         )
 
@@ -155,8 +259,12 @@ class McpMemoryService:
         return c.dir_size(self.root) if self.root else 0
 
 
-def make() -> McpMemoryService:
-    return McpMemoryService()
+def make(plugin: bool = True) -> McpMemoryService:
+    return McpMemoryService(plugin)
+
+
+def make_mcp_only() -> McpMemoryService:
+    return McpMemoryService(plugin=False)
 
 
 def installed() -> bool:
