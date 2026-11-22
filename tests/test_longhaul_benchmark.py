@@ -1029,6 +1029,14 @@ class IsolationTests(unittest.TestCase):
         native = lb.agent_env(Path("/tmp/home-x"), {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": ""})
         self.assertNotIn("CLAUDE_CODE_DISABLE_AUTO_MEMORY", native)
 
+    def test_the_native_arms_claude_md_counts_as_memory_that_entered_the_context(self):
+        class Host:
+            files = {"CLAUDE.md": "x" * 123}
+
+        self.assertEqual(lb.auto_loaded_chars("native", Host()), 123)
+        for arm in ("off", "notes", "log", "memoryking", "mcp_memory"):
+            self.assertEqual(lb.auto_loaded_chars(arm, Host()), 0)
+
     def test_a_work_directory_under_a_claude_md_is_refused(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             (Path(tmp) / "CLAUDE.md").write_text("instructions")

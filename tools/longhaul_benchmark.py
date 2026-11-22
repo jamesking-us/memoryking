@@ -316,6 +316,12 @@ def materialize(workdir: Path, bench: Path, task: gen.Task, host, home: Path) ->
     return prompt_file
 
 
+def auto_loaded_chars(arm: str, host) -> int:
+    """Characters of memory the host itself puts into the context at the start, which the
+    event stream does not show as a tool or hook result: the `native` arm's `CLAUDE.md`."""
+    return len(host.files.get("CLAUDE.md", "")) if arm == "native" else 0
+
+
 def snapshot_notes(workdir: Path, baseline: dict[str, str]) -> list[str]:
     """Files the agent added or changed that are not code, for the record."""
     code = {".py", ".pyi", ".json", ".toml", ".cfg", ".ini", ".txt", ".lock"}
@@ -428,6 +434,11 @@ def cmd_run(args) -> dict:
         stream = (bench / "agent.stdout").read_text(errors="replace")
         graded = grading.check(task, workdir, collector.hits if collector else [])
         scan = grading.analyze(task, stream, memory_paths)
+        loaded = auto_loaded_chars(args.arm, host)
+        if loaded and scan["has_result"]:
+            scan["auto_loaded_chars"] = loaded
+            scan["memory_chars"] += loaded
+            scan["memory_reads"] += 1
         cls = grading.classify(task, graded, scan, ran)
         used = {}
         try:
