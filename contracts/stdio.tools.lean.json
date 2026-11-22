@@ -110,6 +110,18 @@
             "maxLength": 40,
             "description": "Brief as the project stood then: a date (YYYY-MM-DD) or ISO date-time. Omit for now."
           },
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Only memories observed at or after this date (YYYY-MM-DD) or ISO date-time."
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Only memories observed at or before this; a bare date means the end of that day."
+          },
           "salience": {
             "type": "boolean",
             "description": "Let your own recent use of memories nudge the ranking (bounded, reported per item). Default false."

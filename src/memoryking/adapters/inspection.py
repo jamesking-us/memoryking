@@ -101,7 +101,7 @@ class Inspection:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     result["receipt"],
@@ -1117,7 +1117,7 @@ class Inspection:
             result = {"observation": args["observation"], "status": "released", "replayed": False}
         self.s._apply(self.s._journal(record), at)
         self.db.execute(
-            "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
         )
         return result
@@ -1173,7 +1173,7 @@ class Inspection:
         )
         result = {"observation": args["observation"], "status": "purged", "replayed": False}
         self.db.execute(
-            "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
         )
         return result

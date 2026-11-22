@@ -374,3 +374,21 @@ def release_all(db: Any, dialect: Any, tenant: str, incarnation: str, now: int) 
         + release_jobs(db, tenant)
         + release_artifacts(db, tenant, now)
     )
+
+
+# The record types whose size or age the functions above bound, with how: a window of revisions,
+# a time to live, the projection frontier, or the artifact a row needs. The record-type registry
+# declares the same set (tests/test_records.py asserts they agree), so a new type that holds
+# history is not forgotten here.
+RETENTION_RULES = {
+    "checkpoints": "window",
+    "experience_records": "window",
+    "jobs": "frontier",
+    "handoff_views": "orphan",
+    "rendered_artifacts": "expire",
+    "retries": "expire",
+    "receipts": "expire",
+    "processing_usage": "expire",
+    "egress_audit": "expire",
+    "session_summaries": "expire",
+}

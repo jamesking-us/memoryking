@@ -188,6 +188,57 @@ class SetupTests(unittest.TestCase):
         self.mk("setup", "claude-code", "--project", "demo", "--remove")
         self.assertEqual(original, (claude / "settings.json").read_bytes())
 
+    def fake_claude(self, exit_code=0):
+        """A `claude` executable that records its arguments, first on PATH."""
+        bin_dir = self.home / f"bin{exit_code}"
+        bin_dir.mkdir()
+        record = self.home / f"claude-args{exit_code}.json"
+        script = bin_dir / "claude"
+        script.write_text(
+            f"#!{sys.executable}\n"
+            "import json, sys\n"
+            f"json.dump(sys.argv[1:], open({str(record)!r}, 'w'))\n"
+            f"if {exit_code}:\n"
+            "    sys.stderr.write('server already exists\\n')\n"
+            f"sys.exit({exit_code})\n"
+        )
+        script.chmod(0o755)
+        return {**self.env, "PATH": f"{bin_dir}:{self.env['PATH']}"}, record
+
+    def test_register_runs_the_host_command_only_when_asked(self):
+        env, record = self.fake_claude()
+        plain = self.mk("setup", "claude-code", "--project", "demo", env=env)
+        self.assertFalse(record.exists())
+        self.assertIn("claude mcp add-json memoryking ", plain.stdout)
+        done = self.mk("setup", "claude-code", "--project", "demo", "--register", env=env)
+        arguments = json.loads(record.read_text())
+        self.assertEqual(["mcp", "add-json", "memoryking"], arguments[:3])
+        entry = json.loads(arguments[3])
+        self.assertEqual(4, len(arguments))
+        self.assertEqual("stdio", entry["type"])
+        self.assertIn("default-agent", entry["args"])
+        self.assertEqual("lean", entry["args"][entry["args"].index("--profile") + 1])
+        self.assertIn("registered with `claude mcp add-json`", done.stdout)
+        self.assertNotIn("run the command below", done.stdout)
+
+    def test_register_dry_run_and_a_refusal_do_not_hide_the_command(self):
+        env, record = self.fake_claude()
+        dry = self.mk(
+            "setup", "claude-code", "--project", "demo", "--register", "--dry-run", env=env
+        )
+        self.assertFalse(record.exists())
+        self.assertIn("would run: claude mcp add-json memoryking ", dry.stdout)
+        refusing, _ = self.fake_claude(exit_code=1)
+        done = self.mk("setup", "claude-code", "--project", "demo", "--register", env=refusing)
+        self.assertIn("refused (server already exists)", done.stdout)
+        self.assertIn("claude mcp add-json memoryking ", done.stdout)
+
+    def test_register_without_claude_on_the_path_prints_the_command(self):
+        env = {**self.env, "PATH": "/usr/bin:/bin"}
+        done = self.mk("setup", "claude-code", "--project", "demo", "--register", env=env)
+        self.assertIn("`claude` is not on your PATH", done.stdout)
+        self.assertIn("claude mcp add-json memoryking ", done.stdout)
+
     def test_generic_prints_the_command_and_json_and_writes_no_host_file(self):
         done = self.mk("setup", "generic", "--project", "demo")
         self.assertIn('"mcpServers"', done.stdout)

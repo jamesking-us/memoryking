@@ -68,7 +68,7 @@ class Processing:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -124,7 +124,7 @@ class Processing:
             ):
                 raise LocalError("usage_retention_limit")
         self.db.execute(
-            "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO processing_usage(tenant,id,project,principal,incarnation,provider,fingerprint,stage,status,input_tokens,cached_input_tokens,output_tokens,cost_microusd,duration_ms,request_hash,output_hash,dependencies,created,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 identifier,
@@ -201,7 +201,7 @@ class Processing:
         )
         result.update(usage_attempt=usage, assurance="actor_reported", automatic_acceptance=False)
         self.db.execute(
-            "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
         )
         return result

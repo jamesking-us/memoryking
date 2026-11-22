@@ -57,7 +57,7 @@ class SharedProcessingTransportTests(unittest.TestCase):
                 "key": "worker-config",
                 "args": {
                     "project": "demo",
-                    "model": "minilm-l6-v2-onnx",
+                    "model": "bge-small-en-v1-5-onnx",
                     "state": "experimental",
                     "expected_generation": 0,
                 },

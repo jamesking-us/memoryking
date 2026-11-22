@@ -102,6 +102,24 @@ test("client refuses unsafe URLs and ambiguous credentials before any request", 
   assert.equal(connected.project, "p");
 });
 
+test("client asks the shared MCP endpoint for the full profile by name", async () => {
+  const seen = [];
+  const memory = new MemoryKing({
+    url: "https://memory.example.test",
+    tenant: "t",
+    project: "p",
+    credential: "x",
+    fetch: async (url) => {
+      seen.push(String(url));
+      return new Response("{}", { status: 500 });
+    },
+  });
+  await memory.context().catch(() => undefined);
+  assert.deepEqual(seen, [
+    "https://memory.example.test/v1/tenants/t/projects/p/mcp?profile=full",
+  ]);
+});
+
 test("local daemon: recall over the loopback agent endpoint", async () => {
   const daemon = await service("local");
   try {

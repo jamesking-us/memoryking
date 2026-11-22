@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Self
 
 from memoryking.adapters import blobs as blobfiles
+from memoryking.adapters.blobs import FileBlobStore
 from memoryking.adapters.local_files import (
     Control,
     Ownership,
@@ -31,6 +32,8 @@ from memoryking.adapters.local_files import (
     sync_dir,
     write_blob_index,
 )
+from memoryking.application.blob_store import BlobStore
+from memoryking.application.records import retire_for_new_history
 from memoryking.application.storage import SQLiteDialect
 from memoryking.application.store_core import (  # noqa: F401
     ARTIFACT_BYTES_LIMIT,
@@ -145,11 +148,13 @@ class LocalStore(StoreCore):
         clock: Clock | None = None,
         fault: Callable[[str], None] | None = None,
         instance_id: str | None = None,
+        blobs: BlobStore | None = None,
     ):
         paths(root, control)
         private_dir(root)
         private_dir(control)
         self.root, self.control_path = root, control
+        self.blobs = blobs if blobs is not None else FileBlobStore(root)
         self.lease = lease_holder(control, instance_id)
         self.owner = Ownership(root)
         try:
@@ -293,7 +298,7 @@ class LocalStore(StoreCore):
             db.executescript(Path(__file__).with_name("local_schema.sql").read_text())
             db.execute("BEGIN IMMEDIATE")
             db.executemany(
-                "INSERT INTO meta VALUES (?,?)",
+                "INSERT INTO meta(key,value) VALUES (?,?)",
                 [
                     ("store", store),
                     ("incarnation", incarnation),
@@ -303,11 +308,11 @@ class LocalStore(StoreCore):
             )
             db.execute("INSERT INTO tenants(tenant) VALUES (?)", (tenant,))
             db.execute(
-                "INSERT INTO grants VALUES (?,?,?,?,?,?)",
+                "INSERT INTO grants(tenant,principal,project,capabilities,starts,expires) VALUES (?,?,?,?,?,?)",
                 (tenant, principal, "*", json.dumps(sorted(CAPABILITIES)), None, None),
             )
             db.execute(
-                "INSERT INTO projections VALUES (?,?,?,?,?,?)",
+                "INSERT INTO projections(tenant,incarnation,channel,configuration,generation,frontier) VALUES (?,?,?,?,?,?)",
                 (tenant, incarnation, "audit_probe", "v1", 1, 0),
             )
             db.commit()
@@ -821,16 +826,11 @@ class LocalStore(StoreCore):
                 )
             }
             removed = 0
-            for directory in (self.root / "blobs").iterdir():
-                private_dir(directory)
-                touched = {directory}
-                for name, path in blobfiles.iterate(directory):
-                    private_file(path)
-                    if (directory.name, name) not in live:
-                        path.unlink()
-                        touched.add(path.parent)
-                        removed += 1
-                blobfiles.sync_directories(touched)
+            for tenant in self.blobs.tenants():
+                for digest in self.blobs.digests(tenant):
+                    if (tenant, digest) not in live:
+                        removed += self.blobs.delete(tenant, digest)
+                self.blobs.sync()
             if not self.db.in_transaction:
                 self.db.execute("UPDATE meta SET value='0' WHERE key='gc_pending'")
             return removed
@@ -905,9 +905,8 @@ class LocalStore(StoreCore):
                 private_dir(output.parent.parent, create=True)
                 private_dir(output.parent, create=True)
                 touched.update({output.parent, output.parent.parent})
-            source = blobfiles.blob_path(self.root, tenant, digest)
             try:
-                how, size = self._place_blob(earlier, tenant, digest, source, output)
+                how, size = self._place_blob(earlier, tenant, digest, output)
             except FileNotFoundError:
                 # A purge deleted the file after the snapshot. The snapshot still lists it, and
                 # a restore replays the purge from the control journal, so it is left out;
@@ -950,7 +949,6 @@ class LocalStore(StoreCore):
         earlier: tuple[Path, set[str]] | None,
         tenant: str,
         digest: str,
-        source: Path,
         output: Path,
     ) -> tuple[str, int]:
         if earlier is not None:
@@ -960,8 +958,10 @@ class LocalStore(StoreCore):
                 f"blobs/{tenant}/{digest}",
             ):
                 if relative in held:
-                    return blobfiles.link_or_copy(root / relative, source, output, digest)
-        return "copied", blobfiles.copy_verified(source, output, digest)
+                    size = blobfiles.link_previous(root / relative, output, digest)
+                    if size is not None:
+                        return "linked", size
+        return "copied", self.blobs.copy_to(tenant, digest, output)
 
     @classmethod
     def restore(
@@ -973,8 +973,10 @@ class LocalStore(StoreCore):
         fault: Callable[[str], None] | None = None,
         clock: Clock | None = None,
         lost_anchor_journal_head: str | None = None,
+        blob_store: BlobStore | None = None,
     ) -> Path:
         """Explicit offline fresh-history activation. Missing anchor/journal fails closed."""
+        store_blobs = blob_store if blob_store is not None else FileBlobStore(root)
         paths(root, control)
         private_dir(root)
         private_dir(control)
@@ -1050,21 +1052,15 @@ class LocalStore(StoreCore):
             with (backup / "store.sqlite").open("rb") as stream:
                 blobfiles.write_durable(root / "store.sqlite", stream, manifest["database_sha256"])
             sync_dir(root)
-            touched: set[Path] = set()
             for relative in blobs:
                 tenant_name, digest = relative.split("/")[1], blobfiles.digest_of(relative)
-                tenant_directory = root / "blobs" / tenant_name
-                private_dir(tenant_directory, create=True)
-                shard = blobfiles.shard_directory(tenant_directory, digest)
                 with (backup / relative).open("rb") as stream:
-                    blobfiles.write_durable(shard / digest, stream, digest)
-                # A flat copy of the same blob (the layout before sharding) is now redundant.
-                (tenant_directory / digest).unlink(missing_ok=True)
-                touched.update({shard, tenant_directory})
-            blobfiles.sync_directories(touched)
+                    store_blobs.put_stream(tenant_name, digest, stream)
+            store_blobs.sync()
             # Build an unavailable instance under the already-held ownership locks.
             recovery = cls.__new__(cls)
             recovery.root, recovery.control_path = root, control
+            recovery.blobs = store_blobs
             recovery.owner, recovery.control_owner = owner, controller_owner
             recovery.control, recovery.anchor = controller, anchor
             recovery.clock, recovery.lock = clock or SystemClock(), threading.RLock()
@@ -1077,17 +1073,7 @@ class LocalStore(StoreCore):
                 recovery.db.execute(
                     "UPDATE meta SET value=? WHERE key='incarnation'", (recovery.incarnation,)
                 )
-                recovery.db.execute("UPDATE retries SET result=NULL")
-                recovery.db.execute("DELETE FROM instance_lease")
-                recovery.db.execute("DELETE FROM receipts")
-                recovery.db.execute(
-                    "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]'"
-                )
-                recovery.db.execute(
-                    "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]'"
-                )
-                recovery.db.execute("UPDATE handoffs SET state='retired'")
-                recovery._retire_optional()
+                retire_for_new_history(recovery.db, recovery.incarnation)
                 for (tenant,) in recovery.db.execute("SELECT tenant FROM tenants").fetchall():
                     recovery._reindex(tenant)
                 recovery.db.commit()
@@ -1124,24 +1110,3 @@ class LocalStore(StoreCore):
             owner.close()
             if controller_owner:
                 controller_owner.close()
-
-    def _retire_optional(self, tenant: str | None = None) -> None:
-        """A restored history cannot reuse projected vectors, leases or adapter bases.
-
-        A local restore replaces the whole store's history, so it passes no tenant and the
-        statements cover every tenant; the shared restore names its tenant in each one.
-        """
-        scope, bound = (" WHERE tenant=?", (tenant,)) if tenant else ("", ())
-        self.db.execute(
-            "UPDATE ranking_state SET configuration=NULL,version=version+1" + scope, bound
-        )
-        self.db.execute("DELETE FROM adapter_bases" + scope, bound)
-        self.db.execute("DELETE FROM embedding_items" + scope, bound)
-        self.db.execute("DELETE FROM embedding_vectors" + scope, bound)
-        self.db.execute("DELETE FROM embedding_skips" + scope, bound)
-        self.db.execute("DELETE FROM embedding_jobs" + scope, bound)
-        self.db.execute(
-            "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0"
-            + scope,
-            (self.incarnation, *bound),
-        )

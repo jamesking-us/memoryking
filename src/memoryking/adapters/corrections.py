@@ -52,7 +52,7 @@ class Corrections:
         self, who: dict[str, Any], request: dict[str, Any], replacement: str, position: int
     ) -> None:
         self.db.execute(
-            "INSERT INTO supersessions VALUES (?,?,?,?,?,?)",
+            "INSERT INTO supersessions(tenant,replacement,superseded,project,principal,recorded) VALUES (?,?,?,?,?,?)",
             (
                 who["tenant"],
                 replacement,
@@ -115,7 +115,7 @@ class Corrections:
             return {"request": open_one["id"], "observation": row["id"], "state": "open"}
         ident = uid("ret")
         self.db.execute(
-            "INSERT INTO retirement_requests VALUES (?,?,?,?,?,?,?,?,NULL,NULL)",
+            "INSERT INTO retirement_requests(tenant,id,project,observation,requester,note,state,requested,decided_by,decided) VALUES (?,?,?,?,?,?,?,?,NULL,NULL)",
             (tenant, ident, args["project"], row["id"], who["principal"], args["note"], "open", at),
         )
         position = self.s._event(tenant, "retirement_requested", row["id"], at, who["principal"])

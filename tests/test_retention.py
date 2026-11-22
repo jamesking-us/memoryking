@@ -379,14 +379,15 @@ class PostgresRetentionTests(RetentionCases, pg.NativeFixture):
             with db.transaction():
                 db.execute("SET LOCAL search_path=memoryking,pg_catalog")
                 db.execute("DROP TABLE receipt_observations")
-                # Schema 15 created these; a real schema 13 database has neither.
+                # Schemas 15 and 16 created these; a real schema 13 database has none of them.
                 db.execute("DROP TABLE consolidation_runs, unreviewed_tier")
+                db.execute("DROP TABLE embedding_vectors, embedding_skips")
                 db.execute("UPDATE shared_meta SET value='13' WHERE key='schema'")
             migrate(db)
             version = db.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()[0]
-        self.assertEqual("15", version)
+        self.assertEqual("16", version)
         self.assertEqual(before, self.count("receipt_observations"))
         # Row-level security is forced again after the copy.
         with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as db:

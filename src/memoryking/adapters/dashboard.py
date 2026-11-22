@@ -465,7 +465,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             store.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     uid("rcpt"),

@@ -22,7 +22,6 @@ the statistics, one above it is not yet, so capture and purge stay exact at any 
 
 from __future__ import annotations
 
-import hashlib
 import time
 from typing import Any
 
@@ -58,7 +57,7 @@ def ensure(db: Any, tenant: str) -> None:
     """Record the tenant's state before its first row in this format is written."""
     found, _ = state(db, tenant)
     db.execute(
-        insert_ignore("lexical_state", 4),
+        insert_ignore("lexical_state", "tenant,state,cursor,configuration"),
         (tenant, found, 0, INDEX_CONFIGURATION if found == CURRENT else "lexical-v1"),
     )
 
@@ -105,7 +104,7 @@ def _count(db: Any, tenant: str, project: str, indexed: str, sign: int) -> None:
 def add(db: Any, tenant: str, project: str, observation: str, text: str) -> None:
     """Index a newly captured observation; count it when the statistics are live."""
     indexed = index_text(text)
-    db.execute("INSERT INTO lexical VALUES (?,?,?)", (tenant, observation, indexed))
+    db.execute("INSERT INTO lexical(tenant,id,text) VALUES (?,?,?)", (tenant, observation, indexed))
     if state(db, tenant)[0] == CURRENT:
         _count(db, tenant, project, indexed, 1)
 
@@ -279,7 +278,9 @@ def step(
         done.append((tenant, row["id"], indexed))
         db.execute("DELETE FROM anchors WHERE tenant=? AND id=?", (tenant, row["id"]))
         for kind, anchor in extract(text):
-            db.execute(insert_ignore("anchors", 4), (tenant, row["id"], anchor, kind))
+            db.execute(
+                insert_ignore("anchors", "tenant,id,anchor,kind"), (tenant, row["id"], anchor, kind)
+            )
         _count(db, tenant, row["project"], indexed, 1)
         last = row["position"]
         if (time.monotonic() - started) * 1000 > budget_ms:
@@ -290,7 +291,7 @@ def step(
         (tenant, *ids),
     )
     for entry in done:
-        db.execute("INSERT INTO lexical VALUES (?,?,?)", entry)
+        db.execute("INSERT INTO lexical(tenant,id,text) VALUES (?,?,?)", entry)
     if stats is not None:
         stats["documents"] = stats.get("documents", 0) + len(done)
     if reset is not None:
@@ -299,21 +300,14 @@ def step(
     return False
 
 
-def blob_text(root: Any, row: Any, tenant: str) -> str | None:
+def blob_text(blobs: Any, row: Any, tenant: str) -> str | None:
     """The retained text of an observation, verified against its content hash."""
-    from memoryking.adapters.blobs import blob_path
-    from memoryking.adapters.local_files import private_file
     from memoryking.domain.local import LocalError
 
     if row["blob"] is None:
         return None
-    path = blob_path(root, tenant, row["blob"])
     try:
-        private_file(path)
-        raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != row["blob"]:
-            return None
-        text: str = raw.decode()
+        text: str = blobs.get(tenant, row["blob"]).decode()
         return text
     except (OSError, LocalError, UnicodeDecodeError):
         return None

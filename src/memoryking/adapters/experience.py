@@ -103,7 +103,7 @@ class Experience:
                 result = self.query(who, args, at)
             if mutation and previous is None:
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
                 )
             result.update(
@@ -119,7 +119,7 @@ class Experience:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -251,7 +251,7 @@ class Experience:
             tenant, "procedure_" + action["decision"], row["id"], at, action["actor"]
         )
         self.db.execute(
-            "INSERT INTO lifecycle VALUES (?,?,?,?,?)",
+            "INSERT INTO lifecycle(tenant,revision,position,action,detail) VALUES (?,?,?,?,?)",
             (tenant, row["id"], position, action["decision"], json.dumps(action["detail"])),
         )
         self.db.execute(
