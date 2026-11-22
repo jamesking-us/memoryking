@@ -905,6 +905,19 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(result["passed"], expected)
         self.assertEqual(self.one("off", "t1-id-format", "null")["failure_class"], "missing")
 
+    def test_the_working_directory_is_named_after_the_project(self):
+        """Pilot fault: claude-mem and MCP Memory Service take the project from the directory
+        name, so a directory called `work` hid the seeded history from their start hooks."""
+        agent = "sh -c 'basename {workdir} > {workdir}/wd.txt'"
+        proc = self.run_cli(
+            "run", "--track", "T1", "--size", 20, "--task", "t1-export-delimiter", "--arm", "off",
+            "--agent", agent, "--seeded", self.base / "seeded", "--results", self.base / "results",
+            "--work", self.base / "work",
+        )  # fmt: skip
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        raw = self.base / "results/raw/T1-20-t1-export-delimiter-off-r1/final/wd.txt"
+        self.assertEqual(raw.read_text().strip(), "ledger-sync")
+
     def test_a_run_keeps_its_stream_and_final_code_beside_the_results(self):
         self.one("off", "t1-export-delimiter", "oracle", rep=3)
         raw = self.base / "results/raw/T1-20-t1-export-delimiter-off-r3"

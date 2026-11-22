@@ -409,7 +409,9 @@ def cmd_run(args) -> dict:
     check_isolated(run_dir)
     if run_dir.exists():
         raise BenchmarkError(f"{run_dir} already exists")
-    workdir, bench, home = run_dir / "work", run_dir / "bench", run_dir / "home"
+    # The directory is named after the project: products that derive the project from the
+    # working directory (claude-mem, MCP Memory Service) then look where the history was seeded.
+    workdir, bench, home = run_dir / "ws" / task.scope.project, run_dir / "bench", run_dir / "home"
     for d in (workdir, bench, home):
         d.mkdir(parents=True)
     system_root = run_dir / "system"
@@ -1025,7 +1027,7 @@ def cmd_lived(args) -> dict:
     check_isolated(run_dir)
     if run_dir.exists():
         raise BenchmarkError(f"{run_dir} already exists")
-    workdir, bench, home = run_dir / "work", run_dir / "bench", run_dir / "home"
+    workdir, bench, home = run_dir / "ws" / task.scope.project, run_dir / "bench", run_dir / "home"
     for d in (workdir, bench, home):
         d.mkdir(parents=True)
     system = load_system(args.arm)

@@ -222,7 +222,7 @@ def main() -> int:
     parser.add_argument("--settings")
     args = parser.parse_args()
     workdir = Path(args.workdir).resolve()
-    bench = workdir.parent / "bench"
+    bench = Path(args.prompt_file).resolve().parent  # the driver writes the prompt next to task.json
     task = gen.Task.from_json(json.loads((bench / "task.json").read_text()))
     emit({"type": "system", "subtype": "init", "model": "stub"})
     emit(
