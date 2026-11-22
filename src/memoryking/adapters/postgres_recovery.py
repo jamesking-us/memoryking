@@ -40,71 +40,25 @@ from memoryking.adapters.postgres_admin import Roles
 from memoryking.adapters.postgres_sql import PostgresSQL, record_factory, take_gate
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
+from memoryking.application.records import ARCHIVE_SCHEMA, archive_tables, retire_for_new_history
 from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.local import Clock, LocalError, SystemClock, temporal_valid
 
-# Preserve the revision-1 archive inventory for supported historical restores.
-TABLES_V1 = (
-    "tenants",
-    "grants",
-    "events",
-    "observations",
-    "lexical",
-    "retries",
-    "jobs",
-    "projections",
-    "projection_items",
-    "receipts",
-    "retired_sources",
-    "knowledge_state",
-    "families",
-    "revisions",
-    "evidence_spans",
-    "lifecycle",
-    "replacements",
-    "conflicts",
-    "attestations",
-    "rendered_artifacts",
-    "checkpoint_streams",
-    "checkpoints",
-    "operation_intents",
-    "handoffs",
-    "handoff_views",
-    "repositories",
-    "repository_clones",
-    "repository_snapshots",
-    "code_policies",
-    "code_validations",
-    "repository_jobs",
-    "tenant_gates",
-    "tenant_meta",
-)
-TABLES_V2 = TABLES_V1 + (
-    "embedding_partitions",
-    "embedding_jobs",
-    "embedding_items",
-    "processing_usage",
-    "adapter_bases",
-)
-TABLES_V3 = TABLES_V2 + ("experience_records", "ranking_state", "ranking_history")
-# Schema 4 archives add the egress audit and session summaries; schema 3 archives
-# written before those tables existed stay restorable.
-TABLES_V4 = TABLES_V3 + ("egress_audit", "session_summaries")
-# Schema 5 archives add source trust rules and observation holds.
-TABLES_V5 = TABLES_V4 + ("source_trust", "observation_holds")
-# Schema 6 archives add entity anchors.
-TABLES_V6 = TABLES_V5 + ("anchors",)
-# Schema 8 archives add credential generations, so a restore knows which credentials were replaced.
-TABLES_V8 = TABLES_V6 + ("credential_generations",)
-# Schema 9 archives add the lexical statistics and the state of the lexical index.
-TABLES_V9 = TABLES_V8 + ("lexical_state", "lexical_projects", "lexical_terms")
-# Schema 10 archives add supersession links, retirement requests and pins.
-TABLES_V10 = TABLES_V9 + ("supersessions", "retirement_requests", "pins")
-# Schema 12 archives add the consolidation runs and the unreviewed-tier policy (schema 11
-# archives hold the same tables as schema 10; they added the operations log's own files).
-TABLES_V12 = TABLES_V10 + ("consolidation_runs", "unreviewed_tier")
-# Schema 13 archives add the binary embedding vectors and the claims that could not be embedded.
-TABLES = TABLES_V12 + ("embedding_vectors", "embedding_skips")
+# The archive inventories derive from the record-type registry: a table joins the archive in the
+# schema its declaration names, and an archive of an older schema stays restorable with the
+# tables it held (schema 7 archives hold the schema 6 tables, schema 11 the schema 10 tables).
+TABLES_V1 = archive_tables(1)
+TABLES_V2 = archive_tables(2)
+TABLES_V3 = archive_tables(3)
+TABLES_V4 = archive_tables(4)
+TABLES_V5 = archive_tables(5)
+TABLES_V6 = archive_tables(6)
+TABLES_V8 = archive_tables(8)
+TABLES_V9 = archive_tables(9)
+TABLES_V10 = archive_tables(10)
+TABLES_V12 = archive_tables(12)
+TABLES = archive_tables(ARCHIVE_SCHEMA)
+ARCHIVE_SCHEMAS = frozenset(range(1, ARCHIVE_SCHEMA + 1))
 ROW_LIMIT = 1048576
 ARCHIVE_LIMIT = 16 * 1024 * 1024 * 1024
 
@@ -227,7 +181,7 @@ def backup(
             fenced = False
         manifest: dict[str, Any] = {
             "format": "memoryking-postgres-1",
-            "schema": 13,
+            "schema": ARCHIVE_SCHEMA,
             "store": store.store_id,
             "tenant": store.tenant,
             "incarnation": store.incarnation,
@@ -459,27 +413,17 @@ def restore(
             controller.operations.sync(anchor)
         private_file(archive / "manifest")
         manifest = controller.verify_document(archive / "manifest")
-        archive_tables = {
-            1: TABLES_V1,
-            2: TABLES_V2,
-            3: TABLES_V3,
-            4: TABLES_V4,
-            5: TABLES_V5,
-            6: TABLES_V6,
-            7: TABLES_V6,
-            8: TABLES_V8,
-            9: TABLES_V9,
-            10: TABLES_V10,
-            11: TABLES_V10,
-            12: TABLES_V12,
-            13: TABLES,
-        }.get(manifest.get("schema", 0), ())
+        archive_inventory = (
+            archive_tables(manifest.get("schema", 0))
+            if manifest.get("schema") in ARCHIVE_SCHEMAS
+            else ()
+        )
         if (
             manifest.get("format") != "memoryking-postgres-1"
-            or manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
+            or manifest.get("schema") not in ARCHIVE_SCHEMAS
             or manifest.get("store") != controller.store
             or manifest.get("tenant") != tenant
-            or set(manifest.get("tables", {})) != set(archive_tables)
+            or set(manifest.get("tables", {})) != set(archive_inventory)
         ):
             raise LocalError("backup_invalid")
         if clock.utc_ms() < anchor["last_utc"]:
@@ -488,7 +432,7 @@ def restore(
         operations_applied = manifest.get("operations_sequence", 0)
         if operations_applied < controller.operations.compacted_through():
             raise LocalError("backup_invalid")
-        for table in archive_tables:
+        for table in archive_inventory:
             if digest_file(archive / (table + ".ndjson")) != manifest["tables"][table]["sha256"]:
                 raise LocalError("backup_invalid")
             current, archived = columns(connection, table), manifest["tables"][table]["columns"]
@@ -541,15 +485,13 @@ def restore(
                 (directory / digest).unlink(missing_ok=True)  # a flat copy is now redundant
                 touched.add(shard)
             blobfiles.sync_directories(touched)
-            # The lease is not archived: a restore starts it again.
-            connection.execute("DELETE FROM instance_lease WHERE tenant=%s", (tenant,))
             for table in reversed(TABLES):
                 if table not in {"tenants", "tenant_gates"}:
                     connection.execute(
                         sql.SQL("DELETE FROM {} WHERE tenant=%s").format(sql.Identifier(table)),
                         (tenant,),
                     )
-            for table in archive_tables:
+            for table in archive_inventory:
                 names = manifest["tables"][table]["columns"]
                 count = 0
                 with (archive / (table + ".ndjson")).open("rb") as stream:
@@ -610,18 +552,9 @@ def restore(
             recovery.db.execute(
                 "UPDATE meta SET value=? WHERE key='incarnation'", (recovery.incarnation,)
             )
-            recovery.db.execute("UPDATE retries SET result=NULL WHERE tenant=?", (tenant,))
-            recovery.db.execute("DELETE FROM receipts WHERE tenant=?", (tenant,))
-            recovery.db.execute(
-                "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=?",
-                (tenant,),
-            )
-            recovery.db.execute(
-                "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]' WHERE tenant=?",
-                (tenant,),
-            )
-            recovery.db.execute("UPDATE handoffs SET state='retired' WHERE tenant=?", (tenant,))
-            recovery._retire_optional(tenant)
+            # The lease is not archived and a restore starts it again; replay results, receipts,
+            # retained artifacts, checkpoint bodies and projected vectors do not carry over.
+            retire_for_new_history(recovery.db, recovery.incarnation, tenant)
             recovery._reindex(tenant)
             live = {
                 row[0]

@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from memoryking.adapters.local_embeddings import SUPPORTED, model_manifest
 from memoryking.adapters.local_store import MAX_COUNTER, RETRY_MS, USAGE_LIMIT, uid
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.records import partition_tables
 from memoryking.application.retention import index_receipt
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
@@ -156,7 +157,7 @@ class Embeddings:
             >= 16
         ):
             raise LocalError("embedding_partition_limit")
-        for table in ("embedding_jobs", "embedding_items", "embedding_vectors"):
+        for table in partition_tables():
             self.db.execute(
                 f"DELETE FROM {table} WHERE tenant=? AND project=? AND fingerprint=?", key
             )

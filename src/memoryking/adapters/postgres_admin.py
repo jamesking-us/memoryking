@@ -16,6 +16,7 @@ from psycopg import sql
 
 from memoryking.adapters.local_files import Control, atomic, private_dir, sync_dir
 from memoryking.adapters.local_store import CAPABILITIES, identifier, paths, uid
+from memoryking.application.records import worker_tables
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError
 
@@ -357,19 +358,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
         # Workers can materialize projections and record their bounded release receipts;
         # they cannot create policy, content, checkpoint or handoff records, rewrite or
         # delete receipts, or touch tenant counters except through the owner-run function.
-        for table in (
-            "jobs",
-            "projections",
-            "projection_items",
-            "repository_jobs",
-            "embedding_jobs",
-            "embedding_items",
-            "embedding_vectors",
-            "embedding_skips",
-            "processing_usage",
-            "code_validations",
-            "meta",
-        ):
+        for table in worker_tables():
             connection.execute(
                 sql.SQL("GRANT INSERT,UPDATE,DELETE ON {} TO {}").format(
                     sql.Identifier(table), sql.Identifier(roles.worker)

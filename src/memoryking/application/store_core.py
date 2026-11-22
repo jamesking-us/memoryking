@@ -175,6 +175,16 @@ class Visibility:
         self.projects: dict[tuple[str, str, str, int], bool] = {}  # read grant per project
 
 
+class _Followed:
+    """What one purge has retired so far, shared by the per-type follow-through methods."""
+
+    def __init__(self, depends: Callable[[Any], bool], purged: set[str]) -> None:
+        self.depends, self.purged = depends, purged
+        self.retired = 0  # experience records retired: ranking is disabled when any was
+        self.checkpoints: set[str] = set()
+        self.artifacts: set[str] = set()
+
+
 class StoreCore:
     """What every backend shares; the attributes below are supplied by the backend."""
 
@@ -1150,59 +1160,17 @@ class StoreCore:
         # A fixed point: whatever is retired here joins the purged set, so anything
         # derived from it (a summary of a purged checkpoint, an atlas page over a
         # handoff view, an artifact over a retired experience record) goes too.
-        retired = 0
-        purged_checkpoints: set[str] = set()
-        purged_artifacts: set[str] = set()
+        followed = _Followed(depends, purged)
         changed = True
         while changed:
             changed = False
-            for row in self.db.execute(
-                "SELECT id,dependencies FROM checkpoints WHERE tenant=? AND state!='purged'",
-                (tenant,),
-            ).fetchall():
-                if depends(row["dependencies"]):
-                    self.db.execute(
-                        "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=? AND id=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.update(
-                        handoff[0]
-                        for handoff in self.db.execute(
-                            "SELECT id FROM handoffs WHERE tenant=? AND checkpoint=?",
-                            (tenant, row["id"]),
-                        ).fetchall()
-                    )
-                    self.db.execute(
-                        "UPDATE handoffs SET state='purged' WHERE tenant=? AND checkpoint=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.add(row["id"])
-                    purged_checkpoints.add(row["id"])
-                    changed = True
-            for row in self.db.execute(
-                "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL",
-                (tenant,),
-            ).fetchall():
-                if depends(row["dependencies"]):
-                    self.db.execute(
-                        "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=? AND id=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.add(row["id"])
-                    retired += 1
-                    changed = True
-            for row in self.db.execute(
-                "SELECT id,dependencies FROM rendered_artifacts WHERE tenant=? AND state='retained'",
-                (tenant,),
-            ).fetchall():
-                if depends(row["dependencies"]):
-                    self.db.execute(
-                        "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.add(row["id"])
-                    purged_artifacts.add(row["id"])
-                    changed = True
+            for follow in self._FOLLOW.values():
+                changed |= getattr(self, follow)(tenant, followed)
+        retired, purged_checkpoints, purged_artifacts = (
+            followed.retired,
+            followed.checkpoints,
+            followed.artifacts,
+        )
         # Session summaries hold verbatim checkpoint text: erase every summary of a
         # purged checkpoint or whose artifact was purged.
         for identifier in purged_checkpoints:
@@ -1223,6 +1191,73 @@ class StoreCore:
                 "UPDATE ranking_state SET configuration=NULL,version=version+1,reconciliation=0 WHERE tenant=?",
                 (tenant,),
             )
+
+    # The record types a purge follows (those with a dependency list), each with the method that
+    # retires its rows; tests/test_records.py asserts this is the registry's set.
+    _FOLLOW = {
+        "checkpoints": "_follow_checkpoints",
+        "experience_records": "_follow_experience",
+        "rendered_artifacts": "_follow_artifacts",
+    }
+
+    def _follow_checkpoints(self, tenant: str, followed: "_Followed") -> bool:
+        changed = False
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM checkpoints WHERE tenant=? AND state!='purged'",
+            (tenant,),
+        ).fetchall():
+            if followed.depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.update(
+                    handoff[0]
+                    for handoff in self.db.execute(
+                        "SELECT id FROM handoffs WHERE tenant=? AND checkpoint=?",
+                        (tenant, row["id"]),
+                    ).fetchall()
+                )
+                self.db.execute(
+                    "UPDATE handoffs SET state='purged' WHERE tenant=? AND checkpoint=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.add(row["id"])
+                followed.checkpoints.add(row["id"])
+                changed = True
+        return changed
+
+    def _follow_experience(self, tenant: str, followed: "_Followed") -> bool:
+        changed = False
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL",
+            (tenant,),
+        ).fetchall():
+            if followed.depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.add(row["id"])
+                followed.retired += 1
+                changed = True
+        return changed
+
+    def _follow_artifacts(self, tenant: str, followed: "_Followed") -> bool:
+        changed = False
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM rendered_artifacts WHERE tenant=? AND state='retained'",
+            (tenant,),
+        ).fetchall():
+            if followed.depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.add(row["id"])
+                followed.artifacts.add(row["id"])
+                changed = True
+        return changed
 
     def _apply(self, record: dict[str, Any], at: int) -> None:
         # A record advances the position of the log it came from: operation records have a

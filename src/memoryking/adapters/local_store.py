@@ -31,6 +31,7 @@ from memoryking.adapters.local_files import (
     sync_dir,
     write_blob_index,
 )
+from memoryking.application.records import retire_for_new_history
 from memoryking.application.storage import SQLiteDialect
 from memoryking.application.store_core import (  # noqa: F401
     ARTIFACT_BYTES_LIMIT,
@@ -1077,17 +1078,7 @@ class LocalStore(StoreCore):
                 recovery.db.execute(
                     "UPDATE meta SET value=? WHERE key='incarnation'", (recovery.incarnation,)
                 )
-                recovery.db.execute("UPDATE retries SET result=NULL")
-                recovery.db.execute("DELETE FROM instance_lease")
-                recovery.db.execute("DELETE FROM receipts")
-                recovery.db.execute(
-                    "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]'"
-                )
-                recovery.db.execute(
-                    "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]'"
-                )
-                recovery.db.execute("UPDATE handoffs SET state='retired'")
-                recovery._retire_optional()
+                retire_for_new_history(recovery.db, recovery.incarnation)
                 for (tenant,) in recovery.db.execute("SELECT tenant FROM tenants").fetchall():
                     recovery._reindex(tenant)
                 recovery.db.commit()
@@ -1124,24 +1115,3 @@ class LocalStore(StoreCore):
             owner.close()
             if controller_owner:
                 controller_owner.close()
-
-    def _retire_optional(self, tenant: str | None = None) -> None:
-        """A restored history cannot reuse projected vectors, leases or adapter bases.
-
-        A local restore replaces the whole store's history, so it passes no tenant and the
-        statements cover every tenant; the shared restore names its tenant in each one.
-        """
-        scope, bound = (" WHERE tenant=?", (tenant,)) if tenant else ("", ())
-        self.db.execute(
-            "UPDATE ranking_state SET configuration=NULL,version=version+1" + scope, bound
-        )
-        self.db.execute("DELETE FROM adapter_bases" + scope, bound)
-        self.db.execute("DELETE FROM embedding_items" + scope, bound)
-        self.db.execute("DELETE FROM embedding_vectors" + scope, bound)
-        self.db.execute("DELETE FROM embedding_skips" + scope, bound)
-        self.db.execute("DELETE FROM embedding_jobs" + scope, bound)
-        self.db.execute(
-            "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0"
-            + scope,
-            (self.incarnation, *bound),
-        )
