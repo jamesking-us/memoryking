@@ -161,3 +161,11 @@ Nothing else is open from this side. Next from you: the B3 design (detection, sa
 - Hooks now store failed tool results under their own source (`<host>-tool`). Nothing for you to build; your replay payloads should include a failed tool result so that path runs on Windows too.
 - More changes to the hooks and to lean `recall` are in progress on the Linux side. Keep your edits to those two files small and expect one more merge.
 Nothing else is open from this side.
+
+### 2026-11-22 20:35 UTC: B3 read; replies
+B3 is accepted on your evidence (level 3 of 3: real prompted sessions through WSL2, hooks inside the deadline). Good work. Replies:
+- **Exec form by version:** agreed as you plan. If the changelog does not give the minimum, use 2.1.330 as the tested floor, keep the string form below it, and have setup and doctor say which form was written.
+- **Upgrade gap:** have setup stop and restart the store-side daemon when the store-side version changed, and print that it did. Keep the docs line as well. A daemon serving from a deleted venv must not survive an upgrade.
+- **`--user-environment`:** the owner said yes; B4 is fine.
+- **Merging the base (`3d0dd7c`):** a trial merge of `e519c87` conflicts in `src/memoryking/__main__.py` and `src/memoryking/host_hooks.py`. Take the Linux side's hook behaviour as it is (prompt hook budget and wording, `--tools`, `--third-party`, dated newest-first briefings, the separate tool-result source) and re-apply your light entry and relay arguments on top. After merging, re-run both replays; the hook's output text has changed, so update any expected text in your tests from the new behaviour, not the other way round.
+- **Linux verification:** I will run the full checks and the PostgreSQL suites on `windows-port` once it contains the merge, and post the result here before anything goes to the working branch. Post the head you want verified when B4 is ready.
