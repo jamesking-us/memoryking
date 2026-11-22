@@ -304,3 +304,102 @@ WSL2 (Ubuntu 20.04, Python 3.12.14, as root) at `527d936`: **1248 tests, 0 failu
 - `test_relay` passes there through a real daemon.
 
 B2 is complete apart from the two "ask first" answers (1, 2). B3 waits on answers 3 and 4.
+
+### 2026-11-22 16:10 UTC: B3 design (ask first), plus what is already pushed
+`windows-port` is at `2146b3b`, with the working branch merged at `f77da85` (17 commits, clean).
+
+#### Already done in B3: the light hook entry (no behavior change)
+- **What changed:**
+  - `memoryking.contracts` loads `validate_contract` (jsonschema and every schema) on first use.
+  - `adapters/local_client.py` holds the client end of the socket; `local_ipc` re-exports the same objects.
+  - `memoryking.hook_cli` is the `hook` command with only what a hook needs, taking exactly the arguments of `memoryking ... hook ...`. Those arguments are now defined there and shared with `__main__`; `memoryking --help` and `memoryking hook --help` are byte-identical to before.
+  - Hook commands written by setup and `hooks install` now name it: `-m memoryking.hook_cli`, or the new `memoryking-hook` console script where setup writes the command name. The script is added to `check_wheel` and the install rehearsal.
+  - The edits to `host_hooks.py` and `setup_host.py` are one line each, plus a fix in `session_start`: a relay credential was passed to `Path()`, which broke hook session start through a relay. B2 had not covered the `hook` command through a relay; now it does.
+- **Windows, through the WSL2 relay, medians of 5 warm runs, same output:** session-start hook **1131 → 629 ms**, prompt hook **1134 → 627 ms**.
+  - The rest is mostly the standard library: `import json` alone takes about 75 ms on this host, with compiled bytecode present, so it is the host (likely on-access scanning), not MemoryKing.
+  - WSL2 measurements for the same change will be in the B3 report.
+- **Token handling** (answer 2): the handshake is parsed outside an `except` block, so no parse error holding the line (and so the token) is attached to a refusal. A test checks every failed-handshake shape: wrong version, wrong protocol, torn JSON, not an object. The token is never in the error text, repr, detail, cause or context.
+- **Tests:**
+  - `test_relay_windows`: 9/9 on Windows against WSL2. New: the light entry and `memoryking hook` give the same output through the relay for session-start, prompt and session-end, apart from receipt ids.
+  - POSIX targeted run at `2146b3b` in WSL2: `test_host_hooks`, `test_setup`, `test_hook_replay`, `test_relay`, `test_relay_client`, `test_platform_support`, `test_cli`, `test_client`, `test_error_hints`, `test_contracts`, `test_locks`. 160 tests, all OK except the known missing-`node` error.
+
+#### B3 design: `memoryking setup claude-code` on Windows
+**One command:** `memoryking setup claude-code --project P [--backend wsl[:DISTRO] | docker[:CONTAINER]] [--wheel FILE | --image REF] [--dry-run | --remove]`. It is the existing setup command; on Windows it takes this path instead of creating a local store.
+
+1. **Detect.**
+   - It runs `wsl.exe -l -v` (WSL2 distros only; WSL1 is listed and refused) and `docker info --format {{.ServerVersion}}` (an engine running Linux containers), then prints what it found.
+   - Exactly one candidate and no flag: it uses that one and says so. More than one: it stops with the list and the `--backend` values to choose from. It never guesses.
+   - **Neither:** it installs nothing. It prints `wsl --install` (Microsoft, https://learn.microsoft.com/windows/wsl/install) and the Docker Desktop page (https://docs.docker.com/desktop/setup/install/windows-install/), and says both need administrator rights and may need a restart.
+2. **Same version on the store side.** The Windows version is `memoryking.__version__`.
+   - **WSL2:**
+     - A venv at `~/.local/share/memoryking/venv` inside the distro, on its own ext4 home.
+     - It needs `python3` 3.12 or 3.13 there. If missing, setup stops with the exact command: `sudo apt install python3.12-venv` on Ubuntu 24.04, or `uv python install 3.12`. This machine's 20.04 needs uv.
+     - **Released version:** `pip install memoryking==V`.
+     - **Local wheel:** `--wheel FILE` copies the wheel into the distro and installs it.
+   - **Container:**
+     - **Released:** `ghcr.io/jamesking-us/memoryking@sha256:...` pinned by digest; setup will not take a tag alone for the released path.
+     - **Local:** `--image memoryking:local`, built per the deployment guide.
+     - Setup checks `docker run --rm IMAGE --version` before using either, and refuses another version with the command that fixes it.
+   - **Hashes:** the hash locks are not in the wheel today, so a store-side install from a wheel or an index pins only `jsonschema==4.26.0`, not its transitive packages.
+     - **Proposal:** ship `requirements-core.lock` and `requirements-tokenizers.lock` as package data, with a test keeping them identical to the root files, so the store side installs with `--require-hashes` exactly as the image does.
+     - **Ask first:** this is a packaging change.
+   - **Extras:** when `tiktoken` is importable on the Windows side, setup installs the tokenizers lock on the store side too. The image has core only, so for the container either the image gains the tokenizers lock or setup refuses with which side lacks what.
+     - **Proposal:** the relay handshake carries `extras` (for example `["tokenizers"]`). The client refuses at connect with `relay_extras_mismatch` and detail `{"missing_on": "store", "extra": "tokenizers"}`, instead of a `tokenizer_unavailable` mid-session. The opposite case (store side has it, Windows side does not) is harmless and allowed.
+3. **Store.** Setup runs the existing POSIX setup *on the store side*, through the same `wsl.exe --exec` / `docker exec` path, in a new store-only mode: `setup claude-code --store-only` (a small addition to `setup_host`).
+   - **What it does:** creates the store with the existing owner-only rules, the agent profile and the **agent's limited credential**; arranges the daemon (step 4); prints the socket and agent-credential paths as JSON. The Windows side never sees the owner credential.
+   - **Refusals:**
+     - a store whose filesystem is `9p`/`drvfs`/`v9fs`/`fuseblk`/`ntfs` (checked with `findmnt -T`, which covers `/mnt/<drive>` and an NTFS bind mount), with the reason;
+     - a container whose `/data` or `/control` is a bind mount rather than a named volume (`docker inspect`).
+4. **Daemon lifetime.** Tested on this machine (WSL 2.3.24, Ubuntu 20.04):
+   - **A daemon started detached keeps the distro running.** The daemon was started with `setsid nohup` by one `wsl.exe` call, which then returned. With no other WSL2 client for 182 s, and again for **723 s** (a clean watch, no `wsl.exe` call of mine in between), `wsl -l --running` still listed the distro and the daemon still answered. There is no `.wslconfig` on this machine, so these are the defaults.
+   - **Cold start**, after `wsl --terminate` (3 runs): starting the distro takes **465 to 591 ms**, and the daemon from start to a ready socket **675 to 689 ms** (including one `wsl.exe`). The first hook after a reboot therefore pays about 1.2 s once. That is normally SessionStart, whose timeout is 30 s, not the 1.5 s prompt deadline.
+   - **Not tested:** behavior after Windows sleep or hibernate, and `vmIdleTimeout` settings in a user's `.wslconfig`. Doctor will report a stopped daemon.
+   - **Recommendation: start on demand from the relay.** `memoryking relay --profile NAME` runs the existing `daemon.ensure` when the socket is missing, exactly as profile autostart does for a local client. The first hook after a reboot or `wsl --shutdown` pays the daemon start; after that the detached daemon keeps the distro running. There is no scheduled task and no other persistent Windows configuration.
+   - **Container:** `docker run -d --restart unless-stopped`. It runs whenever Docker Desktop runs; whether Docker Desktop starts at sign-in is the user's Docker setting, and doctor names it.
+   - A logon scheduled task (`wsl.exe ... memoryking serve`) was not needed. I have not built it, and I would add it only if on-demand start turns out not to hold.
+5. **Claude Code configuration.**
+   - **MCP:** the bridge as `command` plus `args`, with no shell: `python.exe -m memoryking mcp --relay ... --project P`, added the way POSIX setup does today.
+   - **Hooks:** the string form, the default per answer 4, written so the **same string is correct in Git Bash and in PowerShell**:
+     - The program is the interpreter path with forward slashes and, when it contains a space, its 8.3 short form. A quoted first word would be a string, not a command, in PowerShell, and `&` means something else in bash.
+     - Other arguments are bare when they hold only `[A-Za-z0-9_./:=@+,-]`; otherwise they are single-quoted, which is literal in both shells, and a value containing `'` is refused.
+     - If a path with a space has no short name (8.3 names disabled on the volume), setup stops and says so. **Ask first:** alternatively it could write the documented per-hook `"shell": "powershell"` field, but that is as unproven on 2.1.101 as the exec form.
+   - **No store-side path on a Windows command line.** Git Bash's path conversion rewrites any argument that looks like a POSIX path before the program sees it; measured here, `/root/x` arrived as `C:/Program Files/Git/root/x`. So a hook string through Git Bash cannot carry `--socket`, `--credential` or `--relay-python`.
+     - **New `--relay-profile NAME`:** the store side resolves the socket and the agent credential from its own profile. `memoryking relay --profile NAME` also runs the existing autostart there, which is step 4's on-demand start.
+     - **The store-side Python** is a fixed location setup installs, `$HOME/.local/share/memoryking/venv/bin/python`. `relay_client` builds `wsl.exe -d D --exec sh -c 'exec "$HOME/..." -m memoryking.relay "$@"' sh --profile NAME` itself, never through a shell on the Windows side. `--relay-python` still overrides.
+     - **The container** gets the same, with `MEMORYKING_CONFIG` in the control volume through `docker exec -e`.
+     - **Tested on this machine:** one hook string of this shape (forward-slash interpreter path, bare tokens, one single-quoted value with a space) gives the program the identical argument list through Git Bash and through Windows PowerShell 5.1.
+   - **Project identity:** `--project` stays explicit and is passed on every hook and bridge command. Paths in Claude Code's event JSON (Windows paths) are never used to derive the project. The same repository opened from Windows and from WSL is one project if both are set up with the same `--project`, two if not; setup prints which.
+   - The new prompt-time recall hook is written too, with `--no-prompt-hook` as on POSIX.
+6. **Hand-typed CLI.** Opt-in `--user-environment` sets `MEMORYKING_RELAY`, `MEMORYKING_RELAY_PYTHON`, `MEMORYKING_SOCKET` and `MEMORYKING_CREDENTIAL` (store-side paths, nothing secret) as per-user variables (`HKCU\Environment`). It is listed by `--dry-run` and undone by `--remove`. Without the flag, setup prints the exact line.
+7. **Undo record.** POSIX setup keeps its byte-exact undo record under `~/.memoryking/setup/`, through `atomic`, which refuses on Windows.
+   - **Proposal:** on Windows the record goes to `%LOCALAPPDATA%\MemoryKing\setup\claude-code.json`. It holds the original bytes of the Claude Code files it edited and the backend chosen (kind, distro or container, store-side paths); no token.
+   - It is **never read to connect or to decide what to trust**. Commands get the relay only from their own flags; the record is used only by `--remove` and by doctor's report.
+   - **Ask first:** this is a Windows-side file, though not a trusted one.
+8. **Doctor on Windows.** `memoryking doctor` reads the undo record, falling back to `MEMORYKING_RELAY`. It reports in plain words, with one next step when something is wrong:
+   - which back end is configured, and whether it is reachable and running;
+   - the versions on both sides, and the extras;
+   - whether the store-side filesystem is allowed;
+   - whether the hooks and the bridge in Claude Code's files are the ones setup wrote.
+9. **Dry run and remove.**
+   - **`--dry-run`:** prints every change before it is made (store-side commands, the exact hook strings and the bridge command, the environment variables, the undo-record path) and makes none.
+   - **Idempotence:** a second run changes nothing and says so.
+   - **`--remove`:** restores Claude Code's files byte for byte, removes the bridge and the environment variables, and keeps the store, the store-side install and the daemon, printing the commands that remove them, as POSIX remove does.
+10. **End-to-end check.** The last step of setup captures one marked observation and recalls it through the relay as the hooks will. It prints one line: `MemoryKing works: <back end>, store <path>, versions match`, or exactly what failed.
+11. **Evidence (answer 3)**, one command each:
+    - **`memoryking doctor --replay-hooks`:** runs the hook strings setup wrote, exactly as Claude Code would, through Git Bash and through PowerShell. The order is SessionStart, UserPromptSubmit (timed against the 1.5 s deadline through each relay), PreCompact, Stop, SessionEnd, then a second SessionStart that must contain the first session's capture. It prints pass or fail per step.
+    - **`memoryking doctor --session-check SINCE`:** reads what the hooks recorded through the relay since a time, and reports pass or fail. It is for the no-prompt real start and end now, and for the two prompted sessions if the owner approves them in person.
+    - **The no-prompt check, from the hooks reference:**
+      - SessionStart runs when an interactive session starts (source `startup`), with no prompt needed.
+      - SessionEnd runs when a session ends; its reasons include `prompt_input_exit` (exited while prompt input was visible). Firing with **zero** prompts is not stated outright.
+      - The hooks page does not say whether start and exit make a model request.
+      - That page documents versions up to about 2.1.330, but **this machine has Claude Code 2.1.101**. Whether its hooks behave as documented, and whether `args` or `shell` exist in it, has to be observed.
+      - **Plan:** open and close one interactive session with no prompt, and check what the hooks recorded. **Ask first** (question 9), because I cannot rule out from the docs that the old client makes a request at start or exit.
+
+#### Questions
+5. Ship the core and tokenizers hash locks as package data, so the store-side install is hash-checked (step 2)?
+6. The Windows undo record in `%LOCALAPPDATA%`, never read to connect or to trust (step 7)?
+7. Hook strings with an 8.3 short program path, stopping when there is none, versus writing `"shell": "powershell"` (step 5)?
+8. Handshake `extras` and `relay_extras_mismatch` at connect (step 2)?
+9. May I open and close one interactive `claude` session with no prompt on this machine, given that I cannot rule out a request at start or exit on 2.1.101?
+
+Unless you say otherwise, I will build steps 1, 3, 4 (on-demand relay start), 5, 8, 9, 10 and 11 now. Those choices only affect files this command writes. I will hold the parts behind questions 5 to 8 until you answer.
