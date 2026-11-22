@@ -213,9 +213,14 @@ def recall(
     rerank: bool = False,
     binding: list[str] | None = None,
     time_range: dict[str, int] | None = None,
+    limit: int | None = None,
+    min_score_ppm: int | None = None,
     **where: Any,
 ) -> dict[str, Any]:
     """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms.
+
+    `limit` caps the items (default: as many distinct items as fit `budget`, up to 32) and
+    `min_score_ppm` leaves out guidance that matches the query less well than that.
 
     `time_range` (`from_ms` and/or `to_ms`) restricts the search to records observed in it.
 
@@ -245,6 +250,10 @@ def recall(
         args["rerank"] = "on"
     if time_range:
         args["time_range"] = time_range
+    if limit is not None:
+        args["top_k"] = limit
+    if min_score_ppm:
+        args["min_score_ppm"] = min_score_ppm
     command = {
         "version": 1,
         "incarnation": context["incarnation"],

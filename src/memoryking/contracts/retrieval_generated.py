@@ -11,6 +11,7 @@ class Brief(TypedDict):
     max_output_tokens: int
     tokenizer: str
     top_k: NotRequired[int]
+    min_score_ppm: NotRequired[int]
     task: NotRequired[str]
     run: NotRequired[str]
     valid_ms: NotRequired[int]

@@ -284,6 +284,27 @@ class ReplyShapeTests(BridgeCase):
         # The lean tools stay cheap: the trailer is a small part of a short briefing.
         self.assertLess(len(trailer), 260)
 
+    def test_recall_fills_the_budget_with_distinct_items_and_limit_caps_them(self):
+        words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet".split()
+        calls = [
+            ("remember", {"text": f"Run {n}: the nightly billing job {word} retried the charge."})
+            for n, word in enumerate(words)
+        ]
+        calls += [
+            ("recall", {"query": "nightly billing job retried charge"}),
+            ("recall", {"query": "nightly billing job retried charge", "limit": 3}),
+            ("recall", {"query": "nightly billing job retried charge", "budget": 400}),
+        ]
+        *_, everything, capped, small = self.bridge(calls)
+
+        def shown(reply):
+            return len(re.findall(r"^\d+\. \*\*\[g\d+\]", reply["content"][0]["text"], re.M))
+
+        self.assertEqual(len(words), shown(everything))  # more than the old fixed eight
+        self.assertEqual(3, shown(capped))
+        self.assertTrue(0 < shown(small) < len(words))  # the budget still bounds the list
+        self.assertIn("omitted for budget", small["content"][0]["text"])
+
     def test_full_profile_keeps_the_json_envelope_as_text(self):
         (reply,) = self.bridge([("memory_status", {"project": "p"})], "--profile", "full")
         self.assertEqual("p", json.loads(reply["content"][0]["text"])["project"])

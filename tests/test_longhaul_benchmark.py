@@ -776,7 +776,10 @@ class MemoryKingArmTests(unittest.TestCase):
         self.assertIn("2025-03-20", text)
         self.assertIn("semicolon", text)
         self.assertIn("claude-session", text)  # the transcript tail, as the hook captures it
-        self.assertIn("user-claude", text)  # and the user's own turns as their own observation
+        # and the user's own turns as their own observation: the same words inside the session
+        # capture, so the briefing shows them once and cites the other record
+        self.assertIn("also recorded in obs_", text)
+        self.assertNotIn("user-claude", text)
 
     def test_tool_errors_reach_memory_and_successful_tool_output_does_not_nothing_is_held(self):
         system = self.reopen()
@@ -874,10 +877,10 @@ class PipelineTests(unittest.TestCase):
         )
         return proc
 
-    def one(self, arm, task, mode, track="T1", size=20, rep=1, seeded=None):
+    def one(self, arm, task, mode, track="T1", size=20, rep=1, seeded=None, extra=""):
         seeded = seeded or self.base / "seeded"
         results = self.base / "results"
-        agent = f"{STUB} --mode {mode} --mcp-config {{mcp_config}} --settings {{settings}}"
+        agent = f"{STUB} --mode {mode}{extra} --mcp-config {{mcp_config}} --settings {{settings}}"
         proc = self.run_cli(
             "run",
             "--track",
@@ -971,6 +974,12 @@ class PipelineTests(unittest.TestCase):
         result = self.one("memoryking", "t1-export-delimiter", "reader")
         self.assertTrue(result["passed"], result["check"])
         self.assertEqual(result["seed"]["sessions"], 20)
+        # One broad query naming the subject and every attribute, as the pilot's agents asked.
+        broad = self.one(
+            "memoryking", "t1-export-delimiter", "reader", rep=3, extra=" --queries broad"
+        )
+        self.assertTrue(broad["passed"], broad["check"])
+        self.assertEqual(broad["stream"]["memory_reads"], 1)
         # The store the run used is a copy: the seeded one still has no run-time writes.
         again = self.one("memoryking", "t1-export-delimiter", "null", rep=2)
         self.assertFalse(again["passed"])
