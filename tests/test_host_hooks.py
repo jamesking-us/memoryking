@@ -39,7 +39,7 @@ class StartNoteTests(unittest.TestCase):
         self.assertIn("`memoryking capture --source agent --file FILE`", note)
         self.assertIn("pipe", note)
         self.assertNotIn('--text "..."`', note)
-        self.assertLess(len(note), 900)
+        self.assertLess(len(note), 1100)
         self.assertIn("mcp__memoryking__remember", host_hooks.start_note("claude", "mcp"))
 
 

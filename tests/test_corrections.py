@@ -247,6 +247,35 @@ class CorrectionCases:
         ).fetchone()
         self.assertEqual((row["state"], row["note"]), ("approved", ""))
 
+    def stored_with(self, needle: bytes) -> list[str]:
+        """Files under the store's data directory (database files apart) that hold `needle`."""
+        return sorted(
+            str(path.relative_to(self.root))
+            for path in self.root.rglob("*")
+            if path.is_file()
+            and ".sqlite" not in path.name
+            and not path.is_socket()
+            and needle in path.read_bytes()
+        )
+
+    def test_an_approved_forget_leaves_the_text_on_no_file_at_once(self):
+        agent = self.store.grant(self.owner, "agent", "p", ["capture", "read"])
+        secret = "The staging password is hunter2-forget-me."
+        mine = self.cap("mine", secret, credential=agent)["observation"]
+        self.cap("other", "An unrelated note stays.", credential=agent)
+        self.assertTrue(self.stored_with(b"hunter2-forget-me"), "the text is held before forget")
+        asked = self.kn("retire", credential=agent, observation=mine, note="Secret.")
+        spared = self.cap("o2", "A dismissed request keeps its note.", credential=agent)
+        wanted = self.kn("retire", credential=agent, observation=spared["observation"], note="x")
+        # A dismissal removes nothing.
+        self.kn("retire_decide", request=wanted["request"], decision="dismiss", reason="no")
+        self.assertTrue(self.stored_with(b"A dismissed request keeps"))
+        self.assertTrue(self.stored_with(b"hunter2-forget-me"))
+        # Approval removes the file now: no restart, no sweep.
+        self.kn("retire_decide", request=asked["request"], decision="approve", reason="approved")
+        self.assertEqual([], self.stored_with(b"hunter2-forget-me"))
+        self.assertTrue(self.stored_with(b"An unrelated note stays."))
+
     # --- pins ------------------------------------------------------------------------
 
     def test_pins_are_a_reviewer_decision_and_survive_a_replacement_revision(self):

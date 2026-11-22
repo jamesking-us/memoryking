@@ -245,7 +245,12 @@ def doctor(args: Any) -> int:
     path, found = configured[0]
     where = relay_of(next(iter(found.values())))
     spec, profile = where.get("relay"), where.get("relay-profile")
-    print(f"hooks: {', '.join(sorted(found))} in {path}")
+    form = (
+        "shell-free form (command plus args)"
+        if all(isinstance(command, list) for command in found.values())
+        else "string form (Git Bash and PowerShell)"
+    )
+    print(f"hooks: {', '.join(sorted(found))} in {path}, {form}")
     if not spec or not profile:
         print("next step: run `memoryking setup claude-code` again; these hooks name no relay")
         return 1

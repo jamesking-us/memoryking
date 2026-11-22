@@ -118,6 +118,13 @@ def add_hook_arguments(hk: argparse.ArgumentParser) -> None:
         help="How the agent reaches memory; the session-start note then names the tools to "
         "save with (hooks installed by `memoryking setup` pass mcp)",
     )
+    hk.add_argument(
+        "--third-party",
+        action="store_true",
+        default=None,
+        help="prompt hook: also show text a third party wrote (tool results and errors, "
+        "fetched pages), fenced and labelled; default off (or MEMORYKING_HOOK_THIRD_PARTY=1)",
+    )
     add_binding(hk)
     hk.add_argument(
         "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
@@ -175,6 +182,7 @@ def run(args: argparse.Namespace) -> int:
                     ("limit", args.limit),
                     ("floor", args.floor),
                     ("deadline", args.deadline),
+                    ("third_party", args.third_party),
                 )
                 if value is not None
             }

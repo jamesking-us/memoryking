@@ -23,6 +23,7 @@ from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.token_count import counter
 from memoryking.domain.briefing import budget_scope, pack
 from memoryking.domain.local import Decision, LocalError, is_user_project
+from memoryking.domain.provenance import is_third_party, without_tool_errors
 from memoryking.domain.selectors import bindings
 
 if TYPE_CHECKING:
@@ -233,7 +234,12 @@ def start(
             if taken >= limit:
                 break
             found = observation(row["id"])
-            if found is None or row["id"] in seen or not DECISION_SOURCE.match(found[0]["source"]):
+            if (
+                found is None
+                or row["id"] in seen
+                or not DECISION_SOURCE.match(found[0]["source"])
+                or is_third_party(found[0]["source"])
+            ):
                 continue
             seen.add(row["id"])
             entry = _episode(
@@ -258,6 +264,10 @@ def start(
                 continue
             seen.add(row["id"])
             entry = _episode(retrieval, found[0], "last_session", SESSION_TAIL_BYTES, tail=True)
+            # Sessions captured before tool errors were stored apart hold them in their text.
+            entry["text"] = without_tool_errors(entry["text"])
+            if not entry["text"].strip():
+                continue
             if found[1]:
                 entry["retirement_requested"] = True
             recent.append((row["position"], entry))
@@ -274,7 +284,7 @@ def start(
                 if shown >= USER_OBSERVATIONS:
                     break
                 found = observation(row["id"], scope_project)
-                if found is None or row["id"] in seen:
+                if found is None or row["id"] in seen or is_third_party(found[0]["source"]):
                     continue
                 seen.add(row["id"])
                 shown += 1
