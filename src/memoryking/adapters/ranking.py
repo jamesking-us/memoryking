@@ -274,11 +274,11 @@ class Ranking:
             action["actor"],
         )
         self.db.execute(
-            "INSERT INTO ranking_state VALUES (?,?,?,?,?) ON CONFLICT(tenant,project) DO UPDATE SET version=excluded.version,configuration=excluded.configuration,reconciliation=excluded.reconciliation",
+            "INSERT INTO ranking_state(tenant,project,version,configuration,reconciliation) VALUES (?,?,?,?,?) ON CONFLICT(tenant,project) DO UPDATE SET version=excluded.version,configuration=excluded.configuration,reconciliation=excluded.reconciliation",
             (action["tenant"], action["project"], action["version"], selected, int(missing)),
         )
         self.db.execute(
-            "INSERT INTO ranking_history VALUES (?,?,?,?,?)",
+            "INSERT INTO ranking_history(tenant,project,position,configuration,detail) VALUES (?,?,?,?,?)",
             (action["tenant"], action["project"], position, selected, json.dumps(action)),
         )
         self.s._enqueue(action["tenant"], position, None, action["actor"])

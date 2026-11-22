@@ -125,7 +125,7 @@ class Repository:
                 )
             if mutation and existing is None:
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
                 )
             result.update(
@@ -145,7 +145,7 @@ class Repository:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     result["receipt"],
@@ -209,7 +209,7 @@ class Repository:
         if existing:
             raise LocalError("clone_already_registered")
         self.db.execute(
-            "INSERT INTO repository_clones VALUES (?,?,?,?,?,?)",
+            "INSERT INTO repository_clones(tenant,repository,alias,path,device,inode) VALUES (?,?,?,?,?,?)",
             (who["tenant"], rid, args["clone"], str(root), identity.st_dev, identity.st_ino),
         )
         position = self.s._event(who["tenant"], "repository.registered", rid, at, who["principal"])
@@ -290,7 +290,7 @@ class Repository:
             who["tenant"], "repository.barrier", args["repository"], at, who["principal"]
         )
         self.db.execute(
-            "INSERT INTO repository_snapshots VALUES (?,?,?,?,?,?,?) ON CONFLICT(tenant,incarnation,repository,id) DO UPDATE SET generation=excluded.generation,position=excluded.position",
+            "INSERT INTO repository_snapshots(tenant,incarnation,repository,id,generation,position,body) VALUES (?,?,?,?,?,?,?) ON CONFLICT(tenant,incarnation,repository,id) DO UPDATE SET generation=excluded.generation,position=excluded.position",
             (
                 who["tenant"],
                 self.s.incarnation,
@@ -306,7 +306,7 @@ class Repository:
             (who["tenant"], self.s.incarnation, args["repository"]),
         )
         self.db.execute(
-            "INSERT INTO repository_jobs VALUES (?,?,?,?,?,?)",
+            "INSERT INTO repository_jobs(tenant,incarnation,repository,snapshot,generation,state) VALUES (?,?,?,?,?,?)",
             (
                 who["tenant"],
                 self.s.incarnation,

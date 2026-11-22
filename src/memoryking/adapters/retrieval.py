@@ -235,7 +235,7 @@ class Retrieval:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     access_id,
@@ -536,7 +536,7 @@ class Retrieval:
         if len(canonical_bytes(diag)) > 65536:
             raise LocalError("diagnostic_limit")
         self.db.execute(
-            "INSERT INTO rendered_artifacts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO rendered_artifacts(tenant,id,principal,project,incarnation,created,expires,state,body,body_hash,request_json,diagnostics,dependencies) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 receipt,

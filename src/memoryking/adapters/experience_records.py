@@ -104,7 +104,7 @@ class ExperienceRecords:
         ident = uid("exp")
         position = self.s._event(who["tenant"], "experience_" + kind, ident, at, who["principal"])
         self.db.execute(
-            "INSERT INTO experience_records VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO experience_records(tenant,id,project,principal,incarnation,kind,logical_key,revision,body,body_hash,dependencies,readers,position) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 ident,

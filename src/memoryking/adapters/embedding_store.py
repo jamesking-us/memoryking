@@ -67,7 +67,7 @@ class Embeddings:
             )
             raw = canonical_bytes(result)
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -161,7 +161,7 @@ class Embeddings:
                 f"DELETE FROM {table} WHERE tenant=? AND project=? AND fingerprint=?", key
             )
         self.db.execute(
-            "INSERT INTO embedding_partitions VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint) DO UPDATE SET incarnation=excluded.incarnation,generation=excluded.generation,configuration=excluded.configuration,state=excluded.state,scheduled=0,frontier=0",
+            "INSERT INTO embedding_partitions(tenant,project,fingerprint,incarnation,generation,dimensions,configuration,state,scheduled,frontier,created) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint) DO UPDATE SET incarnation=excluded.incarnation,generation=excluded.generation,configuration=excluded.configuration,state=excluded.state,scheduled=0,frontier=0",
             (
                 *key,
                 self.s.incarnation,
@@ -185,7 +185,7 @@ class Embeddings:
             "replayed": False,
         }
         self.db.execute(
-            "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
         )
         return result
@@ -207,7 +207,7 @@ class Embeddings:
         for row in rows:
             observation = row["id"] if row["id"] and not row["deleted"] else None
             self.db.execute(
-                "INSERT INTO embedding_jobs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO embedding_jobs(tenant,project,fingerprint,generation,position,observation,source_revision,blob_hash,incarnation,state,attempts,fence,lease_until,available,principal,purge_epoch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     *key,
                     row["position"],
@@ -268,7 +268,7 @@ class Embeddings:
         ).fetchall()
         for row in rows:
             self.db.execute(
-                "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO NOTHING",
+                "INSERT INTO embedding_vectors(tenant,project,fingerprint,generation,kind,subject,part,incarnation,source_revision,blob_hash,input_hash,vector,start_byte,end_byte,input_tokens,truncated,position) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO NOTHING",
                 (
                     *key,
                     "observation",
@@ -330,7 +330,7 @@ class Embeddings:
                 continue
             attempt = uid("usage")
             self.db.execute(
-                "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO processing_usage(tenant,id,project,principal,incarnation,provider,fingerprint,stage,status,input_tokens,cached_input_tokens,output_tokens,cost_microusd,duration_ms,request_hash,output_hash,dependencies,created,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     attempt,
@@ -413,7 +413,7 @@ class Embeddings:
             output_hash = canonical_hash(args["vector"])
             row = self.r.k._revision(who["tenant"], revision, args["project"])
             self.db.execute(
-                "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO UPDATE SET incarnation=excluded.incarnation,source_revision=excluded.source_revision,blob_hash=excluded.blob_hash,input_hash=excluded.input_hash,vector=excluded.vector,start_byte=excluded.start_byte,end_byte=excluded.end_byte,input_tokens=excluded.input_tokens,truncated=excluded.truncated,position=excluded.position",
+                "INSERT INTO embedding_vectors(tenant,project,fingerprint,generation,kind,subject,part,incarnation,source_revision,blob_hash,input_hash,vector,start_byte,end_byte,input_tokens,truncated,position) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO UPDATE SET incarnation=excluded.incarnation,source_revision=excluded.source_revision,blob_hash=excluded.blob_hash,input_hash=excluded.input_hash,vector=excluded.vector,start_byte=excluded.start_byte,end_byte=excluded.end_byte,input_tokens=excluded.input_tokens,truncated=excluded.truncated,position=excluded.position",
                 (
                     who["tenant"],
                     args["project"],
@@ -438,7 +438,7 @@ class Embeddings:
             # A claim that cannot be embedded is skipped for this generation, not retried
             # on every pass.
             self.db.execute(
-                "INSERT INTO embedding_skips VALUES (?,?,?,?) ON CONFLICT(tenant,fingerprint,generation,subject) DO NOTHING",
+                "INSERT INTO embedding_skips(tenant,fingerprint,generation,subject) VALUES (?,?,?,?) ON CONFLICT(tenant,fingerprint,generation,subject) DO NOTHING",
                 (who["tenant"], token["fingerprint"], token["generation"], revision),
             )
         self.db.execute(
@@ -534,7 +534,7 @@ class Embeddings:
                 continue
             attempt = uid("usage")
             self.db.execute(
-                "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO processing_usage(tenant,id,project,principal,incarnation,provider,fingerprint,stage,status,input_tokens,cached_input_tokens,output_tokens,cost_microusd,duration_ms,request_hash,output_hash,dependencies,created,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     attempt,
@@ -685,7 +685,7 @@ class Embeddings:
         position: int,
     ) -> None:
         self.db.execute(
-            "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO UPDATE SET incarnation=excluded.incarnation,source_revision=excluded.source_revision,blob_hash=excluded.blob_hash,input_hash=excluded.input_hash,vector=excluded.vector,start_byte=excluded.start_byte,end_byte=excluded.end_byte,input_tokens=excluded.input_tokens,truncated=excluded.truncated,position=excluded.position",
+            "INSERT INTO embedding_vectors(tenant,project,fingerprint,generation,kind,subject,part,incarnation,source_revision,blob_hash,input_hash,vector,start_byte,end_byte,input_tokens,truncated,position) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO UPDATE SET incarnation=excluded.incarnation,source_revision=excluded.source_revision,blob_hash=excluded.blob_hash,input_hash=excluded.input_hash,vector=excluded.vector,start_byte=excluded.start_byte,end_byte=excluded.end_byte,input_tokens=excluded.input_tokens,truncated=excluded.truncated,position=excluded.position",
             (
                 who["tenant"],
                 args["project"],
@@ -779,7 +779,7 @@ class Embeddings:
         )
         attempt = uid("usage")
         self.db.execute(
-            "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO processing_usage(tenant,id,project,principal,incarnation,provider,fingerprint,stage,status,input_tokens,cached_input_tokens,output_tokens,cost_microusd,duration_ms,request_hash,output_hash,dependencies,created,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 attempt,

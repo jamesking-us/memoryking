@@ -283,7 +283,7 @@ class SharedDashboard:
                     raise LocalError("route_unavailable")
                 receipt = uid("rcpt")
                 store.db.execute(
-                    "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         value["tenant"],
                         receipt,

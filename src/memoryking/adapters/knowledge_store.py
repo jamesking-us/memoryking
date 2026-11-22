@@ -165,7 +165,7 @@ class Knowledge:
                 result = self.query(who, args, at, constraints=action == "constraints")
             if mutation and existing is None:
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
                 )
             if len(json.dumps(result).encode()) > 524288:
@@ -181,7 +181,7 @@ class Knowledge:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     result["receipt"],
@@ -370,14 +370,14 @@ class Knowledge:
         family = row["id"] if row else uid("family")
         if row is None:
             self.db.execute(
-                "INSERT INTO families VALUES (?,?,?,?,0)",
+                "INSERT INTO families(tenant,id,project,logical_key,version) VALUES (?,?,?,?,0)",
                 (tenant, family, args["project"], args["logical_key"]),
             )
         revision = uid("rev")
         position = self.s._event(tenant, "propose", revision, at, who["principal"])
         body["executable"] = executable
         self.db.execute(
-            "INSERT INTO revisions VALUES (?,?,?,?,?,?,?,?,?,0)",
+            "INSERT INTO revisions(tenant,id,family,body,body_hash,kind,issuer,created,origin,purged) VALUES (?,?,?,?,?,?,?,?,?,0)",
             (
                 tenant,
                 revision,
@@ -392,7 +392,7 @@ class Knowledge:
         )
         for span in body["evidence"]:
             self.db.execute(
-                "INSERT INTO evidence_spans VALUES (?,?,?,?,?,?)",
+                "INSERT INTO evidence_spans(tenant,revision,observation,start_byte,end_byte,content_hash) VALUES (?,?,?,?,?,?)",
                 (
                     tenant,
                     revision,
@@ -561,7 +561,7 @@ class Knowledge:
             return
         position = self.s._event(tenant, "review", row["id"], at, action["actor"])
         self.db.execute(
-            "INSERT INTO lifecycle VALUES (?,?,?,?,?)",
+            "INSERT INTO lifecycle(tenant,revision,position,action,detail) VALUES (?,?,?,?,?)",
             (
                 tenant,
                 row["id"],
@@ -578,7 +578,7 @@ class Knowledge:
         )
         if replacement:
             self.db.execute(
-                "INSERT INTO replacements VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO replacements(tenant,predecessor,successor,position,selector,valid_start,valid_end) VALUES (?,?,?,?,?,?,?)",
                 (
                     tenant,
                     replacement["predecessor"],
@@ -596,7 +596,7 @@ class Knowledge:
             ).fetchall():
                 if self._state(tenant, other["id"], position)[0] == "accepted":
                     self.db.execute(
-                        insert_ignore("conflicts", 4),
+                        insert_ignore("conflicts", "tenant,left_revision,right_revision,position"),
                         (tenant, other["id"], row["id"], position),
                     )
         self.db.execute(
@@ -639,7 +639,7 @@ class Knowledge:
         position = self.s._event(who["tenant"], "attest", row["id"], at, who["principal"])
         ident = uid("att")
         self.db.execute(
-            "INSERT INTO attestations VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO attestations(tenant,id,revision,actor,position,expires,statement) VALUES (?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 ident,

@@ -602,7 +602,7 @@ class StoreCore:
                     self._enqueue(tenant, position, obs, who["principal"])
                     result = {**self._capture_result(tenant, obs, position), "held": held}
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         *lookup,
                         digest,
@@ -622,7 +622,7 @@ class StoreCore:
         found = extract(text)
         for kind, anchor in found:
             self.db.execute(
-                insert_ignore("anchors", 4),
+                insert_ignore("anchors", "tenant,id,anchor,kind"),
                 (tenant, observation, anchor, kind),
             )
         return len(found)
@@ -835,7 +835,7 @@ class StoreCore:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -1281,7 +1281,7 @@ class StoreCore:
         elif kind == "purge":
             obs = action["observation"]
             self.db.execute(
-                insert_ignore("retired_sources", 4),
+                insert_ignore("retired_sources", "tenant,principal,source,source_event"),
                 (tenant, *action["source_identity"]),
             )
             held = self.db.execute(
@@ -1650,7 +1650,7 @@ class StoreCore:
                 }
             )
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,

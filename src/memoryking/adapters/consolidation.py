@@ -166,7 +166,7 @@ class Consolidation:
                 }
                 self.r._retain(who, {"project": project}, receipt, raw, diag, deps, at)
                 self.db.execute(
-                    "INSERT INTO consolidation_runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO consolidation_runs(tenant,id,project,principal,state,from_position,to_position,observations,prompt_version,permit,provider,model,filed,dropped,created,closed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         who["tenant"],
                         receipt,
@@ -192,7 +192,7 @@ class Consolidation:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -421,7 +421,7 @@ class Consolidation:
             ] = "proposed"
             if relation:
                 self.db.execute(
-                    insert_ignore("conflicts", 4),
+                    insert_ignore("conflicts", "tenant,left_revision,right_revision,position"),
                     (tenant, relation["claim"], result["revision"], result["position"]),
                 )
             filed.append(

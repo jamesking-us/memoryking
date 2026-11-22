@@ -29,7 +29,11 @@ class StatementTests(unittest.TestCase):
             "(%s,%s,%s,%s,%s,%s) ON CONFLICT (tenant,principal,project) DO UPDATE SET "
             "capabilities=EXCLUDED.capabilities,starts=EXCLUDED.starts,expires=EXCLUDED.expires",
         )
-        self.assertTrue(native_statement(insert_ignore("conflicts", 4)).endswith("DO NOTHING"))
+        self.assertTrue(
+            native_statement(
+                insert_ignore("conflicts", "tenant,left_revision,right_revision,position")
+            ).endswith("DO NOTHING")
+        )
         self.assertIn("websearch_to_tsquery", PostgresDialect().lexical_match())
         self.assertEqual(PostgresDialect().byte_length("body"), "octet_length(body)")
         self.assertEqual(SQLiteDialect().byte_length("body"), "length(CAST(body AS BLOB))")

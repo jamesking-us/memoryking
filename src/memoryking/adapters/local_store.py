@@ -293,7 +293,7 @@ class LocalStore(StoreCore):
             db.executescript(Path(__file__).with_name("local_schema.sql").read_text())
             db.execute("BEGIN IMMEDIATE")
             db.executemany(
-                "INSERT INTO meta VALUES (?,?)",
+                "INSERT INTO meta(key,value) VALUES (?,?)",
                 [
                     ("store", store),
                     ("incarnation", incarnation),
@@ -303,11 +303,11 @@ class LocalStore(StoreCore):
             )
             db.execute("INSERT INTO tenants(tenant) VALUES (?)", (tenant,))
             db.execute(
-                "INSERT INTO grants VALUES (?,?,?,?,?,?)",
+                "INSERT INTO grants(tenant,principal,project,capabilities,starts,expires) VALUES (?,?,?,?,?,?)",
                 (tenant, principal, "*", json.dumps(sorted(CAPABILITIES)), None, None),
             )
             db.execute(
-                "INSERT INTO projections VALUES (?,?,?,?,?,?)",
+                "INSERT INTO projections(tenant,incarnation,channel,configuration,generation,frontier) VALUES (?,?,?,?,?,?)",
                 (tenant, incarnation, "audit_probe", "v1", 1, 0),
             )
             db.commit()

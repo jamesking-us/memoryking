@@ -231,7 +231,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
         connection.execute("SELECT pg_advisory_xact_lock(71102308)")
         if connection.execute("SELECT to_regclass('memoryking.shared_meta')").fetchone()[0] is None:
             connection.execute(Path(__file__).with_name("postgres_schema.sql").read_text())
-            connection.execute("INSERT INTO shared_meta VALUES ('schema','1')")
+            connection.execute("INSERT INTO shared_meta(key,value) VALUES ('schema','1')")
         version = connection.execute("SELECT value FROM shared_meta WHERE key='schema'").fetchone()
         if version is None or version[0] not in {
             "1",
@@ -464,7 +464,7 @@ def initialize_tenant(
         connection.execute("SET LOCAL search_path=memoryking,pg_catalog")
         connection.execute("SELECT set_config('memoryking.tenant',%s,true)", (tenant,))
         connection.execute("INSERT INTO tenants(tenant) VALUES (%s)", (tenant,))
-        connection.execute("INSERT INTO tenant_gates VALUES (%s)", (tenant,))
+        connection.execute("INSERT INTO tenant_gates(tenant) VALUES (%s)", (tenant,))
         for key, value in (
             ("store", store),
             ("incarnation", incarnation),
@@ -472,13 +472,16 @@ def initialize_tenant(
             ("operations", "0"),
             ("commit_serial", "0"),
         ):
-            connection.execute("INSERT INTO tenant_meta VALUES (%s,%s,%s)", (tenant, key, value))
+            connection.execute(
+                "INSERT INTO tenant_meta(tenant,key,value) VALUES (%s,%s,%s)", (tenant, key, value)
+            )
         connection.execute(
-            "INSERT INTO grants VALUES (%s,%s,'*',%s,NULL,NULL)",
+            "INSERT INTO grants(tenant,principal,project,capabilities,starts,expires) VALUES (%s,%s,'*',%s,NULL,NULL)",
             (tenant, principal, json.dumps(sorted(CAPABILITIES))),
         )
         connection.execute(
-            "INSERT INTO projections VALUES (%s,%s,'audit_probe','v1',1,0)", (tenant, incarnation)
+            "INSERT INTO projections(tenant,incarnation,channel,configuration,generation,frontier) VALUES (%s,%s,'audit_probe','v1',1,0)",
+            (tenant, incarnation),
         )
         connection.execute("INSERT INTO knowledge_state(tenant) VALUES (%s)", (tenant,))
     anchor["state"] = "active"
