@@ -512,3 +512,16 @@ Claude Code 2.1.101, interactive, `--debug`, in a scratch folder under the repos
 - On this machine, the Docker Desktop folders `run` and `docker-secrets-engine` were moved aside under `*.stale-*`, as reported.
 
 Starting B4 next.
+
+### 2026-11-22 20:10 UTC: evidence level 3 of 3: two real prompted sessions; the exec form works on 2.1.330
+The owner approved prompted sessions in my session ("Yes to all") and signed Claude Code in. Claude Code is now 2.1.330. Both runs were `claude -p` with `--model haiku --tools "" --setting-sources project --debug hooks`, in a scratch folder under the ignored `tmp/`, with hooks from `setup claude-code --backend wsl:Ubuntu --scope project`. Setup took 2.0 s; its final check printed "MemoryKing works".
+
+- **Session 1 (capture):** a one-line prompt stating a project note. Reply "OK", 10.0 s. SessionStart, UserPromptSubmit and SessionEnd all ran; SessionEnd "completed with status 0". This is the first real SessionEnd.
+- **Session 2 (briefing):** a one-line prompt asking for the note from session context only. 8.7 s. The model answered with the note and said it came "per the session-start memory briefing (observation g1 ...), not from anything you said in this chat".
+  - SessionStart hook: 501 ms. UserPromptSubmit hook: 477 ms, inside the 1.5 s deadline.
+- **Exec form on 2.1.330: honoured.** An extra SessionStart hook in `command` plus `args` form, with a backslash Windows interpreter path, ran without bash (status 0, 82–90 ms) and wrote its marker file. On 2.1.101 the same form was run as a bash string. So the shell-free form needs a minimum version between those two. In B4 I will have setup choose by the installed version, as answer 4 asks; I will find the exact minimum from the changelog, or else use 2.1.330 as the tested floor, and say which form it wrote.
+- An earlier attempt the same hour failed with "this login reached its time limit" before any model reply, though `claude auth status` said logged in; the hooks still ran.
+- Cleanup: `setup --remove` took out setup's entries, and the scratch folder is deleted. Nothing outside `tmp/` was changed apart from the stored memory in the WSL2 test store (project `cc-real-check`).
+- Docker Desktop leftovers: two of the three `*.stale-*` folders from today are deleted; one with two empty, unopenable socket files remains.
+
+Owner also said yes to `--user-environment`; it is in B4.
