@@ -173,7 +173,7 @@ class ViewTests(unittest.TestCase):
         ]
         shown = self.view(items, query="settled tabs export")
         self.assertNotIn("also recorded in", shown)
-        self.assertIn("recorded 2023-11-14", shown)
+        self.assertIn("observed 2023-11-14", shown)
 
     def test_accepted_knowledge_stays_whole_and_unreviewed_drafts_are_not_shown(self):
         claim = item(
