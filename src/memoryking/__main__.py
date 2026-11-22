@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import atexit
 import hashlib
 import json
 import os
@@ -15,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__, daemon, profiles, session_bindings
+from memoryking import __version__, daemon, hook_cli, profiles, session_bindings
 from memoryking.adapters import platform_support
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_embeddings import MODEL
@@ -26,8 +25,16 @@ from memoryking.application.lexical_index import RATE_PER_SECOND
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, SystemClock
+from memoryking.hook_cli import (
+    BINDING_HELP,
+    add_binding,
+    add_global_arguments,
+    add_hook_arguments,
+    attach_relay,
+    autostart,
+)
 from memoryking.observability import LEVELS, configure, event
-from memoryking.relay_client import RelayCredential, connect, credential_token
+from memoryking.relay_client import RelayCredential, credential_token
 
 
 def bar(used: int, limit: int, width: int = 12) -> str:
@@ -199,18 +206,6 @@ SUMMARY_INSTRUCTION = (
     "where it stands, what was learned or tried, and what comes next. Use only facts "
     "in the checkpoint above; do not add instructions."
 )
-
-
-BINDING_HELP = (
-    "Where this session works, such as environment=prod; repeatable. Also "
-    "MEMORYKING_BINDINGS and the named profile's bindings"
-)
-
-
-def add_binding(parser: Any) -> None:
-    parser.add_argument(
-        "--binding", action="append", default=[], metavar="KEY=VALUE", help=BINDING_HELP
-    )
 
 
 def failed_attempt(value: str) -> dict[str, str]:
@@ -676,17 +671,6 @@ def unreviewed_command(args: Any) -> None:
         )
 
 
-def attach_relay(args: argparse.Namespace) -> None:
-    """Send this command's requests through a relay; the token stays on the store's side."""
-    if not hasattr(args, "socket"):
-        raise LocalError("relay_invalid")
-    endpoint, credential = connect(args.relay, args.socket, args.credential, args.relay_python)
-    atexit.register(endpoint.close)
-    args.socket = endpoint
-    if hasattr(args, "credential"):
-        args.credential = credential
-
-
 def read_credential(path: Path | RelayCredential) -> str:
     return credential_token(path)
 
@@ -1106,20 +1090,6 @@ def semantic_command(args: Any) -> int:
     return 0
 
 
-def autostart(args: Any) -> None:
-    """Start the profile's daemon when a command needs its socket and the profile allows it."""
-    if (
-        not args.profile
-        or args.command in {"doctor", "stop"}
-        or getattr(args, "socket", None) is None
-        or getattr(args, "store", None) is not None
-    ):
-        return
-    profile = profiles.resolve(args.profile, args.config)
-    if profile.get("autostart") and Path(args.socket) == Path(profile["socket"]):
-        daemon.ensure(args.profile, args.config)
-
-
 def main() -> int:
     platform_support.utf8_stdio()
     if sys.argv[1:2] == ["mcp"]:
@@ -1133,28 +1103,7 @@ def main() -> int:
         return relay.main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
-    parser.add_argument(
-        "--profile",
-        default=os.environ.get("MEMORYKING_PROFILE"),
-        help="Named store from the profiles config; fills omitted --store, --control, "
-        "--socket and --credential (MEMORYKING_PROFILE)",
-    )
-    parser.add_argument(
-        "--config", type=Path, help="Profiles file; default ~/.memoryking/config.toml"
-    )
-    parser.add_argument(
-        "--relay",
-        default=os.environ.get("MEMORYKING_RELAY"),
-        help="Reach the daemon through a relay on the store's side: wsl:DISTRO or "
-        "docker:CONTAINER; --socket and --credential are then paths on that side "
-        "(MEMORYKING_RELAY)",
-    )
-    parser.add_argument(
-        "--relay-python",
-        default=os.environ.get("MEMORYKING_RELAY_PYTHON"),
-        help="Python with MemoryKing on the store's side; default python3 (WSL) or "
-        "python (container) (MEMORYKING_RELAY_PYTHON)",
-    )
+    add_global_arguments(parser)
     commands = parser.add_subparsers(dest="command", required=True)
     prof = commands.add_parser("profile", help="Name a store so commands need no paths")
     prof_commands = prof.add_subparsers(dest="profile_command", required=True)
@@ -1780,43 +1729,10 @@ def main() -> int:
         if name == "release":
             sub.add_argument("observation")
             sub.add_argument("--key", help="Retry key; default: derived from the observation")
-    hk = commands.add_parser(
-        "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
-    )
-    hk.add_argument("kind", choices=("session-start", "pre-compact", "session-end", "prompt"))
-    hk.add_argument("--host", choices=("claude", "codex", "grok"), help="Host that is calling")
-    hk.add_argument("--socket", type=Path)
-    hk.add_argument("--credential", type=Path)
-    hk.add_argument("--project", help="Default: MEMORYKING_PROJECT")
-    hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
-    hk.add_argument(
-        "--query", help="Briefing query at session start; default: the query-free session start"
-    )
-    hk.add_argument(
-        "--budget",
-        type=int,
-        help="Briefing token budget; default 6000 at session start, 1200 for the prompt hook",
-    )
-    hk.add_argument("--limit", type=int, help="prompt hook: items at most (default 5, at most 32)")
-    hk.add_argument(
-        "--floor",
-        type=int,
-        help="prompt hook: lowest lexical score, in millionths, an item may have (default 300000)",
-    )
-    hk.add_argument(
-        "--deadline",
-        type=float,
-        help="prompt hook: seconds before the lookup is abandoned and nothing is added (default 1.5)",
-    )
-    hk.add_argument(
-        "--tools",
-        choices=("mcp", "cli"),
-        help="How the agent reaches memory; the session-start note then names the tools to "
-        "save with (hooks installed by `memoryking setup` pass mcp)",
-    )
-    add_binding(hk)
-    hk.add_argument(
-        "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
+    add_hook_arguments(
+        commands.add_parser(
+            "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
+        )
     )
     hks = commands.add_parser("hooks", help="Install or remove the host hooks")
     hks_commands = hks.add_subparsers(dest="hooks_command", required=True)
@@ -2085,56 +2001,7 @@ def main() -> int:
             else:
                 print(packet["text"], end="")
         elif args.command == "hook":
-            from memoryking import host_hooks
-
-            try:
-                raw = "" if sys.stdin.isatty() else platform_support.read_stdin_text()
-                payload = host_hooks.read_event(raw)
-                where = {
-                    "socket": args.socket,
-                    "credential": args.credential,
-                    "project": args.project,
-                    "profile": args.profile,
-                    "config": args.config,
-                }
-                if args.kind == "prompt":
-                    chosen = {
-                        key: value
-                        for key, value in (
-                            ("budget", args.budget),
-                            ("limit", args.limit),
-                            ("floor", args.floor),
-                            ("deadline", args.deadline),
-                        )
-                        if value is not None
-                    }
-                    sys.stdout.write(
-                        host_hooks.prompt(payload, binding=args.binding, **chosen, **where)
-                    )
-                elif args.kind == "session-start":
-                    sys.stdout.write(
-                        host_hooks.session_start(
-                            payload,
-                            query=args.query,
-                            task=args.task,
-                            budget=args.budget or 6000,
-                            binding=args.binding,
-                            tools=args.tools,
-                            host=args.host,
-                            **where,
-                        )
-                    )
-                else:
-                    summary = host_hooks.save(
-                        payload, args.kind, host=args.host, task=args.task, **where
-                    )
-                    print(json.dumps(summary), file=sys.stderr)
-            except (LocalError, OSError, ValueError, KeyError) as exc:
-                code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
-                print(f"memoryking hook {args.kind}: {code}", file=sys.stderr)
-                if args.strict:
-                    return 1
-            return 0
+            return hook_cli.run(args)
         elif args.command == "hooks":
             from memoryking import host_hooks
 

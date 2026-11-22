@@ -41,6 +41,13 @@ REPLY_SECONDS = 20.0
 REPLY_DETAIL = ("required_capability", "path", "problem", "expected", "missing")
 
 
+def _parse(line: bytes) -> Any:
+    try:
+        return json.loads(line)
+    except ValueError:
+        return None
+
+
 class RelayEndpoint:
     """A running relay: send `request` lines, read the daemon's replies."""
 
@@ -62,11 +69,9 @@ class RelayEndpoint:
         self.lines: queue.Queue[bytes] = queue.Queue()
         threading.Thread(target=self._read, args=(self.process.stdout,), daemon=True).start()
         first = self._next(start_seconds, "relay_unavailable")
-        try:
-            hello = json.loads(first)
-        except ValueError as exc:
-            self.close()
-            raise LocalError("relay_unavailable") from exc
+        # The line may hold the token, and a parse error keeps the whole line: raise outside
+        # the except block so no exception that carries it is attached to the refusal.
+        hello = _parse(first)
         if not isinstance(hello, dict):
             self.close()
             raise LocalError("relay_unavailable")

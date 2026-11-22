@@ -34,6 +34,7 @@ with zipfile.ZipFile(wheel) as archive:
     assert len(entrypoints) == 1
     for entry, module in (
         ("memoryking", "__main__"),
+        ("memoryking-hook", "hook_cli"),
         ("memoryking-migrate", "migration"),
         ("memoryking-embedding-worker", "embedding_worker"),
         ("memoryking-shared", "shared"),

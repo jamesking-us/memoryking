@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -27,6 +28,7 @@ REASON = (
     "needs Windows with MEMORYKING_TEST_RELAY (wsl:DISTRO or docker:CONTAINER) and "
     "MEMORYKING_TEST_RELAY_PYTHON"
 )
+RECEIPT = re.compile(r"rcpt_[0-9a-f]+")
 # Python's default on Windows: piped stdout in the ANSI code page, not UTF-8.
 DEFAULT_STDIO = {
     k: v for k, v in os.environ.items() if k not in {"PYTHONIOENCODING", "PYTHONUTF8"}
@@ -127,6 +129,40 @@ class WindowsRelayTests(unittest.TestCase):
         found = json.loads(self.cli("recall", "--query", "Café naïve rule", "--json").stdout)
         texts = [item["text"] for item in found["guidance"]]
         self.assertIn("Café naïve 3× rule\nsecond line\n", texts)
+
+    def hook(self, module: str, kind: str, event: dict[str, Any]) -> tuple[int, str]:
+        result = subprocess.run(
+            [
+                sys.executable, "-m", module, "--relay", SPEC, "--relay-python", PYTHON,
+                "hook", kind, "--host", "claude", "--socket", self.store["socket"],
+                "--credential", self.store["credential"], "--project", "wintest", "--strict",
+            ],
+            input=json.dumps(event).encode(),
+            capture_output=True,
+            timeout=120,
+            env=DEFAULT_STDIO,
+        )  # fmt: skip
+        return result.returncode, result.stdout.decode("utf-8")
+
+    def test_the_light_hook_entry_answers_as_the_cli_does(self) -> None:
+        self.cli("capture", "--text", "Hook recall on Windows finds the deploy freeze rule.")
+        start = {"hook_event_name": "SessionStart", "session_id": "w1", "source": "startup"}
+        prompt = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "w1",
+            "prompt": "what is the deploy freeze rule for hook recall on Windows",
+        }
+        end = {"hook_event_name": "SessionEnd", "session_id": "w1", "reason": "exit"}
+        for kind, event in (("session-start", start), ("prompt", prompt), ("session-end", end)):
+            with self.subTest(kind=kind):
+                full = self.hook("memoryking", kind, event)
+                light = self.hook("memoryking.hook_cli", kind, event)
+                self.assertEqual(full[0], 0)
+                self.assertEqual(light[0], 0)
+                if kind != "session-start":  # a session start lists recent records, which move
+                    # Each delivery has its own receipt; everything else is the same.
+                    self.assertEqual(RECEIPT.sub("rcpt_", light[1]), RECEIPT.sub("rcpt_", full[1]))
+        self.assertIn("deploy freeze rule", self.hook("memoryking.hook_cli", "prompt", prompt)[1])
 
     def test_sdk_through_one_relay(self) -> None:
         endpoint, credential = connect(SPEC, self.store["socket"], self.store["credential"], PYTHON)

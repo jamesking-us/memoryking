@@ -10,8 +10,8 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from memoryking.adapters.local_client import Socket, request
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_ipc import Socket, request
 from memoryking.contracts.validation import (
     validate_embedding,
     validate_experience,

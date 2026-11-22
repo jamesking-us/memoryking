@@ -7,20 +7,20 @@ import socketserver
 import stat
 import threading
 import time
-from pathlib import Path
 from typing import Any, cast
 
+from memoryking.adapters import local_client
 from memoryking.adapters.embedding_store import Embeddings
 from memoryking.adapters.experience import Experience
 from memoryking.adapters.handoff import Handoff
 from memoryking.adapters.inference import Inference
 from memoryking.adapters.inspection import Inspection
 from memoryking.adapters.knowledge_store import Knowledge
+from memoryking.adapters.local_client import REPLY_DETAIL, WIRE_LIMIT
 from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
 from memoryking.adapters.platform_support import (
     UnixStreamServer,
     owned_by_current_user,
-    unix_stream_socket,
 )
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
@@ -34,11 +34,6 @@ from memoryking.contracts.problems import explain
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure, summarize, timings, trace, tracing
-from memoryking.relay_client import RelayEndpoint
-
-WIRE_LIMIT = 262144
-# Public fields a refusal may carry beside `error` and `hint`.
-REPLY_DETAIL = ("required_capability", "path", "problem", "expected", "missing")
 
 
 def refusal(exc: LocalError) -> bytes:
@@ -333,37 +328,6 @@ class Server(socketserver.ThreadingMixIn, UnixStreamServer):
         self.path.unlink(missing_ok=True)
 
 
-# Where a client sends requests: the daemon's socket, or a relay to it (relay_client).
-Socket = Path | RelayEndpoint
-
-
-def request(
-    socket_path: Socket, credential: str, operation: str, args: dict[str, Any]
-) -> dict[str, Any]:
-    if isinstance(socket_path, RelayEndpoint):
-        return socket_path.request(credential, operation, args)
-    payload = canonical_bytes(
-        {"version": 1, "credential": credential, "operation": operation, "args": args}
-    )
-    if len(payload) + 1 > WIRE_LIMIT:
-        raise LocalError("invalid_request")
-    with unix_stream_socket() as stream:
-        stream.settimeout(10)
-        try:
-            stream.connect(str(socket_path))
-        except (FileNotFoundError, ConnectionRefusedError) as exc:
-            # Nothing is listening: the request never left this process, so it is safe to retry.
-            raise LocalError("transport_unavailable") from exc
-        stream.sendall(payload + b"\n")
-        with stream.makefile("rb") as response:
-            raw = response.readline(1048577)
-        value = load_strict(raw)
-        if not isinstance(value, dict):
-            raise LocalError("invalid_response")
-        if "error" in value:
-            raise LocalError(
-                value["error"],
-                value.get("hint"),
-                {k: v for k, v in value.items() if k in REPLY_DETAIL},
-            )
-        return value
+# The client end lives in local_client so a client need not import the store; kept here
+# for callers that import it from this module.
+request = local_client.request

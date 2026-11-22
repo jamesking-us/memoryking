@@ -28,6 +28,7 @@ Repository = "https://github.com/jamesking-us/memoryking"
 
 [project.scripts]
 memoryking = "memoryking.__main__:main"
+memoryking-hook = "memoryking.hook_cli:main"
 memoryking-migrate = "memoryking.migration:main"
 memoryking-shared = "memoryking.shared:main"
 memoryking-reference-agent = "memoryking.reference_agent:main"

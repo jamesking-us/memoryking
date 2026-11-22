@@ -45,10 +45,11 @@ from pathlib import Path
 from typing import Any
 
 from memoryking import hooks, session_bindings
-from memoryking.adapters.local_ipc import request
+from memoryking.adapters.local_client import request
 from memoryking.domain.briefing import terms
 from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError
+from memoryking.hook_cli import light
 
 HOSTS = ("claude", "codex", "grok")
 KINDS = ("session-start", "pre-compact", "session-end", "prompt")
@@ -368,7 +369,12 @@ def session_start(
         "task": task,
         "binding": binding,
         "socket": socket,
-        "credential": Path(where["credential"]) if where.get("credential") else None,
+        # A path from the command line, or a relay's in-memory credential as it is.
+        "credential": (
+            Path(where["credential"])
+            if isinstance(where.get("credential"), (str, os.PathLike))
+            else where.get("credential")
+        ),
         "project": project,
         "profile": where.get("profile"),
         "config": where.get("config"),
@@ -694,7 +700,7 @@ def hook_command(
 
     `launcher` replaces the absolute interpreter with other shell words, such as
     `["memoryking"]` when that name resolves on the host's PATH."""
-    parts = list(launcher) if launcher else [json.dumps(sys.executable), "-m", "memoryking"]
+    parts = light(list(launcher) if launcher else [json.dumps(sys.executable), "-m", "memoryking"])
     if profile:
         parts += ["--profile", profile]
     parts += ["hook", kind, "--host", host, "--project", project]

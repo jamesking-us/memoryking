@@ -61,6 +61,30 @@ class RelayClientTests(unittest.TestCase):
         refused = self.fails("relay_version_mismatch", lambda: RelayEndpoint(fake(other + ECHO)))
         self.assertEqual(refused.detail, {"expected": __version__, "found": "0.0.0"})
 
+    def test_a_failed_handshake_never_carries_the_token(self) -> None:
+        secret = "tok-SECRET-0123456789"
+        handshakes = (
+            f'{{"relay":1,"version":"0.0.0","credential":"{secret}"}}',  # wrong version
+            f'{{"relay":9,"version":"{__version__}","credential":"{secret}"}}',  # wrong protocol
+            f'{{"relay":1,"version":"{__version__}","credential":"{secret}"',  # torn JSON
+            f'["{secret}"]',  # not an object
+        )
+        for line in handshakes:
+            with self.subTest(line=line[:30]):
+                body = f"out.write({line.encode() + b'\n'!r}); out.flush()\n"
+                with self.assertRaises(LocalError) as caught:
+                    RelayEndpoint(fake(body))
+                shown = " ".join(
+                    [str(caught.exception), repr(caught.exception), str(caught.exception.detail)]
+                    + [str(a) for a in caught.exception.args]
+                )
+                self.assertNotIn(secret, shown)
+                cause = caught.exception.__cause__ or caught.exception.__context__
+                self.assertNotIn(
+                    secret, str(cause) + repr(cause) + str(vars(cause) if cause else "")
+                )
+                self.assertTrue(caught.exception.__suppress_context__ or cause is None)
+
     def test_a_refusing_relay_names_its_reason(self) -> None:
         body = 'out.write(b\'{"error":"unsafe_socket","hint":"x"}\\n\'); out.flush()\n'
         self.fails("unsafe_socket", lambda: RelayEndpoint(fake(body)))

@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from memoryking import profiles, session_bindings
+from memoryking.adapters.local_client import request
 from memoryking.adapters.local_files import private_file
-from memoryking.adapters.local_ipc import request
 from memoryking.domain.local import LocalError
 from memoryking.relay_client import RelayCredential, credential_token
 
