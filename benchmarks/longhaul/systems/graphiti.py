@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Iterable
 
 from . import _common as c
-from ._types import HostConfig, Scope, SeedReport, Session
+from .base import HostConfig, Scope, SeedReport, Session
 
 NAME = "graphiti"
 EMBED_MODEL = "all-MiniLM-L6-v2"
@@ -370,3 +370,8 @@ def make() -> Graphiti:
 
 def installed() -> bool:
     return Graphiti.installed()
+
+
+def create():
+    """The arm for the benchmark driver (`systems.load`)."""
+    return make()

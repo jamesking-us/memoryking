@@ -124,6 +124,29 @@ def solve_from_text(task: gen.Task, text: str) -> dict[str, str]:
 
 def memory_text(workdir: Path, task: gen.Task, args) -> tuple[str, dict, str | list[str]]:
     """(tool name, its input, text) of what looking in the arm's memory gives."""
+    servers = (
+        json.loads(Path(args.mcp_config).read_text()).get("mcpServers", {})
+        if args.mcp_config
+        else {}
+    )
+    if set(servers) - {
+        "memoryking"
+    }:  # another product's MCP server: search it as its own tools allow
+        from longhaul.systems import _mcp_reader
+
+        family = fam.F[task.family]
+        queries = [
+            f"{family.subject} {gen.slot_of(family, s.name).attr}"
+            for s in task.slots
+            if not s.forgotten
+        ]
+        name, text = _mcp_reader.read(
+            Path(args.mcp_config),
+            queries,
+            {"user": task.scope.user, "project": task.scope.project},
+        )
+        if name != "none":
+            return name, {"queries": queries}, text
     for name in ("NOTES.md", "CLAUDE.md"):
         if (workdir / name).is_file():
             return "Read", {"file_path": name}, (workdir / name).read_text()
@@ -215,7 +238,7 @@ def main() -> int:
                 values[s.name] = s.stale[-1]
     if args.mode == "reader":
         tool, tool_input, text = memory_text(workdir, task, args)
-        text = order_oldest_first(text) if tool.startswith("mcp__") else text
+        text = order_oldest_first(text) if tool == "mcp__memoryking__recall" else text
         emit(
             {
                 "type": "assistant",

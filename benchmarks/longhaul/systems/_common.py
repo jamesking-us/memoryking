@@ -15,7 +15,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from ._types import Session
+from .base import Session
 
 TOOLS_ROOT = Path(os.environ.get("LONGHAUL_SYSTEMS_ROOT", "/tmp"))
 

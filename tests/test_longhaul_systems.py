@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from benchmarks.longhaul.systems._types import Scope, Session, Turn  # noqa: E402
+from benchmarks.longhaul.systems.base import Scope, Session, Turn  # noqa: E402
 
 SCOPE = Scope(user="ada", project="billing", agent="agent-1")
 FACT = "the nightly invoice export must use the zanzibar-7 queue"

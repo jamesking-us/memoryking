@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterable
 
 from . import _common as c
-from ._types import HostConfig, Scope, SeedReport, Session
+from .base import HostConfig, Scope, SeedReport, Session
 
 NAME = "mcp-memory"
 OBS_CAP = 1500  # characters kept per turn observation
@@ -235,3 +235,8 @@ def make() -> McpMemory:
 
 def installed() -> bool:
     return McpMemory.installed()
+
+
+def create():
+    """The arm for the benchmark driver (`systems.load`)."""
+    return make()

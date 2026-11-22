@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from benchmarks.longhaul.systems import _common as c  # noqa: E402
-from benchmarks.longhaul.systems._types import Scope, Session, Turn  # noqa: E402
+from benchmarks.longhaul.systems.base import Scope, Session, Turn  # noqa: E402
 
 PRODUCTS = ["mcp_memory", "basic_memory", "mcp_memory_service", "claude_mem", "mem0", "graphiti"]
 TOPICS = [

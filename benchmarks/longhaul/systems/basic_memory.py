@@ -12,13 +12,14 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
 from typing import Iterable
 
 from . import _common as c
-from ._types import HostConfig, Scope, SeedReport, Session
+from .base import HostConfig, Scope, SeedReport, Session
 
 NAME = "basic-memory"
 PROJECT = "main"  # the project a fresh install creates; the quick-start never makes another
@@ -101,8 +102,33 @@ class BasicMemory:
             (self.root / d).mkdir(parents=True, exist_ok=True)
         self.procs = c.Procs(self.root)
         self.reads = self.writes = 0
+        self._rebase()
         # The README documents `auto_update` as the one switch that keeps the version still.
         self._cli("config", "set", "auto_update", "false")
+
+    def _rebase(self) -> None:
+        """A seeded instance is copied to a new directory for each run. The product records the
+        absolute path of its project in `config.json` and in the `project` table of its database;
+        point both at this copy, so a run never reads or writes the seeded original."""
+        assert self.root is not None
+        cfg = self.root / "cfg" / "config.json"
+        if not cfg.is_file():
+            return
+        data = json.loads(cfg.read_text())
+        old = data.get("projects", {}).get(PROJECT, {}).get("path")
+        new = str(self.root / "notes")
+        if not old or old == new:
+            return
+        data["projects"][PROJECT]["path"] = new
+        cfg.write_text(json.dumps(data, indent=2))
+        db = self.root / "cfg" / "memory.db"
+        if db.is_file():
+            con = sqlite3.connect(db)
+            try:
+                con.execute("update project set path = ? where path = ?", (new, old))
+                con.commit()
+            finally:
+                con.close()
 
     def _client(self) -> c.McpStdio:
         if self.client is None:
@@ -313,3 +339,8 @@ def make_mcp_only() -> BasicMemory:
 
 def installed() -> bool:
     return BasicMemory.installed()
+
+
+def create():
+    """The arm for the benchmark driver (`systems.load`)."""
+    return make()

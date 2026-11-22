@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterable
 
 from . import _common as c
-from ._types import HostConfig, Scope, SeedReport, Session
+from .base import HostConfig, Scope, SeedReport, Session
 
 NAME = "mcp-memory-service"
 
@@ -64,11 +64,15 @@ class McpMemoryService:
             "MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec",
             "HF_HUB_DISABLE_XET": "1",  # harness fix: the xet transport does not pass this proxy
             "HF_HOME": str(self.home / "hf"),  # model files cached once under the install directory
+            # The default embedding model is cached under `~/.cache/mcp_memory`, whatever the
+            # settings; the server's HOME is the install directory's, so a session's fresh HOME
+            # does not download the 90 MB model again.
+            "HOME": str(self.home / "home"),
         }
 
     def prepare(self, root: Path) -> None:
         self.root = Path(root)
-        (self.root / "home").mkdir(parents=True, exist_ok=True)
+        (self.home / "home").mkdir(parents=True, exist_ok=True)
         self.procs = c.Procs(self.root)
         self.reads = self.writes = 0
         if self.plugin and self.plugin_available():
@@ -84,7 +88,7 @@ class McpMemoryService:
         # The README's local-use form is `MCP_ALLOW_ANONYMOUS_ACCESS=true memory server --http`
         # (loopback only); the hooks' `apiKey: auto-detect` placeholder is not a key.
         env = c.clean_env(
-            {**self._vars(), "MCP_ALLOW_ANONYMOUS_ACCESS": "true"}, home=self.root / "home"
+            {**self._vars(), "MCP_ALLOW_ANONYMOUS_ACCESS": "true"}, home=self.home / "home"
         )
         self.procs.start(
             [
@@ -125,7 +129,7 @@ class McpMemoryService:
     def _client(self) -> c.McpStdio:
         if self.client is None:
             assert self.root is not None and self.procs is not None
-            env = c.clean_env(self._vars(), home=self.root / "home")
+            env = c.clean_env(self._vars(), home=self.home / "home")
             self.client = c.McpStdio(
                 self.procs,
                 [str(self.bin), "server"],
@@ -269,3 +273,8 @@ def make_mcp_only() -> McpMemoryService:
 
 def installed() -> bool:
     return McpMemoryService.installed()
+
+
+def create():
+    """The arm for the benchmark driver (`systems.load`)."""
+    return make()

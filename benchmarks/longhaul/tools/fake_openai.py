@@ -187,7 +187,7 @@ def canned(kind: str, system: str, user: str, body: dict) -> tuple[str, list | N
             ln.strip() for ln in (block.group(1) if block else user).splitlines() if ln.strip()
         ]
         mem = []
-        for ln in lines[:6]:
+        for ln in lines[:60]:
             m = re.match(r"^(user|assistant)\s*:\s*(.+)$", ln, re.I)
             if m and len(m.group(2)) > 8:
                 mem.append(
@@ -261,7 +261,7 @@ def graphiti_override(title: str, value, user: str):
             names = [e["name"] for e in json.loads(ents.group(1))] if ents else []
         except (ValueError, KeyError, TypeError):
             names = []
-        fact = " ".join(text.split())[:300]
+        fact = " ".join(text.split())[:900]
         value["edges"] = [
             {
                 "source_entity_name": a,

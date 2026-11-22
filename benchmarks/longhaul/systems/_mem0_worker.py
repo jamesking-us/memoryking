@@ -108,6 +108,8 @@ def rpc() -> None:
 # ---- MCP mode ---------------------------------------------------------------------------------
 
 DEFAULT_USER = os.environ.get("MEM0_DEFAULT_USER_ID", "mem0-mcp")  # the project's own variable name
+# The project's Claude Code plugin scopes memory to the repository; here `project` metadata does that.
+DEFAULT_PROJECT = os.environ.get("MEM0_DEFAULT_PROJECT", "")
 
 TOOLS = [
     {
@@ -178,22 +180,24 @@ TOOLS = [
 
 def call_tool(memory, name: str, a: dict):
     uid = a.get("user_id") or DEFAULT_USER
+    scoped = {"user_id": uid, **({"project": DEFAULT_PROJECT} if DEFAULT_PROJECT else {})}
     if name == "add_memory":
         return memory.add(
             [{"role": "user", "content": a["text"]}],
             user_id=uid,
             agent_id=a.get("agent_id"),
             run_id=a.get("run_id"),
-            metadata=a.get("metadata"),
+            metadata={
+                **({"project": DEFAULT_PROJECT} if DEFAULT_PROJECT else {}),
+                **(a.get("metadata") or {}),
+            },
         )
     if name == "search_memories":
         return memory.search(
-            a["query"], top_k=a.get("limit", 10), filters=a.get("filters") or {"user_id": uid}
+            a["query"], top_k=a.get("limit", 10), filters=a.get("filters") or scoped
         )
     if name == "get_memories":
-        return memory.get_all(
-            filters=a.get("filters") or {"user_id": uid}, top_k=a.get("limit", 100)
-        )
+        return memory.get_all(filters=a.get("filters") or scoped, top_k=a.get("limit", 100))
     if name == "get_memory":
         return memory.get(a["memory_id"])
     if name == "update_memory":

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Iterable
 
 from . import _common as c
-from ._types import HostConfig, Scope, SeedReport, Session
+from .base import HostConfig, Scope, SeedReport, Session
 
 NAME = "mem0"
 WORKER = Path(__file__).resolve().parent / "_mem0_worker.py"
@@ -181,6 +181,7 @@ class Mem0:
             "${LONGHAUL_LLM_API_KEY}"  # filled from the runner's environment
         )
         env["MEM0_DEFAULT_USER_ID"] = scope.user
+        env["MEM0_DEFAULT_PROJECT"] = scope.project
         return HostConfig(
             mcp={
                 "mcpServers": {
@@ -201,7 +202,12 @@ class Mem0:
     # -- retrieval -------------------------------------------------------------
     def context_for(self, query: str, scope: Scope, budget_chars: int) -> str:
         res = self._rpc(
-            {"op": "search", "query": query, "top_k": 10, "filters": {"user_id": scope.user}}
+            {
+                "op": "search",
+                "query": query,
+                "top_k": 10,
+                "filters": {"user_id": scope.user, "project": scope.project},
+            }
         )
         self.reads += 1
         out, used = [], 0
@@ -237,3 +243,8 @@ def make() -> Mem0:
 
 def installed() -> bool:
     return Mem0.installed()
+
+
+def create():
+    """The arm for the benchmark driver (`systems.load`)."""
+    return make()

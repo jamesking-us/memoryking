@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.parse
@@ -27,7 +28,7 @@ from pathlib import Path
 from typing import Iterable
 
 from . import _common as c
-from ._types import HostConfig, Scope, SeedReport, Session
+from .base import HostConfig, Scope, SeedReport, Session
 
 NAME = "claude-mem"
 HOOK_TIMEOUT = 120
@@ -90,10 +91,27 @@ class ClaudeMem:
             )
         else:
             env.update(CLAUDE_MEM_PROVIDER="claude", CLAUDE_MEM_CLAUDE_AUTH_METHOD="subscription")
+            if os.environ.get(
+                "LONGHAUL_CLAUDE_CONFIG_DIR"
+            ):  # the Claude login the observer may use
+                env["CLAUDE_MEM_CLAUDE_CONFIG_DIR"] = os.environ["LONGHAUL_CLAUDE_CONFIG_DIR"]
         return env
+
+    @staticmethod
+    def _host_agent_allowed() -> bool:
+        return os.environ.get("LONGHAUL_ALLOW_HOST_AGENT") == "1"
+
+    @staticmethod
+    def _host_credentials() -> dict[str, str]:
+        """With the gate open the worker's observer is a Claude Code agent on the owner's login:
+        pass the credential variables an operator already uses for the host CLI."""
+        names = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+        return {n: os.environ[n] for n in names if os.environ.get(n)}
 
     def _env(self) -> dict[str, str]:
         base = c.clean_env(self._env_vars(), home=self.user_home)
+        if not self.llm_cfg.get("base_url") and self._host_agent_allowed():
+            base.update(self._host_credentials())
         base["PATH"] = ":".join(
             [str(self.launcher.parent), os.path.dirname(self._bun()), base.get("PATH", "")]
         )
@@ -127,10 +145,21 @@ class ClaudeMem:
                 "model": "fake-model",
                 "api_key": "sk-not-a-key",
             }
+        if not self.llm_cfg.get("base_url") and not self._host_agent_allowed():
+            raise RuntimeError(
+                "claude-mem's default observer is the host's Claude login: every tool event and "
+                "summary, including those of a live session, is a real model call. Set "
+                "LONGHAUL_ALLOW_HOST_AGENT=1 to allow it, or LONGHAUL_LLM_BASE_URL for another endpoint."
+            )
         self._start_worker()
 
     def _start_worker(self) -> None:
         assert self.procs is not None and self.root is not None
+        # A seeded instance is copied for each run: the copy holds the previous worker's pid and
+        # supervisor files, which name a process that is not ours.
+        for stale in ("worker.pid", "supervisor.json", "worker-heartbeat.json"):
+            (self.data / stale).unlink(missing_ok=True)
+        shutil.rmtree(self.data / "run", ignore_errors=True)
         r = subprocess.run(
             [str(self.launcher), "start"],
             env=self._env(),
@@ -197,7 +226,7 @@ class ClaudeMem:
 
     def seed(self, sessions: Iterable[Session]) -> SeedReport:
         assert self.root is not None
-        if not self.llm_cfg.get("base_url") and os.environ.get("LONGHAUL_ALLOW_HOST_AGENT") != "1":
+        if not self.llm_cfg.get("base_url") and not self._host_agent_allowed():
             raise RuntimeError(
                 "claude-mem's default observer is the host's Claude login (a real, billed model call). "
                 "Set LONGHAUL_ALLOW_HOST_AGENT=1 to allow it, or LONGHAUL_LLM_BASE_URL for another endpoint."
@@ -424,3 +453,8 @@ def make() -> ClaudeMem:
 
 def installed() -> bool:
     return ClaudeMem.installed()
+
+
+def create():
+    """The arm for the benchmark driver (`systems.load`)."""
+    return make()
