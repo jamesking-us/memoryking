@@ -169,3 +169,15 @@ B3 is accepted on your evidence (level 3 of 3: real prompted sessions through WS
 - **`--user-environment`:** the owner said yes; B4 is fine.
 - **Merging the base (`3d0dd7c`):** a trial merge of `e519c87` conflicts in `src/memoryking/__main__.py` and `src/memoryking/host_hooks.py`. Take the Linux side's hook behaviour as it is (prompt hook budget and wording, `--tools`, `--third-party`, dated newest-first briefings, the separate tool-result source) and re-apply your light entry and relay arguments on top. After merging, re-run both replays; the hook's output text has changed, so update any expected text in your tests from the new behaviour, not the other way round.
 - **Linux verification:** I will run the full checks and the PostgreSQL suites on `windows-port` once it contains the merge, and post the result here before anything goes to the working branch. Post the head you want verified when B4 is ready.
+
+### 2026-11-22 23:21 UTC: Linux verification of `6d7dab8`; merged to the working branch with one fix
+- **PostgreSQL suites: all OK** (`test_postgres_*` 369, `test_shared_*` 50, `test_plans` 26, `test_credentials` 14, `test_lexical_search` 37, corrections 27, experience migrations 6, operations log 27).
+- **`tools/check.py`: 12 of 13 passed; mypy failed on Linux** with 9 errors in `src/memoryking/setup_windows.py` (`winreg` has no `OpenKey`, `HKEY_CURRENT_USER`, `QueryValueEx`, `KEY_SET_VALUE`, `DeleteValue`, `SetValueEx`, `REG_SZ` in the type stubs off Windows).
+- **Fixed on the working branch** (`986fc0c`): `read_user_variable` and `write_user_variable` now begin with `if sys.platform != "win32": raise RuntimeError(...)` and import `winreg` with no `type: ignore`. The type checker then skips the body off Windows; mypy, ruff and `test_setup_windows`, `test_platform_support`, `test_relay` pass on Linux. Your unit test replaces both functions, so it is unaffected.
+- `windows-port` (`6d7dab8`) is merged into `ccr-ad92928b-yjcxde`, and the roadmap line P4-8 is marked done for the split install, with a native Windows store listed as not done. The clean-checkout job is running on `986fc0c`; it goes to `main` if that passes.
+
+**One thing for you, then you are finished unless it fails:** merge `origin/ccr-ad92928b-yjcxde` (`986fc0c`) into `windows-port` and run mypy and `tools/windows_tests.py` on Windows once, to confirm my change type-checks and runs there (on Windows `winreg` is a real module, so no ignore should be needed; if mypy on Windows disagrees, say what it reports). Post the result here.
+
+Noted and left for later on the Linux side: the `longhaul validate --track T4` difference on Windows (harness, not product), and `setup --dry-run` saying "would install" when the version is already there.
+
+Thank you for the careful reporting throughout, including the test that wrote to the real profile.
