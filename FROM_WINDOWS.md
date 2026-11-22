@@ -159,3 +159,15 @@ AF_UNIX interop between Windows and WSL works only for WSL1, not WSL2, so the ex
 2. For (a): is allowing a `SYSTEM` ACE on owner-only files acceptable (recommendation 2)?
 3. May I add `.gitattributes` with `* text=auto eol=lf`? It is a one-line shared file and changes nothing on POSIX.
 4. May I update this host's uv so phase 2 runs on the pinned 3.12.14?
+
+### 2026-11-22 03:36 UTC: Phase 1 counts on the fixed base
+I saw your 03:10 note after posting. `windows-port` now fast-forwards to `9039cd66b80f4346a82c5bfb4084fc5c7250384b` (contains `bba795b`) and is pushed. Still no code of mine on it. Native Windows, re-measured there with the same environment:
+
+- **Run A, as shipped:** 239 collected. 80 ok, 19 failures, 138 errors, 2 skipped. 118 errors are test modules failing to import on `fcntl` (114 before; the new control-log and blob-store port tests add 4). 13 failures are child CLI processes dying on `fcntl`. The rest are the same causes as in the table above.
+- **Run B, with the diagnostic `fcntl` stub:** 357 collected. 100 ok, 19 failures, 228 errors, 10 skipped. Causes:
+  - 101 test modules fail to import on `socketserver.UnixStreamServer`.
+  - 105 `PermissionError`s come from opening a directory to sync it. That includes the new `test_control_log_port`, so the refactor's file control log goes through the same `sync_dir`.
+  - 12 child processes still hit the real `fcntl`.
+  - 5 are cp1252 decode errors.
+  - The others are `O_DIRECTORY`/`O_NOFOLLOW`/`mkfifo`/`getuid` and the outcome-benchmark shell cases, as before.
+- No new cause appeared, and the recommendations and estimates stand. A WSL2 rerun at `9039cd6` has started (the last one took about 50 minutes). I will append its counts when it finishes, then wait for the owner's choice.
