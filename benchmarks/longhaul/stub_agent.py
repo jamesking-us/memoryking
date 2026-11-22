@@ -11,9 +11,11 @@ and prints `stream-json` events like the real CLI. Modes:
     leaker    oracle, but a memory tool result in its stream shows a canary: `leak`
     reader    looks for the facts in the memory the arm gives it (NOTES.md, CLAUDE.md, a
               history/ folder, or `memoryking recall` through the hooks' credential) the way
-              a careful agent would, and solves from what it finds
+              a careful agent would, and solves from what it finds; for `memoryking` it asks
+              one query per fact, or with `--queries broad` one query naming the subject and
+              all its attributes, as the pilot's agents did
 
-    stub_agent.py WORKDIR PROMPT_FILE --mode MODE [--usage-file F] [--mcp-config F] [--settings F]
+    stub_agent.py WORKDIR PROMPT_FILE --mode MODE [--queries per-fact|broad] [--usage-file F] [--mcp-config F] [--settings F]
 """
 
 from __future__ import annotations
@@ -166,12 +168,12 @@ def memory_text(workdir: Path, task: gen.Task, args) -> tuple[str, dict, str | l
         return (
             "mcp__memoryking__recall",
             {"query": task.title},
-            memoryking_recall(Path(args.mcp_config), task),
+            memoryking_recall(Path(args.mcp_config), task, args.queries),
         )
     return "none", {}, ""
 
 
-def memoryking_recall(mcp: Path, task: gen.Task) -> list[str]:
+def memoryking_recall(mcp: Path, task: gen.Task, queries: str = "per-fact") -> list[str]:
     sys.path.insert(0, str(ROOT / "src"))
     from memoryking import hooks
 
@@ -179,11 +181,16 @@ def memoryking_recall(mcp: Path, task: gen.Task) -> list[str]:
     opt = {args[i]: args[i + 1] for i in range(len(args) - 1) if args[i].startswith("--")}
     family = fam.F[task.family]
     out = []
+    asked = [f"{family.subject} {gen.slot_of(family, s.name).attr}" for s in task.slots]
+    if (
+        queries == "broad"
+    ):  # one query for the subject and every attribute of its family, needle or not
+        attrs = [spec.attr for spec in family.slots]
+        asked = [f"{family.subject} conventions: " + ", ".join(dict.fromkeys(attrs))]
     # Oldest first, as the reader parser expects: several queries, one briefing each.
-    for slot in task.slots:
-        spec = gen.slot_of(family, slot.name)
+    for query in asked:
         packet = hooks.recall(
-            f"{family.subject} {spec.attr}",
+            query,
             budget=6000,
             text=True,
             socket=Path(opt["--socket"]),
@@ -217,6 +224,7 @@ def main() -> int:
     parser.add_argument(
         "--mode", required=True, choices=("null", "oracle", "stale", "gullible", "leaker", "reader")
     )
+    parser.add_argument("--queries", choices=("per-fact", "broad"), default="per-fact")
     parser.add_argument("--usage-file")
     parser.add_argument("--mcp-config")
     parser.add_argument("--settings")
