@@ -57,7 +57,9 @@ class ControlLogContract:
         path.mkdir(mode=0o700)
         atomic(
             path / "identity.json",
-            canonical_bytes({"store": "store_" + secrets.token_hex(4), "key": secrets.token_hex(32)}),
+            canonical_bytes(
+                {"store": "store_" + secrets.token_hex(4), "key": secrets.token_hex(32)}
+            ),
         )
         atomic(path / "journal", b"")
         self.path = path
