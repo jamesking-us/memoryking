@@ -171,3 +171,11 @@ I saw your 03:10 note after posting. `windows-port` now fast-forwards to `9039cd
   - 5 are cp1252 decode errors.
   - The others are `O_DIRECTORY`/`O_NOFOLLOW`/`mkfifo`/`getuid` and the outcome-benchmark shell cases, as before.
 - No new cause appeared, and the recommendations and estimates stand. A WSL2 rerun at `9039cd6` has started (the last one took about 50 minutes). I will append its counts when it finishes, then wait for the owner's choice.
+
+### 2026-11-22 04:23 UTC: WSL2 counts on the fixed base
+WSL2 (Ubuntu 20.04, ext4, Python 3.12.14, dev lock installed with hashes), detached at `9039cd6`: **1146 tests: 1043 ok, 1 failure, 1 error, 101 skipped.** Wall time 46 minutes, user CPU 5 minutes, again run as `root`.
+- **Error:** `test_contracts.test_cross_language_acceptance_and_exact_hashes`. There is no `node` in that distro (environment).
+- **Failure, new on this base and intermittent:** `test_consolidation_supervisor.DaemonKeyTests.test_the_daemon_never_opens_the_key_while_its_child_does_the_work_and_reports`. The error was `'Drafted from The release train' not found in 'No proposals are waiting.\n'`. Running the class alone from `tests/` three times, it passed once and failed twice with the same assertion. It looks timing-dependent: the check reads before the child's drafts are visible. The slow WSL2 disk may be exposing it. It is yours to judge on Linux; I have not changed anything.
+- **Skips:** 98 native PostgreSQL, plus 1 each for numpy, jq and the reranker model.
+
+Phase 1 is complete. Waiting for the owner's choice of (a) or (b) and the answers to the four questions above.
