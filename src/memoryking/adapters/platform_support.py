@@ -68,6 +68,9 @@ if sys.platform != "win32":
 
     UnixStreamServer = socketserver.UnixStreamServer
 
+    def read_stdin_text() -> str:
+        return sys.stdin.read()
+
 else:
     fcntl = None
 
@@ -90,6 +93,17 @@ else:
 
     def unix_stream_socket() -> socket.socket:
         refuse()
+
+    def read_stdin_text() -> str:
+        """Piped text as UTF-8, as a text-mode read would see it.
+
+        The console code page (often cp1252) is never what a host or a pipe sends.
+        Windows PowerShell prepends a byte-order mark to what it pipes into a program,
+        two when its output encoding is set to UTF-8 with one, so every leading mark is
+        dropped; CRLF line ends become LF, as in any Windows text-mode read.
+        """
+        text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+        return text.lstrip("﻿").replace("\r\n", "\n")
 
     class UnixStreamServer(socketserver.TCPServer):
         """Stands in for the Unix-domain server so modules that subclass it still import."""

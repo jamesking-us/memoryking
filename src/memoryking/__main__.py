@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
@@ -18,7 +19,7 @@ from memoryking import __version__, daemon, profiles, session_bindings
 from memoryking.adapters import platform_support
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_embeddings import MODEL
-from memoryking.adapters.local_files import atomic, private_dir, private_file
+from memoryking.adapters.local_files import atomic, private_dir
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import CAPABILITIES, SCHEMA_VERSION, LocalStore
 from memoryking.application.lexical_index import RATE_PER_SECOND
@@ -26,6 +27,7 @@ from memoryking.contracts.canonical import ContractError, canonical_bytes, load_
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, SystemClock
 from memoryking.observability import LEVELS, configure, event
+from memoryking.relay_client import RelayCredential, connect, credential_token
 
 
 def bar(used: int, limit: int, width: int = 12) -> str:
@@ -674,9 +676,19 @@ def unreviewed_command(args: Any) -> None:
         )
 
 
-def read_credential(path: Path) -> str:
-    private_file(path)
-    return path.read_text(encoding="utf-8").strip()
+def attach_relay(args: argparse.Namespace) -> None:
+    """Send this command's requests through a relay; the token stays on the store's side."""
+    if not hasattr(args, "socket"):
+        raise LocalError("relay_invalid")
+    endpoint, credential = connect(args.relay, args.socket, args.credential, args.relay_python)
+    atexit.register(endpoint.close)
+    args.socket = endpoint
+    if hasattr(args, "credential"):
+        args.credential = credential
+
+
+def read_credential(path: Path | RelayCredential) -> str:
+    return credential_token(path)
 
 
 def duration(ms: int) -> str:
@@ -1114,6 +1126,10 @@ def main() -> int:
         from memoryking.adapters import stdio
 
         return stdio.main(sys.argv[2:])
+    if sys.argv[1:2] == ["relay"]:
+        from memoryking import relay
+
+        return relay.main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
     parser.add_argument(
@@ -1124,6 +1140,19 @@ def main() -> int:
     )
     parser.add_argument(
         "--config", type=Path, help="Profiles file; default ~/.memoryking/config.toml"
+    )
+    parser.add_argument(
+        "--relay",
+        default=os.environ.get("MEMORYKING_RELAY"),
+        help="Reach the daemon through a relay on the store's side: wsl:DISTRO or "
+        "docker:CONTAINER; --socket and --credential are then paths on that side "
+        "(MEMORYKING_RELAY)",
+    )
+    parser.add_argument(
+        "--relay-python",
+        default=os.environ.get("MEMORYKING_RELAY_PYTHON"),
+        help="Python with MemoryKing on the store's side; default python3 (WSL) or "
+        "python (container) (MEMORYKING_RELAY_PYTHON)",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     prof = commands.add_parser("profile", help="Name a store so commands need no paths")
@@ -1327,6 +1356,12 @@ def main() -> int:
         help="Run the MCP stdio bridge (arguments as for `python -m memoryking.adapters.stdio`)",
     )
     mcp.add_argument("rest", nargs="*", help="Bridge options; run `memoryking mcp --help`")
+    relayed = commands.add_parser(
+        "relay",
+        help="Carry request lines between stdin/stdout and the daemon socket, for a client "
+        "that cannot reach it (a Windows client through wsl.exe or docker exec)",
+    )
+    relayed.add_argument("rest", nargs="*", help="Relay options; run `memoryking relay --help`")
     reindex = commands.add_parser(
         "reindex",
         help="Start the rebuild into the current lexical configuration; --wait shows progress",
@@ -1841,7 +1876,10 @@ def main() -> int:
                         print(f"  {field} = {value}")
             return 0
         profiles.apply(args, args.profile, args.config)
-        autostart(args)
+        if args.relay:
+            attach_relay(args)
+        else:
+            autostart(args)
         optional = (
             {"socket", "credential"}
             if args.command
@@ -1887,13 +1925,13 @@ def main() -> int:
             result = daemon.stop(profiles.resolve(args.profile, args.config))
             print(json.dumps(result))
         elif args.command == "dashboard-login":
-            private_file(args.credential)
+            token = read_credential(args.credential)
             private_dir(args.output.parent)
             if args.output.exists() or args.output.is_symlink():
                 raise LocalError("credential_output_exists")
             result = request(
                 args.socket,
-                args.credential.read_text(encoding="utf-8").strip(),
+                token,
                 "dashboard_bootstrap",
                 {},
             )
@@ -1953,7 +1991,7 @@ def main() -> int:
             elif args.file is not None and str(args.file) != "-":
                 text = args.file.read_text(encoding="utf-8", errors="replace")
             else:
-                text = sys.stdin.read()
+                text = platform_support.read_stdin_text()
             result = hooks.capture(
                 text,
                 source=args.source,
@@ -2023,7 +2061,7 @@ def main() -> int:
             from memoryking import host_hooks
 
             try:
-                raw = "" if sys.stdin.isatty() else sys.stdin.read()
+                raw = "" if sys.stdin.isatty() else platform_support.read_stdin_text()
                 payload = host_hooks.read_event(raw)
                 where = {
                     "socket": args.socket,
@@ -2388,10 +2426,9 @@ def main() -> int:
                     )
                 )
         elif args.command == "status":
-            private_file(args.credential)
             result = request(
                 args.socket,
-                args.credential.read_text(encoding="utf-8").strip(),
+                read_credential(args.credential),
                 "status",
                 {"project": args.project},
             )
@@ -2402,8 +2439,7 @@ def main() -> int:
             else:
                 print(render_status(result, __version__))
         elif args.command == "reindex":
-            private_file(args.credential)
-            token = args.credential.read_text(encoding="utf-8").strip()
+            token = read_credential(args.credential)
             started = request(args.socket, token, "reindex", {})
             lexical = started.get("lexical", {})
             if not args.json:
@@ -2420,7 +2456,7 @@ def main() -> int:
             elif args.wait:
                 print("Reindex complete.")
         elif args.command == "request":
-            private_file(args.credential)
+            token = read_credential(args.credential)
             body = load_strict(sys.stdin.buffer.read(262145))
             if not isinstance(body, dict) or set(body) != {"operation", "args"}:
                 raise LocalError("invalid_request")
@@ -2432,7 +2468,7 @@ def main() -> int:
                     raise LocalError("credential_output_exists")
             result = request(
                 args.socket,
-                args.credential.read_text(encoding="utf-8").strip(),
+                token,
                 body["operation"],
                 body["args"],
             )

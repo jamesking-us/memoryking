@@ -34,6 +34,7 @@ from memoryking.contracts.problems import explain
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure, summarize, timings, trace, tracing
+from memoryking.relay_client import RelayEndpoint
 
 WIRE_LIMIT = 262144
 # Public fields a refusal may carry beside `error` and `hint`.
@@ -332,9 +333,15 @@ class Server(socketserver.ThreadingMixIn, UnixStreamServer):
         self.path.unlink(missing_ok=True)
 
 
+# Where a client sends requests: the daemon's socket, or a relay to it (relay_client).
+Socket = Path | RelayEndpoint
+
+
 def request(
-    socket_path: Path, credential: str, operation: str, args: dict[str, Any]
+    socket_path: Socket, credential: str, operation: str, args: dict[str, Any]
 ) -> dict[str, Any]:
+    if isinstance(socket_path, RelayEndpoint):
+        return socket_path.request(credential, operation, args)
     payload = canonical_bytes(
         {"version": 1, "credential": credential, "operation": operation, "args": args}
     )

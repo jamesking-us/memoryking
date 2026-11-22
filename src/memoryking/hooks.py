@@ -18,6 +18,7 @@ from memoryking import profiles, session_bindings
 from memoryking.adapters.local_files import private_file
 from memoryking.adapters.local_ipc import request
 from memoryking.domain.local import LocalError
+from memoryking.relay_client import RelayCredential, credential_token
 
 TEXT_LIMIT = 65536
 DAY_MS = 86_400_000
@@ -52,14 +53,15 @@ def connection_files(
         raise LocalError("credential_required")
     if not project:
         raise LocalError("project_required")
-    private_file(credential)
+    if not isinstance(credential, RelayCredential):
+        private_file(credential)
     return socket, credential, project
 
 
 def connection(**where: Any) -> tuple[Path, str, str]:
     """(socket, credential token, project) from arguments, then the environment."""
     socket, credential, project = connection_files(**where)
-    return socket, credential.read_text(encoding="utf-8").strip(), project
+    return socket, credential_token(credential), project
 
 
 def event_id(source: str, text: str, salt: str = "") -> str:

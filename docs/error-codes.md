@@ -790,6 +790,15 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `redirect_forbidden` | The shared service URL redirected; use the final HTTPS URL directly. |
 
+## relay
+
+| Code | What to do |
+| --- | --- |
+| `relay_interrupted` | The relay ended after the request was sent, so its outcome is unknown; read the current state before repeating a change. |
+| `relay_invalid` | `--relay` must be wsl:DISTRO or docker:CONTAINER, with --socket and --credential as absolute paths on that side. |
+| `relay_unavailable` | The relay could not start or has ended; check that the WSL2 distro or the container is running with MemoryKing installed (`--relay-python`). |
+| `relay_version_mismatch` | The store side runs another MemoryKing version (see `found`); install the same version on both sides, then retry. |
+
 ## release
 
 | Code | What to do |
