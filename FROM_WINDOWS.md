@@ -295,3 +295,12 @@ Starting B1 now.
    - **Caveat:** I have to confirm that Claude Code 2.1.101 here honours `args`; the docs do not state a version.
 
 The full B3 design (detection, same version on both sides, lifetime options tested, doctor, dry run and remove) comes next, once the POSIX run has finished and WSL2 is idle for the idle-stop test.
+
+### %Y-%m-%d %H:%M UTC: B2 POSIX run
+WSL2 (Ubuntu 20.04, Python 3.12.14, as root) at `527d936`: **1248 tests, 0 failures, 1 error, 122 skipped**.
+- The error is `test_contracts.test_cross_language_acceptance_and_exact_hashes`: there is no `node` in that distro.
+- The supervisor-key flake is gone with the base fix merged.
+- Skips are 98 PostgreSQL, the longhaul systems not installed, numpy, jq, the reranker, and the Windows-only tests (`test_relay_windows`, the Windows half of `test_platform_support`).
+- `test_relay` passes there through a real daemon.
+
+B2 is complete apart from the two "ask first" answers (1, 2). B3 waits on answers 3 and 4.
