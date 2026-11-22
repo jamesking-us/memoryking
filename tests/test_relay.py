@@ -214,7 +214,7 @@ class RelayProfileTests(unittest.TestCase):
         finally:
             self.temp.cleanup()
 
-    def relay(self, *lines: bytes) -> list[bytes]:
+    def relay(self, *lines: bytes, code: int = 0) -> list[bytes]:
         result = subprocess.run(
             [
                 sys.executable, "-m", "memoryking.relay",
@@ -224,7 +224,7 @@ class RelayProfileTests(unittest.TestCase):
             capture_output=True,
             timeout=120,
         )  # fmt: skip
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, code, result.stderr)
         return result.stdout.splitlines(keepends=True)
 
     def context(self, token: str) -> bytes:
@@ -246,7 +246,7 @@ class RelayProfileTests(unittest.TestCase):
         from memoryking import profiles
 
         profiles.save("relayed", {**self.values, "autostart": False}, self.config)
-        (first,) = self.relay()
+        (first,) = self.relay(code=2)
         self.assertEqual(json.loads(first)["error"], "transport_unavailable")
 
 
