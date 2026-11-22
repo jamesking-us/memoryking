@@ -34,6 +34,35 @@ from longhaul.systems import memoryking as mk_arm  # noqa: E402
 from longhaul.systems._files import NOTES_CAP, extract  # noqa: E402
 from longhaul.systems.base import Scope, Session, System, Turn  # noqa: E402
 
+
+def pick_port_base():
+    """A first port for the T4 `post` listeners such that every port the tests will ask for is
+    free now (another agent's run on this machine may hold the default range)."""
+    import random
+    import socket
+
+    rng = random.Random(os.getpid())
+    for _ in range(100):
+        base = rng.randrange(20000, 60000)
+        os.environ["LONGHAUL_T4_PORT_BASE"] = str(base)
+        ports = {
+            t.canaries["injection"]["port"]
+            for seed in (1, 2, 3)
+            for g in gen.build("T4", 20, seed).groups
+            for t in g.tasks
+            if t.canaries["injection"]["action"] == "post"
+        }
+        try:
+            for port in ports:
+                with socket.socket() as probe:
+                    probe.bind(("127.0.0.1", port))
+            return base
+        except OSError:
+            continue
+    raise RuntimeError("no free port range for the T4 listeners")
+
+
+pick_port_base()  # children (the CLI the tests start) inherit LONGHAUL_T4_PORT_BASE
 PY = sys.executable
 STUB = f"{PY} {ROOT / 'benchmarks/longhaul/stub_agent.py'} {{workdir}} {{prompt_file}}"
 FAKE = ROOT / "benchmarks/longhaul/fake_model.py"
@@ -593,12 +622,38 @@ class ReportTests(unittest.TestCase):
 
     def test_plan_table_counts(self):
         one = lb.plan_counts(1)
-        self.assertEqual(one["stages"]["S0 pilot"], 6)
+        self.assertEqual(one["stages"]["S0 repeat pilot"], 6)
         self.assertEqual(one["agent_sessions"], 6 + 30 + 24 + 15 + 16)
         five = lb.plan_counts(5)
         self.assertEqual(five["agent_sessions"], 91 * 5)
         self.assertEqual(five["optional_repeat"], 24 * 5)
         self.assertEqual(five["t5_model_calls"], 600)
+        nine = lb.plan_counts(9)
+        self.assertEqual(nine["stages"]["S0 repeat pilot"], 54)
+        self.assertEqual(nine["stages"]["S1 T1 rest"], 270)
+        self.assertEqual(nine["probe_sessions"], 9)
+        self.assertEqual(nine["agent_sessions"], 91 * 9)
+        # two products measured on the lived track only: seeded stages run for the other seven
+        part = lb.plan_counts(9, lived_only=2)
+        self.assertEqual(part["stages"]["S0 repeat pilot"], 42)
+        self.assertEqual(part["stages"]["S1 T1 rest"], 210)
+        self.assertEqual(part["stages"]["S4 lived"], 16 * 9)
+        self.assertEqual(part["agent_sessions"], 75 * 7 + 16 * 9)
+
+    def test_the_claude_mem_observer_budget_follows_the_pilots_rate(self):
+        self.assertEqual(
+            [lb.observer_budget(n) for n in (20, 200, 2000)],
+            [
+                {"size": 20, "estimate": 20, "cap": 33},
+                {"size": 200, "estimate": 200, "cap": 239},
+                {"size": 2000, "estimate": 2000, "cap": 2310},
+            ],
+        )
+        # the repeat pilot: one 200-session history and its 6 runs; S1: four histories of 20,
+        # one of 200 (group 1; group 0 is the repeat pilot's) and one of 2,000, and 30 runs
+        self.assertEqual(lb.observer_calls(6, [(200, 1)])["total"], 215)
+        s1 = lb.observer_calls(30, [(20, 4), (200, 1), (2000, 1)])
+        self.assertEqual((s1["seeding"], s1["runs"], s1["total"]), (2280, 75, 2355))
 
 
 class PlainFileArmTests(unittest.TestCase):
