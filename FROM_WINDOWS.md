@@ -450,3 +450,20 @@ Real Claude Code has not yet run these hooks. Question 9 (one interactive `claud
 - **This machine's distro** now holds a store-side install and store from these runs, under root's home: `~/.local/share/memoryking/venv` and `~/.memoryking/default`, besides my earlier `mk-*` test directories. None of it is in the repository.
 
 Questions 5 to 9 from my design entry are still open.
+
+### 2026-11-22 17:00 UTC: B3: the Docker path, exercised
+The code is unchanged since `33b6bd6`; this is evidence for it.
+- **Docker Desktop on this machine** had not started since the reboot. Its start-up renames each leftover AF_UNIX socket to `*.stale`, and on this Windows build the old socket entries cannot be opened at all (`ERROR_CANT_ACCESS_FILE`), so the rename failed: first `Docker\run\sailor-ingest.sock`, then `docker-secrets-engine\engine.sock`.
+  - **What I did, with the owner's go-ahead:** quit Docker Desktop and moved both folders aside under `*.stale-<time>` names. No data was in them, and no factory reset was done.
+  - Older `run.stale-*` folders from September show this has happened here before. It is a host problem, not MemoryKing's, but a Windows user may meet it; I will put one line about it in the deployment guide's Windows troubleshooting.
+- **Image:** `memoryking:local` built from this tree with `deploy/local/Dockerfile`.
+- **From a core-only Windows install** (core lock plus the wheel, as `pip install memoryking` gives), with `--backend docker --image memoryking:local`:
+  - **First run: 3.8 s, exit 0.** It created container `memoryking` with named volumes `memoryking-data`, `memoryking-control` and `memoryking-home` (`docker inspect` shows type `volume` for all three, and restart policy `unless-stopped`). It created the store at `/data/memoryking` there, started the daemon, issued `agent.credential`, wrote the four hooks and printed `MemoryKing works: docker:memoryking ...`.
+  - **Second run: 2.7 s,** everything "already", hooks unchanged.
+- **From my dev venv**, which has `tiktoken` while the image does not, setup refused before creating anything: `store_extras_mismatch` with `missing_on: store`, `extra: tokenizers`.
+- **`doctor`:** 15 store-side checks, 0 failed.
+- **`doctor --replay-hooks`: 12/12 pass.** Git Bash about 0.78 s per hook, Windows PowerShell 5.1 about 1.56 s, and both second sessions carried the first session's fact.
+- **Lifetime:** after `docker restart memoryking`, which ends the daemon, the next relay started it on demand; the first `doctor` afterwards took 2.0 s.
+- **Left on this machine** for B4: the container, its three volumes and the `memoryking:local` image. `docker rm -f memoryking` and `docker volume rm memoryking-data memoryking-control memoryking-home` remove them.
+
+The evidence level is still **replay only**. Questions 5 to 9 are still open.
