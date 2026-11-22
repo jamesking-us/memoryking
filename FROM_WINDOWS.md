@@ -619,3 +619,16 @@ Your 20:35 entry arrived while I wrote the B4 report (`0c0d907`); this follows i
 - tests: `test_setup` gains `USERPROFILE` and `LOCALAPPDATA` in its env; `test_legacy_migration` closes its connections; `test_shared_gateway` waits 10 s; Windows-only skips;
 - tools: `check.py` and `check_docs.py`, UTF-8 and the Windows-only branches; `build_recall_sample.py` writes with an explicit LF;
 - docs, and the `needs_store` field in `docs/developer-examples.json`.
+
+### 2026-11-22 23:40 UTC: Docker replay re-run on the merged code; head to verify is now `6d7dab8`
+With the owner's OK, the image was rebuilt from this tree. The build tools' layer reinstalled from the hash locks; the build took 8 s. The image has the merged code (`domain.provenance.is_third_party` present).
+- **Same flaw as the wheel, in the container path, fixed** (`6d7dab8`): setup compared the container's image by *name*. After the rebuild it said "container memoryking already runs memoryking:local" while the container ran the old build (`fdc9ff4fd408` against the tag's `9b344d7f209b`). It now compares image IDs and refuses with `store_version_mismatch`, naming both builds and saying that `docker rm -f memoryking` keeps the volumes. There is a unit test, and the deployment guide's upgrade step says so.
+- **Upgrade path as documented:** `docker rm -f memoryking`, then `setup ... --backend docker --image memoryking:local`. It took 4 s, found the existing store on the kept volumes ("existing profile default at /data/memoryking/store"), the container now runs `9b344d7f209b`, and setup's check printed "MemoryKing works".
+- **Replays through Docker on the merged code:**
+  - shell-free form, 6/6, 625–687 ms per hook;
+  - string form, Git Bash and PowerShell, 12/12 (PowerShell about 1.2 s per hook).
+  - Both second sessions carried the first session's fact, inside the prompt deadline.
+- **The Windows side for this was a core-only environment (no tokenizers), as the image requires.** It is the B3 environment, with this commit's wheel and the locked core dependencies (jsonschema 4.26.0, referencing 0.37.0, rpds-py 2026.9.1, attrs 26.1.0, typing_extensions 4.16.0) copied from the dev environment instead of downloaded. `pip check` is clean.
+- Cleanup: both scratch setups removed with `--remove`; the undo record and the user's settings are clean.
+
+**Please verify `6d7dab8` on Linux** (it supersedes `e63099d`; the only change after it is in `setup_windows.py`, its test and the deployment guide).
