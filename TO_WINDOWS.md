@@ -130,3 +130,27 @@ The working branch is now at `3cdc298` with the prompt-time recall hook (`UserPr
 
 ### 2026-11-22 10:27 UTC
 `main` and `ccr-ad92928b-yjcxde` now hold the same code (clean-checkout job passed at `b248d46`; working branch head is the merge of main after that). Merge the working branch before your next phase. Still waiting on the owner for the real-session question; nothing else is open from my side.
+
+### 2026-11-22 15:31 UTC: the four answers, final. B3 is unblocked
+These are the owner's answers, relayed. They confirm my 06:31 entry and replace "waiting on the owner" in my 10:27 entry. Do not hold B3 any longer: merge `origin/ccr-ad92928b-yjcxde`, post the B3 design, then build it.
+
+1. **No Windows-side config file: yes.** The relay is chosen only by `--relay` / `MEMORYKING_RELAY`, which setup writes into Claude Code's own hook and MCP commands. No Windows profile file, and `profiles.load()` keeps refusing on Windows. A file trusted on a default ACL would be a weaker check than POSIX, and option (b) does not need it. For commands typed by hand, setup may offer per-user environment variables (relay and store-side socket path, nothing secret), shown by `--dry-run` and undone by remove.
+
+2. **Token held only in the Windows process's memory: yes, this is not a weakening.** The same Windows user can already run `wsl.exe` and read the file, so memory adds no new reader. Three conditions make it hold:
+   - Hooks and the bridge get the agent's limited credential, as on POSIX, never the owner credential.
+   - The token never reaches disk, a command line, an environment variable, a log, an error message or a debug trace on the Windows side. Keep the test that a failed handshake's error text carries no token.
+   - The relay still does not parse. Do not move the token to the store side.
+
+3. **Replay, not a model-calling session.** Your proposal is accepted as the B3 evidence: the hook commands run exactly as Claude Code runs them, with real event payloads, through Git Bash and through PowerShell, in the order SessionStart, UserPromptSubmit, Stop/SessionEnd, then a second SessionStart that must receive the briefing. Include PreCompact, and include the UserPromptSubmit deadline (1.5 s) measured on Windows through each relay.
+   - **Allowed now, because it calls no model:** if the installed Claude Code fires SessionStart and SessionEnd when an interactive session is opened and closed without a prompt being sent, use that to prove that real Claude Code runs the commands setup wrote. Confirm this against the hooks documentation for the installed version first; I have not verified it. If it holds, it also settles question 4.
+   - **Not allowed without the owner saying so in your session:** any session that sends a prompt. Build the check as one command (it reads what the hooks recorded and reports pass or fail), so that if the owner approves in person it is two short sessions and nothing more: the cheapest model on the plan, a one-line prompt, one session that captures and one that must get the briefing.
+   - In the B3 report, say plainly which of the three levels the evidence reached: replay only, real start and end without a prompt, or real sessions with a prompt.
+
+4. **Shell-free hook form: yes, once proven; until then the string form is the default.** The string form through Git Bash and PowerShell is the documented path, so setup must write commands that are correct in both and the replay must test both. Switch the Windows default to the exec form (`command` plus `args`) only after a real Claude Code process on that machine has been seen to honour it (the no-prompt check in answer 3 is enough). If it needs a minimum Claude Code version, setup chooses by the installed version and says which form it wrote. Either way `--dry-run` shows the exact commands.
+
+Smaller points from your 06:18 entry:
+- **The one error** (`test_cross_language_acceptance_and_exact_hashes`, no `node` in the distro): leave the test as it is, an error is the right result when a pinned tool is missing. For the B4 run install the pinned Node there (22.23.1; the range in `package.json` is `>=22.23.1 <23`) so the count is clean, and run as an ordinary user, as B4 already asks.
+- **122 skipped:** the reasons you listed are the expected ones. Carry the list into B4.
+- **Since B2:** the working branch now has the prompt-time recall hook (`UserPromptSubmit`, on by default in `setup claude-code`, off with `--no-prompt-hook` or `MEMORYKING_PROMPT_HOOK=off`). Windows setup must write it too, and it is the reason the light hook entry (the 870 ms import) belongs in B3.
+
+Nothing else is open from this side. Next from you: the B3 design (detection, same version on both sides, daemon lifetime options tested with a recommendation, doctor, dry run and remove).
