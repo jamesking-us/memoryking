@@ -44,7 +44,7 @@ shared = ["psycopg[binary]==3.3.6", "psycopg-pool==3.3.3", "mcp==2.3.0"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"memoryking" = ["py.typed"]
+"memoryking" = ["py.typed", "locks/*.lock"]
 "memoryking.contracts" = ["*.json", "py.typed"]
 "memoryking.adapters" = ["*.sql", "*.json", "web/*", "tokenizers/*", "models/*.json"]
 

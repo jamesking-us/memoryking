@@ -58,8 +58,15 @@ def check_socket(path: Path) -> None:
         raise LocalError("unsafe_socket")
 
 
+def extras() -> list[str]:
+    """The optional extras installed on this side that change what a client may ask for."""
+    import importlib.util
+
+    return ["tokenizers"] if importlib.util.find_spec("tiktoken") is not None else []
+
+
 def handshake(credential: Path | None) -> bytes:
-    body: dict[str, object] = {"relay": PROTOCOL, "version": __version__}
+    body: dict[str, object] = {"relay": PROTOCOL, "version": __version__, "extras": extras()}
     if credential is not None:
         from memoryking.adapters.local_files import private_file
 

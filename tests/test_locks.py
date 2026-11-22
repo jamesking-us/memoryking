@@ -53,6 +53,16 @@ class LockTests(unittest.TestCase):
         core = (ROOT / "requirements-core.lock").read_text(encoding="utf-8")
         self.assertNotIn("pywin32", core)
 
+    def test_the_locks_inside_the_package_are_the_repositorys(self) -> None:
+        # Windows setup installs the store side's dependencies from these, hash-checked.
+        for name in ("core", "tokenizers"):
+            with self.subTest(lock=name):
+                self.assertEqual(
+                    (ROOT / "src/memoryking/locks" / f"{name}.lock").read_bytes(),
+                    (ROOT / f"requirements-{name}.lock").read_bytes(),
+                    f"copy requirements-{name}.lock to src/memoryking/locks/{name}.lock",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

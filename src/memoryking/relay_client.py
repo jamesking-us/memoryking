@@ -41,6 +41,17 @@ REPLY_SECONDS = 20.0
 REPLY_DETAIL = ("required_capability", "path", "problem", "expected", "missing")
 
 
+def missing_extras(theirs: Any) -> list[str]:
+    """Extras this side uses that a relay's handshake says the store side lacks. A relay
+    that names no extras (an older one) is not refused for it."""
+    if not isinstance(theirs, list):
+        return []
+    import importlib.util
+
+    ours = ["tokenizers"] if importlib.util.find_spec("tiktoken") is not None else []
+    return [extra for extra in ours if extra not in theirs]
+
+
 def _parse(line: bytes) -> Any:
     try:
         return json.loads(line)
@@ -83,6 +94,14 @@ class RelayEndpoint:
             raise LocalError(
                 "relay_version_mismatch",
                 detail={"expected": __version__, "found": str(hello.get("version"))},
+            )
+        missing = missing_extras(hello.get("extras"))
+        if missing:
+            # Briefings here would ask for exact token counts the store side cannot make;
+            # say so now, not as tokenizer_unavailable in the middle of a session.
+            self.close()
+            raise LocalError(
+                "store_extras_mismatch", detail={"missing_on": "store", "extra": missing[0]}
             )
         credential = hello.get("credential")
         self.credential: str | None = credential if isinstance(credential, str) else None

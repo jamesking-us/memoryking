@@ -17,14 +17,16 @@ Windows runs the agent-side tools but not the store. One run:
    saying it works or exactly what failed.
 
 `--dry-run` prints every change and makes none; a second run changes nothing it does not
-need to; `--remove` takes this setup's entries out of Claude Code's files and keeps the
-store, which it says how to remove.
+need to; `--remove` puts Claude Code's files back byte for byte from the undo record in
+`%LOCALAPPDATA%\\MemoryKing\\setup` (or, where a file changed since, takes out only this
+setup's entries) and keeps the store, which it says how to remove.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -71,10 +73,12 @@ done
 mkdir -p "$dir" && chmod 700 "$dir"
 [ -x "$py" ] || "$base" -m venv "$dir/venv" >/dev/null 2>&1 || { echo '{"error":"store_python_missing"}'; exit 4; }
 if [ "$source" = index ]; then spec="memoryking==$want"; else spec="$(wslpath -a "$source")"; fi
-"$py" -m pip install -q --disable-pip-version-check "$spec" >/dev/null 2>"$dir/install.log" || { echo '{"error":"store_install_failed"}'; exit 5; }
-if [ "$tok" = 1 ]; then
-  "$py" -m pip install -q --disable-pip-version-check "tiktoken==0.12.0" >/dev/null 2>>"$dir/install.log" || { echo '{"error":"store_install_failed"}'; exit 5; }
-fi
+pip() { "$py" -m pip install -q --disable-pip-version-check "$@" >/dev/null 2>>"$dir/install.log" || { echo '{"error":"store_install_failed"}'; exit 5; }; }
+: > "$dir/install.log"
+# Every dependency from the hash locks this version ships, then MemoryKing alone.
+pip --require-hashes -r "$(wslpath -a "$4")"
+if [ "$tok" = 1 ]; then pip --require-hashes -r "$(wslpath -a "$5")"; fi
+pip --no-deps "$spec"
 same || { echo '{"error":"store_version_mismatch"}'; exit 6; }
 echo '{"installed":"now"}'
 """
@@ -201,13 +205,16 @@ def install(kind: str, name: str, args: Any, say: dict[str, str]) -> None:
             f"MemoryKing {__version__} in {name} at {WSL_PYTHON.rsplit('/bin/', 1)[0]}"
             + (" with the tokenizers extra" if tokenizers else "")
             + (f" from {args.wheel.name}" if args.wheel else " from the package index")
+            + ", its dependencies hash-checked from the locks this version ships"
         )
         if args.dry_run:
             say["install"] = "would install " + what
             return
+        locks = Path(__file__).with_name("locks")
         done = quiet(
             ["wsl.exe", "-d", name, "--exec", "/bin/sh", "-c", WSL_INSTALL, "sh"]
             + [__version__, source, "1" if tokenizers else "0"]
+            + [str(locks / "core.lock"), str(locks / "tokenizers.lock")]
         )
         result = last_json(done)
         if "error" in result:
@@ -297,20 +304,34 @@ def neutral(config: dict[str, Any]) -> None:
                         raise LocalError("hook_command_unsafe", detail={"problem": word[:80]})
 
 
-class NoRecord(setup_host.Files):
-    """Edits without the byte-exact undo record, which would be a Windows-side file
-    (an open question); removal then takes out only this setup's own entries."""
+def record_path() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return Path(base) / "MemoryKing" / "setup" / "claude-code.json"
+
+
+class WindowsRecord(setup_host.Files):
+    """The byte-exact undo record of the files setup edited, kept in `%LOCALAPPDATA%`.
+
+    It is used only by `--remove` to put those files back; nothing reads it to connect or
+    to decide what to trust (commands carry their relay in their own arguments). It holds
+    no secret: the original bytes of Claude Code's settings files and what was written."""
 
     def __init__(self, dry: bool):
-        self.state_path, self.dry = Path(), dry
-        self.state = {"files": {}}
-        self.pending = []
+        super().__init__(record_path(), dry)
 
     def save(self) -> None:
-        return None
+        if self.dry or not self.state["files"]:
+            return
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(json.dumps(self.state, indent=2) + "\n", encoding="utf-8")
 
     def save_removal(self) -> None:
-        return None
+        if self.dry:
+            return
+        if self.state["files"]:
+            self.save()
+        else:
+            self.state_path.unlink(missing_ok=True)
 
 
 def check(spec: str, agent: str, project: str) -> str:
@@ -334,7 +355,7 @@ def run(args: Any) -> int:
         raise LocalError("host_unsupported")
     home = Path.home()
     cwd = (args.cwd or Path.cwd()).resolve()
-    files = NoRecord(args.dry_run)
+    files = WindowsRecord(args.dry_run)
     if args.remove:
         code = setup_host.remove(args, files, home, cwd)
         print(
@@ -390,6 +411,7 @@ def run(args: Any) -> int:
             f"{files.write(path, text)} {path}; the same command strings run in Git Bash and "
             "PowerShell"
         )
+    files.save()
     setup_host.summary(args, {**say, "store": f"{say['install']}; {say['store']}"}, printed, files)
     if not args.dry_run:
         print(check(spec, agent, args.project))

@@ -110,6 +110,40 @@ class HookStringTests(unittest.TestCase):
         self.assertFalse(any(word.startswith("/") for word in argv))
 
 
+class UndoRecordTests(unittest.TestCase):
+    def test_remove_puts_files_back_byte_for_byte_and_then_the_record_goes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            edited, created = root / "user.json", root / "new" / "settings.json"
+            original = b'{\r\n  "theme": "dark"\r\n}\r\n'
+            edited.write_bytes(original)
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(root / "local")}):
+                files = setup_windows.WindowsRecord(dry=False)
+                self.assertEqual(files.write(edited, '{"hooks": {}}\n'), "changed")
+                self.assertEqual(files.write(created, '{"hooks": {}}\n'), "created")
+                files.save()
+                record = setup_windows.record_path()
+                self.assertTrue(record.is_file())
+                self.assertNotIn("credential", record.read_text(encoding="utf-8"))
+                again = setup_windows.WindowsRecord(dry=False)
+                self.assertEqual(again.restore(edited, lambda text: text), "restored")
+                self.assertEqual(again.restore(created, lambda text: text), "deleted")
+                again.save_removal()
+                self.assertEqual(edited.read_bytes(), original)
+                self.assertFalse(created.exists())
+                self.assertFalse((root / "new").exists())
+                self.assertFalse(record.exists())
+
+    def test_a_dry_run_writes_no_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}):
+                files = setup_windows.WindowsRecord(dry=True)
+                files.write(Path(tmp) / "s.json", "{}\n")
+                files.save()
+                self.assertFalse(setup_windows.record_path().exists())
+                self.assertFalse((Path(tmp) / "s.json").exists())
+
+
 @unittest.skipUnless(
     platform_support.LOCAL_STORE_SUPPORTED, "the store side of a Windows setup runs on POSIX"
 )

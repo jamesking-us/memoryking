@@ -84,8 +84,14 @@ class RelayTests(unittest.TestCase):
 
     def test_handshake_names_the_version_and_hands_over_the_credential(self) -> None:
         first = json.loads(self.relayed(credential=self.credential)[0])
-        self.assertEqual(first, {"relay": 1, "version": __version__, "credential": self.token})
-        self.assertEqual(json.loads(self.relayed()[0]), {"relay": 1, "version": __version__})
+        extras = relay.extras()
+        self.assertEqual(
+            first,
+            {"relay": 1, "version": __version__, "extras": extras, "credential": self.token},
+        )
+        self.assertEqual(
+            json.loads(self.relayed()[0]), {"relay": 1, "version": __version__, "extras": extras}
+        )
 
     def test_replies_are_the_daemons_bytes(self) -> None:
         denied = self.line("capture", {"project": "p", "text": "x"}, credential="not-a-token")

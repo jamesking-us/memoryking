@@ -7,6 +7,7 @@ import re
 import sys
 import textwrap
 import unittest
+from unittest import mock
 
 from memoryking import __version__, relay, relay_client
 from memoryking.adapters import local_ipc
@@ -60,6 +61,22 @@ class RelayClientTests(unittest.TestCase):
         other = 'out.write(b\'{"relay":1,"version":"0.0.0"}\\n\'); out.flush()\n'
         refused = self.fails("relay_version_mismatch", lambda: RelayEndpoint(fake(other + ECHO)))
         self.assertEqual(refused.detail, {"expected": __version__, "found": "0.0.0"})
+
+    def test_an_extra_this_side_uses_and_the_store_side_lacks_is_refused_at_connect(self) -> None:
+        lacking = (
+            f'out.write(b\'{{"relay":1,"version":"{__version__}","extras":[]}}\\n\'); out.flush()\n'
+        )
+        having = lacking.replace('"extras":[]', '"extras":["tokenizers"]')
+        older = lacking.replace(',"extras":[]', "")
+        with mock.patch("importlib.util.find_spec", return_value=object()):  # tiktoken here
+            refused = self.fails(
+                "store_extras_mismatch", lambda: RelayEndpoint(fake(lacking + ECHO))
+            )
+            self.assertEqual(refused.detail, {"missing_on": "store", "extra": "tokenizers"})
+            RelayEndpoint(fake(having + ECHO)).close()
+            RelayEndpoint(fake(older + ECHO)).close()  # names no extras: not refused for it
+        with mock.patch("importlib.util.find_spec", return_value=None):  # no tiktoken here
+            RelayEndpoint(fake(lacking + ECHO)).close()
 
     def test_a_failed_handshake_never_carries_the_token(self) -> None:
         secret = "tok-SECRET-0123456789"
