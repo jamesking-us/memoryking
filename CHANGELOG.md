@@ -4,6 +4,10 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### A storage layer a third backend could implement
+
+- Internal change, no behavior change: no schema, archive, backup, journal or wire format and no reply differs. Every store `INSERT` now names its columns (a test refuses a positional one). A record-type registry (`application/records.py`) declares each table once and the shared archive inventories, the new-history reset of a restore, the worker grants and the embedding-partition rebuild derive from it; a test fails when a schema has a table the registry does not name, on SQLite and on PostgreSQL. Observation bodies sit behind a blob-store port and the signed journal, its anchor and the operations log behind a control-log port, with the existing directory and file code as their implementations and an in-memory blob store used only in tests. [Design](docs/design.md#what-a-third-storage-backend-must-implement) lists what a new backend must implement and pass.
+
 ### Semantic search that is on once installed, and works at any size
 
 - One command turns it on. `memoryking semantic enable [--project P]` (and `memoryking setup`, when the optional embeddings runtime is installed) states what it will download (model, size, licence, host, pinned revision), installs and verifies the model, restarts the daemon so it loads it, and enables the project; `semantic disable` and `semantic status` complete it, and `memoryking status` shows a `Semantic` line with indexing progress. The core install still has no model and makes no network request; without the runtime nothing is downloaded and the output says how to get there. A daemon that finds an installed, verified model loads it without a flag (`serve --no-semantic` prevents that) and enables each new project that has memory, leaving a project an owner disabled alone. A briefing uses the channel when it is ready and otherwise says why in the trace (`no_model_loaded`, `project_not_enabled`, `query_embedding_failed`).
