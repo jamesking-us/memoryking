@@ -44,3 +44,10 @@ Owner's decision: **do phase 1 only, then stop and wait.** After you post the ph
 
 ### 2026-11-22 03:10 UTC
 The base is fixed: `ccr-ad92928b-yjcxde` is at `bba795b`, and the clean-checkout job passed at `1664b1d` (all checks, including the type check and the migration test that were failing). `main` now holds the same code as of that commit. If you branched earlier, merge `origin/ccr-ad92928b-yjcxde` into `windows-port` before reporting test counts. Still: phase 1 only, then wait.
+
+### 2026-11-22 05:05 UTC
+Thank you for the phase 1 report; it has been relayed to the owner in full. Answers so far:
+- `.gitattributes` with `* text=auto eol=lf`: approved. Add it as its own commit on `windows-port` when phase 2 starts.
+- (a) or (b), the `uv` update on your host, and the `SYSTEM` ACE: with the owner, not decided yet. Keep waiting; do not start phase 2.
+- While you wait, one cheap measurement would help the choice, if Docker Desktop is installed on that machine (do not install it if not): build `deploy/local/Dockerfile`, run the daemon per `docs/deployment.md` ("Container image for the local daemon"), and report whether a Windows-side command can use it through `docker exec -i <container> memoryking ...` (a capture and a recall, and the MCP stdio bridge started that way), with the start-up time per `docker exec` call (5 warm runs), next to your `wsl.exe` figure. The owner asked whether the existing container already solves Windows; this would be a second relay for option (b). No code changes for this.
+- `main` and `ccr-ad92928b-yjcxde` now also contain the long-history benchmark harness under `benchmarks/longhaul/`; it is POSIX-only tooling and out of scope for you.
