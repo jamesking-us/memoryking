@@ -198,23 +198,28 @@ class SharedOperabilityTests(unittest.TestCase):
         newer = str(postgres_admin.SCHEMA_VERSION + 1)
 
         def with_database_at(version, check):
+            used = []
+
+            def recheck(connection):
+                used.append(connection)
+                return True
+
             with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as db:
                 db.execute(
                     "UPDATE memoryking.shared_meta SET value=%s WHERE key='schema'", (version,)
                 )
                 try:
                     # A pooled connection re-reads the schema version only when its periodic
-                    # check runs (every few seconds); make every use of it do so here, and once
-                    # more after the restore so the connection does not keep the wrong version.
-                    with mock.patch.object(postgres_pool, "checked", lambda connection: True):
+                    # check runs (every few seconds); make every use of it do so here.
+                    with mock.patch.object(postgres_pool, "checked", recheck):
                         return check()
                 finally:
                     db.execute(
                         "UPDATE memoryking.shared_meta SET value=%s WHERE key='schema'",
                         (str(postgres_admin.SCHEMA_VERSION),),
                     )
-                    with mock.patch.object(postgres_pool, "checked", lambda connection: True):
-                        open_store()
+                    for connection in used:  # none keeps the version it read in the window
+                        connection.memoryking_schema = None
 
         def open_store():
             with PostgresStore(self.pool, self.root, self.control, self.tenant, self.credential):
