@@ -8,10 +8,8 @@ directory, so two starters never race; the daemon logs to `daemon.log` there and
 
 from __future__ import annotations
 
-import fcntl
 import os
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -19,6 +17,11 @@ from pathlib import Path
 from typing import Any
 
 from memoryking import profiles
+from memoryking.adapters.platform_support import (
+    lock_nowait,
+    require_local_store,
+    unix_stream_socket,
+)
 from memoryking.domain.local import LocalError
 
 LOG = "daemon.log"
@@ -31,7 +34,7 @@ STOP_SECONDS = 15.0
 
 def alive(socket_path: Path) -> bool:
     """True when something accepts connections on the socket."""
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+    with unix_stream_socket() as probe:
         probe.settimeout(2)
         try:
             probe.connect(str(socket_path))
@@ -103,6 +106,7 @@ def start_hint(name: str | None) -> str:
 
 
 def start(name: str, profile: dict[str, Any], config: Path | None = None) -> dict[str, Any]:
+    require_local_store()
     store = Path(profile["store"])
     path = Path(profile["socket"])
     if len(os.fsencode(path)) > 100:
@@ -112,7 +116,7 @@ def start(name: str, profile: dict[str, Any], config: Path | None = None) -> dic
         deadline = time.monotonic() + START_SECONDS
         while True:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_nowait(lock)
                 break
             except OSError:
                 if alive(path):  # another starter finished while we waited
@@ -151,6 +155,7 @@ def start(name: str, profile: dict[str, Any], config: Path | None = None) -> dic
 
 def stop(profile: dict[str, Any]) -> dict[str, Any]:
     """Ask the daemon to shut down cleanly (SIGTERM) and wait for its socket to go."""
+    require_local_store()
     store, path = Path(profile["store"]), Path(profile["socket"])
     if not alive(path):
         return {"running": False, "stopped": False}

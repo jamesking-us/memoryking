@@ -569,6 +569,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `local_io_or_configuration_error` | A file or directory could not be read or written; check the path, its permissions, and that the daemon is running. |
+| `local_store_unsupported` | Windows runs the agent-side tools but not the memory store: run the store in WSL2 or Docker Desktop (deployment guide, Windows). |
 
 ## loopback
 

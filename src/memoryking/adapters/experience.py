@@ -17,7 +17,7 @@ from memoryking.domain import selectors
 from memoryking.domain.local import LocalError, Released, temporal_valid
 
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("experience.schema.json").read_text())
+    json.loads(Path(__file__).with_name("experience.schema.json").read_text(encoding="utf-8"))
 )
 POLICY = "reviewed-procedure-v1"
 LIMIT = 256

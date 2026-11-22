@@ -26,7 +26,9 @@ from memoryking.domain.checkpoint import complete
 from memoryking.domain.local import LocalError, is_user_project
 from memoryking.memory_api import MemoryMethods
 
-CATALOG = json.loads(Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text())
+CATALOG = json.loads(
+    Path(__file__).with_name("adapters").joinpath("stdio.tools.json").read_text(encoding="utf-8")
+)
 TOOL_VALIDATORS = {
     item["name"]: Draft202012Validator(item["inputSchema"]) for item in CATALOG["tools"]
 }

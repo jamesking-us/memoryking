@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from memoryking import __version__, daemon, profiles, session_bindings
+from memoryking.adapters import platform_support
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_embeddings import MODEL
 from memoryking.adapters.local_files import atomic, private_dir, private_file
@@ -675,7 +676,7 @@ def unreviewed_command(args: Any) -> None:
 
 def read_credential(path: Path) -> str:
     private_file(path)
-    return path.read_text().strip()
+    return path.read_text(encoding="utf-8").strip()
 
 
 def duration(ms: int) -> str:
@@ -1795,6 +1796,13 @@ def main() -> int:
     login.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        if (
+            not platform_support.LOCAL_STORE_SUPPORTED
+            and args.command != "profile"
+            and (hasattr(args, "store") or hasattr(args, "control"))
+        ):
+            # Opens a store or control tree on this machine, which cannot hold one.
+            platform_support.refuse()
         if args.command == "setup":
             from memoryking import setup_host
 
@@ -1884,7 +1892,10 @@ def main() -> int:
             if args.output.exists() or args.output.is_symlink():
                 raise LocalError("credential_output_exists")
             result = request(
-                args.socket, args.credential.read_text().strip(), "dashboard_bootstrap", {}
+                args.socket,
+                args.credential.read_text(encoding="utf-8").strip(),
+                "dashboard_bootstrap",
+                {},
             )
             atomic(args.output, json.dumps(result).encode())
             print(json.dumps({"bootstrap_file": str(args.output), "url": result["url"]}))
@@ -2380,7 +2391,7 @@ def main() -> int:
             private_file(args.credential)
             result = request(
                 args.socket,
-                args.credential.read_text().strip(),
+                args.credential.read_text(encoding="utf-8").strip(),
                 "status",
                 {"project": args.project},
             )
@@ -2392,7 +2403,7 @@ def main() -> int:
                 print(render_status(result, __version__))
         elif args.command == "reindex":
             private_file(args.credential)
-            token = args.credential.read_text().strip()
+            token = args.credential.read_text(encoding="utf-8").strip()
             started = request(args.socket, token, "reindex", {})
             lexical = started.get("lexical", {})
             if not args.json:
@@ -2420,7 +2431,10 @@ def main() -> int:
                 if args.credential_output.exists() or args.credential_output.is_symlink():
                     raise LocalError("credential_output_exists")
             result = request(
-                args.socket, args.credential.read_text().strip(), body["operation"], body["args"]
+                args.socket,
+                args.credential.read_text(encoding="utf-8").strip(),
+                body["operation"],
+                body["args"],
             )
             if "credential" in result:
                 atomic(args.credential_output, result.pop("credential").encode())

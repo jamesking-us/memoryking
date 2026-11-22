@@ -18,7 +18,7 @@ from memoryking.domain.local import LocalError, Released
 from memoryking.domain.selectors import Truth, bindings, path_valid
 
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("repository.schema.json").read_text())
+    json.loads(Path(__file__).with_name("repository.schema.json").read_text(encoding="utf-8"))
 )
 
 

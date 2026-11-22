@@ -23,7 +23,7 @@ from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import Decision, LocalError, Released
 
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("inference.schema.json").read_text())
+    json.loads(Path(__file__).with_name("inference.schema.json").read_text(encoding="utf-8"))
 )
 EGRESS_REVISION = LOCAL_REVISION
 AUDIT_GROUP_LIMIT = 4096  # records one millisecond can hold in a single listing

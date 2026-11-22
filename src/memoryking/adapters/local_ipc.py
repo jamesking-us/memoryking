@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import socket
 import socketserver
 import stat
 import threading
@@ -18,6 +17,11 @@ from memoryking.adapters.inference import Inference
 from memoryking.adapters.inspection import Inspection
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
+from memoryking.adapters.platform_support import (
+    UnixStreamServer,
+    owned_by_current_user,
+    unix_stream_socket,
+)
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
@@ -190,7 +194,7 @@ class Handler(socketserver.StreamRequestHandler):
             )
 
 
-class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+class Server(socketserver.ThreadingMixIn, UnixStreamServer):
     """Bounded concurrent requests: a slow client never blocks everyone else."""
 
     request_queue_size = 16
@@ -220,7 +224,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             raise LocalError("socket_path_too_long")
         if self.path.exists():
             info = self.path.lstat()
-            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+            if not stat.S_ISSOCK(info.st_mode) or not owned_by_current_user(info.st_uid):
                 raise LocalError("unsafe_socket")
             self.path.unlink()
         self.operations: LocalOperations = StoreOperations(store)
@@ -336,7 +340,7 @@ def request(
     )
     if len(payload) + 1 > WIRE_LIMIT:
         raise LocalError("invalid_request")
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+    with unix_stream_socket() as stream:
         stream.settimeout(10)
         try:
             stream.connect(str(socket_path))

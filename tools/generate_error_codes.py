@@ -16,7 +16,7 @@ from memoryking.domain.hints import HINTS, hint  # noqa: E402
 def raised_codes() -> set[str]:
     codes: set[str] = set()
     for path in (ROOT / "src/memoryking").rglob("*.py"):
-        codes.update(re.findall(r'LocalError\("([a-z0-9_]+)"', path.read_text()))
+        codes.update(re.findall(r'LocalError\("([a-z0-9_]+)"', path.read_text(encoding="utf-8")))
     codes.update({"store_required", "control_required", "socket_required", "credential_required"})
     return codes
 
@@ -54,12 +54,12 @@ def main() -> int:
     target = ROOT / "docs/error-codes.md"
     text = render()
     if args.check:
-        if not target.exists() or target.read_text() != text:
+        if not target.exists() or target.read_text(encoding="utf-8") != text:
             print("error-codes.md drift; run tools/generate_error_codes.py")
             return 1
         print("error-codes.md matches")
         return 0
-    target.write_text(text)
+    target.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {target.relative_to(ROOT)}")
     return 0
 

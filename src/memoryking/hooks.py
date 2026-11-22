@@ -59,7 +59,7 @@ def connection_files(
 def connection(**where: Any) -> tuple[Path, str, str]:
     """(socket, credential token, project) from arguments, then the environment."""
     socket, credential, project = connection_files(**where)
-    return socket, credential.read_text().strip(), project
+    return socket, credential.read_text(encoding="utf-8").strip(), project
 
 
 def event_id(source: str, text: str, salt: str = "") -> str:

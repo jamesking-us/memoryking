@@ -29,7 +29,7 @@ from memoryking.domain.local import Decision, LocalError, Released
 from memoryking.domain.selectors import bindings
 
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("handoff.schema.json").read_text())
+    json.loads(Path(__file__).with_name("handoff.schema.json").read_text(encoding="utf-8"))
 )
 
 

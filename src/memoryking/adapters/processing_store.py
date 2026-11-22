@@ -25,7 +25,7 @@ from memoryking.domain.local import Decision, LocalError, Released
 from memoryking.domain.usage import UsageRecord, summarize
 
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("processing.schema.json").read_text())
+    json.loads(Path(__file__).with_name("processing.schema.json").read_text(encoding="utf-8"))
 )
 
 

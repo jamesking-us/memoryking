@@ -30,7 +30,7 @@ RERANK_THREADS = 4  # the reranker may use up to this many CPU threads
 
 def model_manifest(name: str = MODEL) -> dict[str, Any]:
     value: dict[str, Any] = json.loads(
-        Path(__file__).with_name("models").joinpath(name + ".json").read_text()
+        Path(__file__).with_name("models").joinpath(name + ".json").read_text(encoding="utf-8")
     )
     return value
 

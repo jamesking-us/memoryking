@@ -400,6 +400,7 @@ HINTS: dict[str, str] = {
     "owner_closed": "The store was closed; open it again.",
     "unsafe_permissions": "Directories must be mode 0700 and files 0600, owned by this user.",
     "unsafe_socket": "The socket path exists and is not a socket owned by this user.",
+    "local_store_unsupported": "Windows runs the agent-side tools but not the memory store: run the store in WSL2 or Docker Desktop (deployment guide, Windows).",
     "socket_path_too_long": "The socket path must fit in 100 bytes; use a shorter store path.",
     "transport_unavailable": "The daemon is not running; start it with the `start` command in this reply, or run `memoryking setup <host> --project P`, which makes it start on demand.",
     "profile_required": "Name the store with `--profile NAME` (or MEMORYKING_PROFILE) so the command knows which daemon to stop.",

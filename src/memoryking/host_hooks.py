@@ -695,7 +695,7 @@ def install(
     existing: dict[str, Any] = {}
     if path.exists():
         try:
-            loaded = json.loads(path.read_text())
+            loaded = json.loads(path.read_text(encoding="utf-8"))
         except ValueError as exc:
             raise LocalError("hook_config_invalid") from exc
         if not isinstance(loaded, dict):
@@ -704,7 +704,7 @@ def install(
     merged = merge(existing, _entries(host, commands), remove=remove)
     if write:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(merged, indent=2) + "\n")
+        path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return {
         "host": host,
         "path": str(path),

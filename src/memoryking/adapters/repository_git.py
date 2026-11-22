@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from memoryking.adapters.platform_support import open_directory_nofollow, open_regular_nofollow
 from memoryking.contracts.canonical import canonical_hash
 from memoryking.domain.local import LocalError
 from memoryking.domain.repository import MAX_FILE_BYTES, PARSER, project_source
@@ -149,14 +150,14 @@ class GitSnapshot:
             raise LocalError("repository_capture_limit")
         # Walk using directory descriptors and NOFOLLOW at every component. Never
         # traverse submodules, symlinks, devices or a path swapped outside the root.
-        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = open_directory_nofollow(self.root)
         try:
             parts = path.split("/")
             for part in parts[:-1]:
-                new = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                new = open_directory_nofollow(part, dir_fd=fd)
                 os.close(fd)
                 fd = new
-            file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            file_fd = open_regular_nofollow(parts[-1], dir_fd=fd)
             try:
                 before = os.fstat(file_fd)
                 if not stat.S_ISREG(before.st_mode):

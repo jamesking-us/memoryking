@@ -96,7 +96,7 @@ class Files:
         self.state: dict[str, Any] = {"files": {}}
         self.pending: list[tuple[Path, str]] = []  # what a dry run would write
         if state_path.exists():
-            self.state = json.loads(state_path.read_text())
+            self.state = json.loads(state_path.read_text(encoding="utf-8"))
 
     def write(self, path: Path, text: str) -> str:
         """Write `text` to `path`; returns created, changed or unchanged."""
@@ -157,7 +157,7 @@ class Files:
         if updated is None or updated == current.decode():
             return "unchanged"
         if not self.dry:
-            path.write_text(updated)
+            path.write_text(updated, encoding="utf-8")
         return "edited"
 
 
@@ -244,7 +244,10 @@ def credential_usable(profile: dict[str, Any], path: Path, project: str) -> bool
     """The agent credential exists, works for the project and holds every needed capability."""
     try:
         context = request(
-            Path(profile["socket"]), path.read_text().strip(), "context", {"project": project}
+            Path(profile["socket"]),
+            path.read_text(encoding="utf-8").strip(),
+            "context",
+            {"project": project},
         )
     except (LocalError, OSError):
         return False
@@ -269,7 +272,7 @@ def ensure_credential(
     grant["for_user"] = "@self"
     if args.expires:
         grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
-    owner = Path(profile["credential"]).read_text().strip()
+    owner = Path(profile["credential"]).read_text(encoding="utf-8").strip()
     # Restating a grant returns the principal's current credential, so a second project (or
     # a lost file) never invalidates another host's credential; rotation stays explicit.
     token = request(Path(profile["socket"]), owner, "grant", grant)["credential"]
@@ -372,7 +375,7 @@ def register(args: Any, files: Files, home: Path, command: list[str]) -> tuple[s
     """Register the bridge with the host; returns (summary line, lines for the user to run)."""
     if args.host == "codex":
         path = home / ".codex" / "config.toml"
-        text = path.read_text() if path.exists() else ""
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
         try:
             outcome = files.write(path, codex_with(text, codex_block(command)))
         except LocalError as exc:
@@ -473,7 +476,7 @@ def semantic_step(name: str, args: Any, profile: dict[str, Any], say: dict[str, 
         print(semantic.consent(), flush=True)
         model_install.install(semantic.model_dir(), semantic.MODEL)
     socket = Path(profile["socket"])
-    token = (Path(profile["control"]) / "owner.credential").read_text().strip()
+    token = (Path(profile["control"]) / "owner.credential").read_text(encoding="utf-8").strip()
     if (
         request(socket, token, "status", {"project": args.project}).get("semantic", {}).get("model")
         != semantic.MODEL
