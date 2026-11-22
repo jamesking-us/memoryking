@@ -94,7 +94,7 @@ class EmbeddingJobCases:
         self.assertTrue(self.status_e(config)["ready"])
         with self.store.transaction():
             self.assertEqual(
-                self.store.db.execute("SELECT count(*) FROM embedding_items").fetchone()[0], 2
+                self.store.db.execute("SELECT count(*) FROM embedding_vectors").fetchone()[0], 2
             )
         self.fails("stale_lease", lambda: self.complete_e(first))
         self.fails("embedding_generation_conflict", lambda: self.configure())
@@ -207,7 +207,7 @@ class EmbeddingJobCases:
         )
         with self.store.transaction():
             self.assertEqual(
-                self.store.db.execute("SELECT count(*) FROM embedding_items").fetchone()[0], 0
+                self.store.db.execute("SELECT count(*) FROM embedding_vectors").fetchone()[0], 0
             )
 
 

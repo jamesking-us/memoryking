@@ -7,6 +7,7 @@ import test_embedding_jobs as jobs
 import test_knowledge as knowledge
 import test_retrieval as retrieval
 
+from memoryking.adapters import retrieval as retrieval_module
 from memoryking.contracts.canonical import canonical_hash
 
 
@@ -61,7 +62,7 @@ class DenseCases:
         self.assertEqual(result["guidance"][0]["authority"], "observed_episode")
         diag = self.receipt(result)["diagnostics"]
         self.assertEqual(diag["model_fingerprints"], [config["fingerprint"]])
-        self.assertEqual(diag["trace"][-2]["metric"], "equal_channel_rrf60_v1")
+        self.assertEqual(diag["trace"][-2]["metric"], retrieval_module.DEFAULT_FUSION["name"])
         replay = self.run_r("replay", {"project": "p", "receipt": result["receipt"]})
         self.assertEqual(result, replay)
 
@@ -97,14 +98,24 @@ class DenseCases:
             )
         config = self.configure()
         self.drain(config)
-        with patch("memoryking.adapters.dense_search.SCAN_LIMIT", 1):
+        with (
+            patch("memoryking.adapters.dense_search.SCAN_VECTORS", 1),
+            patch("memoryking.adapters.dense_search.SCAN_VECTORS_PYTHON", 1),
+        ):
             result = self.run_r(args=self.dense_args(config), credential=reader)
             self.assertEqual(result["coverage"]["dense"], "ready")
             self.assertEqual(
                 [i["reference"] for i in result["guidance"]], [self.obs["observation"]]
             )
             owner = self.run_r(args=self.dense_args(config))
-            self.assertEqual(owner["coverage"]["dense"], "scan_limit")
+            # Past the bound the newest vectors are scanned and the trace says so; the
+            # channel still answers.
+            self.assertEqual(owner["coverage"]["dense"], "ready")
+            stage = next(
+                s for s in self.receipt(owner)["diagnostics"]["trace"] if s["stage"] == "dense"
+            )
+            self.assertTrue(stage["scan_truncated"])
+            self.assertEqual(stage["scan_limit"], 1)
         self.store.purge(self.owner, self.obs["observation"])
         self.fails(
             "replay_purged",
@@ -127,6 +138,15 @@ class DenseCases:
 
         before = self.run_r()
         self.assertEqual(before["coverage"]["dense"], "unavailable")
+
+        def reason(result):
+            stages = self.receipt(result)["diagnostics"]["trace"]
+            return next(s["reason"] for s in stages if s["stage"] == "dense")
+
+        self.assertEqual(reason(before), "no_model_loaded")
+        self.store.embedder = FakeEmbedder("1" * 64)
+        self.assertEqual(reason(self.run_r()), "project_not_enabled")
+        self.store.embedder = None
         config = self.configure()
         job = self.claim_e(config)
         self.complete_e(job)
@@ -173,6 +193,195 @@ class DenseCases:
         )
         lexical = self.run_r()
         self.assertEqual(lexical["guidance"][0]["reference"], self.obs["observation"])
+
+    def test_vectors_stored_as_json_by_an_earlier_release_answer_and_then_convert(self):
+        import json
+
+        config = self.configure()
+        with self.store.transaction():
+            tenant = self.store.db.execute("SELECT tenant FROM tenants").fetchone()[0]
+            row = self.store.db.execute(
+                "SELECT * FROM observations WHERE tenant=? AND id=?",
+                (tenant, self.obs["observation"]),
+            ).fetchone()
+            self.store.db.execute(
+                "INSERT INTO embedding_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    tenant,
+                    "p",
+                    config["fingerprint"],
+                    config["generation"],
+                    row["id"],
+                    self.store.incarnation,
+                    row["revision"],
+                    row["blob"],
+                    "0" * 64,
+                    json.dumps([1000000] + [0] * 383),
+                    0,
+                    10,
+                    None,
+                    0,
+                    row["position"],
+                ),
+            )
+            position = self.store.db.execute(
+                "SELECT position FROM tenants WHERE tenant=?", (tenant,)
+            ).fetchone()[0]
+            self.store.db.execute(
+                "UPDATE embedding_partitions SET scheduled=?,frontier=? WHERE tenant=?",
+                (position, position, tenant),
+            )
+
+        def counts():
+            with self.store.transaction():
+                return tuple(
+                    self.store.db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                    for table in ("embedding_items", "embedding_vectors")
+                )
+
+        # A store that has not converted yet still answers from the old rows.
+        self.assertEqual(counts(), (1, 0))
+        result = self.run_r(args=self.dense_args(config))
+        self.assertEqual(result["coverage"]["dense"], "ready")
+        self.assertEqual(result["guidance"][0]["reference"], self.obs["observation"])
+        # The indexing loop's next request converts them, and the answer does not change.
+        self.claim_e(config)
+        self.assertEqual(counts(), (0, 1))
+        again = self.run_r(args=self.dense_args(config))
+        self.assertEqual(again["guidance"][0]["reference"], self.obs["observation"])
+        self.assertEqual(
+            again["guidance"][0]["dense_score_ppm"], result["guidance"][0]["dense_score_ppm"]
+        )
+
+    def test_accepted_claims_are_embedded_and_found_by_meaning(self):
+        # A reviewed claim that shares no word with the question, embedded after the
+        # observations; the question's vector sits where the claim's vector does.
+        claim = self.propose(self.body("Deploys freeze every Friday afternoon"), key="freeze")
+        self.review(claim)
+        config = self.configure()
+        jobs = []
+        for _ in range(8):
+            job = self.claim_e(config)
+            if job["job"] is None:
+                break
+            jobs.append(job)
+            at_claim = job.get("kind") == "claim"
+            self.complete_e(job, vector=([0, 1000000] if at_claim else [1000000, 0]) + [0] * 382)
+        # Observations first, then the claim.
+        self.assertEqual([j.get("kind") for j in jobs], [None, "claim"])
+        self.assertEqual(jobs[1]["input"], "Deploys freeze every Friday afternoon")
+        args = self.dense_args(config)
+        args["dense"]["vector"] = [0, 1000000] + [0] * 382
+        result = self.run_r(args=args)
+        found = [g for g in result["guidance"] if g["reference"] == claim["revision"]]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["selection_reason"], "semantic_similarity")
+        self.assertEqual(found[0]["dense_score_ppm"], 1000000)
+        # A claim whose evidence is purged loses its vector with its text.
+        self.store.purge(self.owner, self.obs["observation"])
+        with self.store.transaction():
+            left = self.store.db.execute(
+                "SELECT count(*) FROM embedding_vectors WHERE kind='claim'"
+            ).fetchone()[0]
+        self.assertEqual(left, 0)
+
+    def test_the_fusion_in_force_is_named_in_the_receipt_and_is_deterministic(self):
+        config = self.configure()
+        self.drain(config)
+
+        def stage(result):
+            trace = self.receipt(result)["diagnostics"]["trace"]
+            return next(s for s in trace if s.get("metric") not in (None, "bm25_word_forms_v1"))
+
+        default = self.run_r(args=self.dense_args(config))
+        self.assertEqual(
+            stage(default)["fusion"]["method"], retrieval_module.DEFAULT_FUSION["method"]
+        )
+        convex = {"name": "convex_test_v1", "method": "convex", "lexical": 1, "dense": 1}
+        self.store.fusion = convex
+        try:
+            first = self.run_r(args=self.dense_args(config))
+            again = self.run_r(args=self.dense_args(config))
+        finally:
+            self.store.fusion = None
+        self.assertEqual(stage(first)["metric"], "convex_test_v1")
+        self.assertEqual(stage(first)["fusion"], {"method": "convex", "lexical": 1, "dense": 1})
+        self.assertEqual(first["guidance"], again["guidance"])
+        self.assertEqual(first["guidance"][0]["reference"], self.obs["observation"])
+
+    def test_a_long_capture_is_embedded_passage_by_passage_and_found_by_a_late_one(self):
+        with patch("memoryking.adapters.embedding_store.EMBED_PASSAGES", True):
+            self.passage_by_passage()
+
+    def test_by_default_an_observation_is_embedded_once_from_its_opening(self):
+        text = "\n\n".join(f"Paragraph {n} says " + ("word " * 140) for n in range(3))
+        long = self.store.capture(
+            self.owner,
+            self.ns,
+            "long",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "fixture",
+                "source_event": "long",
+                "text": text,
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        config = self.configure()
+        self.drain(config)
+        with self.store.transaction():
+            parts = self.store.db.execute(
+                "SELECT count(*) FROM embedding_vectors WHERE subject=?", (long["observation"],)
+            ).fetchone()[0]
+        self.assertEqual(parts, 1)
+
+    def passage_by_passage(self):
+        paragraphs = [f"Paragraph {n} says " + ("word " * 140) for n in range(3)]
+        long = self.store.capture(
+            self.owner,
+            self.ns,
+            "long",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "fixture",
+                "source_event": "long",
+                "text": "\n\n".join(paragraphs),
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        config = self.configure()
+        seen = []
+        for _ in range(16):
+            job = self.claim_e(config)
+            if job["job"] is None:
+                break
+            seen.append((job.get("kind"), job["observation"], job["start_byte"], job["end_byte"]))
+            late = job["observation"] == long["observation"] and job["start_byte"] > 0
+            self.complete_e(job, vector=([0, 1000000] if late else [1000000, 0]) + [0] * 382)
+        mine = [item for item in seen if item[1] == long["observation"]]
+        self.assertGreaterEqual(len(mine), 2)
+        self.assertEqual([m[0] for m in mine][:1], [None])
+        self.assertTrue(all(m[0] == "passage" for m in mine[1:]))
+        # Passages are contiguous views of the one observation.
+        self.assertEqual(mine[0][3], mine[1][2])
+        with self.store.transaction():
+            rows = self.store.db.execute(
+                "SELECT part,truncated FROM embedding_vectors WHERE subject=? ORDER BY part",
+                (long["observation"],),
+            ).fetchall()
+        self.assertEqual([r[0] for r in rows], list(range(len(mine))))
+        self.assertEqual([r[1] for r in rows][-1], 0)  # nothing follows the last one
+        args = self.dense_args(config)
+        args["dense"]["vector"] = [0, 1000000] + [0] * 382
+        found = self.run_r(args=args)
+        hit = [g for g in found["guidance"] if g["reference"] == long["observation"]]
+        self.assertEqual(hit[0]["dense_score_ppm"], 1000000)
 
 
 class DenseRetrievalTests(DenseCases, unittest.TestCase):

@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import test_sdk as sdk
 
-from memoryking.adapters.local_embeddings import LocalOnnxEmbedding, model_manifest
+from memoryking.adapters.local_embeddings import MODEL, LocalOnnxEmbedding, model_manifest
 from memoryking.domain.embeddings import EmbeddingBatch, fingerprint
 from memoryking.domain.local import LocalError
 from memoryking.embedding_worker import run_once
@@ -28,7 +28,7 @@ class EmbeddingWorkerTests(unittest.TestCase):
                 "key": "worker-config",
                 "args": {
                     "project": "p",
-                    "model": "minilm-l6-v2-onnx",
+                    "model": MODEL,
                     "state": "experimental",
                     "expected_generation": 0,
                 },

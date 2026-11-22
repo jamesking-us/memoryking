@@ -288,7 +288,7 @@ class CredentialMigrationTests(unittest.TestCase):
                 store.db.execute("DROP TABLE credential_generations")
                 store.db.execute("PRAGMA user_version=14")
             with LocalStore(base / "s", base / "c") as store:
-                self.assertEqual(20, store.db.execute("PRAGMA user_version").fetchone()[0])
+                self.assertEqual(21, store.db.execute("PRAGMA user_version").fetchone()[0])
                 self.assertEqual(
                     0, store.db.execute("SELECT count(*) FROM credential_generations").fetchone()[0]
                 )

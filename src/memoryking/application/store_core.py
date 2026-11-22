@@ -1307,6 +1307,10 @@ class StoreCore:
                 "DELETE FROM embedding_items WHERE tenant=? AND observation=?", (tenant, obs)
             )
             self.db.execute(
+                "DELETE FROM embedding_vectors WHERE tenant=? AND kind='observation' AND subject=?",
+                (tenant, obs),
+            )
+            self.db.execute(
                 "UPDATE embedding_jobs SET state='noop',fence=fence+1 WHERE tenant=? AND observation=?",
                 (tenant, obs),
             )
@@ -1696,6 +1700,7 @@ class StoreCore:
                 ),
                 "capacity": self._capacity(tenant),
                 "lexical": lexical_index.describe(self.db, tenant, self._lexical_rate),
+                "semantic": self._semantic(tenant, position),
                 # Counts only: an administrator sees that user memory exists, never what it says.
                 "user_scopes": dict(
                     zip(
@@ -1715,6 +1720,36 @@ class StoreCore:
             result["consolidation"] = self.consolidation.describe()
         self._expose()
         return result
+
+    def _semantic(self, tenant: str, position: int) -> dict[str, Any]:
+        """The semantic index per project: whether a model is loaded, how far indexing has
+        got and how many vectors it holds. Counts only; no text."""
+        model = getattr(self.embedder, "name", None)
+        partitions = []
+        for row in self.db.execute(
+            "SELECT project,fingerprint,state,frontier,generation FROM embedding_partitions WHERE tenant=? AND incarnation=? ORDER BY project,fingerprint",
+            (tenant, self.incarnation),
+        ).fetchall():
+            vectors = int(
+                self.db.execute(
+                    "SELECT count(*) FROM embedding_vectors WHERE tenant=? AND project=? AND fingerprint=? AND generation=?",
+                    (tenant, row["project"], row["fingerprint"], row["generation"]),
+                ).fetchone()[0]
+            )
+            current = self.embedder is not None and row["fingerprint"] == self.embedder.fingerprint
+            partitions.append(
+                {
+                    "project": row["project"],
+                    "state": row["state"],
+                    "current_model": current,
+                    "vectors": vectors,
+                    "indexed_position": row["frontier"],
+                    "percent_indexed": 100
+                    if row["frontier"] >= position
+                    else int(100 * row["frontier"] / max(1, position)),
+                }
+            )
+        return {"model": model, "loaded": self.embedder is not None, "partitions": partitions}
 
     def _capacity(self, tenant: str) -> dict[str, dict[str, Any]]:
         """Utilisation of every bounded per-tenant resource; warning at 80 percent."""

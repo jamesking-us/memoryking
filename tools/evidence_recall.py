@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import pickle
 import re
 import statistics
 import sys
@@ -53,11 +54,35 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from memoryking.adapters.local_store import LocalStore  # noqa: E402
 from memoryking.adapters.retrieval import Retrieval  # noqa: E402
+from memoryking.contracts.canonical import canonical_hash  # noqa: E402
+from memoryking.domain.embeddings import EmbeddingBatch, pack, unpack  # noqa: E402
 
 GATE = ROOT / "fixtures/evaluation/evidence-recall-gate.json"
 TEXT_LIMIT = 60000
 KS = (5, 10)
 BUDGET = 65536
+PASSAGES = False  # --passages embeds passage by passage; the default is the opening, as shipped
+# Fusion presets for --fusion: the shipped default, weighted rank fusion and a convex
+# combination of normalised scores (the lexical score over the best lexical score, the
+# similarity min-max scaled over the dense candidates).
+FUSIONS: dict[str, dict[str, Any]] = {
+    "rrf60": {"name": "equal_channel_rrf60_v1", "method": "rrf", "k": 60, "lexical": 1, "dense": 1},
+    "rrf20": {"name": "rrf_k20_v1", "method": "rrf", "k": 20, "lexical": 1, "dense": 1},
+    "rrf60-lex2": {"name": "rrf_k60_lex2_v1", "method": "rrf", "k": 60, "lexical": 2, "dense": 1},
+    "rrf60-lex3": {"name": "rrf_k60_lex3_v1", "method": "rrf", "k": 60, "lexical": 3, "dense": 1},
+    "rrf60-dense2": {
+        "name": "rrf_k60_dense2_v1",
+        "method": "rrf",
+        "k": 60,
+        "lexical": 1,
+        "dense": 2,
+    },
+    "convex30": {"name": "convex_lex30_v1", "method": "convex", "lexical": 3, "dense": 7},
+    "convex50": {"name": "convex_lex50_v1", "method": "convex", "lexical": 1, "dense": 1},
+    "convex70": {"name": "convex_lex70_v1", "method": "convex", "lexical": 7, "dense": 3},
+    "convex80": {"name": "convex_lex80_v1", "method": "convex", "lexical": 4, "dense": 1},
+    "convex90": {"name": "convex_lex90_v1", "method": "convex", "lexical": 9, "dense": 1},
+}
 REQUEST_EXTRAS: dict[str, Any] = {}  # set by --text: ask for the rendered text and count it
 ITEM_START = re.compile(r"^\d+\. \*\*\[g\d+\]\*\* ", re.M)
 ITEM_END = re.compile(r"(?: _\([^)\n]*\)_)?\n(?:\n## |\n_(?:Showing|\d+ matches)|\Z)")
@@ -147,12 +172,21 @@ class StampClock:
 
     def __init__(self, utc_ms: int):
         self.offset = utc_ms - time.time_ns() // 1_000_000
+        self.paused = 0
 
     def utc_ms(self) -> int:
         return time.time_ns() // 1_000_000 + self.offset
 
     def monotonic_ms(self) -> int:
-        return time.monotonic_ns() // 1_000_000
+        return time.monotonic_ns() // 1_000_000 - self.paused
+
+    def pause(self, ms: float) -> None:
+        """Give back time spent on something a recall measurement should not be charged
+        for (a cross-encoder scoring a cold cache on a busy machine): both clocks step back
+        together, so the release deadline sees only the rest of the request."""
+        whole = int(ms)
+        self.paused += whole
+        self.offset -= whole
 
     def advance_to(self, utc_ms: int) -> None:
         self.offset = max(self.offset, utc_ms - time.time_ns() // 1_000_000)
@@ -184,6 +218,175 @@ def scores(ranked: list[str], gold: set[str]) -> dict[str, float]:
     return out
 
 
+class CachedEmbedder:
+    """The harness's embedder: each text is embedded once per model and kept on disk, so that
+    a fusion or reranking experiment over the same data does not embed it again. Documents are
+    batched by length for throughput; the vectors are the ones the daemon's worker would
+    store."""
+
+    kinds = True
+
+    def __init__(self, provider: Any, cache: Path | None):
+        self.provider, self.cache = provider, cache
+        self.fingerprint, self.dimensions = provider.fingerprint, provider.dimensions
+        self.path = cache / (provider.name + ".pkl") if cache else None
+        self.vectors: dict[str, bytes] = {}
+        if self.path is not None and self.path.exists():
+            self.vectors = pickle.loads(self.path.read_bytes())  # our own file
+        self.embedded = 0
+        self.seconds = 0.0
+
+    @staticmethod
+    def key(kind: str, text: str) -> str:
+        return hashlib.sha256((kind + "\0" + text).encode()).hexdigest()
+
+    def prepare(self, texts: list[str], kind: str = "document") -> None:
+        todo = sorted(
+            {t for t in texts if self.key(kind, t) not in self.vectors}, key=lambda t: len(t)
+        )
+        started = time.perf_counter()
+        for start in range(0, len(todo), 16):
+            group = todo[start : start + 16]
+            batch = self.provider.embed(group, kind=kind)
+            for text, vector in zip(group, batch.vectors, strict=True):
+                self.vectors[self.key(kind, text)] = pack(vector)
+            if (start // 16) % 50 == 0:
+                print(f"embedded {start}/{len(todo)}", file=sys.stderr, flush=True)
+        self.seconds += time.perf_counter() - started
+        self.embedded += len(todo)
+        if todo and self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_bytes(pickle.dumps(self.vectors))
+
+    def embed(self, texts: list[str], kind: str = "document") -> EmbeddingBatch:
+        self.prepare(texts, kind)
+        return EmbeddingBatch(
+            self.fingerprint,
+            self.dimensions,
+            [unpack(self.vectors[self.key(kind, t)], self.dimensions) for t in texts],
+            [canonical_hash(t) for t in texts],
+            None,
+            [False] * len(texts),
+        )
+
+
+class CachedReranker:
+    """Scores each (question, text) pair once per model and keeps them on disk, so the
+    windows of 16, 32 and 64 candidates (each a prefix of the same fused order) cost one
+    pass between them."""
+
+    def __init__(self, provider: Any, cache: Path | None):
+        self.provider, self.cache = provider, cache
+        self.fingerprint = provider.fingerprint
+        self.path = cache / ("rerank-" + provider.name + ".pkl") if cache else None
+        self.scores: dict[str, int] = {}
+        if self.path is not None and self.path.exists():
+            self.scores = pickle.loads(self.path.read_bytes())  # our own file
+        self.calls = 0
+        self.clock: Any = None
+
+    def score(self, query: str, texts: list[str]) -> list[int]:
+        keys = [hashlib.sha256((query + "\0" + t).encode()).hexdigest() for t in texts]
+        missing = [i for i, k in enumerate(keys) if k not in self.scores]
+        if missing:
+            started = time.perf_counter()
+            found = self.provider.score(query, [texts[i] for i in missing])
+            if self.clock is not None:
+                self.clock.pause((time.perf_counter() - started) * 1000)
+            for i, value in zip(missing, found, strict=True):
+                self.scores[keys[i]] = value
+            self.calls += 1
+            if self.path is not None and self.calls % 50 == 0:
+                self.save()
+        return [self.scores[k] for k in keys]
+
+    def save(self) -> None:
+        if self.path is not None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_bytes(pickle.dumps(self.scores))
+
+
+def index_dense(
+    store: Any,
+    retrieval: Retrieval,
+    embedder: CachedEmbedder,
+    project: str,
+    passages: bool = True,
+) -> int:
+    """Enable the project's partition and write the vectors the indexing worker would have
+    written, up to the store's current position: one per passage (`passages-v1`, as the
+    worker does) or, with `passages=False`, one per observation from its opening only."""
+    from memoryking.domain.passages import split
+
+    rows = store.db.execute(
+        "SELECT tenant,id,revision,blob,position FROM observations WHERE tenant='main' AND project=? AND deleted=0",
+        (project,),
+    ).fetchall()
+    units: dict[str, list[tuple[int, int, str]]] = {}
+    for r in rows:
+        text = retrieval._blob(r)[:16384].decode("utf-8", errors="ignore")
+        if passages:
+            found = split(text)
+            units[r["id"]] = [
+                (
+                    len(text[: p.start].encode()),
+                    len(text[: p.end].encode()),
+                    text[p.start : p.end],
+                )
+                for p in found
+            ] or [(0, len(text.encode()), text)]
+        else:
+            units[r["id"]] = [(0, len(text.encode()), text)]
+    embedder.prepare([u[2] for parts in units.values() for u in parts])
+    position = store.db.execute("SELECT position FROM tenants WHERE tenant='main'").fetchone()[0]
+    configuration = embedder.provider.configuration
+    count = 0
+    with store.transaction() as decision:
+        at = decision.evaluated_ms
+        store.db.execute(
+            "INSERT INTO embedding_partitions VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "main",
+                project,
+                embedder.fingerprint,
+                store.incarnation,
+                1,
+                embedder.dimensions,
+                json.dumps(configuration),
+                "experimental",
+                position,
+                position,
+                at,
+            ),
+        )
+        for r in rows:
+            for number, (start, end, text) in enumerate(units[r["id"]]):
+                count += 1
+                store.db.execute(
+                    "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "main",
+                        project,
+                        embedder.fingerprint,
+                        1,
+                        "observation",
+                        r["id"],
+                        number,
+                        store.incarnation,
+                        r["revision"],
+                        r["blob"],
+                        canonical_hash(text),
+                        embedder.vectors[embedder.key("document", text)],
+                        start,
+                        end,
+                        None,
+                        0,
+                        r["position"],
+                    ),
+                )
+    return count
+
+
 def run(
     questions: list[dict[str, Any]],
     *,
@@ -192,6 +395,9 @@ def run(
     as_of: bool,
     budget: int,
     reranker: Any | None = None,
+    embedder: CachedEmbedder | None = None,
+    fusion: dict[str, Any] | None = None,
+    rerank_window: int | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Pooled: one store and project for every question's sessions. Per question
@@ -204,7 +410,16 @@ def run(
     tokens: list[int] = []
     memory: list[int] = []
     for number, group in enumerate(groups, 1):
-        found = run_group(group, top_k=top_k, as_of=as_of, budget=budget, reranker=reranker)
+        found = run_group(
+            group,
+            top_k=top_k,
+            as_of=as_of,
+            budget=budget,
+            reranker=reranker,
+            embedder=embedder,
+            fusion=fusion,
+            rerank_window=rerank_window,
+        )
         rows += found["rows"]
         observations += found["observations"]
         capture_seconds += found["capture_seconds"]
@@ -226,6 +441,9 @@ def run(
         "depth": DEPTH,
         "budget": budget,
         "reranker": getattr(reranker, "fingerprint", None),
+        "rerank_window": rerank_window if reranker is not None else None,
+        "embedding": getattr(embedder, "fingerprint", None),
+        "fusion": (fusion or {}).get("name") if embedder is not None else None,
         # Legacy figures over the first `top_k` cited observations (see the protocol).
         "session_recall_at_k": mean([r["hit_k"] for r in rows]),
         "answer_turn_recall_at_k": mean([r["turn_hit_k"] for r in rows]),
@@ -284,6 +502,9 @@ def run_group(
     as_of: bool,
     budget: int,
     reranker: Any | None,
+    embedder: CachedEmbedder | None = None,
+    fusion: dict[str, Any] | None = None,
+    rerank_window: int | None = None,
 ) -> dict[str, Any]:
     """One store. Several questions share it only in the pooled setting, where they also
     share one project; a single question's project is its own either way."""
@@ -306,6 +527,9 @@ def run_group(
         credential = LocalStore.initialize(root / "db", root / "ctl").read_text()
         with LocalStore(root / "db", root / "ctl", clock=clock) as store:
             store.reranker = reranker
+            if hasattr(reranker, "clock"):
+                reranker.clock = clock
+            store.rerank_window = rerank_window
             retrieval = Retrieval(store)
             captured: dict[str, tuple[str, bool]] = {}  # observation -> (session, has_answer)
             answer_turns: dict[str, set[str]] = {}  # session -> its answer observations
@@ -344,6 +568,11 @@ def run_group(
             while store.drain():
                 pass
             capture_seconds = time.perf_counter() - started_capture
+            if embedder is not None:
+                index_dense(store, retrieval, embedder, project, PASSAGES)
+                store.embedder = embedder
+                store.fusion = fusion
+                embedder.prepare([item["question"][:2048] for item in questions], "query")
 
             rows: list[dict[str, Any]] = []
             tokens: list[int] = []
@@ -519,7 +748,9 @@ def compare(
     return lines, regressions
 
 
-def comparable(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
+def comparable(
+    baseline: dict[str, Any], current: dict[str, Any], vary_reranker: bool = False
+) -> list[str]:
     problems = []
     for key in (
         "pooled",
@@ -528,7 +759,7 @@ def comparable(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
         "depth",
         "budget",
         "questions",
-        "reranker",
+        *(() if vary_reranker else ("reranker",)),
     ):
         if baseline.get(key) != current.get(key):
             problems.append(f"{key}: {baseline.get(key)!r} vs {current.get(key)!r}")
@@ -540,6 +771,7 @@ def comparable(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
 
 
 def main() -> int:
+    global PASSAGES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, help="LongMemEval-format JSON")
     parser.add_argument("--output", type=Path)
@@ -590,7 +822,36 @@ def main() -> int:
         type=Path,
         help="Installed local cross-encoder directory; every briefing then asks for `rerank`",
     )
+    parser.add_argument(
+        "--vary-reranker",
+        action="store_true",
+        help="With --compare: the reports may differ in their reranker (that is the question)",
+    )
+    parser.add_argument("--reranker-name", help="Manifest id of --reranker-model")
+    parser.add_argument("--rerank-window", type=int, help="Candidates the cross-encoder reorders")
+    parser.add_argument("--reranker-threads", type=int, default=1)
+    parser.add_argument(
+        "--embedding",
+        help="Manifest id of a local embedding model; every briefing then uses the dense channel",
+    )
+    parser.add_argument("--embedding-dir", type=Path, help="Installed directory of --embedding")
+    parser.add_argument("--embedding-cache", type=Path, help="Directory for the vector cache")
+    parser.add_argument("--embedding-threads", type=int, default=1)
+    parser.add_argument(
+        "--passages",
+        action="store_true",
+        help="With --embedding: one vector per passage, not per observation from its opening",
+    )
+    parser.add_argument(
+        "--fusion",
+        choices=sorted(FUSIONS),
+        default="convex50",
+        help="How the lexical and semantic channels are combined (with --embedding); "
+        "convex50 is the shipped default",
+    )
     args = parser.parse_args()
+    if args.passages:
+        PASSAGES = True
     if args.text:
         REQUEST_EXTRAS.update(format="text", tokenizer="chars-estimate-v1")
     if args.tokenizer:
@@ -600,9 +861,22 @@ def main() -> int:
             parser.error("--data and --output are required unless --current is given")
         reranker = None
         if args.reranker_model is not None:
-            from memoryking.adapters.local_embeddings import LocalOnnxReranker
+            from memoryking.adapters.local_embeddings import RERANKER, LocalOnnxReranker
 
-            reranker = LocalOnnxReranker(args.reranker_model)
+            reranker = CachedReranker(
+                LocalOnnxReranker(
+                    args.reranker_model, args.reranker_name or RERANKER, args.reranker_threads
+                ),
+                args.embedding_cache,
+            )
+        embedder = None
+        if args.embedding is not None:
+            from memoryking.adapters.local_embeddings import LocalOnnxEmbedding
+
+            embedder = CachedEmbedder(
+                LocalOnnxEmbedding(args.embedding_dir, args.embedding, args.embedding_threads),
+                args.embedding_cache,
+            )
         raw = args.data.read_bytes()
         questions = load(
             args.data,
@@ -622,8 +896,18 @@ def main() -> int:
             as_of=args.as_of,
             budget=args.budget,
             reranker=reranker,
+            embedder=embedder,
+            fusion=FUSIONS[args.fusion],
+            rerank_window=args.rerank_window,
             progress=progress,
         )
+        if reranker is not None:
+            reranker.save()
+            report["reranker_model"] = args.reranker_name or RERANKER
+        if embedder is not None:
+            report["embedding_model"] = args.embedding
+            report["embedding_seconds"] = round(embedder.seconds, 1)
+            report["embedded_texts"] = embedder.embedded
         report["data"] = {"path": args.data.name, "sha256": hashlib.sha256(raw).hexdigest()}
         report["gate"] = json.loads(args.gate_file.read_text()) if args.gate_file.exists() else {}
         report["failures"] = gate(report, report["gate"]) if args.gate else []
@@ -640,7 +924,7 @@ def main() -> int:
     status = 1 if report["failures"] else 0
     if args.compare is not None:
         baseline = json.loads(args.compare.read_text())
-        problems = comparable(baseline, report)
+        problems = comparable(baseline, report, args.vary_reranker)
         if problems:
             print("reports are not comparable: " + "; ".join(problems), file=sys.stderr)
             return 2

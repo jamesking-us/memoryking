@@ -5548,6 +5548,7 @@
             "model": {
               "type": "string",
               "enum": [
+                "bge-small-en-v1-5-onnx",
                 "minilm-l6-v2-onnx"
               ]
             },
