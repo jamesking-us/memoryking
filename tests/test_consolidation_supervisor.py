@@ -47,6 +47,8 @@ sys.exit(m.main())
 class KeyedProvider(Provider):
     def do_POST(self):
         self.server.authorizations.append(self.headers.get("Authorization"))
+        # Test-only slowness: the reply, and so the drafts, arrive after the request does.
+        time.sleep(float(os.environ.get("MK_PROVIDER_DELAY", "1.0")))
         super().do_POST()
 
 
@@ -255,8 +257,15 @@ key_file = "{self.key}"
         # A child ran the pass: the provider saw the key that only the child read.
         self.assertTrue(wait_for(lambda: self.provider.authorizations, 40))
         self.assertEqual("Bearer " + KEY_VALUE, self.provider.authorizations[0])
-        self.assertIn(
-            "Drafted from The release train", self.cli(socket, "review", "list", "--project", "p")
+        # The request reaches the provider before the child has filed its drafts; wait for them.
+        self.assertTrue(
+            wait_for(
+                lambda: (
+                    "Drafted from The release train"
+                    in self.cli(socket, "review", "list", "--project", "p")
+                ),
+                40,
+            )
         )
         seen = {}
 
