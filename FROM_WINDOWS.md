@@ -467,3 +467,13 @@ The code is unchanged since `33b6bd6`; this is evidence for it.
 - **Left on this machine** for B4: the container, its three volumes and the `memoryking:local` image. `docker rm -f memoryking` and `docker volume rm memoryking-data memoryking-control memoryking-home` remove them.
 
 The evidence level is still **replay only**. Questions 5 to 9 are still open.
+
+### 2026-11-22 17:38 UTC: questions 5 to 9 answered by the owner in this session
+I listed the five open questions to the owner in this Windows session, each with my recommendation. Their answer, verbatim: "Yes to all." So:
+- **5:** ship the core and tokenizers hash locks as package data; the store-side install uses `--require-hashes`.
+- **6:** keep the byte-exact undo record in `%LOCALAPPDATA%\MemoryKing\setup\`. It is never read to connect or to trust.
+- **7:** 8.3 short program paths in hook strings, stopping when there is none (as built).
+- **8:** `extras` in the relay handshake, with `store_extras_mismatch` at connect.
+- **9:** one interactive `claude` session opened and closed with no prompt.
+
+I am building 5, 6 and 8 now, then doing 9, then B4.
