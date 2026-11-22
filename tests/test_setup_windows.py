@@ -197,6 +197,39 @@ class UpgradeTests(unittest.TestCase):
 
         self.assertEqual(seen[0][-1], hashlib.sha256(b"one build").hexdigest())
 
+    def test_a_container_from_an_older_build_of_the_same_tag_is_refused(self) -> None:
+        from types import SimpleNamespace
+
+        from memoryking import __version__
+
+        def docker(old: str, new: str):
+            def quiet(argv: list[str], timeout: float = 600) -> subprocess.CompletedProcess[bytes]:
+                out = {
+                    "run": f"memoryking {__version__}\n",
+                    "inspect": f"memoryking:local sha256:{old}\n",
+                    "image": f"sha256:{new}\n",
+                }[argv[1]]
+                return subprocess.CompletedProcess(argv, 0, out.encode(), b"")
+
+            return quiet
+
+        args = SimpleNamespace(image="memoryking:local", dry_run=False)
+        with (
+            mock.patch("importlib.util.find_spec", return_value=None),
+            mock.patch.object(setup_windows, "quiet", side_effect=docker("a" * 64, "b" * 64)),
+        ):
+            with self.assertRaises(LocalError) as caught:
+                setup_windows.install("docker", "memoryking", args, {})
+        self.assertEqual(caught.exception.code, "store_version_mismatch")
+        self.assertIn("docker rm -f memoryking", caught.exception.detail["found"])
+        say: dict[str, str] = {}
+        with (
+            mock.patch("importlib.util.find_spec", return_value=None),
+            mock.patch.object(setup_windows, "quiet", side_effect=docker("c" * 64, "c" * 64)),
+        ):
+            setup_windows.install("docker", "memoryking", args, say)
+        self.assertEqual(say["install"], "container memoryking already runs memoryking:local")
+
     def test_the_same_install_leaves_the_daemon_running(self) -> None:
         say, calls = self.install(b'{"installed":"already"}\n')
         self.assertEqual(len(calls), 1)

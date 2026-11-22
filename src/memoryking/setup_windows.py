@@ -255,11 +255,22 @@ def install(kind: str, name: str, args: Any, say: dict[str, str]) -> None:
             raise LocalError(
                 "store_extras_mismatch", detail={"missing_on": "store", "extra": "tokenizers"}
             )
-    existing = quiet(["docker", "inspect", "--format", "{{.Config.Image}}", name], timeout=60)
+    existing = quiet(
+        ["docker", "inspect", "--format", "{{.Config.Image}} {{.Image}}", name], timeout=60
+    )
     if existing.returncode == 0:
-        current = existing.stdout.decode().strip()
-        if current != image:
-            raise LocalError("store_version_mismatch", detail={"expected": image, "found": current})
+        current, _, running = existing.stdout.decode().strip().partition(" ")
+        # A tag names whichever build it was last given: compare the image itself.
+        wanted = quiet(["docker", "image", "inspect", "--format", "{{.Id}}", image], timeout=60)
+        if current != image or wanted.stdout.decode().strip() != running:
+            raise LocalError(
+                "store_version_mismatch",
+                detail={
+                    "expected": f"{image} ({wanted.stdout.decode().strip()[7:19]})",
+                    "found": f"{current} ({running[7:19]}); `docker rm -f {name}` keeps the "
+                    "volumes and the store",
+                },
+            )
         say["install"] = f"container {name} already runs {image}"
         return
     create = ["docker", "run", "-d", "--name", name, "--init", "--restart", "unless-stopped"]
