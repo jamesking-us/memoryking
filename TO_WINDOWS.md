@@ -51,3 +51,33 @@ Thank you for the phase 1 report; it has been relayed to the owner in full. Answ
 - (a) or (b), the `uv` update on your host, and the `SYSTEM` ACE: with the owner, not decided yet. Keep waiting; do not start phase 2.
 - While you wait, one cheap measurement would help the choice, if Docker Desktop is installed on that machine (do not install it if not): build `deploy/local/Dockerfile`, run the daemon per `docs/deployment.md` ("Container image for the local daemon"), and report whether a Windows-side command can use it through `docker exec -i <container> memoryking ...` (a capture and a recall, and the MCP stdio bridge started that way), with the start-up time per `docker exec` call (5 warm runs), next to your `wsl.exe` figure. The owner asked whether the existing container already solves Windows; this would be a second relay for option (b). No code changes for this.
 - `main` and `ccr-ad92928b-yjcxde` now also contain the long-history benchmark harness under `benchmarks/longhaul/`; it is POSIX-only tooling and out of scope for you.
+
+### 2026-11-22 05:40 UTC: the owner's decisions; start work
+1. **Option (b)**: the client, CLI, MCP stdio bridge, `setup claude-code` and the hooks run on native Windows; the store and daemon run in WSL2 (and in the container image, if your `docker exec` measurement shows that relay works). Build it so the full native port (a) can follow later without rework: every platform difference still goes through the one platform module, which (a) would extend.
+2. **Yes**, update `uv` on that host so you run the pinned Python 3.12.14.
+3. **Yes**, a `SYSTEM` ACE is acceptable on owner-only files. This only matters for (a); record it in your notes, do not build ACL code now.
+(Correction to my 05:05 note: the benchmark harness is on `ccr-ad92928b-yjcxde` only, not yet on `main`.)
+
+The five phases in the brief above are replaced by these four. Merge `origin/ccr-ad92928b-yjcxde` into `windows-port` before each; push and report after each; you do not need to wait for a reply between phases unless you raise an "ask first" item.
+
+**B1 Import and install.**
+- `.gitattributes` (own commit). Lock files: add the Windows-only transitive pins and hashes so every lock installs with `--require-hashes` on Windows, macOS and Linux; say exactly what you ran. pywin32 may appear in the dev and shared locks only (it is the MCP library's requirement), never in the core lock.
+- The platform module: `fcntl`, the Unix socket server, owner and mode checks, directory sync and the `O_*` flags stop being import-time requirements. On Windows the client, CLI and bridge import; anything that needs the store on the local machine (`init`, `serve`, `backup`, `restore`, `gc`, and any other command that opens a store or control directory directly) refuses with one new error code and a hint that points to WSL2 or the container. New error codes go through the contracts and `tools/generate_error_codes.py`; hints are at most 200 characters.
+- `encoding="utf-8"` on text I/O in the code paths that run on Windows. Do not sweep the whole repository; list what you left.
+- Target: every `memoryking` module imports on Windows; POSIX behavior and the POSIX test results are unchanged.
+
+**B2 Relay transport.** Ask first if anything here weakens a guarantee.
+- A `memoryking relay` command (runs on the Linux side): connects to the daemon's Unix socket and copies bytes both ways between it and stdin/stdout. It does not parse, so framing, the size limit and `service_busy` pass through unchanged; it must refuse a socket that fails the existing owner and mode checks, exactly as the client does today.
+- The Windows client transport: start the relay through `wsl.exe -d <distro> -- ...`, and through `docker exec -i <container> ...` if that measured well, chosen by explicit configuration (no guessing which the user means). The credential stays on the Linux side; describe how the Windows side authenticates without a copy on NTFS, as you proposed. No network listener, no new secret.
+- The Python client keeps one relay open; the bridge pays the start-up once; say what a per-call CLI or hook invocation costs.
+- Tests: the relay itself is tested on POSIX through a real daemon (the Linux session will run these); the Windows transport is tested on your machine through a real WSL2 daemon, skipped with a reason elsewhere.
+
+**B3 Setup, hooks and daemon lifetime.** Ask first on lifetime.
+- `memoryking setup claude-code` on Windows writes hook and MCP commands with correct Windows quoting, in the relay configuration, and passes the project identity explicitly where the Linux side cannot see the Windows working directory (say how a Windows path maps to a project and whether the same repository opened from WSL and from Windows is one project or two).
+- Daemon lifetime: WSL2 stops an idle distro. Post the options you tested (relay starts the daemon on demand; a logon scheduled task; something else) with a recommendation before building one.
+- Exercise it for real: a Claude Code session on Windows that starts, captures, ends, and a second session that gets the briefing. No benchmark.
+
+**B4 Close out.**
+- The WSL2 test run as an ordinary user, and an explanation of the 50-minute wall time (or a statement that it could not be explained, with what you ruled out).
+- The list of tests skipped on Windows and why; `tools/check.py` on Windows passing or its inapplicable steps named.
+- Docs: `docs/reference.md` runtimes section rewritten to current fact (what runs natively, what needs WSL2 or the container, what is not supported); `docs/deployment.md` Windows section; `SECURITY.md` if the relay changes any statement there; `CHANGELOG.md` under Unreleased. Keep the README unchanged. Leave the roadmap line to the Linux session.
