@@ -200,6 +200,7 @@ HINTS: dict[str, str] = {
     "plan_stream_type_changed": "A task stream cannot switch between ordinary checkpoints and a plan; use a separate task id.",
     "plan_task_stream_required": "Plans live on the task stream; send run as null.",
     "hook_event_invalid": "The host sent something other than one JSON object on stdin; run the hook from the host, not by hand.",
+    "deadline_exceeded": "The prompt-time recall hook gave up waiting for the store and added nothing; the prompt went ahead. Check that the daemon is running (`memoryking status`).",
     "hook_config_invalid": "The host's hook config file is not a JSON object; fix or remove it before installing.",
     "host_unsupported": "Hooks are generated for claude, codex or grok; other hosts can run the same `memoryking hook` commands by hand.",
     "chat_review_disabled": "Confirming in chat is off for this bridge; ask the user to run `memoryking review accept` or start the bridge with --allow-chat-review.",

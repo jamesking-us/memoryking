@@ -7,6 +7,7 @@ export interface Brief {
   max_output_tokens: number;
   tokenizer: string;
   top_k?: number;
+  min_score_ppm?: number;
   task?: string;
   run?: string;
   valid_ms?: number;

@@ -34,6 +34,35 @@ from longhaul.systems import memoryking as mk_arm  # noqa: E402
 from longhaul.systems._files import NOTES_CAP, extract  # noqa: E402
 from longhaul.systems.base import Scope, Session, System, Turn  # noqa: E402
 
+
+def pick_port_base():
+    """A first port for the T4 `post` listeners such that every port the tests will ask for is
+    free now (another agent's run on this machine may hold the default range)."""
+    import random
+    import socket
+
+    rng = random.Random(os.getpid())
+    for _ in range(100):
+        base = rng.randrange(20000, 60000)
+        os.environ["LONGHAUL_T4_PORT_BASE"] = str(base)
+        ports = {
+            t.canaries["injection"]["port"]
+            for seed in (1, 2, 3)
+            for g in gen.build("T4", 20, seed).groups
+            for t in g.tasks
+            if t.canaries["injection"]["action"] == "post"
+        }
+        try:
+            for port in ports:
+                with socket.socket() as probe:
+                    probe.bind(("127.0.0.1", port))
+            return base
+        except OSError:
+            continue
+    raise RuntimeError("no free port range for the T4 listeners")
+
+
+pick_port_base()  # children (the CLI the tests start) inherit LONGHAUL_T4_PORT_BASE
 PY = sys.executable
 STUB = f"{PY} {ROOT / 'benchmarks/longhaul/stub_agent.py'} {{workdir}} {{prompt_file}}"
 FAKE = ROOT / "benchmarks/longhaul/fake_model.py"
@@ -237,6 +266,38 @@ class UnsolvableWithoutHistoryTests(unittest.TestCase):
                         result = grading.check(t, work)
                         self.assertTrue(result["passed"], f"{t.id} oracle {result}")
             self.assertEqual(total, sum(COUNTS.values()))
+
+    def test_the_checks_do_not_fail_code_that_follows_other_settled_conventions(self):
+        """Pilot faults: an identifier with no separator, and an export in UTF-16 with quoted
+        fields, are right when the history says so; the hidden checks must read them."""
+        tasks = {t.family: t for g in gen.build("T1", 200).groups for t in g.tasks}
+        ids, export = tasks["id-format"], tasks["export-delimiter"]
+        want = {s.name: s.current for s in ids.slots}
+        with tempfile.TemporaryDirectory() as tmp:
+            work = make_workdir(ids, tmp, "ids")
+            for body in (
+                f"def new_id(n):\n    return {want['prefix']!r} + str(n).zfill({want['width']})\n",
+                f"def new_id(n):\n    return {want['prefix']!r} + '_' + str(n).zfill({want['width']})\n",
+            ):
+                (work / "ledger/ids.py").write_text(body)
+                self.assertTrue(grading.check(ids, work)["passed"], body)
+            want = {s.name: s.current for s in export.slots}
+            work = make_workdir(export, tmp, "export")
+            for enc, quote, eol in (
+                ("utf-16", '"', "\n"),
+                ("utf-8", "'", "\r\n"),
+                ("utf-16-le", "", "\n"),
+            ):
+                (work / "ledger/exporter.py").write_text(
+                    "def write_orders(rows, path):\n"
+                    f"    with open(path, 'w', encoding={enc!r}, newline='') as out:\n"
+                    f"        q = {quote!r}\n"
+                    f"        d = {want['delimiter']!r}\n"
+                    f"        out.write(d.join([q + {want['header']!r} + q, 'Amount', 'Status']) + {eol!r})\n"
+                    "        for r in rows:\n"
+                    f"            out.write(d.join(q + x + q for x in r) + {eol!r})\n"
+                )
+                self.assertTrue(grading.check(export, work)["passed"], (enc, quote))
 
     def test_one_wrong_slot_fails_and_the_value_pools_leave_a_guess_at_most_a_sixteenth(self):
         for track in ("T1", "T3"):
@@ -561,12 +622,38 @@ class ReportTests(unittest.TestCase):
 
     def test_plan_table_counts(self):
         one = lb.plan_counts(1)
-        self.assertEqual(one["stages"]["S0 pilot"], 6)
+        self.assertEqual(one["stages"]["S0 repeat pilot"], 6)
         self.assertEqual(one["agent_sessions"], 6 + 30 + 24 + 15 + 16)
         five = lb.plan_counts(5)
         self.assertEqual(five["agent_sessions"], 91 * 5)
         self.assertEqual(five["optional_repeat"], 24 * 5)
         self.assertEqual(five["t5_model_calls"], 600)
+        nine = lb.plan_counts(9)
+        self.assertEqual(nine["stages"]["S0 repeat pilot"], 54)
+        self.assertEqual(nine["stages"]["S1 T1 rest"], 270)
+        self.assertEqual(nine["probe_sessions"], 9)
+        self.assertEqual(nine["agent_sessions"], 91 * 9)
+        # two products measured on the lived track only: seeded stages run for the other seven
+        part = lb.plan_counts(9, lived_only=2)
+        self.assertEqual(part["stages"]["S0 repeat pilot"], 42)
+        self.assertEqual(part["stages"]["S1 T1 rest"], 210)
+        self.assertEqual(part["stages"]["S4 lived"], 16 * 9)
+        self.assertEqual(part["agent_sessions"], 75 * 7 + 16 * 9)
+
+    def test_the_claude_mem_observer_budget_follows_the_pilots_rate(self):
+        self.assertEqual(
+            [lb.observer_budget(n) for n in (20, 200, 2000)],
+            [
+                {"size": 20, "estimate": 20, "cap": 33},
+                {"size": 200, "estimate": 200, "cap": 239},
+                {"size": 2000, "estimate": 2000, "cap": 2310},
+            ],
+        )
+        # the repeat pilot: one 200-session history and its 6 runs; S1: four histories of 20,
+        # one of 200 (group 1; group 0 is the repeat pilot's) and one of 2,000, and 30 runs
+        self.assertEqual(lb.observer_calls(6, [(200, 1)])["total"], 215)
+        s1 = lb.observer_calls(30, [(20, 4), (200, 1), (2000, 1)])
+        self.assertEqual((s1["seeding"], s1["runs"], s1["total"]), (2280, 75, 2355))
 
 
 class PlainFileArmTests(unittest.TestCase):
@@ -744,7 +831,10 @@ class MemoryKingArmTests(unittest.TestCase):
         self.assertIn("2025-03-20", text)
         self.assertIn("semicolon", text)
         self.assertIn("claude-session", text)  # the transcript tail, as the hook captures it
-        self.assertIn("user-claude", text)  # and the user's own turns as their own observation
+        # and the user's own turns as their own observation: the same words inside the session
+        # capture, so the briefing shows them once and cites the other record
+        self.assertIn("also recorded in obs_", text)
+        self.assertNotIn("user-claude", text)
 
     def test_tool_errors_reach_memory_and_successful_tool_output_does_not_nothing_is_held(self):
         system = self.reopen()
@@ -784,7 +874,22 @@ class MemoryKingArmTests(unittest.TestCase):
         system = self.reopen()
         host = system.host(self.base / "wd", self.scope)
         events = host.settings["hooks"]
-        self.assertEqual(sorted(events), ["PreCompact", "SessionEnd", "SessionStart"])
+        self.assertEqual(
+            sorted(events), ["PreCompact", "SessionEnd", "SessionStart", "UserPromptSubmit"]
+        )
+        # the arm is exactly what `memoryking setup claude-code` installs by default
+        from memoryking import host_hooks
+
+        default = host_hooks.install(
+            host="claude", scope="user", project="billing", cwd=self.base / "wd",
+            home=self.base / "wd" / ".unused-home", socket=system.socket,
+            credential=self.base / "none", tools="mcp", write=False,
+        )  # fmt: skip
+        self.assertEqual(sorted(events), default["events"])
+        plain = load_system("memoryking_nohook")
+        self.assertEqual(plain.name, "memoryking-nohook")
+        self.assertFalse(plain.prompts)
+        self.assertNotIn("memoryking_nohook", lb.ARMS)
         command = events["SessionStart"][0]["hooks"][0]["command"]
         self.assertIn("hook session-start --host claude --project billing", command)
         self.assertIn("--tools mcp", command)
@@ -842,10 +947,10 @@ class PipelineTests(unittest.TestCase):
         )
         return proc
 
-    def one(self, arm, task, mode, track="T1", size=20, rep=1, seeded=None):
+    def one(self, arm, task, mode, track="T1", size=20, rep=1, seeded=None, extra=""):
         seeded = seeded or self.base / "seeded"
         results = self.base / "results"
-        agent = f"{STUB} --mode {mode} --mcp-config {{mcp_config}} --settings {{settings}}"
+        agent = f"{STUB} --mode {mode}{extra} --mcp-config {{mcp_config}} --settings {{settings}}"
         proc = self.run_cli(
             "run",
             "--track",
@@ -876,6 +981,26 @@ class PipelineTests(unittest.TestCase):
             result = self.one("off", "t1-export-delimiter", mode, rep=1 if mode == "null" else 2)
             self.assertEqual(result["passed"], expected)
         self.assertEqual(self.one("off", "t1-id-format", "null")["failure_class"], "missing")
+
+    def test_the_working_directory_is_named_after_the_project(self):
+        """Pilot fault: claude-mem and MCP Memory Service take the project from the directory
+        name, so a directory called `work` hid the seeded history from their start hooks."""
+        agent = "sh -c 'basename {workdir} > {workdir}/wd.txt'"
+        proc = self.run_cli(
+            "run", "--track", "T1", "--size", 20, "--task", "t1-export-delimiter", "--arm", "off",
+            "--agent", agent, "--seeded", self.base / "seeded", "--results", self.base / "results",
+            "--work", self.base / "work",
+        )  # fmt: skip
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        raw = self.base / "results/raw/T1-20-t1-export-delimiter-off-r1/final/wd.txt"
+        self.assertEqual(raw.read_text().strip(), "ledger-sync")
+
+    def test_a_run_keeps_its_stream_and_final_code_beside_the_results(self):
+        self.one("off", "t1-export-delimiter", "oracle", rep=3)
+        raw = self.base / "results/raw/T1-20-t1-export-delimiter-off-r3"
+        self.assertTrue((raw / "agent.stdout").exists())
+        self.assertIn("write_orders", (raw / "final/ledger/exporter.py").read_text())
+        self.assertFalse((raw / "final/history").exists())
 
     def test_reader_finds_the_facts_in_every_plain_arm_at_size_20(self):
         for arm in ("notes", "log", "native"):
@@ -919,6 +1044,12 @@ class PipelineTests(unittest.TestCase):
         result = self.one("memoryking", "t1-export-delimiter", "reader")
         self.assertTrue(result["passed"], result["check"])
         self.assertEqual(result["seed"]["sessions"], 20)
+        # One broad query naming the subject and every attribute, as the pilot's agents asked.
+        broad = self.one(
+            "memoryking", "t1-export-delimiter", "reader", rep=3, extra=" --queries broad"
+        )
+        self.assertTrue(broad["passed"], broad["check"])
+        self.assertEqual(broad["stream"]["memory_reads"], 1)
         # The store the run used is a copy: the seeded one still has no run-time writes.
         again = self.one("memoryking", "t1-export-delimiter", "null", rep=2)
         self.assertFalse(again["passed"])
@@ -1029,6 +1160,14 @@ class IsolationTests(unittest.TestCase):
         native = lb.agent_env(Path("/tmp/home-x"), {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": ""})
         self.assertNotIn("CLAUDE_CODE_DISABLE_AUTO_MEMORY", native)
 
+    def test_the_native_arms_claude_md_counts_as_memory_that_entered_the_context(self):
+        class Host:
+            files = {"CLAUDE.md": "x" * 123}
+
+        self.assertEqual(lb.auto_loaded_chars("native", Host()), 123)
+        for arm in ("off", "notes", "log", "memoryking", "mcp_memory"):
+            self.assertEqual(lb.auto_loaded_chars(arm, Host()), 0)
+
     def test_a_work_directory_under_a_claude_md_is_refused(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             (Path(tmp) / "CLAUDE.md").write_text("instructions")
@@ -1072,9 +1211,10 @@ class IsolationTests(unittest.TestCase):
                 "-p",
                 "--strict-mcp-config",
                 "--include-hook-events",
-                "--no-session-persistence",
             ):
                 self.assertIn(flag, argv)
+            # a persisted transcript is what the session-end hooks of memory products read
+            self.assertNotIn("--no-session-persistence", argv)
             self.assertEqual(argv[argv.index("--setting-sources") + 1], "user,project")
             self.assertEqual(argv[argv.index("--mcp-config") + 1], str(tmp / "mcp.json"))
             self.assertIn("mcp__x__y", argv[argv.index("--allowed-tools") + 1])

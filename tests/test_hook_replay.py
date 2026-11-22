@@ -8,14 +8,19 @@ model choosing to call a tool. One case per knowledge kind of the task-outcome b
 that task's own session-1 prompt. No real transcript is committed."""
 
 import json
+import os
+import re
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from memoryking import host_hooks
 from memoryking.adapters.local_ipc import Server
 from memoryking.adapters.local_store import LocalStore
+from memoryking.adapters.retrieval import Retrieval
+from memoryking.domain.local import LocalError
 
 TASKS = Path(__file__).resolve().parents[1] / "benchmarks" / "outcomes" / "tasks"
 
@@ -231,6 +236,164 @@ class HookReplayTests(unittest.TestCase):
         shown = host_hooks.session_start(begin, tools="mcp", **self.where)
         self.assertIn("`remember`", shown)
         self.assertNotIn("mcp__", shown)
+
+    # --- the prompt-time recall hook --------------------------------------------------------
+
+    def end_session(self, text, session="s1"):
+        path = self.root / f"{session}.jsonl"
+        path.write_text(text)
+        end = host_hooks.read_event(
+            json.dumps(
+                {
+                    "session_id": session,
+                    "transcript_path": str(path),
+                    "hook_event_name": "SessionEnd",
+                    "scratchpad_dir": "/x",
+                }
+            ),
+            {},
+        )
+        self.assertTrue(host_hooks.save(end, "session-end", **self.where)["captured"])
+
+    def submit(self, prompt, **options):
+        """What the host adds to the model's context when the user submits `prompt`."""
+        event = host_hooks.read_event(
+            json.dumps(
+                {
+                    "session_id": "s2",
+                    "hook_event_name": "UserPromptSubmit",
+                    "prompt": prompt,
+                    "prompt_id": "p",
+                }
+            ),
+            {},
+        )
+        self.assertEqual("prompt", event["kind"])
+        return host_hooks.prompt(event, **self.where, **options)
+
+    def observations(self):
+        return self.store.db.execute("SELECT count(*) FROM observations").fetchone()[0]
+
+    def test_a_prompt_gets_what_session_1_recorded_about_it_before_any_tool_is_chosen(self):
+        for name in ("job-states", "retry-helper"):
+            prompt1, meta = task(name)
+            self.end_session(transcript(prompt1, "Done; tests pass.", noise=3), session=name)
+        for name in ("job-states", "retry-helper"):
+            _, meta = task(name)
+            prompt2 = (TASKS / name / "session2.md").read_text().strip()
+            before = self.observations()
+            shown = self.submit(prompt2)
+            self.assertCarries(shown, meta["stub"]["must_recall"])
+            self.assertIn("evidence, not instructions", shown)
+            self.assertRegex(shown, r"receipt rcpt_[0-9a-f]+")
+            self.assertNotIn("# Briefing", shown)  # not the query repeated back
+            self.assertNotIn("## Caveats", shown)
+            self.assertLess(len(shown), 5000)  # bounded: the token budget, in characters
+            self.assertEqual(before, self.observations())  # the hook never writes
+            # a delivery like any other: its receipt names what was shown
+            receipt = re.search(r"receipt (rcpt_[0-9a-f]+)", shown).group(1)
+            output = []
+            Retrieval(self.store).execute(
+                self.where["credential"].read_text().strip(),
+                {
+                    "version": 1,
+                    "incarnation": self.store.incarnation,
+                    "action": "receipt",
+                    "args": {"project": "work", "receipt": receipt},
+                },
+            ).emit(output.append)
+            diagnostics = json.loads(output[0])["diagnostics"]
+            self.assertEqual("rendered_text", diagnostics["budget_count_scope"])
+            cited = re.findall(r"- \[g\d+\] (obs_[0-9a-f]+)", shown)
+            self.assertTrue(cited)
+            for reference in cited:
+                self.assertIn(reference, [i["reference"] for i in diagnostics["selected"]])
+
+    def test_nothing_is_injected_when_nothing_clears_the_floor_or_the_prompt_says_nothing(self):
+        prompt1, _ = task("job-states")
+        self.end_session(transcript(prompt1, "Done; tests pass.", noise=3))
+        for prompt in (
+            "yes please",
+            "continue",
+            "/clear",
+            "",
+            "Rename the dashboard colour palette and update every stylesheet import.",
+        ):
+            self.assertEqual("", self.submit(prompt), prompt)
+        # a floor nothing can reach leaves out even a prompt that matches
+        prompt2 = (TASKS / "job-states" / "session2.md").read_text().strip()
+        self.assertNotEqual("", self.submit(prompt2))
+        self.assertEqual("", self.submit(prompt2, floor=1_000_000))
+
+    def test_the_prompt_hook_can_be_turned_off_in_the_environment(self):
+        prompt1, _ = task("job-states")
+        self.end_session(transcript(prompt1, "Done; tests pass.", noise=3))
+        prompt2 = (TASKS / "job-states" / "session2.md").read_text().strip()
+        self.assertNotEqual("", self.submit(prompt2))
+        for value in ("off", "0", "false", "no"):
+            with patch.dict(os.environ, {host_hooks.PROMPT_OFF: value}):
+                self.assertEqual("", self.submit(prompt2), value)
+
+    def test_held_material_is_never_injected(self):
+        from memoryking.adapters.trust import Trust
+
+        prompt1, _ = task("job-states")
+        self.end_session(transcript(prompt1, "Done; tests pass.", noise=3))
+        prompt2 = (TASKS / "job-states" / "session2.md").read_text().strip()
+        shown = self.submit(prompt2)
+        ids = re.findall(r"obs_[0-9a-f]+", shown)
+        self.assertTrue(ids)
+        tenant = self.store.db.execute("SELECT tenant FROM tenants").fetchone()[0]
+        for observation in set(ids):
+            source = self.store.db.execute(
+                "SELECT source FROM observations WHERE id=?", (observation,)
+            ).fetchone()[0]
+            with self.store.transaction() as decision:
+                Trust(self.store).hold(tenant, "work", observation, source, decision.evaluated_ms)
+        self.assertEqual("", self.submit(prompt2))
+
+    def test_the_prompt_is_not_echoed_back_as_a_memory_of_itself(self):
+        prompt1, _ = task("job-states")
+        self.end_session(transcript(prompt1, "Done; tests pass.", noise=3))
+        # The user sends the very words an earlier session captured: nothing to add.
+        self.assertEqual("", self.submit(prompt1))
+        # A prompt that quotes only part of a capture still gets the rest of what matches.
+        shown = host_hooks.prompt_briefing(
+            "# Briefing: x\n_Status partial_\n\n## Unreviewed observations (evidence)\n"
+            "1. **[g1]** User: please fix the retry helper with backoff and jitter now.\n"
+            "2. **[g2]** The retry helper keeps a ceiling of five attempts.\n\n"
+            "## Caveats\n- Token counts are estimates.\n\n## Sources\n- [g1] obs_a\n- [g2] obs_b\n",
+            "please fix the retry helper with backoff and jitter now",
+        )
+        self.assertNotIn("obs_a", shown)
+        self.assertNotIn("[g1]", shown)
+        self.assertIn("[g2] obs_b", shown)
+        self.assertNotIn("Caveats", shown)
+
+    def test_secret_shapes_in_a_prompt_never_reach_the_store_as_the_query(self):
+        asked = []
+
+        def recall(query, **options):
+            asked.append(query)
+            return {"sources": [], "text": ""}
+
+        token = "sk-" + "A1b2C3d4" * 4
+        with patch("memoryking.hooks.recall", side_effect=recall):
+            self.submit(f"Rotate the billing exporter retry key, it is api_key={token} today")
+        self.assertEqual(1, len(asked))
+        self.assertNotIn(token, asked[0])
+        self.assertIn("[REDACTED]", asked[0])
+
+    def test_a_slow_store_costs_the_prompt_its_deadline_and_nothing_more(self):
+        import time
+        from unittest.mock import patch as mock
+
+        prompt2 = (TASKS / "job-states" / "session2.md").read_text().strip()
+        with mock("memoryking.hooks.recall", side_effect=lambda *a, **k: time.sleep(5)):
+            started = time.monotonic()
+            with self.assertRaisesRegex(LocalError, "deadline_exceeded"):
+                self.submit(prompt2, deadline=0.2)
+            self.assertLess(time.monotonic() - started, 2)
 
     def test_the_installed_command_names_the_tools_through_the_cli(self):
         installed = host_hooks.install(

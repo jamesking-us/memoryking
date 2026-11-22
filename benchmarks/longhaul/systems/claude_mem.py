@@ -9,10 +9,14 @@ Code login (provider `claude`, model `haiku`), which is a real, billed call; thi
 to use it unless `LONGHAUL_ALLOW_HOST_AGENT=1`. With `LONGHAUL_LLM_BASE_URL` set it uses the
 documented `openai-compatible` provider instead, which is how the offline tests run.
 
-Seeding replays a recorded session as the hook events a real session would have produced:
-user turn -> UserPromptSubmit, tool turn -> PostToolUse, assistant turn -> Stop with that text as
-the last assistant message. Nothing in the hook payloads carries a timestamp, so the store's
-times are ingestion times (order is preserved).
+Seeding replays a recorded session as the hook events a real Claude Code session fires, with
+the host's own payloads (`_session.py`): `UserPromptSubmit` for each user turn, `PostToolUse` or
+`PostToolUseFailure` for each tool turn, one `Stop` per user turn with the last assistant message
+of that turn, `SessionEnd`, and the transcript file written as the host would have it. What the
+observer is shown, read from the plugin's own code: the first user prompt of a session, each tool
+call and result, and at Stop the last assistant message (the summary step does not read the
+transcript unless the Stop payload has no `last_assistant_message`). Nothing in the hook payloads
+carries a timestamp, so the store's times are ingestion times (order is preserved).
 """
 
 from __future__ import annotations
@@ -28,10 +32,19 @@ from pathlib import Path
 from typing import Iterable
 
 from . import _common as c
+from . import _session
 from .base import HostConfig, Scope, SeedReport, Session
 
 NAME = "claude-mem"
 HOOK_TIMEOUT = 120
+# The plugin's own hooks.json: the claude-mem subcommand each host event runs.
+HOOK_COMMAND = {
+    "UserPromptSubmit": "session-init",
+    "PostToolUse": "observation",
+    "PostToolUseFailure": "observation",
+    "Stop": "summarize",
+    "SessionEnd": "session-end",
+}
 
 
 class ClaudeMem:
@@ -60,9 +73,11 @@ class ClaudeMem:
     @staticmethod
     def installed() -> bool:
         h = c.install_dir(NAME)
-        return (h / "home/.local/bin/claude-mem").is_file() and (
-            h / "home/.claude/plugins/cache/thedotmack/claude-mem"
-        ).is_dir()
+        return (
+            (h / "home/.local/bin/claude-mem").is_file()
+            and (h / "home/.claude/plugins/cache/thedotmack/claude-mem").is_dir()
+            and ClaudeMem._bun_path() is not None
+        )
 
     # -- environment -----------------------------------------------------------
     @property
@@ -118,13 +133,18 @@ class ClaudeMem:
         return base
 
     @staticmethod
-    def _bun() -> str:
-        for cand in (os.environ.get("LONGHAUL_BUN"), str(Path("/root/.bun/bin/bun"))):
-            if cand and Path(cand).is_file():
-                return cand
+    def _bun_path() -> str | None:
+        """The Bun runtime this user can execute, or None. Another user's install is not ours."""
         from shutil import which
 
-        return which("bun") or "bun"
+        for cand in (os.environ.get("LONGHAUL_BUN"), str(Path("/root/.bun/bin/bun"))):
+            if cand and os.access(cand, os.X_OK):
+                return cand
+        return which("bun")
+
+    @staticmethod
+    def _bun() -> str:
+        return ClaudeMem._bun_path() or "bun"
 
     def _url(self, path: str) -> str:
         return f"http://127.0.0.1:{self.port}{path}"
@@ -224,6 +244,21 @@ class ClaudeMem:
             time.sleep(0.5)
         raise TimeoutError("claude-mem observer queue did not drain")
 
+    def observer_turns(self) -> int:
+        """The observer's model turns so far, counted from the worker's own log (one
+        `Observer turn usage` line per response): the unit of the call budget in RUNNING.md."""
+        total = 0
+        for log in (self.data / "logs").glob("claude-mem-*.log"):
+            with log.open(errors="replace") as handle:
+                total += sum(1 for line in handle if "Observer turn usage" in line)
+        return total
+
+    def _calls_since(self, base: dict | None, turns_before: int) -> int:
+        """Observer calls since seeding began: the fake endpoint's count, else the worker's."""
+        if self.llm and base is not None:
+            return self.llm.stats()["chat_calls"] - base["chat_calls"]
+        return self.observer_turns() - turns_before
+
     def seed(self, sessions: Iterable[Session]) -> SeedReport:
         assert self.root is not None
         if not self.llm_cfg.get("base_url") and not self._host_agent_allowed():
@@ -232,59 +267,30 @@ class ClaudeMem:
                 "Set LONGHAUL_ALLOW_HOST_AGENT=1 to allow it, or LONGHAUL_LLM_BASE_URL for another endpoint."
             )
         base = self.llm.stats() if self.llm else None
+        turns_before = self.observer_turns()
+        cap = int(os.environ.get("LONGHAUL_CLAUDE_MEM_CALL_CAP") or 0)  # 0: no cap
         started = time.monotonic()
         n = 0
         for s in sessions:
             cwd = self.root / "projects" / s.scope.project
             cwd.mkdir(parents=True, exist_ok=True)
             tpath = self.root / "transcripts" / f"{s.id}.jsonl"
-            tpath.parent.mkdir(exist_ok=True)
-            rows: list[dict] = []
-            common = {"session_id": s.id, "cwd": str(cwd), "transcript_path": str(tpath)}
-            tool_n = 0
-            for t in s.turns:
-                if t.role == "user":
-                    rows.append({"type": "user", "message": {"role": "user", "content": t.text}})
-                    tpath.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-                    self._hook(
-                        "session-init",
-                        {**common, "hook_event_name": "UserPromptSubmit", "prompt": t.text},
-                    )
-                elif t.role == "tool":
-                    tool_n += 1
-                    self._hook(
-                        "observation",
-                        {
-                            **common,
-                            "hook_event_name": "PostToolUse",
-                            "tool_name": "Bash",
-                            "tool_input": {"command": f"(recorded tool call {tool_n})"},
-                            "tool_response": {"stdout": t.text, "stderr": ""},
-                            "tool_use_id": f"{s.id}-{tool_n}",
-                        },
-                    )
-                else:  # assistant
-                    rows.append(
-                        {
-                            "type": "assistant",
-                            "message": {
-                                "role": "assistant",
-                                "content": [{"type": "text", "text": t.text}],
-                            },
-                        }
-                    )
-                    tpath.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-                    self._hook(
-                        "summarize",
-                        {**common, "hook_event_name": "Stop", "last_assistant_message": t.text},
-                    )
-            self._hook(
-                "session-end", {**common, "hook_event_name": "SessionEnd", "reason": "other"}
-            )
+            # The hook events a real session of these turns fires, with the payloads the host
+            # gives them (`_session.py`): the prompt of each user turn, each tool call or failure,
+            # the last assistant message of each turn at Stop, the transcript file as written so
+            # far, and the end of the session.
+            for event in _session.events(s, str(cwd), str(tpath)):
+                _session.write_transcript(tpath, event.transcript)
+                self._hook(HOOK_COMMAND[event.name], event.payload)
             n += 1
+            if cap and n % 10 == 0 and self._calls_since(base, turns_before) > cap:
+                raise RuntimeError(
+                    f"claude-mem seeding stopped after {n} sessions: more than "
+                    f"{cap} observer calls (LONGHAUL_CLAUDE_MEM_CALL_CAP)"
+                )
         self._wait_idle()
         calls = tokens = 0
-        note = "hook replay (session-init, observation, summarize, session-end); observer: "
+        note = "hook replay as a real session fires it (prompt, tool or failure, stop, end); observer: "
         if self.llm and base is not None:
             now = self.llm.stats()
             calls = now["chat_calls"] - base["chat_calls"]
@@ -293,7 +299,11 @@ class ClaudeMem:
             )
             note += "fake openai-compatible endpoint (counts are the fake server's)"
         else:
-            note += "the host Claude login; call and token counts are not measured here"
+            calls = self.observer_turns() - turns_before
+            note += (
+                "the host Claude login; calls are the worker's own count of observer turns, "
+                "tokens are not measured here"
+            )
         return SeedReport(
             sessions=n,
             seconds=time.monotonic() - started,

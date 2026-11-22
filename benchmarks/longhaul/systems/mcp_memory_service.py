@@ -28,6 +28,9 @@ NAME = "mcp-memory-service"
 
 class McpMemoryService:
     needs_llm = False
+    # A real session does not give this product what seeding writes (SYSTEMS.md): it is
+    # measured on the lived track only, and seeded runs need --allow-unfaithful-seeding.
+    seeding_faithful = False
 
     def __init__(self, plugin: bool = True) -> None:
         self.plugin = plugin

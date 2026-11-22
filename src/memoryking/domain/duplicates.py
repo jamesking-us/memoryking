@@ -13,6 +13,12 @@ hosts and error codes. Two notes about PAY-142 and PAY-143, or about different f
 never duplicates, however alike the rest of the sentence is. A differing word that is not a
 number (another entity, another value, "thirty" against "sixty") keeps two notes apart, and
 short notes are compared exactly.
+
+`contained` is the other repeat: one excerpt that lies inside another, such as the user's own
+turns that a hook captured as an observation of their own and again as part of the session
+capture. It needs the shorter text to hold at least eight distinct words and at least 90% of
+its text, paragraph by paragraph, to be found verbatim in the longer one, and to name no anchor
+the longer one lacks.
 """
 
 from __future__ import annotations
@@ -26,17 +32,19 @@ NEGATIONS = frozenset({"not", "no", "never", "none", "nor", "without", "cannot",
 MINIMUM_WORDS = 8
 OVERLAP = 0.8
 DIFFERENCE = 2
+COVERAGE = 0.9  # share of the shorter excerpt that must be found in the longer one
 
 
 class Shape:
     """What a comparison needs from one excerpt; words and anchors are worked out when a
     comparison first needs them, because most pairs differ in length or text already."""
 
-    __slots__ = ("text", "normalized", "_words", "_anchors")
+    __slots__ = ("text", "normalized", "_words", "_anchors", "_blocks")
 
     def __init__(self, text: str):
         self.text = text
         self.normalized = " ".join(text.casefold().split())
+        self._blocks: list[str] | None = None
         self._words: frozenset[str] | None = None
         self._anchors: frozenset[tuple[str, str]] | None = None
 
@@ -45,6 +53,14 @@ class Shape:
         if self._words is None:
             self._words = frozenset(token for token, _ in analyze(self.text))
         return self._words
+
+    @property
+    def blocks(self) -> list[str]:
+        """The paragraphs (separated by blank lines), each normalised like `normalized`."""
+        if self._blocks is None:
+            parts = re.split(r"\n[ \t]*\n", self.text)
+            self._blocks = [b for b in (" ".join(p.casefold().split()) for p in parts) if b]
+        return self._blocks
 
     @property
     def anchors(self) -> frozenset[tuple[str, str]]:
@@ -77,6 +93,20 @@ def duplicates(a: Shape, b: Shape) -> bool:
     ):
         return False
     return a.anchors == b.anchors and a.words & NEGATIONS == b.words & NEGATIONS
+
+
+def contained(small: Shape, large: Shape) -> bool:
+    """`small`'s excerpt lies inside `large`'s: nearly all of it (90%, by paragraphs) is found
+    verbatim in the longer one, which also names every anchor it names."""
+    if len(small.normalized) >= len(large.normalized):
+        return False
+    allowed = (1 - COVERAGE) * len(small.normalized)  # text that may be missing
+    for block in small.blocks:
+        if block not in large.normalized:
+            allowed -= len(block)
+            if allowed < 0:
+                return False
+    return len(small.words) >= MINIMUM_WORDS and small.anchors <= large.anchors
 
 
 _VERSION = re.compile(r"^(.+?)__v[0-9]+$")

@@ -210,6 +210,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `database_tls_required` | Remote DSNs must use sslmode=verify-full. |
 | `database_transaction_required` | This read needs an open store transaction. |
 
+## deadline
+
+| Code | What to do |
+| --- | --- |
+| `deadline_exceeded` | The prompt-time recall hook gave up waiting for the store and added nothing; the prompt went ahead. Check that the daemon is running (`memoryking status`). |
+
 ## delegation
 
 | Code | What to do |

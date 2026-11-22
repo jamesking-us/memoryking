@@ -297,6 +297,7 @@ def hook_changes(args: Any, agent_profile: str, home: Path, cwd: Path) -> tuple[
         write=False,
         launcher=launcher_parts(),
         tools="mcp",
+        prompts=not args.no_prompt_hook,
     )
     return Path(result["path"]), json.dumps(result["config"], indent=2) + "\n"
 
@@ -359,6 +360,12 @@ def run(args: Any) -> int:
     else:
         path, text = hook_changes(args, agent_profile, home, cwd)
         say["hooks"] = f"{files.write(path, text)} {path}, run as the same principal as the bridge"
+        say["hooks"] += (
+            "; the prompt-time recall hook is not installed (--no-prompt-hook)"
+            if args.no_prompt_hook
+            else "; the prompt-time recall hook recalls for each prompt (turn it off with "
+            "--no-prompt-hook, or MEMORYKING_PROMPT_HOOK=off in the host's environment)"
+        )
     if args.dry_run or args.no_semantic:
         semantic_step(name, args, profile, say)
     else:

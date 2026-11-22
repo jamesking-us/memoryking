@@ -72,6 +72,11 @@ PASSTHROUGH = (
     "LONGHAUL_MODEL",
     "LONGHAUL_MAX_BUDGET",
 )
+# The pilot and every test generate with these seeds: their instances are development data and
+# never a result. Measured stages use MEASURED_SEED (RUNNING.md, "Seeds"), and `report` leaves
+# development-seed runs out unless asked.
+DEVELOPMENT_SEEDS = (1, 2, 3, 4, 5)
+MEASURED_SEED = 11
 DEFAULT_RESULTS = Path("/tmp/mk-lh/results")
 DEFAULT_SEEDED = Path("/tmp/mk-lh/seeded")
 DEFAULT_WORK = Path("/tmp/mk-lh/work")
@@ -165,6 +170,13 @@ def cmd_seed(args) -> dict:
     if target.exists():
         raise BenchmarkError(f"{target} already exists")
     system = load_system(args.arm)
+    faithful = getattr(system, "seeding_faithful", True)
+    if not faithful and not args.allow_unfaithful_seeding:
+        raise BenchmarkError(
+            f"{args.arm}: a real session does not give this product what seeding writes, so it "
+            "is measured on the lived track only (SYSTEMS.md). Pass --allow-unfaithful-seeding "
+            "to seed it anyway as an upper bound, labelled as such in every table."
+        )
     system.prepare(target)
     try:
         report = system.seed(group.sessions)
@@ -181,6 +193,8 @@ def cmd_seed(args) -> dict:
         "group": args.group,
         "seed": args.seed,
         "digest": s.digest(),
+        "history_digest": s.history_digest(),
+        "seeding_faithful": faithful,
         "sessions": report.sessions,
         "seconds": report.seconds,
         "llm_calls": report.llm_calls,
@@ -217,7 +231,13 @@ class Collector:
             def log_message(self, *a):
                 return None
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        try:
+            self.server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        except OSError as exc:
+            raise BenchmarkError(
+                f"the T4 listener could not bind 127.0.0.1:{port} ({exc.strerror}): another "
+                "process holds it; this is a harness fault, not a result (RUNNING.md, exclusions)"
+            ) from exc
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
@@ -316,6 +336,33 @@ def materialize(workdir: Path, bench: Path, task: gen.Task, host, home: Path) ->
     return prompt_file
 
 
+def auto_loaded_chars(arm: str, host) -> int:
+    """Characters of memory the host itself puts into the context at the start, which the
+    event stream does not show as a tool or hook result: the `native` arm's `CLAUDE.md`."""
+    return len(host.files.get("CLAUDE.md", "")) if arm == "native" else 0
+
+
+def keep_raw(target: Path, bench: Path, workdir: Path) -> None:
+    """Keep what a failure analysis or a regrade needs after the run directory is removed: the
+    agent's event stream and what is left of its working directory (small files, no history).
+    These hold model output; they stay beside the results and are never committed."""
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("agent.stdout", "agent.stderr"):
+        if (bench / name).exists():
+            shutil.copy(bench / name, target / name)
+    for p in sorted(workdir.rglob("*")):
+        rel = p.relative_to(workdir)
+        if (
+            p.is_file()
+            and not p.is_symlink()
+            and rel.parts[0] != "history"
+            and "__pycache__" not in rel.parts
+            and p.stat().st_size <= 200_000
+        ):
+            (target / "final" / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(p, target / "final" / rel)
+
+
 def snapshot_notes(workdir: Path, baseline: dict[str, str]) -> list[str]:
     """Files the agent added or changed that are not code, for the record."""
     code = {".py", ".pyi", ".json", ".toml", ".cfg", ".ini", ".txt", ".lock"}
@@ -375,14 +422,22 @@ def cmd_run(args) -> dict:
         if (seeded / "seed-report.json").exists()
         else {}
     )
-    if seed_report.get("digest") not in (None, s.digest()):
+    # The seeded store depends on the sessions only: a corrected hidden check must not make a
+    # seeded store unusable, so the sessions have a digest of their own.
+    if "history_digest" in seed_report:
+        mismatch = seed_report["history_digest"] != s.history_digest()
+    else:
+        mismatch = seed_report.get("digest") not in (None, s.digest())
+    if mismatch:
         raise BenchmarkError("the seeded history is not the one this seed and size generate")
     name = f"{task.id}-{args.arm}-r{args.rep}"
     run_dir = Path(args.work) / f"{args.size}-{name}"
     check_isolated(run_dir)
     if run_dir.exists():
         raise BenchmarkError(f"{run_dir} already exists")
-    workdir, bench, home = run_dir / "work", run_dir / "bench", run_dir / "home"
+    # The directory is named after the project: products that derive the project from the
+    # working directory (claude-mem, MCP Memory Service) then look where the history was seeded.
+    workdir, bench, home = run_dir / "ws" / task.scope.project, run_dir / "bench", run_dir / "home"
     for d in (workdir, bench, home):
         d.mkdir(parents=True)
     system_root = run_dir / "system"
@@ -428,6 +483,11 @@ def cmd_run(args) -> dict:
         stream = (bench / "agent.stdout").read_text(errors="replace")
         graded = grading.check(task, workdir, collector.hits if collector else [])
         scan = grading.analyze(task, stream, memory_paths)
+        loaded = auto_loaded_chars(args.arm, host)
+        if loaded and scan["has_result"]:
+            scan["auto_loaded_chars"] = loaded
+            scan["memory_chars"] += loaded
+            scan["memory_reads"] += 1
         cls = grading.classify(task, graded, scan, ran)
         used = {}
         try:
@@ -440,6 +500,8 @@ def cmd_run(args) -> dict:
             "size": args.size,
             "group": group.index,
             "variant": task.variant,
+            "stated_by": task.stated_by,
+            "seeding_faithful": seed_report.get("seeding_faithful", True),
             "arm": args.arm,
             "rep": args.rep,
             "history_seed": args.seed,
@@ -473,6 +535,7 @@ def cmd_run(args) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     file = out / f"{args.track}-{args.size}-{name}.json"
     file.write_text(json.dumps(result, indent=1, sort_keys=True))
+    keep_raw(Path(args.results) / "raw" / f"{args.track}-{args.size}-{name}", bench, workdir)
     if not args.keep:
         shutil.rmtree(run_dir, ignore_errors=True)
     return {
@@ -576,11 +639,57 @@ def cmd_validate(args) -> dict:
     return report
 
 
+# --------------------------------------------------------------------- regrade
+
+
+def cmd_regrade(args) -> dict:
+    """A fault only in a hidden check is corrected by grading the saved outputs again (the
+    final code of each run, kept under `raw/<run>/final`) with the check as it is now. A run's
+    verdict is replaced only if it changes; the changed runs are listed. Runs whose output
+    was not kept, and a `post` injection (its listener hits are not kept), keep their verdict."""
+    results = Path(args.results)
+    changed, kept, missing = [], 0, []
+    for file in sorted((results / "runs").glob("*.json")):
+        row = json.loads(file.read_text())
+        raw = results / "raw" / file.stem / "final"
+        if "check" not in row or not raw.is_dir():
+            missing.append(file.name)
+            continue
+        task = find_task(suite(row["track"], row["size"], row["history_seed"]), row["task"])[1]
+        with tempfile.TemporaryDirectory(prefix="mk-lhr-", dir="/tmp") as tmp:
+            work = Path(tmp) / "work"
+            shutil.copytree(raw, work)
+            graded = grading.check(task, work)
+        if row["check"].get("injection_acted"):
+            graded["injection_acted"] = True  # not recomputable without the listener's hits
+            graded["passed"] = False
+        scan = {
+            "leak_found": row["stream"].get("leak_found") or [],
+            "has_result": row["stream"].get("has_result"),
+        }
+        cls = grading.classify(task, graded, scan, row.get("agent", {}))
+        passed = cls is None and graded["passed"]
+        if passed == row["passed"] and cls == row["failure_class"]:
+            kept += 1
+            continue
+        changed.append({"run": file.name, "was": row["passed"], "now": passed, "class": cls})
+        if args.apply:
+            row["regraded_from"] = {"passed": row["passed"], "failure_class": row["failure_class"]}
+            row.update(
+                passed=passed,
+                failure_class=cls,
+                check={k: graded[k] for k in ("slots", "injection_acted", "probe_error")},
+            )
+            file.write_text(json.dumps(row, indent=1, sort_keys=True))
+    return {"regraded": changed, "unchanged": kept, "not_regradable": missing}
+
+
 # ----------------------------------------------------------------------- plan
 
-# (stage, track, size, tasks, reps) of the full plan; stage 0 is the pilot.
+# (stage, track, size, tasks, reps) of the measured plan on the measured seed; stage 0 is the
+# repeat of the pilot (the pilot itself was on a development seed and is not part of it).
 PLAN = [
-    ("S0 pilot", "T1", 200, 6, 1),
+    ("S0 repeat pilot", "T1", 200, 6, 1),
     ("S1 T1 rest", "T1", 20, 12, 1),
     ("S1 T1 rest", "T1", 200, 6, 1),
     ("S1 T1 rest", "T1", 2000, 12, 1),
@@ -592,20 +701,54 @@ PLAN = [
     ("S3 scopes and hostile", "T4", 200, 6, 1),
     ("S4 lived", "T2b", 0, 16, 1),
 ]
+PROBE_SESSIONS_PER_ARM = 1  # one real probe session per arm before the first stage
+PROBE_RESERVE = 4  # sessions kept for a probe that is run again after a harness fix
+# claude-mem's observer, in model calls (worker "observer turns"). The pilot measured 194 calls
+# for 200 seeded sessions (0.97 a session, 4-turn sessions) and 2.5 a real run; seeding a
+# 6-turn session fires no more observer-visible events (RUNNING.md), so one call a session is the
+# budget, 15 percent more is the cap that stops a seeding, and a run is budgeted 2.5 calls.
+OBSERVER_CALLS_PER_SESSION = 1.0
+OBSERVER_CAP_MARGIN = 1.15
+OBSERVER_CALLS_PER_RUN = 2.5
+
+
+def observer_budget(size: int) -> dict:
+    """Seeding calls of one claude-mem history of `size` sessions: the estimate and the cap."""
+    return {
+        "size": size,
+        "estimate": round(size * OBSERVER_CALLS_PER_SESSION),
+        "cap": int(size * OBSERVER_CALLS_PER_SESSION * OBSERVER_CAP_MARGIN) + 10,
+    }
+
+
+def observer_calls(stage_runs: int, seeded: list[tuple[int, int]]) -> dict:
+    """Estimate for a stage: `seeded` is [(size, histories)]; each real run adds a few calls."""
+    seeding = sum(observer_budget(n)["estimate"] * k for n, k in seeded)
+    runs = round(stage_runs * OBSERVER_CALLS_PER_RUN)
+    return {"seeding": seeding, "runs": runs, "total": seeding + runs}
+
+
 T5_QUESTIONS = 60
 REPEAT = ("S5 repeat of T1 at 200 (optional, 2 more repetitions)", "T1", 200, 12, 2)
 
 
-def plan_counts(arms: int) -> dict:
+def plan_counts(arms: int, lived_only: int = 0) -> dict:
+    """Real sessions of the plan for `arms` arms, of which `lived_only` are products measured on
+    the lived track only (they run no seeded stage unless seeded as an upper bound)."""
+    seeded = arms - lived_only
     stages: dict[str, int] = {}
-    for stage, _track, _size, tasks, reps in PLAN:
-        stages[stage] = stages.get(stage, 0) + tasks * reps * arms
+    for stage, track, _size, tasks, reps in PLAN:
+        n = arms if track == "T2b" else seeded
+        stages[stage] = stages.get(stage, 0) + tasks * reps * n
     core = sum(stages.values())
-    repeat = REPEAT[3] * REPEAT[4] * arms
+    repeat = REPEAT[3] * REPEAT[4] * seeded
     return {
         "arms": arms,
+        "seeded_arms": seeded,
         "stages": stages,
         "agent_sessions": core,
+        "probe_sessions": PROBE_SESSIONS_PER_ARM * arms,
+        "probe_reserve": PROBE_RESERVE,
         "optional_repeat": repeat,
         "with_repeat": core + repeat,
         "t5_model_calls": T5_QUESTIONS * 2 * arms,
@@ -613,7 +756,19 @@ def plan_counts(arms: int) -> dict:
 
 
 def cmd_plan(args) -> dict:
-    return {"per_arm": plan_counts(1), "for_arms": plan_counts(args.arms)}
+    s0 = plan_counts(args.arms, args.lived_only)
+    first = {k: v for k, v in s0["stages"].items() if k == "S0 repeat pilot"}
+    return {
+        "per_arm": plan_counts(1),
+        "for_arms": s0,
+        "claude_mem_observer": {
+            "per_history": [observer_budget(n) for n in (20, 200, 2000)],
+            "repeat_pilot": observer_calls(
+                first.get("S0 repeat pilot", 0) // max(1, s0["seeded_arms"]), [(200, 1)]
+            ),
+            "s1": observer_calls(30, [(20, 4), (200, 1), (2000, 1)]),
+        },
+    }
 
 
 # --------------------------------------------------------------------- report
@@ -683,7 +838,13 @@ def aggregate(rows: list[dict], primary: str = "memoryking") -> dict:
     for track in sorted({r["track"] for r in rows}):
         part = [r for r in rows if r["track"] == track]
         arms = sorted({r["arm"] for r in part})
-        block: dict = {"arms": {}, "paired": [], "by_size": {}, "by_variant": {}}
+        block: dict = {
+            "arms": {},
+            "paired": [],
+            "by_size": {},
+            "by_variant": {},
+            "by_stated_by": {},
+        }
         for arm in arms:
             mine = [r for r in part if r["arm"] == arm]
             k = sum(1 for r in mine if r["passed"])
@@ -709,6 +870,7 @@ def aggregate(rows: list[dict], primary: str = "memoryking") -> dict:
                 "memory_chars": _mean([r["stream"].get("memory_chars") for r in mine]),
                 "memory_read": sum(1 for r in mine if r["stream"].get("memory_reads")),
                 "memory_written": sum(1 for r in mine if r["stream"].get("memory_writes")),
+                "seeding_faithful": all(r.get("seeding_faithful", True) for r in mine),
                 "seed_seconds": _mean([r["seed"].get("seconds") for r in mine]),
                 "store_bytes": _mean([r["seed"].get("store_bytes") for r in mine]),
             }
@@ -719,6 +881,12 @@ def aggregate(rows: list[dict], primary: str = "memoryking") -> dict:
                     "passed": sum(1 for r in at if r["passed"]),
                     "input_tokens": _mean([r["stream"].get("input_tokens") for r in at]),
                     "seconds": _mean([r["agent"]["seconds"] for r in at]),
+                }
+            for who in sorted({r["stated_by"] for r in mine if r.get("stated_by")}):
+                at = [r for r in mine if r.get("stated_by") == who]
+                block["by_stated_by"].setdefault(who, {})[arm] = {
+                    "runs": len(at),
+                    "passed": sum(1 for r in at if r["passed"]),
                 }
             for variant in sorted({r["variant"] for r in mine if r["variant"]}):
                 at = [r for r in mine if r["variant"] == variant]
@@ -757,8 +925,9 @@ def render_markdown(agg: dict) -> str:
         ]
         for arm, a in block["arms"].items():
             classes = ", ".join(f"{k} {v}" for k, v in sorted(a["failure_classes"].items())) or "-"
+            label = arm if a.get("seeding_faithful", True) else f"{arm} (explicit-save upper bound)"
             lines.append(
-                f"| {arm} | {a['runs']} | {a['passed']} | {pct(a['rate'])} | "
+                f"| {label} | {a['runs']} | {a['passed']} | {pct(a['rate'])} | "
                 f"{pct(a['wilson95'][0])} to {pct(a['wilson95'][1])} | {classes} | "
                 f"{num(a['input_tokens'])} | {num(a['seconds'], 1)} | {num(a['memory_chars'])} | "
                 f"{a['memory_read']} | {a['memory_written']} |"
@@ -797,6 +966,18 @@ def render_markdown(agg: dict) -> str:
                     for arm, a in arms.items()
                 )
                 lines.append(f"- {size} sessions: {cells}")
+        if block["by_stated_by"]:
+            lines += [
+                "",
+                "By who stated the needle (a user decision, or a confirmed outcome the "
+                "assistant reports and the user acknowledges), passed/runs:",
+                "",
+            ]
+            for who, arms in block["by_stated_by"].items():
+                lines.append(
+                    f"- {who}: "
+                    + "; ".join(f"{arm} {a['passed']}/{a['runs']}" for arm, a in arms.items())
+                )
         if block["by_variant"]:
             lines += ["", "By variant (passed/runs):", ""]
             for variant, arms in block["by_variant"].items():
@@ -822,7 +1003,11 @@ def cmd_report(args):
         }
         excluded.discard("")
     rows = load_runs(results, excluded)
+    development = [r for r in rows if r.get("history_seed") in DEVELOPMENT_SEEDS]
+    if not args.include_development:
+        rows = [r for r in rows if r.get("history_seed") not in DEVELOPMENT_SEEDS]
     agg = aggregate(rows, args.primary)
+    agg["development_runs_left_out"] = 0 if args.include_development else len(development)
     t5 = []
     for p in sorted((results / "t5").glob("*.json")) if (results / "t5").exists() else []:
         t5.append(json.loads(p.read_text()))
@@ -853,6 +1038,12 @@ def cmd_report(args):
             )
     if excluded:
         text += "\nExcluded runs (harness faults): " + ", ".join(sorted(excluded)) + "\n"
+    if agg["development_runs_left_out"]:
+        text += (
+            f"\n{agg['development_runs_left_out']} run(s) on development seeds "
+            f"{DEVELOPMENT_SEEDS[0]} to {DEVELOPMENT_SEEDS[-1]} are development data and are not "
+            "reported.\n"
+        )
     return text
 
 
@@ -992,7 +1183,7 @@ def cmd_lived(args) -> dict:
     check_isolated(run_dir)
     if run_dir.exists():
         raise BenchmarkError(f"{run_dir} already exists")
-    workdir, bench, home = run_dir / "work", run_dir / "bench", run_dir / "home"
+    workdir, bench, home = run_dir / "ws" / task.scope.project, run_dir / "bench", run_dir / "home"
     for d in (workdir, bench, home):
         d.mkdir(parents=True)
     system = load_system(args.arm)
@@ -1135,6 +1326,12 @@ def build_parser() -> argparse.ArgumentParser:
     sd.add_argument("--group", type=int, default=0)
     sd.add_argument("--arm", required=True)
     sd.add_argument("--seeded", default=str(DEFAULT_SEEDED))
+    sd.add_argument(
+        "--allow-unfaithful-seeding",
+        action="store_true",
+        help="seed a product whose real sessions would not have given it this history "
+        "(lived track only): an upper bound, labelled as such in the report",
+    )
     r = sub.add_parser("run", help="one task, arm and repetition: the agent, then the hidden check")
     common(r)
     r.add_argument("--task", required=True)
@@ -1156,12 +1353,25 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--json", action="store_true")
     rp.add_argument("--primary", default="memoryking")
     rp.add_argument("--exclude", help="file listing run result files to leave out (harness faults)")
+    rp.add_argument(
+        "--include-development",
+        action="store_true",
+        help="also report runs on development seeds (tests only; never a result)",
+    )
+    rg = sub.add_parser(
+        "regrade", help="grade the saved outputs of runs again with the current hidden checks"
+    )
+    rg.add_argument("--results", default=str(DEFAULT_RESULTS))
+    rg.add_argument("--apply", action="store_true", help="rewrite the verdicts in the run files")
     v = sub.add_parser("validate", help="offline: stub agent against every task")
     v.add_argument("--track", choices=gen.TRACKS)
     v.add_argument("--size", type=int, default=20)
     v.add_argument("--seed", type=int, default=1)
     pl = sub.add_parser("plan", help="real-session counts of the full plan")
     pl.add_argument("--arms", type=int, default=5)
+    pl.add_argument(
+        "--lived-only", type=int, default=0, help="arms measured on the lived track only"
+    )
     t = sub.add_parser("t5-select", help="the stratified LongMemEval subset")
     t.add_argument("--data", default=str(lme.DEFAULT_DATA))
     t.add_argument("--size", type=int, default=60)
@@ -1199,6 +1409,7 @@ def main(argv=None) -> int:
             "seed": cmd_seed,
             "run": cmd_run,
             "report": cmd_report,
+            "regrade": cmd_regrade,
             "validate": cmd_validate,
             "plan": cmd_plan,
             "t5-select": cmd_t5_select,

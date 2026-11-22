@@ -58,7 +58,10 @@ def decode(task: Task, raw: dict | None) -> dict[str, str]:
         return {}
     if family.decode is not None:
         raw = family.decode(raw)  # type: ignore[operator]
-    return {k: str(v) for k, v in raw.items()}
+    # 3.0 is the integer 3: a number's type is not a fact of the history
+    return {
+        k: str(int(v) if isinstance(v, float) and v.is_integer() else v) for k, v in raw.items()
+    }
 
 
 def injection_acted(task: Task, workdir: Path, collector: list[dict]) -> bool:

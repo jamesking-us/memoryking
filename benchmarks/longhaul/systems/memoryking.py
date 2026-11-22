@@ -3,7 +3,11 @@ through the path a real hook-captured session takes.
 
 Installed for the agent (see `host`): the three session hooks and the lean MCP bridge with
 `alwaysLoad`, built by the same code as the setup command (`host_hooks.install`,
-`setup_host.mcp_entry`), under one agent credential per project and agent. The agent is told
+`setup_host.mcp_entry`), under one agent credential per project and agent, and since the
+protocol was amended the prompt-time recall hook that setup installs by default (the pilot ran
+before that hook existed). `prompts=False` (the named variant `memoryking_nohook`) leaves it
+out. The arm calls the code setup calls, with setup's defaults, so it cannot drift from the
+product. The agent is told
 nothing about memory; the start note, the server's instructions and the hooks are the only
 mention.
 
@@ -134,6 +138,7 @@ def transcript_lines(session: Session) -> str:
 
 class MemoryKing:
     name = "memoryking"
+    prompts = True  # the prompt-time recall hook, which setup installs by default
     version = __version__
     needs_llm = False
     reseed_per_run = False
@@ -411,6 +416,7 @@ class MemoryKing:
             credential=cred,
             tools="mcp",
             write=False,
+            prompts=self.prompts,
         )
         bridge = [
             sys.executable,
@@ -554,3 +560,11 @@ class MemoryKing:
 
 def create() -> MemoryKing:
     return MemoryKing()
+
+
+def create_nohook() -> MemoryKing:
+    """The variant without the prompt-time hook (what the pilot ran)."""
+    system = MemoryKing()
+    system.name = "memoryking-nohook"
+    system.prompts = False
+    return system

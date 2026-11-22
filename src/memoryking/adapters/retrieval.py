@@ -41,7 +41,7 @@ from memoryking.domain.briefing import (
     terms,
 )
 from memoryking.domain.briefing_text import render_brief, textualize
-from memoryking.domain.duplicates import duplicates, family, shape
+from memoryking.domain.duplicates import contained, duplicates, family, shape
 from memoryking.domain.lexicon import (
     QUERY_TERM_LIMIT,
     Corpus,
@@ -69,6 +69,10 @@ DEFAULT_FUSION: dict[str, Any] = {
     "dense": 1,
 }
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
+FILL_LIMIT = 32  # items a text briefing may hold when the caller names no count (the maximum)
+HEAD_WINDOW = 64  # ranked items compared and reordered for repeats and diversity
+SIMILAR_AT = 0.6  # word overlap (Jaccard) from which two items count as the same statement
+SIMILAR_CAP = 2  # near-identical statements that keep their rank before the rest follow
 RERANK_TEXT_BYTES = 16384  # the reranker's per-text limit
 SALIENCE_WEIGHT = (
     45_000  # a tenth of a typical full match (about 1/(K1+1) of the scale), in millionths
@@ -1515,8 +1519,13 @@ class Retrieval:
             from memoryking.domain.learning import adjust
 
             ranked = adjust(ranked, ranking["adjustments"])
-        limit = args.get("top_k", 8)
-        presented, collapsed, behind = self._present(who, ranked, limit, positions, families)
+        # A text briefing is packed to the caller's budget, so unless the caller names a count
+        # it may hold as many distinct items as fit (at most the contract's 32); structured
+        # output keeps its small default, because its size is not what the budget limits.
+        limit = args.get("top_k", FILL_LIMIT if args.get("format") == "text" else 8)
+        presented, collapsed, behind = self._present(
+            who, ranked, limit, positions, families, args.get("min_score_ppm", 0)
+        )
         trace = [
             {"stage": "authorized_eligibility", "visible_claims": len(candidates)},
             {
@@ -1598,6 +1607,7 @@ class Retrieval:
         limit: int,
         positions: dict[str, int],
         families: dict[str, tuple[str, str, str]],
+        floor: int = 0,
     ) -> tuple[list[list[dict[str, Any]]], dict[str, int], dict[str, list[str]]]:
         """One answer per fact, after ranking and before packing.
 
@@ -1608,18 +1618,34 @@ class Retrieval:
         1. Several versions of one memory-tool file or vault note (`name`, `name__v2`, ...):
            the newest is kept and names the older ones in `supersedes`.
         2. Duplicates (see `domain.duplicates`): the newest record's text is kept, at the
-           best rank any of them had, and `also_recorded_in` names the others.
+           best rank any of them had, and `also_recorded_in` names the others. An excerpt
+           that lies inside another (the user's turns captured on their own and again within
+           the session capture) is shown once the same way, as the longer text.
         3. An accepted claim in the briefing is the answer for the observations it cites
            when they hold nothing it lacks: the excerpt lies inside the cited span, or
            nearly all its words are in the claim. They are listed in the claim's
            `evidence_not_repeated`; the claim still cites them as its evidence."""
-        count = {"duplicates_collapsed": 0, "versions_collapsed": 0, "evidence_not_repeated": 0}
+        count = {
+            "duplicates_collapsed": 0,
+            "contained_collapsed": 0,
+            "versions_collapsed": 0,
+            "evidence_not_repeated": 0,
+            "below_floor": 0,
+            "diversified": 0,
+        }
+        if floor:
+            # A caller that wants only what clearly matches (the prompt-time hook) names how
+            # well; applied before anything is folded, so nothing below it can stand for a repeat.
+            kept = [e for e in ranked if max(i.get("lexical_score_ppm", 0) for i in e[2]) >= floor]
+            count["below_floor"] = len(ranked) - len(kept)
+            ranked = kept
         Entry = tuple[int, str, list[dict[str, Any]]]
 
         def single(entry: Entry) -> bool:
             return len(entry[2]) == 1 and entry[2][0]["authority"] == "observed_episode"
 
         every: dict[int, list[str]] = {}  # all references behind an item, for the receipt
+        named: dict[tuple[int, str], list[str]] = {}  # the same, by the field that names them
 
         def link(item: dict[str, Any], field: str, references: list[str]) -> None:
             if references:
@@ -1629,13 +1655,21 @@ class Retrieval:
                     "references": [*found["references"], *references][: self.REFERENCES_SHOWN],
                 }
                 every.setdefault(id(item), []).extend(references)
+                named.setdefault((id(item), field), []).extend(references)
 
         def newest(entries: list[Entry], members: list[int]) -> int:
             return max(members, key=lambda i: (positions[entries[i][1]], entries[i][1]))
 
-        def fold(entries: list[Entry], groups: list[list[int]]) -> list[Entry]:
-            """Each group of indexes becomes its newest member, at the group's first slot."""
-            keep = {min(g): newest(entries, g) for g in groups if len(g) > 1}
+        def fold(
+            entries: list[Entry], groups: list[list[int]], keeper: dict[int, int] | None = None
+        ) -> list[Entry]:
+            """Each group of indexes becomes its newest member (or `keeper[first index]`), at
+            the group's first slot."""
+            keep = {
+                min(g): keeper[min(g)] if keeper else newest(entries, g)
+                for g in groups
+                if len(g) > 1
+            }
             gone = {i for g in groups if len(g) > 1 for i in g}
             result: list[Entry] = []
             for index, entry in enumerate(entries):
@@ -1647,8 +1681,9 @@ class Retrieval:
 
         # Only the head of the ranking can reach the briefing once repeats are folded, so
         # only it is compared (a comparison is quadratic); the rest keeps its order.
-        entries: list[Entry] = list(ranked[: min(3 * limit + 8, 64)])
-        rest: list[Entry] = list(ranked[min(3 * limit + 8, 64) :])
+        window = min(3 * limit + 8, HEAD_WINDOW)
+        entries: list[Entry] = list(ranked[:window])
+        rest: list[Entry] = list(ranked[window:])
         # 1. versions of one file
         by_family: dict[tuple[str, str, str], list[int]] = {}
         for index, entry in enumerate(entries):
@@ -1678,21 +1713,58 @@ class Retrieval:
                     break
             else:
                 clusters.append([index])
+
+        def repeat(entries: list[Entry], cluster: list[int], keep: int) -> int:
+            """`keep` stands for the rest of the cluster, which it names newest first."""
+            others = sorted(
+                (i for i in cluster if i != keep),
+                key=lambda i: (-positions[entries[i][1]], entries[i][1]),
+            )
+            item = entries[keep][2][0]
+            link(item, "also_recorded_in", [entries[i][1] for i in others])
+            for i in others:  # what an older copy stood for stays named
+                for field in ("supersedes", "also_recorded_in"):
+                    link(item, field, named.get((id(entries[i][2][0]), field), []))
+            return len(others)
+
         for cluster in clusters:
             if len(cluster) > 1:
-                keep = newest(entries, cluster)
-                others = sorted(
-                    (i for i in cluster if i != keep),
-                    key=lambda i: (-positions[entries[i][1]], entries[i][1]),
-                )
-                item = entries[keep][2][0]
-                link(item, "also_recorded_in", [entries[i][1] for i in others])
-                for i in others:  # versions an older copy had superseded stay named
-                    prior = entries[i][2][0]
-                    if "supersedes" in prior:
-                        link(item, "supersedes", every[id(prior)])
-                count["duplicates_collapsed"] += len(others)
-        entries = fold(entries, clusters) + rest
+                count["duplicates_collapsed"] += repeat(entries, cluster, newest(entries, cluster))
+        entries = fold(entries, clusters)
+        # 2b. an excerpt inside another: the user's own turns, captured by themselves and
+        # again within the session capture, are shown once, as the longer text
+        holder_of: dict[int, int] = {}  # index -> the shortest excerpt that holds it
+        for entry in entries:
+            if single(entry) and entry[1] not in shapes:
+                shapes[entry[1]] = shape(entry[2][0]["text"])
+        for index, entry in enumerate(entries):
+            if not single(entry):
+                continue
+            small = shapes[entry[1]]
+            holder: tuple[int, int] | None = None
+            for other, candidate in enumerate(entries):
+                if other == index or not single(candidate):
+                    continue
+                if candidate[2][0].get("in_time_range") != entry[2][0].get("in_time_range"):
+                    continue
+                big = shapes[candidate[1]]
+                if contained(small, big) and (holder is None or len(big.text) < holder[1]):
+                    holder = (other, len(big.text))
+            if holder is not None:
+                holder_of[index] = holder[0]
+        if holder_of:
+            held: dict[int, list[int]] = {}
+            for index in holder_of:
+                top = index
+                while top in holder_of:
+                    top = holder_of[top]
+                held.setdefault(top, []).append(index)
+            groups = [sorted([top, *members]) for top, members in held.items()]
+            keeper = {min(g): top for g, top in zip(groups, held, strict=True)}
+            for g, top in zip(groups, held, strict=True):
+                count["contained_collapsed"] += repeat(entries, g, top)
+            entries = fold(entries, groups, keeper)
+        entries += rest
         # 3. observations an accepted claim already answers
         while True:
             covering: dict[str, list[tuple[dict[str, Any], list[tuple[int, int]]]]] = {}
@@ -1725,6 +1797,10 @@ class Retrieval:
                 link(claim, "evidence_not_repeated", [reference])
             entries = [e for e in entries if e[1] not in redundant]
             count["evidence_not_repeated"] += len(redundant)
+        # 4. diversity: statements that nearly repeat one already placed (the same wording about
+        # another value, from another near-identical session) move behind other matches, so
+        # a list cut at the budget covers different statements; none is dropped
+        entries = self._diversify(entries, count)
         chosen = entries[:limit]
         shown = [positions[e[1]] for e in chosen if single(e) and e[1] in positions]
         recorded: dict[int, int] = {}
@@ -1745,6 +1821,40 @@ class Retrieval:
             if id(entry[2][0]) in every
         }
         return [group for _, _, group in chosen], count, collapsed
+
+    @staticmethod
+    def _diversify(
+        entries: list[tuple[int, str, list[dict[str, Any]]]],
+        count: dict[str, int],
+    ) -> list[tuple[int, str, list[dict[str, Any]]]]:
+        """Cap how many near-identical statements lead the list: of items whose words overlap
+        by at least `SIMILAR_AT` (the same wording about another value, from another
+        near-identical session) the best `SIMILAR_CAP` keep their place and the rest follow
+        every other match, in their own order, so a list cut at the budget covers different
+        statements. Nothing is dropped, and a list with no such crowd is untouched."""
+        head, tail = entries[:HEAD_WINDOW], entries[HEAD_WINDOW:]
+        words: list[frozenset[str] | None] = [
+            frozenset(re.findall(r"[^\W_]{3,}", entry[2][0]["text"].casefold()))
+            if len(entry[2]) == 1 and entry[2][0]["authority"] == "observed_episode"
+            else None
+            for entry in head
+        ]
+        first: list[int] = []
+        later: list[int] = []
+        for index, mine in enumerate(words):
+            near = 0
+            if mine:
+                for placed in first:
+                    other = words[placed]
+                    if (
+                        other
+                        and SIMILAR_AT * len(other) <= len(mine) <= len(other) / SIMILAR_AT
+                        and len(mine & other) >= SIMILAR_AT * len(mine | other)
+                    ):
+                        near += 1
+            (later if near >= SIMILAR_CAP else first).append(index)
+        count["diversified"] = len(later)
+        return [head[i] for i in [*first, *later]] + tail
 
     def _salience(
         self, who: dict[str, Any], project: str, positions: dict[str, int], at: int
