@@ -1760,7 +1760,11 @@ def main() -> int:
         type=int,
         help="Briefing token budget; default 6000 at session start, 1200 for the prompt hook",
     )
-    hk.add_argument("--limit", type=int, help="prompt hook: items at most (default 5, at most 32)")
+    hk.add_argument(
+        "--limit",
+        type=int,
+        help="prompt hook: closest records considered (default and most 32); the budget decides how many show",
+    )
     hk.add_argument(
         "--floor",
         type=int,
@@ -2059,7 +2063,14 @@ def main() -> int:
                         if value is not None
                     }
                     sys.stdout.write(
-                        host_hooks.prompt(payload, binding=args.binding, **chosen, **where)
+                        host_hooks.prompt(
+                            payload,
+                            binding=args.binding,
+                            host=args.host,
+                            tools=args.tools,
+                            **chosen,
+                            **where,
+                        )
                     )
                 elif args.kind == "session-start":
                     sys.stdout.write(
