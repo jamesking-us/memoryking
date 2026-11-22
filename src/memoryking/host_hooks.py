@@ -369,12 +369,7 @@ def session_start(
         "task": task,
         "binding": binding,
         "socket": socket,
-        # A path from the command line, or a relay's in-memory credential as it is.
-        "credential": (
-            Path(where["credential"])
-            if isinstance(where.get("credential"), (str, os.PathLike))
-            else where.get("credential")
-        ),
+        "credential": _credential(where),
         "project": project,
         "profile": where.get("profile"),
         "config": where.get("config"),
@@ -388,6 +383,12 @@ def session_start(
     parts.append(str(packet.get("text", "")).rstrip())
     note = start_note(str(host or event.get("host") or ""), tools)
     return "\n\n".join(p for p in [note, *parts] if p) + "\n"
+
+
+def _credential(where: dict[str, Any]) -> Any:
+    """A credential path from the command line, or a relay's in-memory credential as it is."""
+    value = where.get("credential")
+    return Path(value) if isinstance(value, (str, os.PathLike)) else value
 
 
 def _normal(text: str) -> str:
@@ -635,7 +636,7 @@ def save(
         source=source,
         event=hooks.event_id(source, text, salt),
         socket=socket,
-        credential=Path(where["credential"]) if where.get("credential") else None,
+        credential=_credential(where),
         project=project,
         profile=where.get("profile"),
         config=where.get("config"),
@@ -655,7 +656,7 @@ def save(
             source=f"user-{name}",
             event=hooks.event_id(f"user-{name}", turns, str(event.get("session", ""))),
             socket=socket,
-            credential=Path(where["credential"]) if where.get("credential") else None,
+            credential=_credential(where),
             project=project,
             profile=where.get("profile"),
             config=where.get("config"),

@@ -1306,6 +1306,28 @@ def main() -> int:
     )
     setup.add_argument("--dry-run", action="store_true", help="Print every change, make none")
     setup.add_argument("--remove", action="store_true", help="Undo this host's registration")
+    setup.add_argument(
+        "--backend",
+        help="Windows: where the store runs, wsl[:DISTRO] or docker[:CONTAINER]; needed only "
+        "when more than one is found",
+    )
+    setup.add_argument(
+        "--wheel",
+        type=Path,
+        help="Windows: install this MemoryKing wheel on the store side instead of the same "
+        "version from the package index",
+    )
+    setup.add_argument(
+        "--image",
+        help="Windows with docker: the MemoryKing image to run (a locally built tag, or the "
+        "release image by digest)",
+    )
+    setup.add_argument(
+        "--store-only",
+        action="store_true",
+        help="Create the store, daemon and agent credential only, and print them as JSON "
+        "(the store side of a Windows setup)",
+    )
     add_binding(setup)
     mcp = commands.add_parser(
         "mcp",
@@ -1337,6 +1359,17 @@ def main() -> int:
     doc.add_argument("--embedding-model", type=Path, help="Model directory to verify")
     doc.add_argument("--reranker-model", type=Path, help="Reranker directory to verify")
     doc.add_argument("--backup-dir", type=Path, help="Scheduled backup directory to check")
+    doc.add_argument(
+        "--replay-hooks",
+        action="store_true",
+        help="Run the MemoryKing hooks in Claude Code's settings as Claude Code does on Windows "
+        "(Git Bash and PowerShell), replaying two sessions; report pass or fail per step",
+    )
+    doc.add_argument(
+        "--settings",
+        type=Path,
+        help="Claude Code settings file whose hooks to check; default ~/.claude/settings.json",
+    )
     doc.add_argument("--backup-every", help="Backup policy interval the directory should meet")
     journal = commands.add_parser(
         "journal", help="Inspect the control journal (offline; stop the daemon first)"
@@ -1774,6 +1807,13 @@ def main() -> int:
     login.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        if args.command == "doctor" and (
+            args.replay_hooks or not platform_support.LOCAL_STORE_SUPPORTED
+        ):
+            # The hooks check needs no store here; on Windows doctor reports the relay instead.
+            from memoryking import hook_check
+
+            return hook_check.doctor(args)
         if (
             not platform_support.LOCAL_STORE_SUPPORTED
             and args.command != "profile"
@@ -1782,6 +1822,10 @@ def main() -> int:
             # Opens a store or control tree on this machine, which cannot hold one.
             platform_support.refuse()
         if args.command == "setup":
+            if not platform_support.LOCAL_STORE_SUPPORTED:
+                from memoryking import setup_windows
+
+                return setup_windows.run(args)
             from memoryking import setup_host
 
             return setup_host.run(args)

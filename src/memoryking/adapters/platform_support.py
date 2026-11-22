@@ -37,6 +37,72 @@ def refuse() -> NoReturn:
     raise LocalError(STORE_UNSUPPORTED)
 
 
+# File systems a store must not live on: a Windows drive seen from WSL2 (drvfs over 9p),
+# NTFS through FUSE or the kernel driver, network shares and VM shared folders. None of
+# them gives the owner-only modes and the rename-and-sync durability the store relies on.
+FOREIGN_FILESYSTEMS = frozenset(
+    {
+        "9p",
+        "v9fs",
+        "drvfs",
+        "fuseblk",
+        "ntfs",
+        "ntfs3",
+        "cifs",
+        "smb3",
+        "smbfs",
+        "vboxsf",
+        "grpcfuse",
+        "fakeowner",  # Docker Desktop's bind mounts of a host folder
+    }  # fmt: skip
+)
+
+
+def filesystem_type(path: str | os.PathLike[str]) -> str | None:
+    """The type of the file system holding `path` (or its nearest existing parent), read
+    from /proc/self/mountinfo; None where that file does not exist (macOS, Windows)."""
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as stream:
+            mounts = stream.read().splitlines()
+    except OSError:
+        return None
+    target = os.path.realpath(path)
+    while not os.path.exists(target) and os.path.dirname(target) != target:
+        target = os.path.dirname(target)
+    best, kind = "", None
+    for line in mounts:
+        fields = line.split()
+        if " - " not in line or len(fields) < 5:
+            continue
+        point = fields[4].replace("\\040", " ")
+        after = line.split(" - ", 1)[1].split()
+        inside = target == point or target.startswith(point.rstrip("/") + "/") or point == "/"
+        if inside and len(point) >= len(best) and after:
+            best, kind = point, after[0]
+    return kind
+
+
+# Characters a word may hold to mean the same in Git Bash and in Windows PowerShell,
+# unquoted; a word with anything else is double-quoted, which is only safe without these.
+# (No comma: PowerShell reads an unquoted `a,b` as an array. No leading `~`: bash expands it.)
+SHELL_BARE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./:=+-~")
+SHELL_UNSAFE_IN_QUOTES = frozenset('$`"\\!%')
+
+
+def neutral_word(word: str) -> bool:
+    """A hook command word that both of Claude Code's Windows shells read identically: bare
+    safe characters, or one double-quoted string holding none that either shell expands."""
+    if word and set(word) <= SHELL_BARE and not word.startswith("~"):
+        return True
+    inner = word[1:-1]
+    return (
+        len(word) >= 2
+        and word[0] == word[-1] == '"'
+        and not set(inner) & SHELL_UNSAFE_IN_QUOTES
+        and not set(inner) & {"\n", "\r", "\0"}
+    )
+
+
 if sys.platform != "win32":
     import fcntl as _fcntl
 
@@ -71,6 +137,9 @@ if sys.platform != "win32":
     def read_stdin_text() -> str:
         return sys.stdin.read()
 
+    def shell_program_path(path: str) -> str:
+        return path
+
     def utf8_stdio() -> None:
         """Nothing to do: the locale's encoding is what POSIX pipes carry."""
 
@@ -96,6 +165,26 @@ else:
 
     def unix_stream_socket() -> socket.socket:
         refuse()
+
+    def shell_program_path(path: str) -> str:
+        """`path` as a first word that Git Bash and PowerShell both run unquoted.
+
+        A quoted first word is a string, not a command, in PowerShell, and `&` means
+        something else in bash, so the program is never quoted: forward slashes (a
+        backslash is an escape in bash), and the 8.3 short form when the path holds a
+        space. Without a short form (8.3 names disabled on that volume) this refuses.
+        """
+        if " " in path:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.GetShortPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+            buffer = ctypes.create_unicode_buffer(32768)
+            if not kernel.GetShortPathNameW(path, buffer, len(buffer)) or " " in buffer.value:
+                raise LocalError("hook_command_unsafe", detail={"path": path})
+            path = buffer.value
+        return path.replace("\\", "/")
 
     def read_stdin_text() -> str:
         """Piped text as UTF-8, as a text-mode read would see it.

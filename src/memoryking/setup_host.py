@@ -234,6 +234,16 @@ def ensure_store(
     }, True
 
 
+def refuse_foreign_filesystem(path: Path) -> None:
+    """A store on a Windows drive, NTFS or a network share would lose owner-only modes and
+    rename durability; refuse it before anything is created."""
+    from memoryking.adapters.platform_support import FOREIGN_FILESYSTEMS, filesystem_type
+
+    kind = filesystem_type(path)
+    if kind in FOREIGN_FILESYSTEMS:
+        raise LocalError("store_filesystem_unsupported", detail={"path": str(path)})
+
+
 def duration_ms(text: str) -> int:
     if len(text) < 2 or text[-1] not in DURATIONS or not text[:-1].isdigit():
         raise LocalError("invalid_duration")
@@ -322,6 +332,9 @@ def run(args: Any) -> int:
     if args.remove:
         return remove(args, files, home, cwd)
     say: dict[str, str] = {}
+    store_only = getattr(args, "store_only", False)
+    if store_only:
+        refuse_foreign_filesystem(args.data_dir or home / ".memoryking" / name)
     profile, created = ensure_store(name, args, home, config, say)
     control = Path(profile["control"])
     credential = control / f"{args.principal}.credential"
@@ -351,6 +364,11 @@ def run(args: Any) -> int:
             )
         )
     ensure_credential(profile, args, credential, args.dry_run, say)
+    if store_only:
+        # The store side of a Windows setup: the host is configured on the Windows side,
+        # which reaches this store through `memoryking relay --profile AGENT_PROFILE`.
+        print(json.dumps({"agent_profile": agent_profile, "store": profile["store"], "say": say}))
+        return 0
     command = bridge_command(agent_profile, args.project, args.binding)
     say["mcp"], printed = register(args, files, home, command)
     if not HOOK_HOST.get(args.host):
