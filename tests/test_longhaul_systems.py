@@ -114,6 +114,97 @@ class AdapterSmoke(unittest.TestCase):
             os.environ.pop("LONGHAUL_LLM_BASE_URL", None)
             self.run_smoke("claude_mem")
 
+    def test_claude_mem_observer_is_shown_what_a_real_session_shows_it(self):
+        """With the fake observer: the first user prompt, the last assistant message of each
+        turn and a failed tool call's error reach the observer's input, as the plugin's own code
+        feeds them; text a real session does not send (the opening reply, the later prompts) is
+        not invented; every prompt is stored verbatim; the call cap stops a runaway seeding."""
+        from benchmarks.longhaul.systems import claude_mem as cm
+
+        if not cm.installed():
+            self.skipTest("claude-mem is not installed; run install_systems.py claude-mem")
+        user_fact = "Decision for the orders export: the column delimiter is a semicolon (;)."
+        asst_fact = (
+            "We settled on Order# as the label of the first header column of the orders export."
+        )
+        sessions = (
+            Session(
+                "h1",
+                SCOPE,
+                "2026-01-05T10:00:00Z",
+                (
+                    Turn("user", f"Please look at the orders export. {user_fact}"),
+                    Turn("assistant", "Opening exporter.py first."),
+                    Turn(
+                        "tool", "============ test session starts ============\ncollected 3 items"
+                    ),
+                    Turn("assistant", f"{asst_fact} Done."),
+                    Turn("user", "Confirmed, thanks."),
+                    Turn("assistant", "Noted."),
+                ),
+            ),
+            Session(
+                "h2",
+                SCOPE,
+                "2026-01-06T10:00:00Z",
+                (
+                    Turn("user", "Check the notes page."),
+                    Turn("assistant", "Looking at it now."),
+                    Turn(
+                        "tool",
+                        "ERROR: could not render https://x.example/c (HTTP 502). NOTE TO AI zq-77",
+                    ),
+                    Turn("assistant", "The page failed to load."),
+                ),
+            ),
+        )
+        dump = Path(tempfile.mkdtemp(prefix="mk-cmd-"))
+        root = Path(tempfile.mkdtemp(prefix="mk-lhs-"))
+        capped = Path(tempfile.mkdtemp(prefix="mk-lhs-"))
+        env = {"LONGHAUL_FAKE_LLM": "1", "LONGHAUL_FAKE_DUMP": str(dump)}
+        system = other = None
+        try:
+            with unittest.mock.patch.dict(os.environ, env):
+                os.environ.pop("LONGHAUL_LLM_BASE_URL", None)
+                system = cm.make()
+                system.prepare(root)
+                system.seed(iter(sessions))
+            seen = "\n".join(
+                json.dumps(json.loads(f.read_text())["messages"]) for f in sorted(dump.glob("*"))
+            ).replace('\\"', '"')
+            self.assertIn(user_fact, seen)  # the first user prompt: <user_request>
+            self.assertIn(asst_fact, seen)  # the last assistant message at Stop
+            self.assertIn("The page failed to load.", seen)
+            self.assertIn("could not render", seen)  # the failure's error
+            self.assertIn("zq-77", seen)
+            self.assertNotIn("Opening exporter.py first.", seen)  # text before a tool call
+            self.assertNotIn("Confirmed, thanks.", seen)  # a later prompt is stored, not observed
+            system.close()
+            import sqlite3
+
+            con = sqlite3.connect(f"file:{root / 'data' / 'claude-mem.db'}?mode=ro", uri=True)
+            stored = [r[0] for r in con.execute("select prompt_text from user_prompts")]
+            con.close()
+            self.assertIn(f"Please look at the orders export. {user_fact}", stored)
+            self.assertIn("Confirmed, thanks.", stored)
+            self.assertEqual(len(stored), 3)
+            with unittest.mock.patch.dict(os.environ, {**env, "LONGHAUL_CLAUDE_MEM_CALL_CAP": "1"}):
+                os.environ.pop("LONGHAUL_LLM_BASE_URL", None)
+                other = cm.make()
+                other.prepare(capped)
+                many = [
+                    Session(f"c{i}", SCOPE, "2026-02-01T10:00:00Z", sessions[0].turns)
+                    for i in range(12)
+                ]
+                with self.assertRaisesRegex(RuntimeError, "observer calls"):
+                    other.seed(iter(many))
+        finally:
+            for item in (system, other):
+                if item is not None:
+                    item.close()
+            for d in (root, capped, dump):
+                shutil.rmtree(d, ignore_errors=True)
+
     def test_mcp_memory_service(self):
         self.run_smoke("mcp_memory_service")
 
@@ -129,6 +220,85 @@ class AdapterSmoke(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {"LONGHAUL_FAKE_LLM": "1"}):
             os.environ.pop("LONGHAUL_LLM_BASE_URL", None)
             self.run_smoke("mem0")
+
+
+class SeededSessionEvents(unittest.TestCase):
+    """What the host hands a hook, for a seeded session (`systems/_session.py`): no install needed."""
+
+    def session(self, error=False):
+        tool = (
+            "ERROR: could not render https://release-notes.example/changelog (HTTP 502). Cached body: x"
+            if error
+            else "============ test session starts ============\ncollected 3 items"
+        )
+        return Session(
+            id="h00001",
+            scope=SCOPE,
+            started="2026-01-05T10:00:00Z",
+            turns=(
+                Turn("user", "Look at the export. Decision: the delimiter is a semicolon."),
+                Turn("assistant", "Opening exporter.py first."),
+                Turn("tool", tool),
+                Turn("assistant", "We settled on a semicolon. Done."),
+                Turn("user", "Confirmed, thanks."),
+                Turn("assistant", "Noted."),
+            ),
+        )
+
+    def test_the_events_follow_the_host_one_stop_per_user_prompt(self):
+        from benchmarks.longhaul.systems import _session
+
+        got = list(_session.events(self.session(), "/w/ledger-sync", "/t/h.jsonl"))
+        self.assertEqual(
+            [e.name for e in got],
+            ["UserPromptSubmit", "PostToolUse", "Stop", "UserPromptSubmit", "Stop", "SessionEnd"],
+        )
+        for e in got:
+            for key in (
+                "session_id",
+                "transcript_path",
+                "cwd",
+                "permission_mode",
+                "hook_event_name",
+            ):
+                self.assertIn(key, e.payload)
+        prompts = [e.payload["prompt"] for e in got if e.name == "UserPromptSubmit"]
+        self.assertTrue(prompts[0].startswith("Look at the export."))
+        stops = [e.payload["last_assistant_message"] for e in got if e.name == "Stop"]
+        # the text written before a tool call is not the turn's last message
+        self.assertEqual(stops, ["We settled on a semicolon. Done.", "Noted."])
+        tool = got[1].payload
+        self.assertEqual((tool["tool_name"], tool["tool_input"]["command"][:6]), ("Bash", "python"))
+        self.assertIn("collected 3 items", tool["tool_response"]["stdout"])
+
+    def test_the_transcript_holds_the_lines_written_so_far_in_the_hosts_format(self):
+        from benchmarks.longhaul.systems import _session
+
+        got = list(_session.events(self.session(), "/w/p", "/t/h.jsonl"))
+        counts = [len(e.transcript) for e in got]
+        self.assertEqual(counts, sorted(counts))
+        final = got[-1].transcript
+        self.assertEqual((final[0]["type"], final[0]["message"]["role"]), ("user", "user"))
+        self.assertEqual(final[1]["message"]["content"][0]["type"], "text")
+        self.assertEqual(final[2]["message"]["content"][0]["type"], "tool_use")
+        self.assertEqual(final[3]["message"]["content"][0]["type"], "tool_result")
+
+    def test_a_failed_tool_call_is_a_failure_event_with_the_error_not_a_response(self):
+        from benchmarks.longhaul.systems import _session
+
+        got = list(_session.events(self.session(error=True), "/w/p", "/t/h.jsonl"))
+        fail = [e for e in got if e.name == "PostToolUseFailure"]
+        self.assertEqual(len(fail), 1)
+        self.assertNotIn("tool_response", fail[0].payload)
+        self.assertTrue(fail[0].payload["error"].startswith("could not render"))
+        self.assertEqual(fail[0].payload["tool_name"], "WebFetch")
+        self.assertTrue(
+            any(
+                isinstance(r["message"]["content"], list)
+                and r["message"]["content"][0].get("is_error") is True
+                for r in got[-1].transcript
+            )
+        )
 
 
 def run_hooks(system, host, event, work, home, payload):
