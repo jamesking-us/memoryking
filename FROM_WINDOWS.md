@@ -222,3 +222,76 @@ The container's Python start-up plus `memoryking.__main__` import costs about 36
 - README (before the install block, absolute links), PyPI rendering check, and the classifier only once the client side really installs and runs.
 
 Starting B1 now.
+
+### 2026-11-22 05:32 UTC: B1 done; B2 built, POSIX run in progress
+`windows-port` is at `527d936` (B2 plus a merge of the base at `ee1e431`). B1 is `377b720`..`1ed86e3`. Windows runs on the pinned Python 3.12.14 now.
+
+#### B1 (import and install): done
+- **`377b720` `.gitattributes`:** `* text=auto eol=lf`, as its own commit. Every tracked text file was already stored with LF, so the repository content does not change.
+- **`0b9a6dd` locks:** each `.in` now pins its Windows-only dependencies with markers: dev has colorama, pywin32 and tzdata; build has colorama; shared has pywin32 and tzdata; embeddings has pyreadline3 and colorama (via tqdm). pywin32 is in the dev and shared locks only, never core (a test asserts it).
+  - **What I ran, on Windows,** each lock's own header command in this order:
+    - `pip-compile --allow-unsafe --generate-hashes --output-file=requirements-dev.lock requirements-dev.in`
+    - build with `--allow-unsafe --constraint=requirements-dev.lock`
+    - core and shared with `--constraint=requirements-dev.lock`
+    - embeddings and tokenizers plain
+  - **Why on Windows:** pip-compile on Linux drops a requirement whose marker is false there. I tried it, and a Linux recompile removes the Windows pins again. `tests/test_locks.py` fails if a lock loses a marked pin, and CONTRIBUTING.md ("Lock files") now says to compile on Windows.
+  - **Linux verification:** I resolved every lock, before and after, with `pip install --dry-run --require-hashes --report` in WSL2. All six resolve to **exactly the same packages and versions** as before. macOS was not run; its markers are false for the same reason.
+  - **Windows verification:** all six locks install with `--require-hashes`.
+  - The dev lock's "unsafe packages" header moved back to where pip-compile writes it; that is cosmetic.
+- **`1ed86e3` platform module (`adapters/platform_support.py`):**
+  - **What moved:** `fcntl` (and `F_FULLFSYNC` for `durable_sync`), the flock lock, the owner-uid check, `O_NOFOLLOW`/`O_DIRECTORY`/`dir_fd` opens, the Unix socket and `UnixStreamServer`. On POSIX each function is exactly the replaced call, and the tests that patch `local_files.fcntl` are unchanged.
+  - **On Windows every store primitive refuses** with `local_store_unsupported`. `private_dir`, `private_file`, `atomic` and `sync_dir` refuse before touching the disk, and a test checks that the directory stays empty. `daemon.start` and `daemon.stop` refuse too, because `os.kill(pid, SIGTERM)` on Windows is a hard `TerminateProcess`.
+  - **CLI gate:** every command whose parser takes `--store`/`--control` refuses, except `profile`: init, serve, backup, restore, gc, control-checkpoint, journal pending and credential rotate-owner, and doctor for now (B3 rewrites it).
+  - **Hint (128 characters):** "Windows runs the agent-side tools but not the memory store: run the store in WSL2 or Docker Desktop (deployment guide, Windows)."
+  - **Contracts:** no contract enumerates error codes; the hint table in `domain/hints.py` plus the generated `docs/error-codes.md` is where codes are defined, and both are updated. The generator also needed UTF-8 reads to run on Windows.
+  - **`encoding="utf-8"` added** (36 calls, 19 files): the schema and catalog loads at import, `__main__`, `profiles`, `setup_host`, `host_hooks`, `hooks`, `sdk`.
+  - **Left unencoded on purpose** (store side or shared server): `local_store` (32 calls), `postgres_admin` (17), `postgres_recovery`, `operations_log`, `local_files` (anchor), `store_core`, `shared_service`, `postgres_pool`, `daemon`, `providers`, `vault`, `model_install`, `migration`, `egress_policy`. Tests and tools are B4.
+- **Results:**
+  - **Windows:** all **143 modules import**. mypy is clean with both `--platform win32` and `--platform linux`, and ruff is clean.
+  - **Windows suite:** 1215 tests now collected (every module loads). 206 ok, 116 skipped, 26 failures, 927 errors. 900 of the errors are store tests refused with `local_store_unsupported`; making them explicit skips with a reason is B4. The rest are the known POSIX-shell, `/tmp`, cp1252-in-tests and benchmark causes.
+  - **POSIX (WSL2, at `1ed86e3`):** 1223 tests, 1 failure, 1 error, 114 skipped. That is the same failure set as the base before my changes: the supervisor-key flake (now fixed on the base, merged) and `node` missing in the distro. Skips are 98 PostgreSQL, the longhaul systems not installed, numpy, jq and the reranker.
+
+#### B2 (relay): built and tested on Windows; the POSIX full run at `527d936` is running
+- **`memoryking relay --socket S [--credential F]`** (fast path `python -m memoryking.relay`), on the store's side:
+  - It writes one handshake line, `{"relay":1,"version":V[,"credential":T]}`, then copies one request line at a time to the daemon, **one new connection per line exactly as a local client connects**, and writes back the daemon's one reply line. It never parses either.
+  - The daemon closes after one request, so a long-lived relay has to reconnect per line; that is the only framing it does, splitting on newlines.
+  - It refuses a socket that fails the daemon's own check (socket type, owner), and a credential file that fails the client's check (`private_file`).
+  - An over-long line is forwarded only up to the daemon's limit, and the daemon refuses it exactly as on the socket. No daemon gives `transport_unavailable`. `service_busy` passes through (tested).
+- **Windows client:** an explicit `--relay wsl:DISTRO` or `--relay docker:CONTAINER` (or `MEMORYKING_RELAY`), plus `--relay-python`. `--socket`/`--credential` then name paths on the store's side.
+  - The relay starts without a shell: `wsl.exe -d D --exec PY -m memoryking.relay ...` or `docker exec -i C PY -m memoryking.relay ...`.
+  - A relay of another version is refused before any request with `relay_version_mismatch` (detail `expected`/`found`).
+  - A request is never retried; a relay that ends after a request was written is `relay_interrupted`.
+  - The CLI, the hooks' connection helpers, the SDK (`LocalClient(endpoint, credential, ...)`) and the MCP bridge all take it. Four new codes, each with a hint.
+- **How the Windows side authenticates without a copy on NTFS:** the token arrives in the handshake and is held only in that process's memory (`RelayCredential`, whose repr never shows it). Nothing on the Windows side writes it.
+- **Windows text fixes found on the way:**
+  - Text piped into `capture` and `hook` is read as UTF-8, with every leading BOM stripped (PowerShell 5.1 sends one, or two with UTF-8 `$OutputEncoding`) and CRLF turned into LF.
+  - CLI stdout and stderr are UTF-8. Without that, `recall` through a pipe failed on characters outside cp1252, which would break hook output.
+  - POSIX reads and writes are unchanged.
+- **Tests:**
+  - `test_relay.py`: real daemon, POSIX; passes in WSL2.
+  - `test_relay_client.py`: stand-in relays, every platform.
+  - `test_relay_windows.py`: Windows only. It creates a store and daemon on the store side, then runs CLI capture and recall, piped text, output beyond cp1252, the SDK, the MCP bridge, the refusal of a wrong socket, and a store command refused here. **8/8 pass against WSL2 (Ubuntu), and 7/7 earlier against a container** (`docker:`, image built from this tree), before the cp1252 test existed.
+- **Measured** (Windows 11, WSL2 idle; medians of 5 warm runs; 20 for requests):
+  - relay start through `wsl.exe`: **115 ms**
+  - one request on an open relay: **33 ms**
+  - a per-call Windows CLI command (for example a hook): **about 1.08 s**, of which about 870 ms is Windows Python importing `memoryking.__main__` (`python -m memoryking --version` alone takes 871 ms)
+  - The import cost is a lazy-import job independent of the relay; worth doing for hooks, and I have not started it.
+  - Container start-up per call is higher, as measured before (`docker exec` about 167 ms bare).
+- **Found in passing:** the client picks the exact tokenizer when `tiktoken` is installed on its own side. A store side without the tokenizers extra then refuses recall with `tokenizer_unavailable`. B3 setup will install the same extras on both sides, and doctor will report a mismatch.
+
+#### Ask first (B2)
+1. **No Windows-side config file.** The relay is chosen only by `--relay`/`MEMORYKING_RELAY` flags. B3 setup would write them into Claude Code's hook and MCP commands; that settings file already decides what runs as this user, so no new file has to be trusted.
+   - **Why it matters:** `profiles.load()` keeps refusing on Windows, because its `private_file` check cannot be made there without the ACL code that belongs to option (a).
+   - **Question:** OK, or do you want a Windows profile file whose trust rests on the default per-user ACL of `%USERPROFILE%`? That would be a weaker check than POSIX.
+2. **The credential token in the Windows process's memory**, delivered over the pipe. Any process of the same Windows user can read that memory, but the same user can also run `wsl.exe` and read the file, so I see no weakening.
+   - **Question:** confirm, or say if you want the token kept on the store side. That would need the relay to insert it, which means parsing.
+
+#### Ask first (B3, before I build it)
+3. **"Exercise it for real: a Claude Code session ..." calls the model,** which is a paid model call. Your brief and my instructions both forbid model or provider calls.
+   - **Proposal:** run the hook commands exactly as Claude Code would, with real event payloads (SessionStart, UserPromptSubmit, Stop, then a second SessionStart that must get the briefing), through Git Bash and through PowerShell, the two shells Claude Code uses for hooks on Windows (docs: hooks reference). Start a real `claude` session only if the owner explicitly authorizes that spend.
+   - **Question:** which?
+4. **Hook command form.** Claude Code runs a string hook through Git Bash, or PowerShell when Git Bash is absent, which means two quoting dialects. It also offers an exec form (`command` plus `args`) with no shell at all.
+   - **Proposal:** write Windows hooks in the exec form, so no quoting is involved, as the MCP entry already does.
+   - **Caveat:** I have to confirm that Claude Code 2.1.101 here honours `args`; the docs do not state a version.
+
+The full B3 design (detection, same version on both sides, lifetime options tested, doctor, dry run and remove) comes next, once the POSIX run has finished and WSL2 is idle for the idle-stop test.
