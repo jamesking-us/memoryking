@@ -303,11 +303,73 @@ class HookReplayTests(unittest.TestCase):
                 },
             ).emit(output.append)
             diagnostics = json.loads(output[0])["diagnostics"]
-            self.assertEqual("rendered_text", diagnostics["budget_count_scope"])
+            # the lookup fetched the closest records as a structured packet; the hook cuts what
+            # the model reads to its own budget, so the receipt lists every record returned
+            self.assertLessEqual(
+                len(shown) / host_hooks.PROMPT_CHARS_PER_TOKEN, host_hooks.PROMPT_BUDGET
+            )
             cited = re.findall(r"- \[g\d+\] (obs_[0-9a-f]+)", shown)
             self.assertTrue(cited)
             for reference in cited:
                 self.assertIn(reference, [i["reference"] for i in diagnostics["selected"]])
+
+    def crowded_history(self, others=40):
+        """One session that settled a fact among `others` that talk about the same component."""
+        topics = ("encoding", "footer", "sorting", "quote character", "line ending", "header case")
+        for n in range(others):
+            self.end_session(
+                transcript(
+                    f"Please look at the orders export again, round {n}. We settled on option {n} "
+                    f"as the {topics[n % len(topics)]} for the orders export.",
+                    "Looked around; nothing changed. Tests pass.",
+                ),
+                session=f"o{n}",
+            )
+        self.end_session(
+            transcript(
+                "Quick question about the orders export. We settled on a semicolon as the column "
+                "delimiter for the orders export; that is the decision now.",
+                "Looked around; nothing changed. Tests pass.",
+            ),
+            session="needle",
+        )
+        return "Write the orders export file. Follow the conventions we already settled for the orders export."
+
+    def test_a_crowded_history_shows_more_than_five_records_and_says_it_is_partial(self):
+        asked = self.crowded_history()
+        shown = self.submit(asked, host="claude", tools="mcp")
+        self.assertIn("semicolon as the column delimiter", shown)
+        self.assertGreater(len(re.findall(r"\*\*\[g\d+\]\*\*", shown)), 5)
+        self.assertLessEqual(
+            len(shown) / host_hooks.PROMPT_CHARS_PER_TOKEN, host_hooks.PROMPT_BUDGET
+        )
+        # honest about being partial, and names the tool to ask again with
+        self.assertRegex(shown, r"found \d+\+? records")
+        self.assertRegex(shown, r"[1-9]\d*\+? more matched and are not shown")
+        self.assertIn("`mcp__memoryking__recall`", shown)
+        self.assertNotIn("Use them only if they help", shown)
+        # lines every session shares are not spent on, and a session is shown once (its
+        # transcript and its user turns are two captures of it)
+        self.assertEqual(0, shown.count("Looked around; nothing changed"))
+        for n in range(40):
+            self.assertLessEqual(shown.count(f"option {n} as"), 1, n)
+        # nothing is written, and the receipt names every record the lookup returned
+        self.assertTrue(re.search(r"receipt rcpt_[0-9a-f]+", shown))
+
+    def test_a_small_history_is_shown_whole_and_not_called_partial(self):
+        prompt1, meta = task("job-states")
+        self.end_session(transcript(prompt1, "Done; tests pass.", noise=3))
+        shown = self.submit((TASKS / "job-states" / "session2.md").read_text().strip())
+        self.assertCarries(shown, meta["stub"]["must_recall"])
+        self.assertIn("Done; tests pass.", shown)  # the whole record, not a cut
+        self.assertNotIn("partial list", shown)
+        self.assertIn("`recall`", shown)  # tool names unknown to the command: the plain name
+
+    def test_a_prompt_whose_only_overlap_is_one_word_adds_nothing(self):
+        self.end_session(
+            transcript("Please add a dashboard widget for queue depth.", "Done; tests pass.")
+        )
+        self.assertEqual("", self.submit("Rename the colour palette and update the dashboard."))
 
     def test_nothing_is_injected_when_nothing_clears_the_floor_or_the_prompt_says_nothing(self):
         prompt1, _ = task("job-states")
@@ -341,8 +403,10 @@ class HookReplayTests(unittest.TestCase):
         self.end_session(transcript(prompt1, "Done; tests pass.", noise=3))
         prompt2 = (TASKS / "job-states" / "session2.md").read_text().strip()
         shown = self.submit(prompt2)
-        ids = re.findall(r"obs_[0-9a-f]+", shown)
-        self.assertTrue(ids)
+        self.assertTrue(re.findall(r"obs_[0-9a-f]+", shown))
+        # a session is two captures (the transcript and the user's turns); hold both
+        ids = [r[0] for r in self.store.db.execute("SELECT id FROM observations").fetchall()]
+        self.assertEqual(2, len(ids))
         tenant = self.store.db.execute("SELECT tenant FROM tenants").fetchone()[0]
         for observation in set(ids):
             source = self.store.db.execute(
