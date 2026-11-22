@@ -173,6 +173,30 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(calls[1][-5:], ["-m", "memoryking", "--profile", "default", "stop"])
         self.assertIn("stopped the daemon that ran the earlier install", say["install"])
 
+    def test_no_empty_argument_reaches_wsl_and_a_local_wheel_is_named_by_its_hash(self) -> None:
+        # wsl.exe refuses an empty argument outright (E_INVALIDARG).
+        _, calls = self.install(b'{"installed":"already"}\n')
+        self.assertNotIn("", calls[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            from types import SimpleNamespace
+
+            from memoryking import __version__
+
+            wheel = Path(tmp) / f"memoryking-{__version__}-py3-none-any.whl"
+            wheel.write_bytes(b"one build")
+            seen: list[list[str]] = []
+
+            def quiet(argv: list[str], timeout: float = 600) -> subprocess.CompletedProcess[bytes]:
+                seen.append(argv)
+                return subprocess.CompletedProcess(argv, 0, b'{"installed":"already"}\n', b"")
+
+            args = SimpleNamespace(wheel=wheel, dry_run=False, profile=None)
+            with mock.patch.object(setup_windows, "quiet", side_effect=quiet):
+                setup_windows.install("wsl", "Ubuntu", args, {})
+        import hashlib
+
+        self.assertEqual(seen[0][-1], hashlib.sha256(b"one build").hexdigest())
+
     def test_the_same_install_leaves_the_daemon_running(self) -> None:
         say, calls = self.install(b'{"installed":"already"}\n')
         self.assertEqual(len(calls), 1)

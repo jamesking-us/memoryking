@@ -24,6 +24,7 @@ setup's entries) and keeps the store, which it says how to remove.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -56,11 +57,13 @@ WORD = re.compile(r'"[^"]*"|\S+')
 # Run inside the distro by `sh -c`, with arguments (want, source, tokenizers): make the
 # venv setup's relay uses, with this exact version, and say what was done as one JSON line.
 WSL_INSTALL = """set -u
-want="$1"; source="$2"; tok="$3"
+want="$1"; source="$2"; tok="$3"; built="${6:-}"
 dir="$HOME/.local/share/memoryking"; py="$dir/venv/bin/python"
 case "$HOME" in /mnt/*) echo '{"error":"store_filesystem_unsupported"}'; exit 3;; esac
 same() { [ -x "$py" ] && "$py" -c 'import sys, memoryking; sys.exit(memoryking.__version__ != sys.argv[1])' "$want" 2>/dev/null; }
-if same && { [ "$tok" = 0 ] || "$py" -c 'import tiktoken' 2>/dev/null; }; then
+# A local wheel is one build of the version: the same version from another build differs.
+build() { [ -z "$built" ] || [ "$(cat "$dir/wheel.sha256" 2>/dev/null)" = "$built" ]; }
+if same && build && { [ "$tok" = 0 ] || "$py" -c 'import tiktoken' 2>/dev/null; }; then
   echo '{"installed":"already"}'; exit 0
 fi
 base=""
@@ -78,8 +81,9 @@ pip() { "$py" -m pip install -q --disable-pip-version-check "$@" >/dev/null 2>>"
 # Every dependency from the hash locks this version ships, then MemoryKing alone.
 pip --require-hashes -r "$(wslpath -a "$4")"
 if [ "$tok" = 1 ]; then pip --require-hashes -r "$(wslpath -a "$5")"; fi
-pip --no-deps "$spec"
+pip --no-deps --force-reinstall "$spec"
 same || { echo '{"error":"store_version_mismatch"}'; exit 6; }
+if [ -n "$built" ]; then printf '%s' "$built" > "$dir/wheel.sha256"; else rm -f "$dir/wheel.sha256"; fi
 echo '{"installed":"now"}'
 """
 
@@ -193,7 +197,7 @@ def install(kind: str, name: str, args: Any, say: dict[str, str]) -> None:
     side has it (otherwise briefings would ask for exact counts the store cannot make)."""
     tokenizers = importlib.util.find_spec("tiktoken") is not None
     if kind == "wsl":
-        source = "index"
+        source, built = "index", ""  # built: the local wheel's SHA-256, a build's identity
         if args.wheel is not None:
             if wheel_version(args.wheel) != __version__:
                 raise LocalError(
@@ -201,6 +205,7 @@ def install(kind: str, name: str, args: Any, say: dict[str, str]) -> None:
                     detail={"expected": __version__, "found": wheel_version(args.wheel)},
                 )
             source = str(args.wheel.resolve())
+            built = hashlib.sha256(args.wheel.read_bytes()).hexdigest()
         what = (
             f"MemoryKing {__version__} in {name} at {WSL_PYTHON.rsplit('/bin/', 1)[0]}"
             + (" with the tokenizers extra" if tokenizers else "")
@@ -215,6 +220,7 @@ def install(kind: str, name: str, args: Any, say: dict[str, str]) -> None:
             ["wsl.exe", "-d", name, "--exec", "/bin/sh", "-c", WSL_INSTALL, "sh"]
             + [__version__, source, "1" if tokenizers else "0"]
             + [str(locks / "core.lock"), str(locks / "tokenizers.lock")]
+            + ([built] if built else [])  # wsl.exe refuses an empty argument (E_INVALIDARG)
         )
         result = last_json(done)
         if "error" in result:
