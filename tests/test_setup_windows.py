@@ -95,6 +95,46 @@ class HookStringTests(unittest.TestCase):
             {"relay": "wsl:Ubuntu", "relay-profile": "default-agent", "project": "p"},
         )
 
+    def test_the_shell_free_form_carries_the_same_words_and_is_still_ours(self) -> None:
+        from memoryking import host_hooks
+
+        line = (
+            "C:/PROGRA~1/py.exe -m memoryking.hook_cli --relay wsl:Ubuntu --relay-profile "
+            'default-agent hook session-start --host claude --project p --binding "env=dev box"'
+        )
+        config = self.config(line)
+        setup_windows.exec_form(config, "C:\\Program Files\\py.exe")
+        (hook,) = config["hooks"]["SessionStart"][0]["hooks"]  # type: ignore[index]
+        self.assertEqual(hook["command"], "C:\\Program Files\\py.exe")
+        self.assertEqual(hook["args"][-2:], ["--binding", "env=dev box"])
+        self.assertEqual(hook["args"][:2], ["-m", "memoryking.hook_cli"])
+        self.assertTrue(host_hooks._ours(config["hooks"]["SessionStart"][0]))  # type: ignore[index]
+        removed = host_hooks.merge(config, {"SessionStart": []}, remove=True)
+        self.assertNotIn("hooks", removed)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            found = hook_check.commands(path)
+        self.assertEqual(found["session-start"], [hook["command"], *hook["args"]])
+        self.assertEqual(hook_check.relay_of(found["session-start"])["relay"], "wsl:Ubuntu")
+
+    def test_the_form_follows_the_installed_claude_code(self) -> None:
+        def version(text: str, code: int = 0):
+            done = subprocess.CompletedProcess([], code, text.encode(), b"")
+            with (
+                mock.patch("shutil.which", return_value="claude.exe"),
+                mock.patch.object(setup_windows, "quiet", return_value=done),
+            ):
+                return setup_windows.claude_version()
+
+        self.assertEqual(version("2.1.330 (Claude Code)\n"), (2, 1, 330))
+        self.assertGreaterEqual(version("2.1.330 (Claude Code)"), setup_windows.EXEC_FORM_SINCE)
+        self.assertLess(version("2.1.101 (Claude Code)"), setup_windows.EXEC_FORM_SINCE)
+        self.assertIsNone(version("garbled"))
+        self.assertIsNone(version("2.1.330", code=1))
+        with mock.patch("shutil.which", return_value=None):
+            self.assertIsNone(setup_windows.claude_version())
+
     def test_no_store_side_path_reaches_a_hook_string(self) -> None:
         # Git Bash rewrites a POSIX-looking argument into a Windows path; the store side is
         # named only by its relay and profile.
@@ -108,6 +148,35 @@ class HookStringTests(unittest.TestCase):
             "p",
         ]
         self.assertFalse(any(word.startswith("/") for word in argv))
+
+
+class UpgradeTests(unittest.TestCase):
+    def install(self, *replies: bytes) -> tuple[dict[str, str], list[list[str]]]:
+        from types import SimpleNamespace
+
+        calls: list[list[str]] = []
+
+        def quiet(argv: list[str], timeout: float = 600) -> subprocess.CompletedProcess[bytes]:
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, replies[len(calls) - 1], b"")
+
+        say: dict[str, str] = {}
+        args = SimpleNamespace(wheel=None, dry_run=False, profile=None)
+        with mock.patch.object(setup_windows, "quiet", side_effect=quiet):
+            setup_windows.install("wsl", "Ubuntu", args, say)
+        return say, calls
+
+    def test_a_new_install_stops_the_daemon_that_ran_the_old_code(self) -> None:
+        say, calls = self.install(
+            b'{"installed":"now"}\n', b'{"running": false, "stopped": true}\n'
+        )
+        self.assertEqual(calls[1][-5:], ["-m", "memoryking", "--profile", "default", "stop"])
+        self.assertIn("stopped the daemon that ran the earlier install", say["install"])
+
+    def test_the_same_install_leaves_the_daemon_running(self) -> None:
+        say, calls = self.install(b'{"installed":"already"}\n')
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(say["install"].startswith("already installed"))
 
 
 class UndoRecordTests(unittest.TestCase):

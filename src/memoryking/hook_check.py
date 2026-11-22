@@ -3,7 +3,8 @@
 `memoryking doctor --replay-hooks` reads the hook commands from Claude Code's settings file
 and runs each one the way Claude Code does on Windows: the command string through Git Bash,
 and through PowerShell (which Claude Code uses when Git Bash is absent), with the event JSON
-on stdin. It replays two sessions per shell, in order: SessionStart, UserPromptSubmit (timed
+on stdin; hooks in the shell-free form (`command` plus `args`) run with no shell, as Claude
+Code runs them. It replays two sessions per shell, in order: SessionStart, UserPromptSubmit (timed
 against the prompt hook's deadline), PreCompact and SessionEnd with a transcript holding a
 fact no earlier session knew, then a second SessionStart and prompt that must both bring
 that fact back. It reports pass or fail per step. Nothing calls a model; the fact and the
@@ -33,24 +34,35 @@ EVENTS = {
 PROMPT_DEADLINE = 1.5
 
 
-def commands(settings: Path) -> dict[str, str]:
-    """The MemoryKing hook command for each kind, from a Claude Code settings file."""
+Command = str | list[str]  # a shell string, or the shell-free form's argv
+
+
+def commands(settings: Path) -> dict[str, Command]:
+    """The MemoryKing hook command for each kind, from a Claude Code settings file: the
+    string a shell runs, or, for a hook in the shell-free form, `command` plus `args`."""
     config = json.loads(settings.read_text(encoding="utf-8"))
-    found: dict[str, str] = {}
+    found: dict[str, Command] = {}
     for event, entries in config.get("hooks", {}).items():
         for entry in entries:
             for hook in entry.get("hooks", []):
-                command = str(hook.get("command", ""))
-                if "memoryking" in command and " hook " in command:
-                    kind = command.split(" hook ", 1)[1].split()[0]
+                args = hook.get("args")
+                line = str(hook.get("command", ""))
+                if isinstance(args, list):
+                    line = " ".join([line, *map(str, args)])
+                if "memoryking" in line and " hook " in line:
+                    kind = line.split(" hook ", 1)[1].split()[0]
                     if EVENTS.get(kind) == event:
-                        found[kind] = command
+                        found[kind] = (
+                            [str(hook.get("command", "")), *map(str, args)]
+                            if isinstance(args, list)
+                            else line
+                        )
     return found
 
 
-def relay_of(command: str) -> dict[str, str]:
+def relay_of(command: Command) -> dict[str, str]:
     """The relay options a hook command carries (`--relay`, `--relay-profile`, ...)."""
-    words = command.split()
+    words = command.split() if isinstance(command, str) else command
     found = {}
     for flag in ("--relay", "--relay-profile", "--relay-python", "--project"):
         if flag in words and words.index(flag) + 1 < len(words):
@@ -117,10 +129,11 @@ def transcript(path: Path, prompt: str, fact: str) -> None:
     path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
 
 
-def run(shell: list[str], command: str, event: dict[str, Any]) -> tuple[int, str, str, float]:
+def run(shell: list[str], command: Command, event: dict[str, Any]) -> tuple[int, str, str, float]:
+    """One hook: a string through `shell`, or the shell-free form's argv with no shell."""
     started = time.monotonic()
     done = subprocess.run(
-        [*shell, command],
+        [*shell, command] if isinstance(command, str) else command,
         input=json.dumps(event).encode(),
         capture_output=True,
         timeout=120,
@@ -142,7 +155,9 @@ def replay(settings: Path) -> tuple[bool, list[str]]:
     lines = [f"hooks in {settings}: " + ", ".join(sorted(found))]
     if missing:
         return False, [*lines, "FAIL: no MemoryKing hook for " + ", ".join(missing)]
-    available = shells()
+    # Claude Code runs the shell-free form with no shell, so it is replayed once that way.
+    shell_free = all(isinstance(command, list) for command in found.values())
+    available = {"no shell (command plus args)": []} if shell_free else shells()
     if not available:
         return False, [*lines, "FAIL: neither Git Bash nor PowerShell was found"]
     ok = True

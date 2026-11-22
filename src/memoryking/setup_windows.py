@@ -219,9 +219,18 @@ def install(kind: str, name: str, args: Any, say: dict[str, str]) -> None:
         result = last_json(done)
         if "error" in result:
             raise LocalError(str(result["error"]), detail={"backend": f"wsl:{name}"})
-        say["install"] = (
-            "already installed: " + what if result.get("installed") == "already" else what
+        if result.get("installed") == "already":
+            say["install"] = "already installed: " + what
+            return
+        say["install"] = what
+        # A daemon started before this install still runs the code it loaded, even from a
+        # venv that is gone: stop it, and the store step starts it again on this version.
+        profile = args.profile or "default"
+        stopped = last_json(
+            quiet(on_store_side(kind, name, "-m", "memoryking", "--profile", profile, "stop"))
         )
+        if stopped.get("stopped") is True:
+            say["install"] += "; stopped the daemon that ran the earlier install"
         return
     image = args.image
     if not image:
@@ -292,6 +301,39 @@ def store(kind: str, name: str, args: Any, say: dict[str, str]) -> str:
         "semantic", "not changed (turn it on there with `memoryking semantic enable`)"
     )
     return str(result["agent_profile"])
+
+
+# The first Claude Code seen on Windows to run a hook's `command` with its `args` and no
+# shell (2.1.101 ran it as a bash string and lost the backslashes). Below it, or when the
+# version cannot be read, setup writes the string form, which both shells read the same.
+EXEC_FORM_SINCE = (2, 1, 330)
+
+
+def claude_version() -> tuple[int, int, int] | None:
+    import shutil
+
+    program = shutil.which("claude")
+    if program is None:
+        return None
+    done = quiet([program, "--version"], timeout=60)
+    found = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", done.stdout.decode(errors="replace"))
+    if done.returncode != 0 or found is None:
+        return None
+    major, minor, patch = (int(part) for part in found.groups())
+    return major, minor, patch
+
+
+def exec_form(config: dict[str, Any], python: str) -> None:
+    """Rewrite MemoryKing's hook commands as `command` (this interpreter) plus `args`, which
+    Claude Code runs with no shell at all: nothing is quoted, expanded or rewritten."""
+    for entries in config.get("hooks", {}).values():
+        for entry in entries:
+            for hook in entry.get("hooks", []):
+                line = host_hooks.command_line(hook)
+                if host_hooks.MARK not in line or " hook " not in line:
+                    continue
+                words = [json.loads(w) if w.startswith('"') else w for w in WORD.findall(line)]
+                hook["command"], hook["args"] = python, words[1:]
 
 
 def neutral(config: dict[str, Any]) -> None:
@@ -405,12 +447,20 @@ def run(args: Any) -> int:
             prompts=not args.no_prompt_hook,
         )
         neutral(result["config"])
+        version = claude_version()
+        shown = ".".join(map(str, version)) if version else None
+        if version is not None and version >= EXEC_FORM_SINCE:
+            exec_form(result["config"], sys.executable)
+            form = f"shell-free form (command plus args), which Claude Code {shown} runs directly"
+        else:
+            form = "string form, which Git Bash and PowerShell read the same" + (
+                f" (Claude Code {shown} predates the shell-free form)"
+                if shown
+                else " (Claude Code's version could not be read)"
+            )
         path = Path(result["path"])
         text = json.dumps(result["config"], indent=2) + "\n"
-        say["hooks"] = (
-            f"{files.write(path, text)} {path}; the same command strings run in Git Bash and "
-            "PowerShell"
-        )
+        say["hooks"] = f"{files.write(path, text)} {path}; {form}"
     files.save()
     setup_host.summary(args, {**say, "store": f"{say['install']}; {say['store']}"}, printed, files)
     if not args.dry_run:

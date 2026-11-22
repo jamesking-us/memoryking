@@ -944,11 +944,16 @@ def _entries(
     return entries
 
 
+def command_line(hook: dict[str, Any]) -> str:
+    """A hook's command and, in the shell-free form Claude Code also reads, its `args`."""
+    args = hook.get("args")
+    words = [str(word) for word in args] if isinstance(args, list) else []
+    return " ".join([str(hook.get("command", "")), *words])
+
+
 def _ours(group: dict[str, Any]) -> bool:
     return any(
-        isinstance(h, dict)
-        and MARK in str(h.get("command", ""))
-        and " hook " in str(h.get("command", ""))
+        isinstance(h, dict) and MARK in command_line(h) and " hook " in command_line(h)
         for h in group.get("hooks", [])
     )
 
