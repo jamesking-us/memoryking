@@ -171,6 +171,36 @@ Fields: `name` is one of `anthropic-messages`, `openai-chat` or `vertex-ai`; `ho
 
 Adapters make one HTTPS request per dispatch with certificate verification, no retry, no streaming and no tool use, and keep no state: the full conversation is resent each time. Every consumed permit writes an audit record (provider, model, host, policy revision, request and manifest hashes, the content-free manifest, highest classification, byte count) that the host completes with the outcome, wire hash, response hash and token usage. `memoryking egress-audit` and the dashboard's **Jobs & health** view list them for 30 days; purging a source does not remove the record of a delivery that already happened.
 
+## Windows
+
+Windows runs the agent-side tools (the command line, the MCP bridge and the Claude Code hooks) natively, and keeps the memory store and its daemon in one of two places on the same machine:
+
+- **WSL2**: a Linux distro under the Windows Subsystem for Linux. Setup installs MemoryKing in a virtual environment in the distro's own home (`~/.local/share/memoryking/venv`), with the same version as Windows and its dependencies hash-checked from the lock files the package ships, and keeps the store in `~/.memoryking`. The distro needs Python 3.12 or 3.13 with `venv`.
+- **Docker Desktop** with Linux containers: a container named `memoryking` from the MemoryKing image, with the store in three named volumes (`memoryking-data`, `memoryking-control`, `memoryking-home`). Setup needs the image named with `--image`: one you built (`docker build -f deploy/local/Dockerfile -t memoryking:local .`) or the published one by digest.
+
+Setup never installs WSL2 or Docker Desktop. When neither is there it stops and names what to install (`wsl --install`, or Docker Desktop), which needs administrator rights and may need a restart. When both are there it does not guess:
+
+```powershell
+memoryking setup claude-code --project my-app --backend wsl:Ubuntu
+memoryking setup claude-code --project my-app --backend docker --image memoryking:local
+```
+
+One run installs the store side, creates the store under the usual owner-only rules, starts the daemon, issues the agent's limited credential, writes the Claude Code hooks, prints the MCP registration command, then saves and recalls a marked note through the relay and prints `MemoryKing works: ...` or exactly what failed. `--dry-run` lists every change and makes none; a second run changes nothing it does not need to. The hooks are written in the form the installed Claude Code runs without a shell (`command` plus `args`, Claude Code 2.1.330 and later), or otherwise as one command string that Git Bash and PowerShell read the same; the summary says which. Neither form contains a path on the store side or a secret.
+
+**How Windows reaches the store.** Each hook, the MCP bridge and any command typed by hand start `memoryking relay` on the store side (`wsl.exe -d DISTRO` or `docker exec -i memoryking`) and keep it open; it passes request lines to the daemon's Unix socket and replies back without reading them. The agent's credential stays on the store side; the relay hands it to the Windows process in its first line, which keeps it only in memory. A relay of another version, or a store side without the `tokenizers` extra when Windows has it, is refused at once with the command that fixes it. For commands typed by hand, `--user-environment` also sets `MEMORYKING_RELAY` and `MEMORYKING_RELAY_PROFILE` for your Windows user (nothing secret; `--remove` puts back what was there), after which `memoryking status` and `memoryking recall --query ...` work in a new terminal.
+
+**Keeping the daemon running.** Nothing has to be started by hand. The relay starts the daemon on the store side when it is not running; the first hook after that takes about 1.5 s instead of half a second. In WSL2 the running daemon keeps the distro up; when the distro stops (`wsl --terminate Ubuntu`, `wsl --shutdown` or a Windows restart), the next session starts both again. The container restarts with Docker Desktop (`--restart unless-stopped`), and the daemon inside it starts on demand. Each hook takes about 0.45 s in the shell-free form, 0.55 s through Git Bash and 1.2 s through PowerShell.
+
+**Checking it.** `memoryking doctor` on Windows says which back end the hooks use, whether the store side answers, the versions on both sides, the store side's own checks, and the one next step when something is wrong. `memoryking doctor --replay-hooks` runs the installed hooks the way Claude Code runs them, with real event payloads, through two sessions, and checks that the second session is briefed with what the first one saved. Neither calls a model.
+
+**Upgrading.** Upgrade both sides together: install the new version on Windows (`pip install --upgrade memoryking`), then run the same `memoryking setup claude-code ...` again. With WSL2 it installs the matching version in the distro and restarts the daemon on it. With Docker, build or pull the new image, remove the old container (`docker rm -f memoryking`; the volumes and the store stay) and run setup with the new `--image`.
+
+**Removing it.** `memoryking setup claude-code --project my-app --remove` puts Claude Code's settings files back byte for byte from setup's record in `%LOCALAPPDATA%\MemoryKing\setup` (or, for a file changed since, takes out only setup's entries) and puts back the user variables. It keeps the store, and prints how to remove it: in WSL2, stop the daemon there (`~/.local/share/memoryking/venv/bin/memoryking --profile default stop`) and delete `~/.memoryking` and `~/.local/share/memoryking`; with Docker, `docker rm -f memoryking` and `docker volume rm memoryking-data memoryking-control memoryking-home`. Removing the store deletes the memory.
+
+**Not supported.** A store on Windows itself; a store on a Windows drive seen from WSL2 (`/mnt/c/...`) or a Windows folder mounted into the container (setup refuses with `store_filesystem_unsupported`, because those file systems do not keep the owner-only modes and durable renames the store relies on); WSL1; a machine where both WSL2 and Docker Desktop are unavailable or disabled; Windows setup for hosts other than Claude Code.
+
+**If Docker Desktop will not start** after an unclean shutdown, with errors about files in its `run` folder that cannot be opened: quit Docker Desktop, rename `%LOCALAPPDATA%\Docker\run` and `%LOCALAPPDATA%\docker-secrets-engine` (both, together), and start it again; it recreates them.
+
 ## Shared PostgreSQL
 
 The shared profile is a Python service backed by PostgreSQL 18.6. It exposes:
