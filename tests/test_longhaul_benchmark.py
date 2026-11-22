@@ -831,7 +831,10 @@ class MemoryKingArmTests(unittest.TestCase):
         self.assertIn("2025-03-20", text)
         self.assertIn("semicolon", text)
         self.assertIn("claude-session", text)  # the transcript tail, as the hook captures it
-        self.assertIn("user-claude", text)  # and the user's own turns as their own observation
+        # and the user's own turns as their own observation: the same words inside the session
+        # capture, so the briefing shows them once and cites the other record
+        self.assertIn("also recorded in obs_", text)
+        self.assertNotIn("user-claude", text)
 
     def test_tool_errors_reach_memory_and_successful_tool_output_does_not_nothing_is_held(self):
         system = self.reopen()
@@ -871,7 +874,22 @@ class MemoryKingArmTests(unittest.TestCase):
         system = self.reopen()
         host = system.host(self.base / "wd", self.scope)
         events = host.settings["hooks"]
-        self.assertEqual(sorted(events), ["PreCompact", "SessionEnd", "SessionStart"])
+        self.assertEqual(
+            sorted(events), ["PreCompact", "SessionEnd", "SessionStart", "UserPromptSubmit"]
+        )
+        # the arm is exactly what `memoryking setup claude-code` installs by default
+        from memoryking import host_hooks
+
+        default = host_hooks.install(
+            host="claude", scope="user", project="billing", cwd=self.base / "wd",
+            home=self.base / "wd" / ".unused-home", socket=system.socket,
+            credential=self.base / "none", tools="mcp", write=False,
+        )  # fmt: skip
+        self.assertEqual(sorted(events), default["events"])
+        plain = load_system("memoryking_nohook")
+        self.assertEqual(plain.name, "memoryking-nohook")
+        self.assertFalse(plain.prompts)
+        self.assertNotIn("memoryking_nohook", lb.ARMS)
         command = events["SessionStart"][0]["hooks"][0]["command"]
         self.assertIn("hook session-start --host claude --project billing", command)
         self.assertIn("--tools mcp", command)
@@ -929,10 +947,10 @@ class PipelineTests(unittest.TestCase):
         )
         return proc
 
-    def one(self, arm, task, mode, track="T1", size=20, rep=1, seeded=None):
+    def one(self, arm, task, mode, track="T1", size=20, rep=1, seeded=None, extra=""):
         seeded = seeded or self.base / "seeded"
         results = self.base / "results"
-        agent = f"{STUB} --mode {mode} --mcp-config {{mcp_config}} --settings {{settings}}"
+        agent = f"{STUB} --mode {mode}{extra} --mcp-config {{mcp_config}} --settings {{settings}}"
         proc = self.run_cli(
             "run",
             "--track",
@@ -1026,6 +1044,12 @@ class PipelineTests(unittest.TestCase):
         result = self.one("memoryking", "t1-export-delimiter", "reader")
         self.assertTrue(result["passed"], result["check"])
         self.assertEqual(result["seed"]["sessions"], 20)
+        # One broad query naming the subject and every attribute, as the pilot's agents asked.
+        broad = self.one(
+            "memoryking", "t1-export-delimiter", "reader", rep=3, extra=" --queries broad"
+        )
+        self.assertTrue(broad["passed"], broad["check"])
+        self.assertEqual(broad["stream"]["memory_reads"], 1)
         # The store the run used is a copy: the seeded one still has no run-time writes.
         again = self.one("memoryking", "t1-export-delimiter", "null", rep=2)
         self.assertFalse(again["passed"])

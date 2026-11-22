@@ -250,7 +250,14 @@
             "top_k": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 32
+              "maximum": 32,
+              "description": "At most this many items. Default: 8 for the structured packet; for format text, as many distinct items as fit max_output_tokens, up to 32."
+            },
+            "min_score_ppm": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000,
+              "description": "Leave out guidance whose lexical score (millionths, see each item's lexical_score_ppm) is below this. Default 0: nothing is left out for a low score."
             },
             "task": {
               "type": "string",

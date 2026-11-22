@@ -452,7 +452,15 @@ class HostHookTests(unittest.TestCase):
         config = json.loads((cwd / ".claude/settings.json").read_text())
         self.assertEqual(config["permissions"], {"allow": ["Bash(ls)"]})
         self.assertEqual(first["config"], second["config"])
-        self.assertEqual(sorted(config["hooks"]), ["PreCompact", "SessionEnd", "SessionStart"])
+        self.assertEqual(
+            sorted(config["hooks"]),
+            ["PreCompact", "SessionEnd", "SessionStart", "UserPromptSubmit"],
+        )
+        prompt = config["hooks"]["UserPromptSubmit"]
+        self.assertEqual(len(prompt), 1)
+        self.assertIn("hook prompt --host claude --project demo", prompt[0]["hooks"][0]["command"])
+        self.assertEqual(prompt[0]["hooks"][0]["timeout"], 5)
+        self.assertNotIn("--task", prompt[0]["hooks"][0]["command"])
         self.assertEqual(len(config["hooks"]["PreCompact"]), 2)  # theirs kept, ours once
         self.assertEqual(config["hooks"]["PreCompact"][0]["hooks"][0]["command"], "echo mine")
         start = config["hooks"]["SessionStart"][0]
@@ -462,6 +470,13 @@ class HostHookTests(unittest.TestCase):
         )
         self.assertIn("--profile home", start["hooks"][0]["command"])
         self.assertIn("--task retry-fix", start["hooks"][0]["command"])
+        without = host_hooks.install(host="claude", prompts=False, **common)
+        self.assertEqual(
+            sorted(without["config"]["hooks"]), ["PreCompact", "SessionEnd", "SessionStart"]
+        )
+        self.assertNotIn("UserPromptSubmit", without["events"])
+        self.assertEqual(len(without["config"]["hooks"]["PreCompact"]), 2)
+        host_hooks.install(host="claude", **common)
         removed = host_hooks.install(host="claude", remove=True, **common)
         self.assertEqual(
             removed["config"]["hooks"],
@@ -475,7 +490,11 @@ class HostHookTests(unittest.TestCase):
             self.assertEqual(result["path"], str(home / relative))
             self.assertTrue((home / relative).exists())
             written = json.loads((home / relative).read_text())
-            self.assertEqual(sorted(written["hooks"]), ["PreCompact", "SessionEnd", "SessionStart"])
+            events = ["PreCompact", "SessionEnd", "SessionStart"]
+            # Grok ignores hook output, so a recall-at-prompt hook there would only cost time.
+            self.assertEqual(
+                sorted(written["hooks"]), events + (["UserPromptSubmit"] if host == "codex" else [])
+            )
         self.assertIsNotNone(result["note"])
         preview = host_hooks.install(
             host="claude", write=False, **{**common, "cwd": self.root / "elsewhere"}

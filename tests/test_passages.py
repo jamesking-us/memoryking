@@ -13,7 +13,7 @@ import test_postgres_parity as pg
 from test_lexical_search import LexicalCases
 
 from memoryking.adapters.retrieval import Retrieval
-from memoryking.domain.duplicates import duplicates, family, shape
+from memoryking.domain.duplicates import contained, duplicates, family, shape
 from memoryking.domain.passages import EXCERPT_BYTES, MAXIMUM, TAIL, excerpt, split
 
 
@@ -160,6 +160,37 @@ class PassageRuleTests(unittest.TestCase):
             )
         )
         self.assertEqual(("a", "s", "name"), family("a", "s", "name__v7"))
+
+    def test_contained_needs_nearly_all_of_the_shorter_text_and_its_anchors(self):
+        said = "User: Please tidy the orders export before Friday.\n\nUser: Delimiter is a caret."
+        whole = (
+            "User: Please tidy the orders export before Friday.\n\n"
+            "Assistant: Opening ledger/exporter.py first.\n\n"
+            "User: Delimiter is a caret.\n\nAssistant: Done."
+        )
+        self.assertTrue(contained(shape(said), shape(whole)))
+        self.assertFalse(contained(shape(whole), shape(said)))  # never the other way
+        self.assertFalse(contained(shape(whole), shape(whole)))  # equal text is a duplicate
+        # a paragraph the longer text lacks (more than a tenth of the shorter) breaks it
+        self.assertFalse(
+            contained(shape(said + "\n\nUser: And rename the helper too."), shape(whole))
+        )
+        # too few words to say they are the same record
+        self.assertFalse(contained(shape("User: Done."), shape("User: Done.\n\nAssistant: OK.")))
+        # inside a longer name is not the same name: the anchors must match
+        near = "Please look at {} before the Friday release of the exporter now"
+        self.assertFalse(
+            contained(
+                shape(near.format("ledger/exporter.py")),
+                shape(near.format("src/ledger/exporter.py") + ", thanks."),
+            )
+        )
+        self.assertTrue(
+            contained(
+                shape(near.format("ledger/exporter.py")),
+                shape(near.format("ledger/exporter.py") + ", thanks."),
+            )
+        )
         self.assertEqual(family("a", "s", "name"), family("a", "s", "name__v2"))
         self.assertNotEqual(family("a", "s", "name"), family("b", "s", "name"))
 
@@ -354,6 +385,121 @@ class PassageCases(LexicalCases):
         refs = self.refs(self.brief("checkout test failed timeout", top_k=4))
         self.assertEqual(4, len(refs))
         self.assertTrue(set(others) <= set(refs))
+
+    def test_an_excerpt_inside_another_is_shown_once_as_the_longer_text(self):
+        # What a hook captures: the session, and the user's turns of it on their own.
+        said = (
+            "User: Please tidy the orders export before Friday.\n\n"
+            "User: Settled in the team call: orders export column delimiter is a caret."
+        )
+        session = (
+            "User: Please tidy the orders export before Friday.\n\n"
+            "Assistant: Opening ledger/exporter.py first.\n\n"
+            "User: Settled in the team call: orders export column delimiter is a caret.\n\n"
+            "Assistant: Done, and the tests pass."
+        )
+        mine = self.capture("said", said)
+        whole = self.capture("session", session)
+        self.capture("other", "Unrelated: the dashboard colour palette was changed on Tuesday.")
+        packet = self.brief("orders export column delimiter caret")
+        self.assertEqual([whole], self.refs(packet))
+        item = packet["guidance"][0]
+        self.assertEqual([mine], item["also_recorded_in"]["references"])
+        self.assertIn("Assistant: Done", item["text"])  # the longer text, verbatim
+        trace = next(
+            t for t in self.receipt(packet)["trace"] if t["stage"] == "one_answer_per_fact"
+        )
+        self.assertEqual(1, trace["contained_collapsed"])
+        # The receipt depends on the contained record too: purging it retires the briefing.
+        self.assertIsInstance(self.replay(packet), bytes)
+        self.store.purge(self.owner, mine)
+        from memoryking.domain.local import LocalError
+
+        with self.assertRaises(LocalError):
+            self.replay(packet)
+
+    def test_a_held_contained_excerpt_is_neither_shown_nor_named(self):
+        from memoryking.adapters.trust import Trust
+
+        said = "User: Please tidy the orders export before Friday, the delimiter is a caret."
+        session = said + "\n\nAssistant: Done, and the tests pass for the orders export."
+        mine = self.capture("said", said)
+        whole = self.capture("session", session)
+        with self.store.transaction() as decision:
+            Trust(self.store).hold(self.tenant_id(), "q", mine, "scraper", decision.evaluated_ms)
+        packet = self.brief("orders export delimiter caret")
+        self.assertEqual([whole], self.refs(packet))
+        self.assertNotIn("also_recorded_in", packet["guidance"][0])
+
+    def test_an_excerpt_that_is_only_partly_inside_another_stays_separate(self):
+        said = "User: Please tidy the orders export before Friday. Also rename the helper."
+        session = (
+            "User: Please tidy the orders export before Friday.\n\n"
+            "Assistant: Opening ledger/exporter.py first, and the delimiter is a caret."
+        )
+        a = self.capture("said", said)
+        b = self.capture("session", session)
+        self.assertEqual({a, b}, set(self.refs(self.brief("orders export tidy delimiter"))))
+
+    def test_a_text_briefing_holds_as_many_items_as_fit_the_budget(self):
+        notes = [
+            self.capture(f"n{n}", f"Note {n}: the billing exporter {word} handles retries.")
+            for n, word in enumerate(
+                "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima".split()
+            )
+        ]
+        everything = self.brief("billing exporter retries", format="text")
+        self.assertEqual(len(notes), len(everything["sources"]))
+        top3 = self.brief("billing exporter retries", format="text", top_k=3)
+        self.assertEqual(3, len(top3["sources"]))
+        # The structured packet keeps its small default, and a small budget still bounds the text.
+        self.assertEqual(8, len(self.brief("billing exporter retries")["guidance"]))
+        small = self.brief(
+            "billing exporter retries",
+            format="text",
+            max_output_tokens=500,
+            tokenizer="chars-estimate-v1",
+        )
+        self.assertLessEqual(small["usage"]["output_tokens"], 500)
+        self.assertTrue(0 < len(small["sources"]) < 12)
+
+    def test_a_score_floor_leaves_out_weak_matches_and_the_trace_counts_them(self):
+        strong = self.capture("s", "The billing exporter retries failed charges twice.")
+        weak = self.capture("w", "Billing statements are sent monthly by the finance team.")
+        everything = self.brief("billing exporter retries failed charges")
+        self.assertEqual({strong, weak}, set(self.refs(everything)))
+        floor = max(
+            g["lexical_score_ppm"] for g in everything["guidance"] if g["reference"] == weak
+        )
+        packet = self.brief("billing exporter retries failed charges", min_score_ppm=floor + 1)
+        self.assertEqual([strong], self.refs(packet))
+        trace = next(
+            t for t in self.receipt(packet)["trace"] if t["stage"] == "one_answer_per_fact"
+        )
+        self.assertEqual(1, trace["below_floor"])
+        self.assertEqual([], self.refs(self.brief("billing exporter", min_score_ppm=1_000_000)))
+
+    def test_a_crowd_of_near_identical_statements_does_not_push_out_different_ones(self):
+        crowd = [
+            self.capture(
+                f"c{n}",
+                f"The orders export, column delimiter: {word} (settled in the team call).",
+            )
+            for n, word in enumerate(["caret", "pipe", "tilde", "tab", "semicolon", "colon"])
+        ]
+        different = [
+            self.capture("d1", "The integration notes say the orders export is UTF-16 encoded."),
+            self.capture("d2", "Assistant: I checked the export header of the orders file today."),
+        ]
+        packet = self.brief("orders export column delimiter", top_k=5)
+        refs = self.refs(packet)
+        self.assertEqual(5, len(refs))
+        self.assertTrue(set(different) <= set(refs), refs)
+        self.assertLessEqual(len(set(crowd) & set(refs)), 3)
+        trace = next(
+            t for t in self.receipt(packet)["trace"] if t["stage"] == "one_answer_per_fact"
+        )
+        self.assertGreater(trace["diversified"], 0)
 
     def test_text_rendering_separates_sections_and_shows_the_recorded_minute(self):
         first = self.capture("a", "Deploys need a second reviewer.")
