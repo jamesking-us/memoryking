@@ -161,6 +161,8 @@ class PgvectorTests(DenseCases, NativeFixture):
             return dense_search.search(self.store, who, args, 10**9, 10**9)
 
     def test_a_large_visible_corpus_is_answered_from_the_index_and_rescored_exactly(self):
+        if dense_search.numpy_module() is None:
+            self.skipTest("the exact rescore needs numpy, which the embeddings extra installs")
         config = self.fill(400, 0)
         found = self.search(config, "owner")
         self.assertEqual(found["scan"], "hnsw_shortlist_exact_rescore_v1")

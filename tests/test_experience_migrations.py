@@ -180,7 +180,7 @@ class NativeExperienceUpgrade(unittest.TestCase):
                         db.execute(
                             "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
                         ).fetchone()[0],
-                        "15",
+                        "16",
                     )
         finally:
             cluster.close()

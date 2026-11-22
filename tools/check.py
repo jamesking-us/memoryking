@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-STEP_TIMEOUT = 1800  # seconds per step; a hung step fails instead of blocking the run
+STEP_TIMEOUT = 3600  # seconds per step; a hung step fails instead of blocking the run (the full test suite alone takes about 30 minutes with PostgreSQL on a loaded machine)
 
 
 def main():

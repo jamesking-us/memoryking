@@ -10,6 +10,9 @@ verbatim evidence and nothing else.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -127,9 +130,10 @@ def build_conversation(
 class ConsolidationLoop:
     """Runs a pass for each project when it has been idle, on a schedule; off by default.
 
-    `tick` is one scan, so a host process (`consolidate --watch`) or the daemon
-    (`serve --consolidate-every`) drives it the same way. A failure never ends the loop and
-    never files anything: the next pass starts from the same frontier."""
+    `tick` is one scan, driven by a host process (`consolidate --watch`). The daemon never
+    runs it: `serve --consolidate-every` supervises separate `consolidate` processes instead
+    (`ConsolidationSupervisor`). A failure never ends the loop and never files anything: the
+    next pass starts from the same frontier."""
 
     def __init__(
         self,
@@ -192,3 +196,167 @@ class ConsolidationLoop:
                 self.tick()
             except Exception as exc:  # the loop must outlive any single failure
                 failure("consolidation", exc)
+
+
+class ConsolidationSupervisor:
+    """The daemon's schedule: it launches one `memoryking consolidate` child per project each
+    interval and never reads a provider key itself, because the key is read only by the child
+    that runs the adapter. It records each child's PID and stops only those, restarts a child
+    that fails with a growing delay, and leaves none running when it stops. A child also exits
+    on its own when the daemon dies (`--parent-pid`), so even a killed daemon leaves none."""
+
+    BACKOFF_FIRST_S = 5.0
+    BACKOFF_CAP_S = 3600.0
+
+    def __init__(self, command: Any, projects: list[str], *, every_s: float, poll_s: float = 0.2):
+        self.command, self.projects = command, list(projects)
+        self.every_s, self.poll_s = every_s, poll_s
+        self.stopping = threading.Event()
+        self.lock = threading.Lock()
+        now = time.monotonic()
+        self.children: dict[str, subprocess.Popen[bytes] | None] = dict.fromkeys(projects)
+        self.due = dict.fromkeys(projects, now + every_s)
+        self.failures = dict.fromkeys(projects, 0)
+        self.last_exit: dict[str, int | None] = dict.fromkeys(projects)
+        self.runs = dict.fromkeys(projects, 0)
+        self.thread = threading.Thread(
+            target=self.run, name="memoryking-consolidation-supervisor", daemon=True
+        )
+
+    def start(self) -> None:
+        event("consolidation", "ready", projects=len(self.projects), mode="child_process")
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stopping.set()
+        self.thread.join(timeout=10)
+        with self.lock:
+            running = [child for child in self.children.values() if child is not None]
+        for child in running:  # only the processes this supervisor started, by recorded PID
+            if child.poll() is None:
+                child.terminate()
+        deadline = time.monotonic() + 10
+        for child in running:
+            try:
+                child.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+
+    def describe(self) -> list[dict[str, Any]]:
+        now, wall = time.monotonic(), int(time.time() * 1000)
+        items = []
+        with self.lock:
+            for project in self.projects:
+                child = self.children[project]
+                running = child is not None and child.poll() is None
+                items.append(
+                    {
+                        "project": project,
+                        "state": "running"
+                        if running
+                        else ("backoff" if self.failures[project] else "waiting"),
+                        "pid": child.pid if running and child is not None else None,
+                        "runs": self.runs[project],
+                        "consecutive_failures": self.failures[project],
+                        "last_exit": self.last_exit[project],
+                        "next_run_ms": None
+                        if running
+                        else wall + int(max(0.0, self.due[project] - now) * 1000),
+                    }
+                )
+        return items
+
+    def tick(self) -> None:
+        for project in self.projects:
+            with self.lock:
+                child = self.children[project]
+                if child is not None and child.poll() is not None:
+                    self.children[project] = None
+                    code = self.last_exit[project] = child.returncode
+                    if code == 0:
+                        self.failures[project] = 0
+                        delay = self.every_s
+                    else:
+                        self.failures[project] += 1
+                        delay = min(
+                            self.every_s,
+                            self.BACKOFF_CAP_S,
+                            self.BACKOFF_FIRST_S * 2 ** (self.failures[project] - 1),
+                        )
+                        event(
+                            "consolidation",
+                            "child_failed",
+                            project=project,
+                            exit=code,
+                            retry_s=round(delay, 1),
+                        )
+                    self.due[project] = time.monotonic() + delay
+                    continue
+                if child is None and time.monotonic() >= self.due[project]:
+                    try:
+                        self.children[project] = subprocess.Popen(
+                            self.command(project),
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            close_fds=True,
+                        )
+                        self.runs[project] += 1
+                    except OSError:
+                        self.failures[project] += 1
+                        self.due[project] = time.monotonic() + self.BACKOFF_FIRST_S
+                        event("consolidation", "child_failed", project=project, exit=None)
+
+    def run(self) -> None:
+        while not self.stopping.wait(self.poll_s):
+            try:
+                self.tick()
+            except Exception as exc:  # the supervisor must outlive any single failure
+                failure("consolidation", exc)
+
+
+def watch_parent(parent: int) -> None:
+    """End this process when the process that launched it is gone."""
+
+    def watch() -> None:
+        while os.getppid() == parent:
+            time.sleep(1.0)
+        os.kill(os.getpid(), 15)
+
+    threading.Thread(target=watch, name="memoryking-parent-watch", daemon=True).start()
+
+
+def child_command(
+    socket: Path,
+    credential: Path,
+    project: str,
+    policy: Path,
+    provider: str | None,
+    model: str | None,
+    idle_ms: int,
+) -> list[str]:
+    """The one-shot `consolidate` process a daemon launches for a project."""
+    command = [
+        sys.executable,
+        "-m",
+        "memoryking",
+        "consolidate",
+        "--socket",
+        str(socket),
+        "--credential",
+        str(credential),
+        "--project",
+        project,
+        "--egress-policy",
+        str(policy),
+        "--idle-ms",
+        str(idle_ms),
+        "--parent-pid",
+        str(os.getpid()),
+        "--json",
+    ]
+    if provider:
+        command += ["--provider", provider]
+    if model:
+        command += ["--model", model]
+    return command
