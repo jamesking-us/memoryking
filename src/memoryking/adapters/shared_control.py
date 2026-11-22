@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import os
 import threading
@@ -13,6 +12,7 @@ from pathlib import Path
 
 from memoryking.adapters.local_files import Control, JournalCache, private_file
 from memoryking.adapters.operations_log import OperationsLog
+from memoryking.adapters.platform_support import lock_nowait, open_nofollow
 from memoryking.domain.local import LocalError
 
 # A store, and so a `SharedControl`, is built per request. The verified journal prefix is kept
@@ -46,14 +46,14 @@ class SharedControl(Control):
     def locked(self, timeout: float = 5) -> Iterator[None]:
         with self.thread_lock:
             path = self.path / "control.lock"
-            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            fd = open_nofollow(path, os.O_RDWR | os.O_CREAT, 0o600)
             try:
                 private_file(path)
                 deadline = time.monotonic() + timeout
                 pause = 0.0005  # the lock is held for one small write: poll fast, then back off
                 while True:
                     try:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        lock_nowait(fd)
                         break
                     except BlockingIOError:
                         if time.monotonic() >= deadline:

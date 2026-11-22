@@ -9,7 +9,7 @@ class ArchitectureTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         forbidden = ("memoryking.adapters", "sqlite3", "psycopg", "httpx", "fastapi", "openai")
         for path in (root / "src/memoryking/domain").rglob("*.py"):
-            for node in ast.walk(ast.parse(path.read_text())):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 names = []
                 if isinstance(node, ast.Import):
                     names = [alias.name for alias in node.names]
@@ -27,6 +27,6 @@ class ArchitectureTests(unittest.TestCase):
         for path in sorted(root.rglob("*")):
             if path.suffix not in (".py", ".sql"):
                 continue
-            for match in positional.finditer(path.read_text()):
+            for match in positional.finditer(path.read_text(encoding="utf-8")):
                 found.append(f"{path.relative_to(root)}: {match.group(0)}")
         self.assertEqual(found, [], "name the columns: INSERT INTO table(col,...) VALUES (...)")

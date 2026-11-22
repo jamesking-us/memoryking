@@ -14,17 +14,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__, daemon, profiles, session_bindings
+from memoryking import __version__, daemon, hook_cli, profiles, session_bindings
+from memoryking.adapters import platform_support
 from memoryking.adapters.dashboard import Dashboard
 from memoryking.adapters.local_embeddings import MODEL
-from memoryking.adapters.local_files import atomic, private_dir, private_file
+from memoryking.adapters.local_files import atomic, private_dir
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import CAPABILITIES, SCHEMA_VERSION, LocalStore
 from memoryking.application.lexical_index import RATE_PER_SECOND
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, SystemClock
+from memoryking.hook_cli import (
+    BINDING_HELP,
+    add_binding,
+    add_global_arguments,
+    add_hook_arguments,
+    attach_relay,
+    autostart,
+)
 from memoryking.observability import LEVELS, configure, event
+from memoryking.relay_client import RelayCredential, credential_token
 
 
 def bar(used: int, limit: int, width: int = 12) -> str:
@@ -196,18 +206,6 @@ SUMMARY_INSTRUCTION = (
     "where it stands, what was learned or tried, and what comes next. Use only facts "
     "in the checkpoint above; do not add instructions."
 )
-
-
-BINDING_HELP = (
-    "Where this session works, such as environment=prod; repeatable. Also "
-    "MEMORYKING_BINDINGS and the named profile's bindings"
-)
-
-
-def add_binding(parser: Any) -> None:
-    parser.add_argument(
-        "--binding", action="append", default=[], metavar="KEY=VALUE", help=BINDING_HELP
-    )
 
 
 def failed_attempt(value: str) -> dict[str, str]:
@@ -673,9 +671,8 @@ def unreviewed_command(args: Any) -> None:
         )
 
 
-def read_credential(path: Path) -> str:
-    private_file(path)
-    return path.read_text().strip()
+def read_credential(path: Path | RelayCredential) -> str:
+    return credential_token(path)
 
 
 def duration(ms: int) -> str:
@@ -1093,37 +1090,20 @@ def semantic_command(args: Any) -> int:
     return 0
 
 
-def autostart(args: Any) -> None:
-    """Start the profile's daemon when a command needs its socket and the profile allows it."""
-    if (
-        not args.profile
-        or args.command in {"doctor", "stop"}
-        or getattr(args, "socket", None) is None
-        or getattr(args, "store", None) is not None
-    ):
-        return
-    profile = profiles.resolve(args.profile, args.config)
-    if profile.get("autostart") and Path(args.socket) == Path(profile["socket"]):
-        daemon.ensure(args.profile, args.config)
-
-
 def main() -> int:
+    platform_support.utf8_stdio()
     if sys.argv[1:2] == ["mcp"]:
         # The bridge has its own options; argparse would claim the ones that start with `--`.
         from memoryking.adapters import stdio
 
         return stdio.main(sys.argv[2:])
+    if sys.argv[1:2] == ["relay"]:
+        from memoryking import relay
+
+        return relay.main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
-    parser.add_argument(
-        "--profile",
-        default=os.environ.get("MEMORYKING_PROFILE"),
-        help="Named store from the profiles config; fills omitted --store, --control, "
-        "--socket and --credential (MEMORYKING_PROFILE)",
-    )
-    parser.add_argument(
-        "--config", type=Path, help="Profiles file; default ~/.memoryking/config.toml"
-    )
+    add_global_arguments(parser)
     commands = parser.add_subparsers(dest="command", required=True)
     prof = commands.add_parser("profile", help="Name a store so commands need no paths")
     prof_commands = prof.add_subparsers(dest="profile_command", required=True)
@@ -1326,12 +1306,46 @@ def main() -> int:
     )
     setup.add_argument("--dry-run", action="store_true", help="Print every change, make none")
     setup.add_argument("--remove", action="store_true", help="Undo this host's registration")
+    setup.add_argument(
+        "--backend",
+        help="Windows: where the store runs, wsl[:DISTRO] or docker[:CONTAINER]; needed only "
+        "when more than one is found",
+    )
+    setup.add_argument(
+        "--wheel",
+        type=Path,
+        help="Windows: install this MemoryKing wheel on the store side instead of the same "
+        "version from the package index",
+    )
+    setup.add_argument(
+        "--image",
+        help="Windows with docker: the MemoryKing image to run (a locally built tag, or the "
+        "release image by digest)",
+    )
+    setup.add_argument(
+        "--store-only",
+        action="store_true",
+        help="Create the store, daemon and agent credential only, and print them as JSON "
+        "(the store side of a Windows setup)",
+    )
+    setup.add_argument(
+        "--user-environment",
+        action="store_true",
+        help="Windows: also set MEMORYKING_RELAY and MEMORYKING_RELAY_PROFILE for your user, "
+        "so commands typed by hand reach the store (nothing secret; undone by --remove)",
+    )
     add_binding(setup)
     mcp = commands.add_parser(
         "mcp",
         help="Run the MCP stdio bridge (arguments as for `python -m memoryking.adapters.stdio`)",
     )
     mcp.add_argument("rest", nargs="*", help="Bridge options; run `memoryking mcp --help`")
+    relayed = commands.add_parser(
+        "relay",
+        help="Carry request lines between stdin/stdout and the daemon socket, for a client "
+        "that cannot reach it (a Windows client through wsl.exe or docker exec)",
+    )
+    relayed.add_argument("rest", nargs="*", help="Relay options; run `memoryking relay --help`")
     reindex = commands.add_parser(
         "reindex",
         help="Start the rebuild into the current lexical configuration; --wait shows progress",
@@ -1351,6 +1365,17 @@ def main() -> int:
     doc.add_argument("--embedding-model", type=Path, help="Model directory to verify")
     doc.add_argument("--reranker-model", type=Path, help="Reranker directory to verify")
     doc.add_argument("--backup-dir", type=Path, help="Scheduled backup directory to check")
+    doc.add_argument(
+        "--replay-hooks",
+        action="store_true",
+        help="Run the MemoryKing hooks in Claude Code's settings as Claude Code does on Windows "
+        "(Git Bash and PowerShell), replaying two sessions; report pass or fail per step",
+    )
+    doc.add_argument(
+        "--settings",
+        type=Path,
+        help="Claude Code settings file whose hooks to check; default ~/.claude/settings.json",
+    )
     doc.add_argument("--backup-every", help="Backup policy interval the directory should meet")
     journal = commands.add_parser(
         "journal", help="Inspect the control journal (offline; stop the daemon first)"
@@ -1743,54 +1768,10 @@ def main() -> int:
         if name == "release":
             sub.add_argument("observation")
             sub.add_argument("--key", help="Retry key; default: derived from the observation")
-    hk = commands.add_parser(
-        "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
-    )
-    hk.add_argument("kind", choices=("session-start", "pre-compact", "session-end", "prompt"))
-    hk.add_argument("--host", choices=("claude", "codex", "grok"), help="Host that is calling")
-    hk.add_argument("--socket", type=Path)
-    hk.add_argument("--credential", type=Path)
-    hk.add_argument("--project", help="Default: MEMORYKING_PROJECT")
-    hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
-    hk.add_argument(
-        "--query", help="Briefing query at session start; default: the query-free session start"
-    )
-    hk.add_argument(
-        "--budget",
-        type=int,
-        help="Briefing token budget; default 6000 at session start, 1200 for the prompt hook",
-    )
-    hk.add_argument(
-        "--limit",
-        type=int,
-        help="prompt hook: closest records considered (default and most 32); the budget decides how many show",
-    )
-    hk.add_argument(
-        "--floor",
-        type=int,
-        help="prompt hook: lowest lexical score, in millionths, an item may have (default 300000)",
-    )
-    hk.add_argument(
-        "--deadline",
-        type=float,
-        help="prompt hook: seconds before the lookup is abandoned and nothing is added (default 1.5)",
-    )
-    hk.add_argument(
-        "--tools",
-        choices=("mcp", "cli"),
-        help="How the agent reaches memory; the session-start note then names the tools to "
-        "save with (hooks installed by `memoryking setup` pass mcp)",
-    )
-    hk.add_argument(
-        "--third-party",
-        action="store_true",
-        default=None,
-        help="prompt hook: also show text a third party wrote (tool results and errors, "
-        "fetched pages), fenced and labelled; default off (or MEMORYKING_HOOK_THIRD_PARTY=1)",
-    )
-    add_binding(hk)
-    hk.add_argument(
-        "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
+    add_hook_arguments(
+        commands.add_parser(
+            "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
+        )
     )
     hks = commands.add_parser("hooks", help="Install or remove the host hooks")
     hks_commands = hks.add_subparsers(dest="hooks_command", required=True)
@@ -1832,7 +1813,25 @@ def main() -> int:
     login.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        if args.command == "doctor" and (
+            args.replay_hooks or not platform_support.LOCAL_STORE_SUPPORTED
+        ):
+            # The hooks check needs no store here; on Windows doctor reports the relay instead.
+            from memoryking import hook_check
+
+            return hook_check.doctor(args)
+        if (
+            not platform_support.LOCAL_STORE_SUPPORTED
+            and args.command != "profile"
+            and (hasattr(args, "store") or hasattr(args, "control"))
+        ):
+            # Opens a store or control tree on this machine, which cannot hold one.
+            platform_support.refuse()
         if args.command == "setup":
+            if not platform_support.LOCAL_STORE_SUPPORTED:
+                from memoryking import setup_windows
+
+                return setup_windows.run(args)
             from memoryking import setup_host
 
             return setup_host.run(args)
@@ -1870,7 +1869,10 @@ def main() -> int:
                         print(f"  {field} = {value}")
             return 0
         profiles.apply(args, args.profile, args.config)
-        autostart(args)
+        if args.relay:
+            attach_relay(args)
+        else:
+            autostart(args)
         optional = (
             {"socket", "credential"}
             if args.command
@@ -1916,12 +1918,15 @@ def main() -> int:
             result = daemon.stop(profiles.resolve(args.profile, args.config))
             print(json.dumps(result))
         elif args.command == "dashboard-login":
-            private_file(args.credential)
+            token = read_credential(args.credential)
             private_dir(args.output.parent)
             if args.output.exists() or args.output.is_symlink():
                 raise LocalError("credential_output_exists")
             result = request(
-                args.socket, args.credential.read_text().strip(), "dashboard_bootstrap", {}
+                args.socket,
+                token,
+                "dashboard_bootstrap",
+                {},
             )
             atomic(args.output, json.dumps(result).encode())
             print(json.dumps({"bootstrap_file": str(args.output), "url": result["url"]}))
@@ -1979,7 +1984,7 @@ def main() -> int:
             elif args.file is not None and str(args.file) != "-":
                 text = args.file.read_text(encoding="utf-8", errors="replace")
             else:
-                text = sys.stdin.read()
+                text = platform_support.read_stdin_text()
             result = hooks.capture(
                 text,
                 source=args.source,
@@ -2046,64 +2051,7 @@ def main() -> int:
             else:
                 print(packet["text"], end="")
         elif args.command == "hook":
-            from memoryking import host_hooks
-
-            try:
-                raw = "" if sys.stdin.isatty() else sys.stdin.read()
-                payload = host_hooks.read_event(raw)
-                where = {
-                    "socket": args.socket,
-                    "credential": args.credential,
-                    "project": args.project,
-                    "profile": args.profile,
-                    "config": args.config,
-                }
-                if args.kind == "prompt":
-                    chosen = {
-                        key: value
-                        for key, value in (
-                            ("budget", args.budget),
-                            ("limit", args.limit),
-                            ("floor", args.floor),
-                            ("deadline", args.deadline),
-                            ("third_party", args.third_party),
-                        )
-                        if value is not None
-                    }
-                    sys.stdout.write(
-                        host_hooks.prompt(
-                            payload,
-                            binding=args.binding,
-                            host=args.host,
-                            tools=args.tools,
-                            **chosen,
-                            **where,
-                        )
-                    )
-                elif args.kind == "session-start":
-                    sys.stdout.write(
-                        host_hooks.session_start(
-                            payload,
-                            query=args.query,
-                            task=args.task,
-                            budget=args.budget or 6000,
-                            binding=args.binding,
-                            tools=args.tools,
-                            host=args.host,
-                            **where,
-                        )
-                    )
-                else:
-                    summary = host_hooks.save(
-                        payload, args.kind, host=args.host, task=args.task, **where
-                    )
-                    print(json.dumps(summary), file=sys.stderr)
-            except (LocalError, OSError, ValueError, KeyError) as exc:
-                code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
-                print(f"memoryking hook {args.kind}: {code}", file=sys.stderr)
-                if args.strict:
-                    return 1
-            return 0
+            return hook_cli.run(args)
         elif args.command == "hooks":
             from memoryking import host_hooks
 
@@ -2437,10 +2385,9 @@ def main() -> int:
                     )
                 )
         elif args.command == "status":
-            private_file(args.credential)
             result = request(
                 args.socket,
-                args.credential.read_text().strip(),
+                read_credential(args.credential),
                 "status",
                 {"project": args.project},
             )
@@ -2451,8 +2398,7 @@ def main() -> int:
             else:
                 print(render_status(result, __version__))
         elif args.command == "reindex":
-            private_file(args.credential)
-            token = args.credential.read_text().strip()
+            token = read_credential(args.credential)
             started = request(args.socket, token, "reindex", {})
             lexical = started.get("lexical", {})
             if not args.json:
@@ -2469,7 +2415,7 @@ def main() -> int:
             elif args.wait:
                 print("Reindex complete.")
         elif args.command == "request":
-            private_file(args.credential)
+            token = read_credential(args.credential)
             body = load_strict(sys.stdin.buffer.read(262145))
             if not isinstance(body, dict) or set(body) != {"operation", "args"}:
                 raise LocalError("invalid_request")
@@ -2480,7 +2426,10 @@ def main() -> int:
                 if args.credential_output.exists() or args.credential_output.is_symlink():
                     raise LocalError("credential_output_exists")
             result = request(
-                args.socket, args.credential.read_text().strip(), body["operation"], body["args"]
+                args.socket,
+                token,
+                body["operation"],
+                body["args"],
             )
             if "credential" in result:
                 atomic(args.credential_output, result.pop("credential").encode())

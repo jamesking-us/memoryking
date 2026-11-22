@@ -4,7 +4,7 @@ This guide takes you from an installed package to an agent that remembers, with 
 
 ## 1. Install
 
-Use Python 3.12 (3.13 also works for the core install); the reference patch is recorded in [`.python-version`](../.python-version). The local service is exercised on macOS. Linux containers are exercised separately; Windows is not a supported local target yet.
+Use Python 3.12 (3.13 also works for the core install); the reference patch is recorded in [`.python-version`](../.python-version). The local service is exercised on macOS. Linux containers are exercised separately. On Windows, follow [the Windows path](#on-windows) below instead.
 
 ```sh
 python3.12 -m venv .venv
@@ -38,6 +38,24 @@ Restart the host, ask it to "remember that the deploy script needs the VPN", and
 ```
 
 `status` includes whether the service is running, whether it starts on demand and where its log is (`daemon.log` in the store directory). To rotate the credential later, use `credential issue --rotate` (see the reference below).
+
+### On Windows
+
+Windows runs the agent's side of MemoryKing itself and keeps the memory in WSL2 or Docker Desktop on the same machine, so you need one of those first (`wsl --install` in an administrator terminal, or Docker Desktop with Linux containers). Then, in PowerShell, with [uv](https://docs.astral.sh/uv/) or any Python 3.12:
+
+```powershell
+uv venv --seed --python 3.12 .venv
+.venv\Scripts\python -I -m pip install memoryking
+.venv\Scripts\memoryking setup claude-code --project my-app
+```
+
+Setup says what it found and which one it uses. If you have both WSL2 and Docker Desktop, it asks you to choose by running it again with `--backend wsl:Ubuntu` (your distro's name) or `--backend docker --image memoryking:local` ([the image](deployment.md#windows)). It installs the same MemoryKing version on that side, creates the store there, writes the Claude Code hooks and prints the MCP command to run, then checks the whole path and ends with one line:
+
+```text
+MemoryKing works: wsl:Ubuntu, project my-app, version 0.1.0 on both sides
+```
+
+`--dry-run` shows every change first, and `--remove` undoes the Windows side. `.venv\Scripts\memoryking doctor` reports the back end, both versions and the next step when something is wrong. The [deployment guide](deployment.md#windows) covers upgrades, removal and what is not supported.
 
 ## 3. Try the complete example
 

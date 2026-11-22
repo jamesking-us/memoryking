@@ -27,7 +27,7 @@ from memoryking.domain.passages import split
 EMBED_PASSAGES = False
 
 VALIDATOR = Draft202012Validator(
-    json.loads(Path(__file__).with_name("embedding.schema.json").read_text())
+    json.loads(Path(__file__).with_name("embedding.schema.json").read_text(encoding="utf-8"))
 )
 
 

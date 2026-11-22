@@ -155,6 +155,7 @@ class RepositoryGitTests(unittest.TestCase):
             "discovered_not_run",
         )
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "needs POSIX named pipes (os.mkfifo)")
     def test_symlink_directory_and_fifo_are_never_followed_or_blocking(self):
         outside = Path(self.tmp.name) / "outside"
         outside.mkdir()

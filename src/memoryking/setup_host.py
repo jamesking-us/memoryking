@@ -96,7 +96,7 @@ class Files:
         self.state: dict[str, Any] = {"files": {}}
         self.pending: list[tuple[Path, str]] = []  # what a dry run would write
         if state_path.exists():
-            self.state = json.loads(state_path.read_text())
+            self.state = json.loads(state_path.read_text(encoding="utf-8"))
 
     def write(self, path: Path, text: str) -> str:
         """Write `text` to `path`; returns created, changed or unchanged."""
@@ -157,7 +157,7 @@ class Files:
         if updated is None or updated == current.decode():
             return "unchanged"
         if not self.dry:
-            path.write_text(updated)
+            path.write_text(updated, encoding="utf-8")
         return "edited"
 
 
@@ -234,6 +234,16 @@ def ensure_store(
     }, True
 
 
+def refuse_foreign_filesystem(path: Path) -> None:
+    """A store on a Windows drive, NTFS or a network share would lose owner-only modes and
+    rename durability; refuse it before anything is created."""
+    from memoryking.adapters.platform_support import FOREIGN_FILESYSTEMS, filesystem_type
+
+    kind = filesystem_type(path)
+    if kind in FOREIGN_FILESYSTEMS:
+        raise LocalError("store_filesystem_unsupported", detail={"path": str(path)})
+
+
 def duration_ms(text: str) -> int:
     if len(text) < 2 or text[-1] not in DURATIONS or not text[:-1].isdigit():
         raise LocalError("invalid_duration")
@@ -244,7 +254,10 @@ def credential_usable(profile: dict[str, Any], path: Path, project: str) -> bool
     """The agent credential exists, works for the project and holds every needed capability."""
     try:
         context = request(
-            Path(profile["socket"]), path.read_text().strip(), "context", {"project": project}
+            Path(profile["socket"]),
+            path.read_text(encoding="utf-8").strip(),
+            "context",
+            {"project": project},
         )
     except (LocalError, OSError):
         return False
@@ -269,7 +282,7 @@ def ensure_credential(
     grant["for_user"] = "@self"
     if args.expires:
         grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
-    owner = Path(profile["credential"]).read_text().strip()
+    owner = Path(profile["credential"]).read_text(encoding="utf-8").strip()
     # Restating a grant returns the principal's current credential, so a second project (or
     # a lost file) never invalidates another host's credential; rotation stays explicit.
     token = request(Path(profile["socket"]), owner, "grant", grant)["credential"]
@@ -319,6 +332,9 @@ def run(args: Any) -> int:
     if args.remove:
         return remove(args, files, home, cwd)
     say: dict[str, str] = {}
+    store_only = getattr(args, "store_only", False)
+    if store_only:
+        refuse_foreign_filesystem(args.data_dir or home / ".memoryking" / name)
     profile, created = ensure_store(name, args, home, config, say)
     control = Path(profile["control"])
     credential = control / f"{args.principal}.credential"
@@ -348,6 +364,11 @@ def run(args: Any) -> int:
             )
         )
     ensure_credential(profile, args, credential, args.dry_run, say)
+    if store_only:
+        # The store side of a Windows setup: the host is configured on the Windows side,
+        # which reaches this store through `memoryking relay --profile AGENT_PROFILE`.
+        print(json.dumps({"agent_profile": agent_profile, "store": profile["store"], "say": say}))
+        return 0
     command = bridge_command(agent_profile, args.project, args.binding)
     say["mcp"], printed = register(args, files, home, command)
     if not HOOK_HOST.get(args.host):
@@ -379,7 +400,7 @@ def register(args: Any, files: Files, home: Path, command: list[str]) -> tuple[s
     """Register the bridge with the host; returns (summary line, lines for the user to run)."""
     if args.host == "codex":
         path = home / ".codex" / "config.toml"
-        text = path.read_text() if path.exists() else ""
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
         try:
             outcome = files.write(path, codex_with(text, codex_block(command)))
         except LocalError as exc:
@@ -480,7 +501,7 @@ def semantic_step(name: str, args: Any, profile: dict[str, Any], say: dict[str, 
         print(semantic.consent(), flush=True)
         model_install.install(semantic.model_dir(), semantic.MODEL)
     socket = Path(profile["socket"])
-    token = (Path(profile["control"]) / "owner.credential").read_text().strip()
+    token = (Path(profile["control"]) / "owner.credential").read_text(encoding="utf-8").strip()
     if (
         request(socket, token, "status", {"project": args.project}).get("semantic", {}).get("model")
         != semantic.MODEL
@@ -502,8 +523,10 @@ def summary(args: Any, say: dict[str, str], printed: list[str], files: Files) ->
         f"{prefix}MCP bridge: {say['mcp']}",
         f"{prefix}session hooks: {say['hooks']}",
         f"{prefix}semantic search: {say['semantic']}",
-        f"undo: memoryking setup {args.host} --project {args.project} --remove",
     ]
+    if "environment" in say:  # Windows: the per-user relay variables
+        lines.append(f"{prefix}user environment: {say['environment']}")
+    lines.append(f"undo: memoryking setup {args.host} --project {args.project} --remove")
     for path, text in files.pending:
         printed = [*printed, f"--- {path} would contain:", text.rstrip("\n")]
     print("\n".join(lines + [""] * bool(printed) + printed))

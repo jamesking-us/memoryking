@@ -15,6 +15,12 @@ import unittest.mock
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+if sys.platform == "win32":
+    raise unittest.SkipTest(
+        "the benchmark harness runs agents and task steps through POS"
+        "IX shell scripts and tools; it runs on Linux and macOS"
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
     "outcome_benchmark", ROOT / "tools/outcome_benchmark.py"

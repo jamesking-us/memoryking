@@ -16,6 +16,7 @@ from test_consolidation_cli import Provider
 
 from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_store import LocalStore
+from memoryking.adapters.platform_support import process_alive
 from memoryking.consolidation import ConsolidationSupervisor
 
 KEY_NAME = "provider-api.key"
@@ -53,11 +54,8 @@ class KeyedProvider(Provider):
 
 
 def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
+    # Not os.kill(pid, 0): on Windows that is a Ctrl-C to the whole console, test runner too.
+    return process_alive(pid)
 
 
 def wait_for(condition, seconds=30.0):
@@ -111,6 +109,7 @@ class SupervisorTests(unittest.TestCase):
             running.stop()
             self.assertFalse(any(alive(pid) for pid in pids))
 
+    @unittest.skipUnless(hasattr(signal, "SIGKILL"), "needs POSIX signals (SIGKILL)")
     def test_a_child_ends_when_the_process_that_launched_it_is_killed(self):
         middle = (
             "import subprocess, sys;"

@@ -6,7 +6,8 @@
       "examples/remember_and_resume.py"
     ],
     "exit_code": 0,
-    "contains": "Walkthrough passed."
+    "contains": "Walkthrough passed.",
+    "needs_store": true
   },
   {
     "id": "validate-observation",
@@ -39,7 +40,8 @@
       "tmp/checks/example-scenarios.json"
     ],
     "exit_code": 0,
-    "contains": "not_evaluated"
+    "contains": "not_evaluated",
+    "needs_store": true
   },
   {
     "id": "strict-release-gate",
@@ -51,7 +53,8 @@
       "tmp/checks/example-gate.json"
     ],
     "exit_code": 2,
-    "contains": "not_evaluated"
+    "contains": "not_evaluated",
+    "needs_store": true
   },
   {
     "id": "pilot-budget",
@@ -70,7 +73,8 @@
       "tools/local_demo.py"
     ],
     "exit_code": 0,
-    "contains": "restore_replays_purge_and_retires_history"
+    "contains": "restore_replays_purge_and_retires_history",
+    "needs_store": true
   },
   {
     "id": "knowledge-cli-workflow",
@@ -79,7 +83,8 @@
       "tools/knowledge_demo.py"
     ],
     "exit_code": 0,
-    "contains": "attributed_no_model_episode"
+    "contains": "attributed_no_model_episode",
+    "needs_store": true
   },
   {
     "id": "briefing-cli-workflow",
@@ -88,7 +93,8 @@
       "tools/briefing_demo.py"
     ],
     "exit_code": 0,
-    "contains": "exact_replay_bytes"
+    "contains": "exact_replay_bytes",
+    "needs_store": true
   },
   {
     "id": "working-cli-workflow",
@@ -97,7 +103,8 @@
       "tools/working_demo.py"
     ],
     "exit_code": 0,
-    "contains": "ambiguous_operation_reconciled_without_repeat"
+    "contains": "ambiguous_operation_reconciled_without_repeat",
+    "needs_store": true
   },
   {
     "id": "stdio-sdk-workflow",
@@ -106,7 +113,8 @@
       "tools/stdio_demo.py"
     ],
     "exit_code": 0,
-    "contains": "real_mcp_stdio_subprocess"
+    "contains": "real_mcp_stdio_subprocess",
+    "needs_store": true
   },
   {
     "id": "handoff-sdk-workflow",
@@ -115,7 +123,8 @@
       "tools/handoff_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"verification_gap_retained\": true"
+    "contains": "\"verification_gap_retained\": true",
+    "needs_store": true
   },
   {
     "id": "trusted-local-inference",
@@ -124,7 +133,8 @@
       "tools/inference_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"actual_request_excludes_purged_and_derived_content\": true"
+    "contains": "\"actual_request_excludes_purged_and_derived_content\": true",
+    "needs_store": true
   },
   {
     "id": "reference-harness-crash-workflow",
@@ -133,7 +143,8 @@
       "tools/harness_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"readback_reconciled_without_rewrite\": true"
+    "contains": "\"readback_reconciled_without_rewrite\": true",
+    "needs_store": true
   },
   {
     "id": "reference-agent-command-help",
@@ -153,7 +164,8 @@
       "tools/repository_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"paused_worker_unrelated_guidance\": \"complete\""
+    "contains": "\"paused_worker_unrelated_guidance\": \"complete\"",
+    "needs_store": true
   },
   {
     "id": "atlas-sdk-workflow",
@@ -162,7 +174,8 @@
       "tools/atlas_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"authorized_atlas_graph_and_list\": true"
+    "contains": "\"authorized_atlas_graph_and_list\": true",
+    "needs_store": true
   },
   {
     "id": "delta-full-model-context",
@@ -171,7 +184,8 @@
       "tools/delta_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"model_token_savings_claimed\": false"
+    "contains": "\"model_token_savings_claimed\": false",
+    "needs_store": true
   },
   {
     "id": "processing-compiler",
@@ -180,7 +194,8 @@
       "tools/processing_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"passed\": true"
+    "contains": "\"passed\": true",
+    "needs_store": true
   },
   {
     "id": "experience-procedures-ranking",
@@ -189,7 +204,8 @@
       "tools/experience_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"exact_replay_preserved\": true"
+    "contains": "\"exact_replay_preserved\": true",
+    "needs_store": true
   },
   {
     "id": "legacy-migration-cli",
@@ -198,7 +214,8 @@
       "tools/migration_demo.py"
     ],
     "exit_code": 0,
-    "contains": "\"repeat_created_no_duplicates\": true"
+    "contains": "\"repeat_created_no_duplicates\": true",
+    "needs_store": true
   },
   {
     "id": "evaluation-custody-and-cost-audit",
@@ -222,7 +239,8 @@
       "tools/plans_demo.py"
     ],
     "exit_code": 0,
-    "contains": "Plan progress: 1 of 2 steps completed (50%)"
+    "contains": "Plan progress: 1 of 2 steps completed (50%)",
+    "needs_store": true
   },
   {
     "id": "host-hooks",
@@ -231,7 +249,8 @@
       "tools/hooks_demo.py"
     ],
     "exit_code": 0,
-    "contains": "Hooks replayed"
+    "contains": "Hooks replayed",
+    "needs_store": true
   },
   {
     "id": "memory-tool-demo",
@@ -240,7 +259,8 @@
       "tools/memory_tool_demo.py"
     ],
     "exit_code": 0,
-    "contains": "Memory tool demo passed."
+    "contains": "Memory tool demo passed.",
+    "needs_store": true
   },
   {
     "id": "client-python",
@@ -249,7 +269,8 @@
       "examples/client_python.py"
     ],
     "exit_code": 0,
-    "contains": "Client example passed."
+    "contains": "Client example passed.",
+    "needs_store": true
   },
   {
     "id": "client-typescript",
@@ -258,7 +279,8 @@
       "examples/client_typescript.py"
     ],
     "exit_code": 0,
-    "contains": "TypeScript client example passed."
+    "contains": "TypeScript client example passed.",
+    "needs_store": true
   },
   {
     "id": "outcome-benchmark-validate",
@@ -291,6 +313,7 @@
       "examples/integrations/with_function_calling.py"
     ],
     "exit_code": 0,
-    "contains": "Function-calling example passed."
+    "contains": "Function-calling example passed.",
+    "needs_store": true
   }
 ]

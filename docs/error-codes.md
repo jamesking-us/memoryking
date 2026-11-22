@@ -411,6 +411,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `hook_command_unsafe` | A hook command word would read differently in Git Bash and PowerShell (see `problem`); avoid $ ` " \ ! % and commas in values. |
 | `hook_config_invalid` | The host's hook config file is not a JSON object; fix or remove it before installing. |
 | `hook_event_invalid` | The host sent something other than one JSON object on stdin; run the hook from the host, not by hand. |
 
@@ -575,6 +576,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `local_io_or_configuration_error` | A file or directory could not be read or written; check the path, its permissions, and that the daemon is running. |
+| `local_store_unsupported` | Windows runs the agent-side tools but not the memory store: run the store in WSL2 or Docker Desktop (deployment guide, Windows). |
 
 ## loopback
 
@@ -795,6 +797,15 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `redirect_forbidden` | The shared service URL redirected; use the final HTTPS URL directly. |
 
+## relay
+
+| Code | What to do |
+| --- | --- |
+| `relay_interrupted` | The relay ended after the request was sent, so its outcome is unknown; read the current state before repeating a change. |
+| `relay_invalid` | `--relay` must be wsl:DISTRO or docker:CONTAINER, with --socket and --credential as absolute paths on that side. |
+| `relay_unavailable` | The relay could not start or has ended; check that the WSL2 distro or the container is running with MemoryKing installed (`--relay-python`). |
+| `relay_version_mismatch` | The store side runs another MemoryKing version (see `found`); install the same version on both sides, then retry. |
+
 ## release
 
 | Code | What to do |
@@ -925,6 +936,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `setup_check_failed` | Setup finished, but a capture made through the relay was not recalled; run `memoryking doctor` for what is wrong. |
 | `setup_config_unsupported` | Setup writes the default profiles file, ~/.memoryking/config.toml; unset MEMORYKING_CONFIG and --config, or register the bridge by hand. |
 
 ## shared
@@ -968,7 +980,15 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `store_backend_ambiguous` | More than one place could hold the store (see `found`); choose one with `--backend`, for example --backend wsl:Ubuntu or --backend docker. |
+| `store_backend_missing` | Windows keeps the memory store in WSL2 or Docker Desktop and neither was found; install one (see `install`; needs admin rights, maybe a restart). |
+| `store_extras_mismatch` | The store side lacks an extra this side uses (see `extra`, `missing_on`); install it on both sides, or remove it here. |
+| `store_filesystem_unsupported` | The store must be on the Linux side's own file system, not a Windows drive, NTFS or a network share; use a path in the Linux home. |
+| `store_image_required` | Docker needs the MemoryKing image: --image memoryking:local (built as the deployment guide shows) or the release image by digest. |
+| `store_install_failed` | Installing MemoryKing on the store side failed; see ~/.local/share/memoryking/install.log there, or pass a local wheel with --wheel. |
+| `store_python_missing` | The WSL2 distro needs Python 3.12 or 3.13 with venv: `sudo apt install python3.12-venv` (Ubuntu 24.04), or `uv python install 3.12`. |
 | `store_required` | Pass `--store PATH` or use `--profile NAME`. |
+| `store_version_mismatch` | The store side has another MemoryKing version (see `found`); install the same version on both sides (--wheel, or the release image by digest). |
 
 ## summary
 

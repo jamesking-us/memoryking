@@ -52,7 +52,7 @@ def load(path: Path | None = None) -> dict[str, dict[str, Any]]:
         return {}
     private_file(path)
     try:
-        data = tomllib.loads(path.read_text())
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeError) as exc:
         raise LocalError("profile_config_invalid") from exc
     profiles = data.get("profiles", {})

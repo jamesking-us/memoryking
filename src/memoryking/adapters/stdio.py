@@ -23,6 +23,7 @@ from memoryking.contracts.canonical import ContractError, canonical_bytes, load_
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError
 from memoryking.observability import failure
+from memoryking.relay_client import connect
 from memoryking.sdk import LocalClient
 
 INPUT_LIMIT = 262144
@@ -176,6 +177,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--credential", type=Path, help="Default: the store profile's credential")
     parser.add_argument("--project", required=True)
     parser.add_argument(
+        "--relay",
+        default=os.environ.get("MEMORYKING_RELAY"),
+        help="Reach the daemon through a relay: wsl:DISTRO or docker:CONTAINER; --socket "
+        "and --credential are then paths on that side (MEMORYKING_RELAY)",
+    )
+    parser.add_argument(
+        "--relay-python",
+        default=os.environ.get("MEMORYKING_RELAY_PYTHON"),
+        help="Python with MemoryKing on the relay's side (MEMORYKING_RELAY_PYTHON)",
+    )
+    parser.add_argument(
+        "--relay-profile",
+        default=os.environ.get("MEMORYKING_RELAY_PROFILE"),
+        help="Named profile on the relay's side: its socket, credential and on-demand "
+        "daemon start (MEMORYKING_RELAY_PROFILE)",
+    )
+    parser.add_argument(
         "--profile",
         choices=("full", "lean"),
         default="lean",
@@ -206,6 +224,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         name = args.store_profile or os.environ.get("MEMORYKING_PROFILE")
+        if args.relay:
+            # One relay for the bridge's lifetime: its start-up is paid once. With
+            # --relay-profile the store side finds its socket and credential itself.
+            name = None
+            args.socket, args.credential = connect(
+                args.relay, args.socket, args.credential, args.relay_python, args.relay_profile
+            )
         if name and (args.socket is None or args.credential is None):
             resolved = profiles.resolve(name)
             args.socket = args.socket or Path(resolved["socket"])
@@ -214,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             raise LocalError("socket_required" if args.socket is None else "credential_required")
         bindings = session_bindings.resolve(args.binding, profile=args.store_profile)
         restart = None
-        if name and profiles.resolve(name).get("autostart"):
+        if not args.relay and name and profiles.resolve(name).get("autostart"):
             daemon.ensure(name)  # the profile lets the bridge start the daemon
 
             def restart() -> bool:

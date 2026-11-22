@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import errno
-import fcntl
 import hashlib
 import hmac
 import os
@@ -17,6 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from memoryking.adapters.operations_log import OperationsCache, OperationsLog
+from memoryking.adapters.platform_support import (
+    fcntl,
+    lock_nowait,
+    open_nofollow,
+    owned_by_current_user,
+    require_local_store,
+)
 from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.local import LocalError
 
@@ -35,7 +41,7 @@ def durable_sync(fd: int) -> None:
     It falls back to ``os.fsync`` only when the call is unsupported for that descriptor.
     """
     full = getattr(fcntl, "F_FULLFSYNC", None)
-    if full is not None:
+    if fcntl is not None and full is not None:
         try:
             fcntl.fcntl(fd, full)
             return
@@ -55,6 +61,7 @@ _FULLSYNC_UNSUPPORTED = {
 
 
 def sync_dir(path: Path) -> None:
+    require_local_store()
     fd = os.open(path, os.O_RDONLY)
     try:
         durable_sync(fd)
@@ -63,23 +70,34 @@ def sync_dir(path: Path) -> None:
 
 
 def private_dir(path: Path, *, create: bool = False) -> None:
+    require_local_store()
     if create and not path.exists():
         if not path.parent.exists():
             private_dir(path.parent, create=True)
         path.mkdir(mode=0o700)
         sync_dir(path.parent)
     info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or not owned_by_current_user(info.st_uid)
+        or info.st_mode & 0o077
+    ):
         raise LocalError("unsafe_permissions")
 
 
 def private_file(path: Path) -> None:
+    require_local_store()
     info = path.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or not owned_by_current_user(info.st_uid)
+        or info.st_mode & 0o077
+    ):
         raise LocalError("unsafe_permissions")
 
 
 def atomic(path: Path, data: bytes) -> None:
+    require_local_store()
     if path.exists() or path.is_symlink():
         private_file(path)
     temporary = path.with_name(".stage-" + secrets.token_hex(12))
@@ -137,10 +155,10 @@ class Ownership:
     def __init__(self, directory: Path):
         self.pid = os.getpid()
         path = directory / "owner.lock"
-        self.fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        self.fd = open_nofollow(path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             private_file(path)
-            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_nowait(self.fd)
         except Exception as exc:
             os.close(self.fd)
             raise LocalError("owner_busy_or_unsafe") from exc
