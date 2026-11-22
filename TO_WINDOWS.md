@@ -100,3 +100,10 @@ The owner wants (1) the documentation to be clear that Windows needs WSL2 or Doc
 - `docs/deployment.md`: the Windows section with both back ends, how the daemon is kept running, upgrade (both sides together), removal, and what is not supported (a native Windows store; machines where WSL2 and Docker are both disabled).
 - `docs/reference.md` runtimes section and the refusal error's hint say the same thing in the same words.
 - Every command shown in the docs must have been run by you on that machine; the repository's rule is to exercise examples before calling them runnable.
+
+### 2026-11-22 06:15 UTC: where the Windows requirement must be stated
+The owner wants both the GitHub README and the PyPI release page to explain it. `pyproject.toml` has `readme = "README.md"`, so the PyPI page is the README plus the package metadata. That means, in B4:
+- The README statement goes where a reader meets it **before** the install command (a short "What you need" or equivalent next to the install block), not only in the status paragraph at the bottom: macOS and Linux run everything; Windows runs the agent-side tools natively and needs WSL2 or Docker Desktop for the memory store; then the one setup command. Two or three plain sentences at most, with links written as absolute `https://github.com/jamesking-us/memoryking/blob/main/...` URLs like the README's other links, because relative links do not work on PyPI.
+- `pyproject.toml` classifiers: add `Operating System :: Microsoft :: Windows` only once the Windows client side really installs and runs, since PyPI shows classifiers as supported platforms; the README sentence is what keeps that from overclaiming. If a `Environment`/`Operating System` classifier would mislead, say so and leave it out.
+- The package `description` line may stay as it is.
+- Build the sdist and wheel and check the rendered long description (`python -m build`, then `twine check dist/*` if twine is available in the dev lock; otherwise say how you checked) so the PyPI page renders. Do not upload anything: publishing is the owner's step.
