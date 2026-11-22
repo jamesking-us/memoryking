@@ -71,6 +71,9 @@ if sys.platform != "win32":
     def read_stdin_text() -> str:
         return sys.stdin.read()
 
+    def utf8_stdio() -> None:
+        """Nothing to do: the locale's encoding is what POSIX pipes carry."""
+
 else:
     fcntl = None
 
@@ -104,6 +107,17 @@ else:
         """
         text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         return text.lstrip("﻿").replace("\r\n", "\n")
+
+    def utf8_stdio() -> None:
+        """Write stdout and stderr as UTF-8.
+
+        A piped stream otherwise uses the ANSI code page (often cp1252), which cannot
+        encode a briefing's characters, and hosts read hook output through a pipe.
+        """
+        for stream in (sys.stdout, sys.stderr):
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is not None:
+                reconfigure(encoding="utf-8")
 
     class UnixStreamServer(socketserver.TCPServer):
         """Stands in for the Unix-domain server so modules that subclass it still import."""

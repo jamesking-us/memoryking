@@ -27,6 +27,10 @@ REASON = (
     "needs Windows with MEMORYKING_TEST_RELAY (wsl:DISTRO or docker:CONTAINER) and "
     "MEMORYKING_TEST_RELAY_PYTHON"
 )
+# Python's default on Windows: piped stdout in the ANSI code page, not UTF-8.
+DEFAULT_STDIO = {
+    k: v for k, v in os.environ.items() if k not in {"PYTHONIOENCODING", "PYTHONUTF8"}
+} | {"PYTHONUTF8": "0"}
 START = """
 import json, os, subprocess, sys, tempfile, time
 from pathlib import Path
@@ -95,6 +99,7 @@ class WindowsRelayTests(unittest.TestCase):
             input=stdin,
             capture_output=True,
             timeout=120,
+            env=DEFAULT_STDIO,
         )  # fmt: skip
 
     def test_the_store_side_runs_this_version(self) -> None:
@@ -107,6 +112,13 @@ class WindowsRelayTests(unittest.TestCase):
         brief = self.cli("recall", "--query", "Windows CLI capture daemon")
         self.assertEqual(brief.returncode, 0, brief.stderr)
         self.assertIn("Windows CLI capture reaches the daemon.", brief.stdout.decode("utf-8"))
+
+    def test_output_beyond_the_ansi_code_page_survives_a_pipe(self) -> None:
+        text = "Arrows → and checks ✓ survive the pipe."
+        self.assertEqual(self.cli("capture", "--text", text).returncode, 0)
+        brief = self.cli("recall", "--query", "arrows checks survive pipe")
+        self.assertEqual(brief.returncode, 0, brief.stderr)
+        self.assertIn(text, brief.stdout.decode("utf-8"))
 
     def test_piped_text_loses_powershell_marks_and_crlf_but_keeps_its_characters(self) -> None:
         piped = "﻿﻿Café naïve 3× rule\r\nsecond line\r\n".encode()

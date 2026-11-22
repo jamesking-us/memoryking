@@ -1121,6 +1121,7 @@ def autostart(args: Any) -> None:
 
 
 def main() -> int:
+    platform_support.utf8_stdio()
     if sys.argv[1:2] == ["mcp"]:
         # The bridge has its own options; argparse would claim the ones that start with `--`.
         from memoryking.adapters import stdio
