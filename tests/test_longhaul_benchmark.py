@@ -254,7 +254,11 @@ class UnsolvableWithoutHistoryTests(unittest.TestCase):
                 self.assertTrue(grading.check(ids, work)["passed"], body)
             want = {s.name: s.current for s in export.slots}
             work = make_workdir(export, tmp, "export")
-            for enc, quote, eol in (("utf-16", '"', "\n"), ("utf-8", "'", "\r\n"), ("utf-16-le", "", "\n")):
+            for enc, quote, eol in (
+                ("utf-16", '"', "\n"),
+                ("utf-8", "'", "\r\n"),
+                ("utf-16-le", "", "\n"),
+            ):
                 (work / "ledger/exporter.py").write_text(
                     "def write_orders(rows, path):\n"
                     f"    with open(path, 'w', encoding={enc!r}, newline='') as out:\n"

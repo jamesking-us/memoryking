@@ -162,7 +162,7 @@ add(
             'if raw[:2] in (b"\\xff\\xfe", b"\\xfe\\xff"):\n    text = raw.decode("utf-16")\n'
             'elif b"\\x00" in raw:\n    text = raw.decode("utf-16-le", "replace")\n'
             'else:\n    text = raw.decode("utf-8-sig", "replace")\n'
-            'lines = [x.translate({34: None, 39: None, 96: None}) for x in text.splitlines()]\n'
+            "lines = [x.translate({34: None, 39: None, 96: None}) for x in text.splitlines()]\n"
             'd = lines[1][2:3] if len(lines) > 1 and lines[1][:2] == "A1" else None\n'
             'print(json.dumps({"delimiter": d, "header": lines[0].split(d)[0] if d else None}))\n'
         ),
