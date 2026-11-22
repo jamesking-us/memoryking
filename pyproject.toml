@@ -67,11 +67,13 @@ files = ["src/memoryking"]
 module = [
   "jsonschema",
   "jsonschema.*",
-  # Optional framework adapters import these lazily; they are not installed for this check.
+  # Optional framework adapters and the optional embeddings runtime import these lazily; they
+  # are not installed for this check.
   "claude_agent_sdk",
   "mcp.types",
   "agents",
   "langchain_core.*",
+  "numpy",
   "langgraph.*",
   "llama_index.*",
 ]
