@@ -138,6 +138,36 @@ class ViewTests(unittest.TestCase):
         self.assertIn("found 32+ records", shown)
         self.assertIn("partial list", shown)
 
+    def test_the_store_count_and_the_offset_of_the_first_record_not_shown_are_named(self):
+        items = [{**i, "_at": n} for n, i in enumerate(self.many(30))]
+        counted = {**packet(items), "page": {"matched": 90, "offset": 0}}
+        shown = host_hooks.prompt_view(
+            counted, "Follow what we settled for the export.", 800, 32, TOOLS
+        )
+        count = shown.count("**[g")
+        self.assertIn("found 90 records", shown)
+        self.assertIn(f"{90 - count} more matched and are not shown", shown)
+        self.assertIn(f"`offset` {count}", shown)
+        self.assertIn("`match` `all`", shown)
+        floor = {**counted, "page": {"matched": 90, "offset": 0, "at_least": True}}
+        self.assertIn(
+            "found 90+ records",
+            host_hooks.prompt_view(floor, "Follow what we settled for the export.", 800, 32, TOOLS),
+        )
+        whole = host_hooks.prompt_view(
+            {**packet(items[:3]), "page": {"matched": 3, "offset": 0}},
+            "Follow what we settled for the export.",
+            2000,
+            32,
+            TOOLS,
+        )
+        self.assertNotIn("`offset`", whole)  # nothing further down: nothing to read on
+
+    def test_a_list_cut_to_particular_sentences_leaves_out_the_record_ids(self):
+        shown = self.view(self.many())
+        self.assertNotIn("## Sources", shown)
+        self.assertIn("## Sources", self.view(self.many(3), budget=2000))
+
     def test_the_prompt_word_for_word_and_one_word_overlaps_are_left_out(self):
         query = "please check the export again before the end of the week thanks"
         items = [

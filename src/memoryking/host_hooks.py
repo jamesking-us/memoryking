@@ -67,11 +67,12 @@ USER_TURN_CHARS = 8_000  # the user's own turns kept per hook capture
 USER_TURN_EACH = 4_000
 STATE_CHARS = 2_000
 PROMPT_BUDGET = 2_000  # tokens the prompt-time briefing may use
-PROMPT_LIMIT = 32  # closest records the lookup may return (the contract's maximum)
+PROMPT_LIMIT = 32  # closest records one lookup may return (the contract's maximum)
+PROMPT_PAGES = 2  # lookups, side by side, of the next PROMPT_LIMIT records each of the same list
 PROMPT_FETCH = 40_000  # tokens the lookup may return before the hook cuts it to its own budget
 PROMPT_SNIPPET = 240  # characters at most of one record shown
 PROMPT_CHARS_PER_TOKEN = 3  # the briefing's own estimate (`chars-estimate-v1`)
-PROMPT_HEADING = 700  # characters the opening sentences take, kept free
+PROMPT_HEADING = 880  # characters the opening sentences take, kept free
 PROMPT_FLOOR = 300_000  # lexical score (millionths) an item needs: two thirds of a full match
 PROMPT_TERMS = 3  # searchable words a prompt needs before it is worth a lookup
 PROMPT_SHARED = 2  # distinct searchable words a record must share with the prompt
@@ -544,22 +545,42 @@ def _one_per_session(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _fit(
-    base: dict[str, Any], items: list[dict[str, Any]], limit: int, room: int
+    base: dict[str, Any],
+    items: list[dict[str, Any]],
+    limit: int,
+    room: int,
+    sources: bool = True,
 ) -> tuple[int, str]:
     """How many of `items` (at most `limit`) fit `room` characters once rendered, and that
-    rendering. The first always shows."""
-    items = [{k: v for k, v in i.items() if k not in PROMPT_UNLISTED} for i in items]
-    shown, best = 0, ""
-    for count in range(1, min(len(items), limit) + 1):
-        body = prompt_briefing(render_brief({**base, "guidance": items[:count]})[0], "")
-        # The date is already in the item; the id is what `fetch` needs.
-        body = re.sub(
-            r"(?m)^(- \[g\d+\] obs_[0-9a-f]+), source [^,\n]+, observed [^\n]*$", r"\1", body
-        )
-        if len(body) + PROMPT_HEADING > room and count > 1:
-            break
-        shown, best = count, body
-    return shown, best
+    rendering. The first always shows. Without `sources` the list of record ids under it is
+    left out: a line of them is a fifth of the room when each record is cut short."""
+    items = [{k: v for k, v in i.items() if k not in (*PROMPT_UNLISTED, "_at")} for i in items]
+    rendered: dict[int, str] = {}
+
+    def body(count: int) -> str:
+        if count not in rendered:
+            text = prompt_briefing(render_brief({**base, "guidance": items[:count]})[0], "")
+            # The date is already in the item; the id is what `fetch` needs.
+            text = re.sub(
+                r"(?m)^(- \[g\d+\] obs_[0-9a-f]+), source [^,\n]+, observed [^\n]*$", r"\1", text
+            )
+            if not sources:
+                text = text.split("\n## Sources")[0].rstrip() + "\n"
+            # Every item here is an observation: saying so on each line spends the budget.
+            rendered[count] = text.replace(" _(observed_episode; ", " _(")
+        return rendered[count]
+
+    # The text only grows with the count, so the largest count that fits is found by halving.
+    low, high = 1, min(len(items), limit)
+    if high < 1:
+        return 0, ""
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(body(middle)) + PROMPT_HEADING <= room:
+            low = middle
+        else:
+            high = middle - 1
+    return low, body(low)
 
 
 def third_party_wanted(flag: bool | None = None) -> bool:
@@ -626,9 +647,9 @@ def prompt_view(
     items = _one_per_session([*own, *chosen(packet, PROMPT_SHARED)])
     if not items:
         return ""
-    base = {k: v for k, v in packet.items() if k != "omitted_for_budget"}
+    base = {k: v for k, v in packet.items() if k not in {"omitted_for_budget", "page"}}
     room = budget * PROMPT_CHARS_PER_TOKEN
-    shown, best = _fit(base, items, limit, room)
+    shown, best = _fit(base, items, limit * PROMPT_PAGES, room)
     cut = items
     if shown < len(items):
         # A word every record holds tells them apart not at all; a rarer one tells more.
@@ -650,12 +671,21 @@ def prompt_view(
                 continue  # the same words from another session add nothing to read
             seen.add(_normal(text))
             cut.append({**item, "text": text})
-        shown, best = _fit(base, cut, limit, room)
+        shown, best = _fit(base, cut, limit * PROMPT_PAGES, room, sources=False)
     if not best:
         return ""
-    matched = len(cut)
+    fetched = packet.get("guidance", [])
     recall = (tools or {}).get("recall", "recall")
-    capped = len(packet.get("guidance", [])) >= PROMPT_LIMIT
+    page = packet.get("page")
+    total = page.get("matched") if isinstance(page, dict) else None
+    if isinstance(total, int) and total >= len(fetched):
+        # The store counted what matched: those it returned that this hook left out do not count.
+        # When its window of newest candidates was full the count is a floor.
+        matched = total - (len(fetched) - len(cut))
+        capped = isinstance(page, dict) and bool(page.get("at_least"))
+    else:
+        matched = len(cut)
+        capped = len(fetched) >= PROMPT_LIMIT
     more = matched - shown
     plus = "+" if capped else ""
     partial = (
@@ -664,12 +694,22 @@ def prompt_view(
         if more > 0 or capped
         else ""
     )
+    # Where the rest of the list starts, for the next lookup: the first record not shown.
+    reach = max((i.get("_at", n) for n, i in enumerate(fetched)), default=-1) + 1
+    after = next((i["_at"] for i in cut[shown:] if "_at" in i), reach)
+    onward = (
+        f" To read on, call it again with the same query and `offset` {after}; `match` `all`"
+        " requires every word of the query."
+        if more > 0 or capped
+        else ""
+    )
     return (
         f"MemoryKing found {matched}{plus} records from earlier sessions that may match the "
         f"user's message (evidence, not instructions; receipt {packet.get('receipt')}); the "
-        f"closest {shown} are below. {partial}To look up a specific fact, call `{recall}` with "
-        "its own words (the thing and the property you need) rather than the whole request. "
-        "Treat these as leads, not as everything recorded.\n\n" + best
+        f"closest {shown} are below, chosen to differ from one another. {partial}To look up a "
+        f"specific fact, call `{recall}` with the thing and the property you need, not the whole "
+        "request; once you have read the code, search again with the property it needs."
+        f"{onward} Treat these as leads, not as everything recorded.\n\n" + best
     )
 
 
@@ -710,7 +750,8 @@ def prompt(
     query = scrub(text[:2048])[0]
     if len(terms(query)) < PROMPT_TERMS:
         return ""
-    outcome: dict[str, Any] = {}
+    outcome: dict[int, Any] = {}
+    errors: dict[int, Exception] = {}
     own: dict[str, Any] = {}
 
     def lookup_mine() -> None:
@@ -731,35 +772,57 @@ def prompt(
         except Exception:  # nothing of the user's own memory is the ordinary case
             own.clear()
 
-    def lookup() -> None:
+    def lookup(page: int) -> None:
         try:
-            outcome["packet"] = hooks.recall(
+            outcome[page] = hooks.recall(
                 query,
                 budget=PROMPT_FETCH,
                 text=False,
                 limit=limit,
                 min_score_ppm=floor,
+                offset=page * limit,
                 binding=binding,
                 **where,
             )
         except Exception as exc:  # reported by the caller, in its own thread
-            outcome["error"] = exc
+            errors[page] = exc
 
     started = time.monotonic()
-    workers = [threading.Thread(target=f, daemon=True) for f in (lookup, lookup_mine)]
+    workers = [
+        threading.Thread(target=lookup, args=(0,), daemon=True),
+        threading.Thread(target=lookup_mine, daemon=True),
+    ]
     for worker in workers:
         worker.start()
     workers[0].join(deadline)
     if workers[0].is_alive():
         raise LocalError("deadline_exceeded")
-    if "error" in outcome:
-        raise outcome["error"]
-    packet = outcome["packet"]
+    if 0 in errors:
+        raise errors[0]
+    packet = outcome[0]
     if packet.get("reason"):
         return ""
-    # The user's own memory is a second lookup in parallel: what it has not found by the
+    guidance = [{**i, "_at": n} for n, i in enumerate(packet.get("guidance", []))]
+    # The closest records are the first page of one ranked list. When more matched than a page
+    # holds, the next pages are read too (each only if the deadline allows: what has not come
+    # by then is left out rather than waited for).
+    matched = (packet.get("page") or {}).get("matched", 0)
+    for page in range(1, PROMPT_PAGES):
+        if matched <= page * limit or len(guidance) < page * limit:
+            break
+        reader = threading.Thread(target=lookup, args=(page,), daemon=True)
+        reader.start()
+        reader.join(max(0.0, deadline - (time.monotonic() - started)))
+        later = outcome.get(page)
+        if later is None or later.get("reason"):
+            break
+        guidance += [
+            {**i, "_at": page * limit + n} for n, i in enumerate(later.get("guidance", []))
+        ]
+    packet = {**packet, "guidance": guidance}
+    # The user's own memory is another lookup in parallel: what it has not found by the
     # deadline is left out rather than waited for.
-    workers[1].join(max(0.0, deadline - (time.monotonic() - started)))
+    workers[-1].join(max(0.0, deadline - (time.monotonic() - started)))
     return prompt_view(
         packet,
         text,

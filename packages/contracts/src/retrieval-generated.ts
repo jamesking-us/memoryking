@@ -8,6 +8,9 @@ export interface Brief {
   tokenizer: string;
   top_k?: number;
   min_score_ppm?: number;
+  offset?: number;
+  match?: "any" | "all";
+  file?: string;
   task?: string;
   run?: string;
   valid_ms?: number;

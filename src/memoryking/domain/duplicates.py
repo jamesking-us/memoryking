@@ -24,6 +24,8 @@ the longer one lacks.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from typing import Any
 
 from memoryking.domain.anchors import extract
 from memoryking.domain.lexicon import analyze
@@ -107,6 +109,56 @@ def contained(small: Shape, large: Shape) -> bool:
             if allowed < 0:
                 return False
     return len(small.words) >= MINIMUM_WORDS and small.anchors <= large.anchors
+
+
+def duplicate_clusters(shapes: list[Shape], keys: list[Any]) -> list[list[int]]:
+    """Group the excerpts into clusters of duplicates, in order of first appearance: an excerpt
+    joins the first cluster whose first member it duplicates (and whose `keys` entry equals its
+    own, so a copy in a time range a question names stays apart). The same result as comparing
+    every excerpt with every cluster's first member, without most of the comparisons: two
+    excerpts can only be duplicates when their words other than numbers are the same, so only
+    clusters whose first member has those words are compared."""
+    clusters: list[list[int]] = []
+    buckets: dict[tuple[Any, frozenset[str]], list[int]] = {}
+    for index, mine in enumerate(shapes):
+        key = (keys[index], frozenset(w for w in mine.words if not w.isdigit()))
+        for number in buckets.get(key, ()):
+            if duplicates(shapes[clusters[number][0]], mine):
+                clusters[number].append(index)
+                break
+        else:
+            clusters.append([index])
+            buckets.setdefault(key, []).append(len(clusters) - 1)
+    return clusters
+
+
+def holders(shapes: list[Shape], keys: list[Any]) -> dict[int, int]:
+    """For each excerpt that lies inside another (see `contained`; the other has the same `keys`
+    entry), the shortest such other excerpt, the first of equally long ones. Only longer
+    excerpts are compared, and an excerpt whose longest paragraph is more than a tenth of it
+    must have that paragraph found word for word in the holder."""
+    order = sorted(range(len(shapes)), key=lambda i: len(shapes[i].normalized))
+    lengths = [len(shapes[i].normalized) for i in order]
+    found: dict[int, int] = {}
+    for index, small in enumerate(shapes):
+        size = len(small.normalized)
+        if size < 2 * MINIMUM_WORDS - 1:
+            continue  # no room for eight distinct words
+        longest = max(small.blocks, key=len, default="")
+        must = longest if len(longest) > (1 - COVERAGE) * size else ""
+        best: tuple[int, int] | None = None
+        for position in range(bisect_right(lengths, size), len(order)):
+            other = order[position]
+            if keys[other] != keys[index]:
+                continue
+            big = shapes[other]
+            if (must and must not in big.normalized) or not contained(small, big):
+                continue
+            if best is None or (len(big.text), other) < best:
+                best = (len(big.text), other)
+        if best is not None:
+            found[index] = best[1]
+    return found
 
 
 _VERSION = re.compile(r"^(.+?)__v[0-9]+$")

@@ -93,7 +93,8 @@ TOOLS: list[dict[str, Any]] = [
             "Look up what earlier sessions and the user recorded about what you are about to "
             "do, before you start or when you need a fact: constraints you must follow, then "
             "ranked guidance with [g1]-style citations and a Sources footer, as Markdown. "
-            "Read the status line first; blocked means decide, not truncate."
+            "Read the status line first; blocked means decide, not truncate. A long history "
+            "shows a sample: after reading the code, search again with the exact property."
         ),
         "inputSchema": {
             "type": "object",
@@ -109,6 +110,16 @@ TOOLS: list[dict[str, Any]] = [
                     "minimum": 1,
                     "maximum": 32,
                     "description": "At most this many items. Default: as many distinct items as fit the budget.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1024,
+                    "description": "Skip this many matches (next page).",
+                },
+                "match": {
+                    "enum": ["any", "all"],
+                    "description": "all: every word must appear.",
                 },
                 "task": {
                     **IDENTIFIER,
@@ -822,6 +833,9 @@ def call(
             args["task"] = arguments["task"]
         if "limit" in arguments:
             args["top_k"] = arguments["limit"]
+        for name in ("offset", "match"):
+            if name in arguments:
+                args[name] = arguments[name]
         if "as_of" in arguments:
             from memoryking.hooks import as_of_ms
 

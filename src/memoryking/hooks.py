@@ -215,12 +215,18 @@ def recall(
     time_range: dict[str, int] | None = None,
     limit: int | None = None,
     min_score_ppm: int | None = None,
+    offset: int | None = None,
+    match: str | None = None,
+    file: str | None = None,
     **where: Any,
 ) -> dict[str, Any]:
     """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms.
 
     `limit` caps the items (default: as many distinct items as fit `budget`, up to 32) and
-    `min_score_ppm` leaves out guidance that matches the query less well than that.
+    `min_score_ppm` leaves out guidance that matches the query less well than that. `offset`
+    skips that many of the best matches (the next page of the same list), `match="all"`
+    keeps only records that hold every word of the query, and `file` only those that name
+    that file, function or ticket exactly.
 
     `time_range` (`from_ms` and/or `to_ms`) restricts the search to records observed in it.
 
@@ -254,6 +260,12 @@ def recall(
         args["top_k"] = limit
     if min_score_ppm:
         args["min_score_ppm"] = min_score_ppm
+    if offset:
+        args["offset"] = offset
+    if match:
+        args["match"] = match
+    if file:
+        args["file"] = file
     command = {
         "version": 1,
         "incarnation": context["incarnation"],
