@@ -370,7 +370,9 @@ ENVIRONMENT = ("MEMORYKING_RELAY", "MEMORYKING_RELAY_PROFILE")
 
 def read_user_variable(name: str) -> str | None:
     """A per-user environment variable as stored (HKCU\\Environment), not this process's."""
-    import winreg  # type: ignore[import-not-found,unused-ignore]
+    if sys.platform != "win32":  # the registry is Windows only; this also tells the type checker
+        raise RuntimeError("the Windows registry is not available on this platform")
+    import winreg
 
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
@@ -381,7 +383,9 @@ def read_user_variable(name: str) -> str | None:
 
 
 def write_user_variable(name: str, value: str | None) -> None:
-    import winreg  # type: ignore[import-not-found,unused-ignore]
+    if sys.platform != "win32":
+        raise RuntimeError("the Windows registry is not available on this platform")
+    import winreg
 
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
         if value is None:
