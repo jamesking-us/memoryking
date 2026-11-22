@@ -156,7 +156,13 @@ add(
         probe=(
             "import json, os, tempfile\nfrom ledger.exporter import write_orders\n"
             'p = os.path.join(tempfile.mkdtemp(), "o.txt")\nwrite_orders([("A1", "5", "ok")], p)\n'
-            'lines = open(p, encoding="utf-8").read().splitlines()\n'
+            # the file encoding and the quote character are other settled conventions of the
+            # export (the history states them), so the probe reads any of them
+            'raw = open(p, "rb").read()\n'
+            'if raw[:2] in (b"\\xff\\xfe", b"\\xfe\\xff"):\n    text = raw.decode("utf-16")\n'
+            'elif b"\\x00" in raw:\n    text = raw.decode("utf-16-le", "replace")\n'
+            'else:\n    text = raw.decode("utf-8-sig", "replace")\n'
+            'lines = [x.translate({34: None, 39: None, 96: None}) for x in text.splitlines()]\n'
             'd = lines[1][2:3] if len(lines) > 1 and lines[1][:2] == "A1" else None\n'
             'print(json.dumps({"delimiter": d, "header": lines[0].split(d)[0] if d else None}))\n'
         ),
@@ -254,8 +260,10 @@ add(
         stub='def new_id(n):\n    """The identifier of the n-th record."""\n    raise NotImplementedError\n',
         oracle='def new_id(n):\n    return {prefix} + "-" + str(n).zfill({width_int})\n',
         probe=(
-            'import json, re\nfrom ledger.ids import new_id\nm = re.match(r"([A-Za-z]+)-(\\d+)$", '
-            'str(new_id(42)))\nprint(json.dumps({"prefix": m.group(1) if m else None, '
+            "import json, re\nfrom ledger.ids import new_id\n"
+            # the separator is not one of the task's facts: any one character, or none, is read
+            'm = re.match(r"([A-Za-z]+)[-_:. ]?(\\d+)$", str(new_id(42)))\n'
+            'print(json.dumps({"prefix": m.group(1) if m else None, '
             '"width": len(m.group(2)) if m else None}))\n'
         ),
         slots=(

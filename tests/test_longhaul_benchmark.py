@@ -238,6 +238,34 @@ class UnsolvableWithoutHistoryTests(unittest.TestCase):
                         self.assertTrue(result["passed"], f"{t.id} oracle {result}")
             self.assertEqual(total, sum(COUNTS.values()))
 
+    def test_the_checks_do_not_fail_code_that_follows_other_settled_conventions(self):
+        """Pilot faults: an identifier with no separator, and an export in UTF-16 with quoted
+        fields, are right when the history says so; the hidden checks must read them."""
+        tasks = {t.family: t for g in gen.build("T1", 200).groups for t in g.tasks}
+        ids, export = tasks["id-format"], tasks["export-delimiter"]
+        want = {s.name: s.current for s in ids.slots}
+        with tempfile.TemporaryDirectory() as tmp:
+            work = make_workdir(ids, tmp, "ids")
+            for body in (
+                f"def new_id(n):\n    return {want['prefix']!r} + str(n).zfill({want['width']})\n",
+                f"def new_id(n):\n    return {want['prefix']!r} + '_' + str(n).zfill({want['width']})\n",
+            ):
+                (work / "ledger/ids.py").write_text(body)
+                self.assertTrue(grading.check(ids, work)["passed"], body)
+            want = {s.name: s.current for s in export.slots}
+            work = make_workdir(export, tmp, "export")
+            for enc, quote, eol in (("utf-16", '"', "\n"), ("utf-8", "'", "\r\n"), ("utf-16-le", "", "\n")):
+                (work / "ledger/exporter.py").write_text(
+                    "def write_orders(rows, path):\n"
+                    f"    with open(path, 'w', encoding={enc!r}, newline='') as out:\n"
+                    f"        q = {quote!r}\n"
+                    f"        d = {want['delimiter']!r}\n"
+                    f"        out.write(d.join([q + {want['header']!r} + q, 'Amount', 'Status']) + {eol!r})\n"
+                    "        for r in rows:\n"
+                    f"            out.write(d.join(q + x + q for x in r) + {eol!r})\n"
+                )
+                self.assertTrue(grading.check(export, work)["passed"], (enc, quote))
+
     def test_one_wrong_slot_fails_and_the_value_pools_leave_a_guess_at_most_a_sixteenth(self):
         for track in ("T1", "T3"):
             for g in gen.build(track, 20).groups:
