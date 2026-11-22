@@ -179,3 +179,46 @@ WSL2 (Ubuntu 20.04, ext4, Python 3.12.14, dev lock installed with hashes), detac
 - **Skips:** 98 native PostgreSQL, plus 1 each for numpy, jq and the reranker model.
 
 Phase 1 is complete. Waiting for the owner's choice of (a) or (b) and the answers to the four questions above.
+
+### 2026-11-22 04:35 UTC: `docker exec` measurement (answer to 05:05) and acknowledgement of 05:40 to 06:15
+**Clock note:** this machine's UTC clock is behind the times in your messages; my headings use my local clock.
+
+**Setup:** Docker Desktop is installed here (engine 29.8.0, Linux containers). With no code changes, I built `deploy/local/Dockerfile` at `ef3c4f0` and followed "Container image for the local daemon" with disposable volumes: `init`, then `docker run -d`. I removed the container, volumes and image afterwards.
+
+**Works from a Windows-side command:**
+- **capture:** `docker exec -i <c> python -m memoryking capture --socket /data/store/service.sock --credential /control/store/owner.credential --project wintest --file -` with the text on stdin. It returned the observation id at position 1.
+- **recall:** the same form with `--query` returned a briefing citing that observation as `[g1]`.
+- **MCP stdio bridge:** `docker exec -i <c> python -m memoryking mcp ...` answered `initialize` and `tools/list` with the lean tool catalog when fed raw bytes (from Git Bash).
+
+**Windows quirk found (it also matters for B2/B3):** Windows PowerShell 5.1 re-encodes what it pipes into a native program.
+- A capture piped from PowerShell stored a leading U+FEFF (byte-order mark) in the observation text.
+- The bridge fed the same JSON-RPC lines from PowerShell answered `parse_error`, even with `$OutputEncoding` set to UTF-8 without a BOM. Git Bash piping of identical lines works.
+- Claude Code starts MCP servers and hooks with raw pipes, so the bridge itself is not affected. But hook and CLI text read from stdin on the Windows side should strip a leading BOM. I will handle that in B1/B2 and test it from PowerShell.
+
+**Start-up per call, 5 warm runs each, milliseconds (median):**
+
+| Path | Runs | Median |
+| --- | --- | --- |
+| `docker exec <c> true` | 174, 167, 167, 167, 168 | 167 |
+| `docker exec <c> python -m memoryking --version` | 548, 521, 525, 525, 521 | 525 |
+| `docker exec -i` capture through the daemon | 537, 523, 526, 535, 536 | 535 |
+| `wsl.exe -d <distro> -- true` | 82, 80, 80, 77, 78 | 80 |
+| `wsl.exe -d <distro> -- python -m memoryking --version` | 185, 186, 187, 187, 194 | 187 |
+
+The container's Python start-up plus `memoryking.__main__` import costs about 360 ms. Under WSL2 it costs about 105 ms. The relay will be a small module that imports nothing from the CLI, so its own cost should sit close to the bare `true` rows. I will measure that in B2.
+
+**Answer to "does the existing container already solve Windows":** partly.
+- The daemon, store and owner-only rules work unchanged inside it.
+- From Windows, everything works through `docker exec -i`: capture, recall and the bridge.
+- What is missing is on the Windows side: the Windows client and CLI cannot import (`fcntl`), nothing configures the per-call relay, and the hook commands need Windows quoting.
+- I will build it as the second relay in B2, beside `wsl.exe`, chosen by explicit configuration.
+
+**Acknowledged:**
+- Option (b) with phases B1 to B4.
+- `uv` is updated (0.11.23 → 0.13.9). From B1 on I run the pinned Python 3.12.14 on Windows.
+- `SYSTEM` ACE recorded for (a); no ACL code now.
+- `.gitattributes` goes in as its own commit.
+- I will post the B3 setup and lifetime design before building it.
+- README (before the install block, absolute links), PyPI rendering check, and the classifier only once the client side really installs and runs.
+
+Starting B1 now.
