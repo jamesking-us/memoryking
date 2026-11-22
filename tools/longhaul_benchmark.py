@@ -13,6 +13,7 @@ See benchmarks/longhaul/RUNNING.md.
     longhaul_benchmark.py run      --track T1 --size 200 --task ID --arm ARM --agent CMD --seeded DIR
     longhaul_benchmark.py report   --results DIR [--json]
     longhaul_benchmark.py validate [--track T]            (stub agent: null fails, oracle passes)
+    longhaul_benchmark.py hookprobe --track T1 --size 200 --seed 1 --seeded DIR   (offline, no agent)
     longhaul_benchmark.py plan     [--arms N]             (real-session counts of the full plan)
     longhaul_benchmark.py t5-select | t5-run | t5-report  (LongMemEval question answering)
     longhaul_benchmark.py lived    --task ID --arm ARM --agent CMD    (T2b)
@@ -39,7 +40,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmarks"))
 
-from longhaul import gen, grading, lme  # noqa: E402
+from longhaul import gen, grading, hookprobe, lme  # noqa: E402
 from longhaul.systems import load as load_system  # noqa: E402
 
 LONGHAUL = ROOT / "benchmarks" / "longhaul"
@@ -1303,6 +1304,37 @@ def cmd_lived(args) -> dict:
     return {"result_file": str(file), "passed": result["passed"], "failure_class": cls}
 
 
+# ------------------------------------------------------------------- hookprobe
+
+
+def cmd_hookprobe(args) -> dict | str:
+    """What the MemoryKing hooks put in front of an agent, per task, on a seeded history:
+    no agent, no model (benchmarks/longhaul/hookprobe.py)."""
+    s = suite(args.track, args.size, args.seed)
+    rows: list[dict] = []
+    for g in s.groups:
+        seeded = seeded_path(args.seeded, "memoryking", args.track, args.size, g.index)
+        if not seeded.exists():
+            raise BenchmarkError(f"{seeded} does not exist: run `seed` first")
+        rows.extend(
+            hookprobe.probe_group(
+                s, g, seeded, Path(args.work), keep_text=args.text, prompt_args=args.prompt_args
+            )
+        )
+    result = {
+        "track": args.track,
+        "size": args.size,
+        "seed": args.seed,
+        "summary": hookprobe.summarize(rows),
+        "tasks": rows,
+    }
+    if args.json:
+        return result
+    return f"track {args.track} size {args.size} seed {args.seed}\n" + hookprobe.render(
+        result["summary"]
+    )
+
+
 # ----------------------------------------------------------------------- main
 
 
@@ -1348,6 +1380,18 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--work", default=str(DEFAULT_WORK))
     r.add_argument("--timeout", type=int, default=1800)
     r.add_argument("--keep", action="store_true", help="keep the run directory")
+    hp = sub.add_parser(
+        "hookprobe",
+        help="offline: which needle sentences the MemoryKing hooks and recall carry (no agent)",
+    )
+    common(hp)
+    hp.add_argument("--seeded", default=str(DEFAULT_SEEDED))
+    hp.add_argument("--work", default=str(SHORT / "hookprobe"))
+    hp.add_argument("--json", action="store_true")
+    hp.add_argument("--text", action="store_true", help="with --json: keep what each source showed")
+    hp.add_argument(
+        "--prompt-args", default="", help="extra options for the prompt hook, e.g. '--budget 2400'"
+    )
     rp = sub.add_parser("report", help="tables from a results directory")
     rp.add_argument("--results", default=str(DEFAULT_RESULTS))
     rp.add_argument("--json", action="store_true")
@@ -1415,6 +1459,7 @@ def main(argv=None) -> int:
             "t5-select": cmd_t5_select,
             "t5-run": cmd_t5_run,
             "lived": cmd_lived,
+            "hookprobe": cmd_hookprobe,
         }[args.command]
         result = handler(args)
     except (BenchmarkError, ValueError) as exc:
