@@ -120,7 +120,11 @@ test("client asks the shared MCP endpoint for the full profile by name", async (
   ]);
 });
 
-test("local daemon: recall over the loopback agent endpoint", async () => {
+// The local daemon needs a memory store, which does not run on Windows (WSL2 or the
+// container hold it there); the test runs wherever the store does.
+const localTest = process.platform === "win32" ? test.skip : test;
+
+localTest("local daemon: recall over the loopback agent endpoint", async () => {
   const daemon = await service("local");
   try {
     const memory = new MemoryKingLocal({

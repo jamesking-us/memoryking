@@ -5,7 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +20,7 @@ SCHEMA = Path("fixtures/migration/kingforge-v1-schema.sql")
 
 
 def fixture(path):
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.executescript(SCHEMA.read_text())
         db.execute(
             "INSERT INTO plans(id,title,objective,author,created_at,updated_at) VALUES (1,'Synthetic plan','Retain constraints','legacy-root',1720000000,1720000001)"
@@ -148,7 +148,7 @@ class MigrationCases:
 
     def test_changed_snapshot_or_target_binding_rejects_old_plan(self):
         self.legacy()
-        with sqlite3.connect(self.snapshot) as db:
+        with closing(sqlite3.connect(self.snapshot)) as db, db:
             db.execute("UPDATE plans SET title='changed' WHERE id=1")
         with self.assertRaisesRegex(LocalError, "legacy_plan_changed"):
             apply_batch(self.snapshot, self.plan, self.operator, self.journal)
@@ -160,7 +160,7 @@ class MigrationCases:
     def test_updated_source_record_requires_reconciliation_not_overwrite(self):
         self.legacy()
         apply_batch(self.snapshot, self.plan, self.operator, self.journal)
-        with sqlite3.connect(self.snapshot) as db:
+        with closing(sqlite3.connect(self.snapshot)) as db, db:
             db.execute("UPDATE lessons SET lesson='replacement' WHERE id=1")
         updated = make_plan(self.snapshot, "town-test", ["kingforge-v1"], self.operator)
         with self.assertRaisesRegex(LocalError, "legacy_journal_plan_mismatch"):
@@ -196,7 +196,7 @@ class MigrationCases:
     def test_universal_active_labels_never_activate_and_retired_bodies_are_omitted(self):
         source = self.root / "universal.sqlite"
         universal_fixture(source)
-        with sqlite3.connect(source) as db:
+        with closing(sqlite3.connect(source)) as db, db:
             db.execute("UPDATE lw_scopes SET lifecycle='deleted'")
         snapshot = freeze(source, self.root / "universal-import")
         operator = DirectOperator(self.store, self.owner)
@@ -244,7 +244,7 @@ class SnapshotTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_unknown_table_and_orphan_fail_closed_without_source_mutation(self):
-        with sqlite3.connect(self.source) as db:
+        with closing(sqlite3.connect(self.source)) as db, db:
             db.execute("CREATE TABLE credentials(id INTEGER PRIMARY KEY, secret TEXT)")
             db.execute("INSERT INTO credentials VALUES(1,'must not be imported')")
             db.execute("UPDATE steps SET plan_id=99")
@@ -268,14 +268,14 @@ class SnapshotTests(unittest.TestCase):
             inspect(link, "town", expected_profiles=["kingforge-v1"])
 
     def test_profile_mismatch_is_explicit_and_retirement_propagates(self):
-        with sqlite3.connect(self.source) as db:
+        with closing(sqlite3.connect(self.source)) as db, db:
             db.execute("UPDATE plans SET status='deleted'")
         result = inspect(self.source, "town", expected_profiles=["universal"])
         self.assertIn("profile_mismatch", [x["code"] for x in result["unresolved"]])
         self.assertTrue(all(row["retired"] for row in result["rows"]))
 
     def test_null_primary_key_or_missing_stable_key_blocks(self):
-        with sqlite3.connect(self.source) as db:
+        with closing(sqlite3.connect(self.source)) as db, db:
             db.execute("CREATE TABLE lw_links(subject_type TEXT)")
         result = inspect(self.source, "town", expected_profiles=["kingforge-v1"])
         self.assertIn("missing_stable_key", [x["code"] for x in result["unresolved"]])
@@ -284,7 +284,7 @@ class SnapshotTests(unittest.TestCase):
 def universal_fixture(path, *, mixed=False):
     if mixed:
         fixture(path)
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.executescript(Path("fixtures/migration/universal-schema.sql").read_text())
         db.execute("INSERT INTO lw_schema_migrations VALUES(1,'synthetic','2026-09-19T00:00:00Z')")
         db.execute(
@@ -323,7 +323,7 @@ class UniversalSnapshotTests(unittest.TestCase):
         self.assertEqual(report["unresolved"], [])
         self.assertEqual(sum(report["tables"].values()), 8)
         self.assertTrue(any(len(r["references"]) == 2 for r in report["rows"]))
-        with sqlite3.connect(self.source) as db:
+        with closing(sqlite3.connect(self.source)) as db, db:
             db.execute("UPDATE lw_scopes SET lifecycle='deleted'")
         retired = inspect(self.source, "universal", expected_profiles=["universal"])
         self.assertTrue(
@@ -332,7 +332,7 @@ class UniversalSnapshotTests(unittest.TestCase):
 
     def test_unknown_typed_link_and_hash_mismatch_block(self):
         universal_fixture(self.source)
-        with sqlite3.connect(self.source) as db:
+        with closing(sqlite3.connect(self.source)) as db, db:
             db.execute("UPDATE lw_links SET object_type='external-secret'")
             db.execute("UPDATE lw_evidence SET content='tampered'")
         report = inspect(self.source, "universal", expected_profiles=["universal"])
@@ -349,7 +349,7 @@ class UniversalSnapshotTests(unittest.TestCase):
         self.assertEqual(report["unresolved"], [])
 
     def test_standalone_document_lesson_and_chunk_links(self):
-        with sqlite3.connect(self.source) as db:
+        with closing(sqlite3.connect(self.source)) as db, db:
             db.executescript(Path("fixtures/migration/standalone-schema.sql").read_text())
             content = "Synthetic postmortem"
             db.execute(

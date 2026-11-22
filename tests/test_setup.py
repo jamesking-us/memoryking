@@ -10,6 +10,8 @@ import threading
 import unittest
 from pathlib import Path
 
+from memoryking.adapters.platform_support import LOCAL_STORE_SUPPORTED
+
 
 def tree(root: Path) -> dict[str, bytes]:
     """Every file setup owns under `root`: host files, profiles, credentials and its state.
@@ -26,6 +28,10 @@ def tree(root: Path) -> dict[str, bytes]:
     return found
 
 
+@unittest.skipUnless(
+    LOCAL_STORE_SUPPORTED,
+    "the POSIX setup with its store and daemon; Windows setup is tested in test_setup_windows",
+)
 class SetupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/tmp", prefix="mk-set-")
@@ -33,6 +39,9 @@ class SetupTests(unittest.TestCase):
         self.env = {
             **{k: v for k, v in os.environ.items() if not k.startswith("MEMORYKING_")},
             "HOME": str(self.home),
+            # Windows reads the home folder from these, not HOME: never the real profile.
+            "USERPROFILE": str(self.home),
+            "LOCALAPPDATA": str(self.home / "AppData" / "Local"),
             "MEMORYKING_SEMANTIC": "off",  # these tests stay offline
             "PYTHONDONTWRITEBYTECODE": "1",
         }

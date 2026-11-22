@@ -65,7 +65,8 @@ class SharedGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.upstream.close()
         await self.upstream.wait_closed()
         reader, writer = await asyncio.open_connection("127.0.0.1", self.port)
-        self.assertEqual(await asyncio.wait_for(reader.read(1), 2), b"")
+        # Windows retries a refused loopback connect for about 2 s before failing it.
+        self.assertEqual(await asyncio.wait_for(reader.read(1), 10), b"")
         writer.close()
         await writer.wait_closed()
         await self.settled()

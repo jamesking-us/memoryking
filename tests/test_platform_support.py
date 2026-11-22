@@ -34,6 +34,17 @@ class EveryPlatformTests(unittest.TestCase):
         self.assertIn("WSL2", text)
         self.assertIn("Docker Desktop", text)
 
+    def test_a_liveness_check_sees_a_process_and_its_end_and_interrupts_nobody(self) -> None:
+        self.assertTrue(platform_support.process_alive(os.getpid()))
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            self.assertTrue(platform_support.process_alive(child.pid))
+        finally:
+            child.kill()
+            child.wait()
+        self.assertFalse(platform_support.process_alive(child.pid))
+        # Reaching here at all means no Ctrl-C reached this process (Windows signal 0).
+
 
 @unittest.skipIf(WINDOWS, "POSIX primitives; Windows refuses them (WindowsTests)")
 class PosixTests(unittest.TestCase):

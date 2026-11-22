@@ -26,6 +26,12 @@ from longhaul import families as fam  # noqa: E402
 from longhaul import gen  # noqa: E402
 from longhaul import preflight as pf  # noqa: E402
 
+if sys.platform == "win32":
+    raise unittest.SkipTest(
+        "the benchmark harness runs agents and task steps through POS"
+        "IX shell scripts and tools; it runs on Linux and macOS"
+    )
+
 SEEDS = (1, 2, 3)
 
 

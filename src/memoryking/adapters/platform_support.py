@@ -37,6 +37,31 @@ def refuse() -> NoReturn:
     raise LocalError(STORE_UNSUPPORTED)
 
 
+def process_alive(pid: int) -> bool:
+    """Whether process `pid` exists. On POSIX `kill(pid, 0)`, as before. On Windows signal
+    0 is CTRL_C_EVENT, which `os.kill` would send to the whole console group (this process
+    included), so the process's exit status is asked for instead."""
+    if sys.platform != "win32":
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+    import ctypes
+
+    kernel = ctypes.windll.kernel32  # type: ignore[attr-defined,unused-ignore]
+    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return False
+        return code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel.CloseHandle(handle)
+
+
 # File systems a store must not live on: a Windows drive seen from WSL2 (drvfs over 9p),
 # NTFS through FUSE or the kernel driver, network shares and VM shared folders. None of
 # them gives the owner-only modes and the rename-and-sync durability the store relies on.

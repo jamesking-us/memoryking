@@ -19,6 +19,7 @@ from typing import Any
 from memoryking import profiles
 from memoryking.adapters.platform_support import (
     lock_nowait,
+    process_alive,
     require_local_store,
     unix_stream_socket,
 )
@@ -53,9 +54,7 @@ def read_pid(store: Path) -> int | None:
 
 def _ours(pid: int) -> bool:
     """The process is alive and is a memoryking process (guards against a reused pid)."""
-    try:
-        os.kill(pid, 0)
-    except OSError:
+    if not process_alive(pid):
         return False
     try:
         command = subprocess.run(
@@ -165,9 +164,7 @@ def stop(profile: dict[str, Any]) -> dict[str, Any]:
     os.kill(pid, signal.SIGTERM)
     deadline = time.monotonic() + STOP_SECONDS
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except OSError:
+        if not process_alive(pid):
             return {"running": False, "stopped": True}
         time.sleep(0.05)
     raise LocalError("daemon_stop_failed")

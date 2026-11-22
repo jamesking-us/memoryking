@@ -478,8 +478,9 @@ def run(args: Any) -> int:
             print(("[dry run] " if args.dry_run else "") + "user environment: " + line)
         code = setup_host.remove(args, files, home, cwd)
         print(
-            "The store side is kept as well. To remove it: in WSL2, `memoryking --profile "
-            "default stop` there and delete ~/.memoryking and ~/.local/share/memoryking; "
+            "The store side is kept as well. To remove it: in WSL2, "
+            "`~/.local/share/memoryking/venv/bin/memoryking --profile default stop` there and "
+            "delete ~/.memoryking and ~/.local/share/memoryking; "
             f"with Docker, `docker rm -f {CONTAINER}` and `docker volume rm "
             + " ".join(v for v, _ in VOLUMES)
             + "` (this deletes the memory)."

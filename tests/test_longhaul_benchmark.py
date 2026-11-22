@@ -34,6 +34,12 @@ from longhaul.systems import memoryking as mk_arm  # noqa: E402
 from longhaul.systems._files import NOTES_CAP, extract  # noqa: E402
 from longhaul.systems.base import Scope, Session, System, Turn  # noqa: E402
 
+if sys.platform == "win32":
+    raise unittest.SkipTest(
+        "the benchmark harness runs agents and task steps through POS"
+        "IX shell scripts and tools; it runs on Linux and macOS"
+    )
+
 
 def pick_port_base():
     """A first port for the T4 `post` listeners such that every port the tests will ask for is
