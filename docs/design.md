@@ -245,6 +245,28 @@ A read of a checkpoint stream inspects its latest revision and at most 129 befor
 
 The pure progress calculation is shared by both stores and the dashboard. Completed work counts effective done steps against the declared scope. Skips stay distinct; unverifiable historical proof becomes unknown. The objective, the step definition and the transitive prerequisite states and evidence bind a completion's evidence, so a reopen followed by the old proof cannot turn a changed definition back into verified completion. This remains source-attributed reported work, not a substitute for an orchestrator's independent test and review gates.
 
+## What a third storage backend must implement
+
+The store's rules (authorization, receipts, purge following dependencies, retention, history and recovery) are written once, in `application/store_core.py` and the adapters beside it. Two backends exist today, SQLite with local files and PostgreSQL. A third, for example another database or object storage for observation bodies, plugs in behind three ports, and one registry tells the rest of the store what each table is.
+
+**The SQL dialect.** All store SQL is written once, in a portable subset, against the facade in `application/storage.py`. A backend supplies a dialect (the full-text predicates, byte length, the few places that differ) and a connection that runs that SQL with `?` placeholders. Engine-specific syntax (`INSERT OR`, `MATCH`, `BLOB`, `GLOB`, `PRAGMA`) is refused, not translated. Every `INSERT` names its columns, so adding a column cannot silently shift the others; a test fails on any positional insert. Authorization filtering happens inside the SQL before any limit, and the backend must enforce tenant isolation itself (the PostgreSQL profile forces row-level security on every tenant table).
+
+**The blob store** (`application/blob_store.py`). Observation text is kept as immutable blobs named by their SHA-256. The port is `put`, `get` (verified against the name), a bounded `head`, `delete`, the `digests` and `tenants` held, a verified `copy_to` for backups, `put_stream` for restores, `sync` and bounded `maintain`. `adapters/blobs.py` is the directory implementation; `tests/blob_helpers.py` holds a second, in-memory one used only in tests.
+
+**The control log** (`application/control_log.py`). The signed, hash-chained journal of policy and purges, its anchor and the operations log live outside the database, so a rolled-back or restored database is detected. The port is signing and verification, anchor read and write, append, reading verified records from a position, the verified count and chain head, apply-failure notes, and the operations log with its compaction. There is deliberately no in-memory version: a double would have to reimplement the signing, chaining and anchoring that the journal, anchor, restore and fault-injection tests hold the one implementation to. A backend that stores the journal elsewhere (a database table, an object store) must keep every guarantee listed at the top of that file, or it is not a control log.
+
+**The record-type registry** (`application/records.py`). One declaration per table says whether it is tenant scoped, which archive schema a shared backup first holds it in, whether it can carry dependencies that a purge follows, how a purge, retention and a restore treat it, which capacity counters count it and whether the worker role may write it. The shared archive inventories, the reset a restore applies to start a new history, the worker grants and the embedding-partition rebuild are derived from it; the dependency walk, retention windows and capacity counters keep their own logic and a test asserts they cover the same types. A new table is added to the registry in the same change as its migration.
+
+**The test suites a new backend must pass:**
+
+- `tests/test_records.py`: every table the backend's schema creates is declared, tenant tables force row-level security where the backend has it, and the derived inventories equal the historical ones.
+- `tests/test_blob_port.py`: the blob-store contract, then capture, recall, replay, purge with dependency follow-through, the projection worker, backup and restore run on the new blob store.
+- `tests/test_control_log_port.py`: the control-log contract, and a check that callers use only what the port names.
+- The shared store cases that already run on both backends (`test_local_store.py`, `test_knowledge.py`, `test_retrieval.py`, `test_working.py`, `test_handoff.py`, `test_repository.py`, adopted by `test_postgres_parity.py`), the journal, anchor, restore and fault-injection suites, and `tools/run_conformance.py` for each profile.
+- `tests/test_architecture.py`: domain code does not import adapters, and store SQL does not use positional inserts.
+
+Passing these shows the backend behaves like the two that exist; it says nothing about its performance or operating limits, which need their own measurement.
+
 ## What this architecture does not establish
 
 Passing implementation tests does not establish better real-task outcomes, cost savings, production throughput, complete browser support, automatic failover or disaster-recovery service levels. The current [feature limits](reference.md#current-limits) preserve those distinctions.

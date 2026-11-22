@@ -251,7 +251,7 @@ class Working:
                 result = json.loads(raw)
             if action in MUTATIONS and old is None and not action.startswith("operation_"):
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
                 )
             if action not in {"resume", "adapter_resume"}:
@@ -268,7 +268,7 @@ class Working:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -322,7 +322,7 @@ class Working:
         )
         deps = dependencies(args["checkpoint"])
         self.db.execute(
-            "INSERT INTO checkpoints VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO checkpoints(tenant,id,project,task,stream,revision,writer,incarnation,created,body,body_hash,readers,dependencies,state,position) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 identifier,
@@ -340,7 +340,7 @@ class Working:
             ),
         )
         self.db.execute(
-            "INSERT INTO checkpoint_streams VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,task,stream) DO UPDATE SET revision=excluded.revision,latest=excluded.latest",
+            "INSERT INTO checkpoint_streams(tenant,project,task,stream,writer,revision,incarnation,latest) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,task,stream) DO UPDATE SET revision=excluded.revision,latest=excluded.latest",
             (*scope, who["principal"], current + 1, self.s.incarnation, identifier),
         )
         self.s._enqueue(who["tenant"], position, None, who["principal"])
@@ -453,7 +453,7 @@ class Working:
         }
         self.r._retain(who, {"project": args["project"]}, receipt, raw, diag, deps, at)
         self.db.execute(
-            "INSERT INTO session_summaries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO session_summaries(tenant,id,project,task,stream,checkpoint,revision,principal,incarnation,method,text,readers,created,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 receipt,
@@ -1031,12 +1031,15 @@ class Working:
                 row["reconciled_incarnation"],
             )
             self.db.execute(
-                "INSERT INTO operation_intents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,id) DO UPDATE SET state=excluded.state,revision=excluded.revision,result_hash=excluded.result_hash,evidence=excluded.evidence,updated=excluded.updated,reconciled_incarnation=excluded.reconciled_incarnation",
+                "INSERT INTO operation_intents(tenant,id,principal,project,task,stream,incarnation,target_hash,parameters_hash,method,provider_key,state,revision,result_hash,evidence,created,updated,reconciled_incarnation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,id) DO UPDATE SET state=excluded.state,revision=excluded.revision,result_hash=excluded.result_hash,evidence=excluded.evidence,updated=excluded.updated,reconciled_incarnation=excluded.reconciled_incarnation",
                 values,
             )
         result = {"operation": row["id"], "state": row["state"], "revision": row["revision"]}
         self.db.execute(
-            insert_ignore("retries", 10),
+            insert_ignore(
+                "retries",
+                "tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires",
+            ),
             (
                 tenant,
                 request["incarnation"],

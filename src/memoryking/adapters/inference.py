@@ -210,7 +210,7 @@ class Inference:
                 }
                 permit = self.s._token("inference-permit", **fields)
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         who["tenant"],
                         self.s.incarnation,
@@ -266,7 +266,7 @@ class Inference:
                     # with a report, and a host that dies leaves it pending, truthfully.
                     policy = self.s.egress_policy
                     self.db.execute(
-                        "INSERT INTO egress_audit VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO egress_audit(tenant,id,principal,project,incarnation,provider,model,host,policy_revision,request_hash,manifest_hash,manifest,classification,request_bytes,evaluated,deadline,status,wire_hash,response_hash,input_tokens,output_tokens,reported,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (
                             who["tenant"],
                             identifier,
@@ -331,7 +331,7 @@ class Inference:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
         self.db.execute(
-            "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 receipt,

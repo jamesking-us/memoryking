@@ -282,7 +282,7 @@ class Handoff:
                 result = {"handle": args["handle"], "status": "cancelled"}
             if old is None:
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
                 )
             if action not in {"materialize", "preview"}:
@@ -298,7 +298,7 @@ class Handoff:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -340,7 +340,7 @@ class Handoff:
         if live_handoffs(self.db, who["tenant"], at) >= HANDOFF_LIMIT:
             raise LocalError("handoff_capacity")
         self.db.execute(
-            "INSERT INTO handoffs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO handoffs(tenant,id,project,task,stream,checkpoint,sender,recipient,role,stage,bindings,incarnation,created,expires,state,stream_revision,ack_view) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 identifier,
@@ -458,7 +458,7 @@ class Handoff:
             if live_handoff_views(self.db, who["tenant"]) >= HANDOFF_VIEW_LIMIT:
                 raise LocalError("handoff_view_capacity")
         self.db.execute(
-            "INSERT INTO handoff_views VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO handoff_views(tenant,id,handoff,actor,mode,stamp,body_hash,status,created) VALUES (?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 receipt,

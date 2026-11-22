@@ -89,10 +89,10 @@ def upsert(table: str) -> str:
     )
 
 
-def insert_ignore(table: str, count: int) -> str:
-    """INSERT ... ON CONFLICT DO NOTHING; portable SQL."""
-    placeholders = ",".join("?" for _ in range(count))
-    return f"INSERT INTO {table} VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+def insert_ignore(table: str, columns: str) -> str:
+    """INSERT ... ON CONFLICT DO NOTHING over the named comma-separated columns; portable SQL."""
+    placeholders = ",".join("?" for _ in columns.split(","))
+    return f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
 
 
 class Dialect(Protocol):

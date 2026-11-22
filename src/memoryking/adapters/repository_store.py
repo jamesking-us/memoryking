@@ -9,8 +9,6 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
-from memoryking.adapters.blobs import blob_path
-from memoryking.adapters.local_files import private_file
 from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.repository_git import GitSnapshot, canonical_remote
 from memoryking.application.storage import upsert
@@ -125,7 +123,7 @@ class Repository:
                 )
             if mutation and existing is None:
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (*lookup, canonical_hash(command), json.dumps(result), None, at + RETRY_MS),
                 )
             result.update(
@@ -145,7 +143,7 @@ class Repository:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     result["receipt"],
@@ -209,7 +207,7 @@ class Repository:
         if existing:
             raise LocalError("clone_already_registered")
         self.db.execute(
-            "INSERT INTO repository_clones VALUES (?,?,?,?,?,?)",
+            "INSERT INTO repository_clones(tenant,repository,alias,path,device,inode) VALUES (?,?,?,?,?,?)",
             (who["tenant"], rid, args["clone"], str(root), identity.st_dev, identity.st_ino),
         )
         position = self.s._event(who["tenant"], "repository.registered", rid, at, who["principal"])
@@ -290,7 +288,7 @@ class Repository:
             who["tenant"], "repository.barrier", args["repository"], at, who["principal"]
         )
         self.db.execute(
-            "INSERT INTO repository_snapshots VALUES (?,?,?,?,?,?,?) ON CONFLICT(tenant,incarnation,repository,id) DO UPDATE SET generation=excluded.generation,position=excluded.position",
+            "INSERT INTO repository_snapshots(tenant,incarnation,repository,id,generation,position,body) VALUES (?,?,?,?,?,?,?) ON CONFLICT(tenant,incarnation,repository,id) DO UPDATE SET generation=excluded.generation,position=excluded.position",
             (
                 who["tenant"],
                 self.s.incarnation,
@@ -306,7 +304,7 @@ class Repository:
             (who["tenant"], self.s.incarnation, args["repository"]),
         )
         self.db.execute(
-            "INSERT INTO repository_jobs VALUES (?,?,?,?,?,?)",
+            "INSERT INTO repository_jobs(tenant,incarnation,repository,snapshot,generation,state) VALUES (?,?,?,?,?,?)",
             (
                 who["tenant"],
                 self.s.incarnation,
@@ -359,10 +357,7 @@ class Repository:
         ).fetchone()
         if row is None or not self.s._visible(who, row, at):
             raise LocalError("evidence_unavailable")
-        path = blob_path(self.s.root, who["tenant"], row["blob"])
-        private_file(path)
-        with path.open("rb") as stream:
-            raw = stream.read(65537)
+        raw = self.s.blobs.head(who["tenant"], row["blob"], 65537)
         if len(raw) > 65536:
             raise LocalError("evidence_unavailable")
         Knowledge(self.s)._support(

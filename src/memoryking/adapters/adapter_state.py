@@ -49,7 +49,7 @@ def resume(
     packet_raw, deps = working._resume(who, args, decision, context_receipt)
     packet = json.loads(packet_raw)
     db.execute(
-        "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (
             who["tenant"],
             context_receipt,
@@ -204,7 +204,7 @@ def resume(
         target_raw = canonical_bytes(target)
         if total < 512 and size + len(target_raw) <= 67108864:
             db.execute(
-                "INSERT INTO adapter_bases VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO adapter_bases(tenant,id,project,principal,incarnation,binding,body,body_hash,dependencies,created,expires) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
