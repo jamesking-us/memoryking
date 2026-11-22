@@ -1115,9 +1115,10 @@ class IsolationTests(unittest.TestCase):
                 "-p",
                 "--strict-mcp-config",
                 "--include-hook-events",
-                "--no-session-persistence",
             ):
                 self.assertIn(flag, argv)
+            # a persisted transcript is what the session-end hooks of memory products read
+            self.assertNotIn("--no-session-persistence", argv)
             self.assertEqual(argv[argv.index("--setting-sources") + 1], "user,project")
             self.assertEqual(argv[argv.index("--mcp-config") + 1], str(tmp / "mcp.json"))
             self.assertIn("mcp__x__y", argv[argv.index("--allowed-tools") + 1])

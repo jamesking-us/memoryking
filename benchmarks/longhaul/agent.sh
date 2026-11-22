@@ -16,8 +16,11 @@
 #       places settings or CLAUDE.md files can come from; none exist except an arm's own
 #   --strict-mcp-config --mcp-config FILE   only the arm's own MCP servers
 #   --settings FILE   the arm's hooks
-#   --disable-slash-commands --no-session-persistence --permission-mode acceptEdits
+#   --disable-slash-commands --permission-mode acceptEdits
 #   --permission-prompts none   nothing can wait for an answer
+#   (no --no-session-persistence: it stops the host writing the transcript that the session-end
+#       hooks of memory products read; the fresh HOME is removed after the run, so nothing is
+#       resumed or carried)
 #   --allowed-tools   running the project's tests, plus the arm's own tools
 set -eu
 workdir=$1
@@ -34,6 +37,6 @@ budget=""
 exec claude -p --model "${LONGHAUL_MODEL:-sonnet}" \
   --output-format stream-json --verbose --include-hook-events \
   --max-turns 60 --permission-mode acceptEdits --permission-prompts none \
-  --setting-sources user,project --disable-slash-commands --no-session-persistence \
+  --setting-sources user,project --disable-slash-commands \
   --strict-mcp-config --mcp-config "$mcp" --settings "$settings" \
   $budget --allowed-tools "$tools" -- "$(cat "$prompt")"

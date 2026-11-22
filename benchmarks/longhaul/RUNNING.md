@@ -63,7 +63,7 @@ Every arm gets the same host (Claude Code CLI, headless), the same model, the sa
 
 ## Isolation, for every arm
 
-- One fresh agent instance per run; nothing resumed; `--no-session-persistence`.
+- One fresh agent instance per run; nothing resumed. Session persistence stays on, because the session-end hooks of memory products read the transcript the host writes; it is written into the fresh `HOME`, which is removed after the run.
 - A fresh `HOME` per session, identical in every arm (only `native` keeps one across the sessions of a lived run). No user-level memory file, no saved sessions.
 - A scrubbed environment: `PATH` without any directory that holds a `memoryking` command, the fresh `HOME`, `LANG`, `TMPDIR`, and proxy, certificate and model-credential variables passed through. Nothing else of the operator's environment reaches the agent.
 - The agent starts in a working directory that holds only the task's repository and the arm's own files. The hidden check, the generator, the oracle, the history of other groups and this repository are outside it. The prompt starts with `Work only inside the current directory: do not read, list or modify anything outside it.`
@@ -78,12 +78,12 @@ Every arm gets the same host (Claude Code CLI, headless), the same model, the sa
 ```
 claude -p --model sonnet --output-format stream-json --verbose --include-hook-events \
   --max-turns 60 --permission-mode acceptEdits --permission-prompts none \
-  --setting-sources user,project --disable-slash-commands --no-session-persistence \
+  --setting-sources user,project --disable-slash-commands \
   --strict-mcp-config --mcp-config <bench>/mcp.json --settings <bench>/settings.json \
   --allowed-tools "<tests and python, grep, ls, cat>,<the arm's tools>" -- "<prompt>"
 ```
 
-Flags are those of the first outcome runs, plus `--setting-sources user,project` (so `CLAUDE.md` is read in the `native` arm) and `--no-session-persistence`; check them against your CLI's `--help`. `--include-hook-events` shows the start hook's output in the stream, which is how the report knows what memory entered the context. The session-end hook runs after the result line and does not show in the stream (see `benchmarks/outcomes/RUNNING.md`); its work is counted from the store (`system_usage`).
+Flags are those of the first outcome runs, plus `--setting-sources user,project` (so `CLAUDE.md` is read in the `native` arm); check them against your CLI's `--help`. `--include-hook-events` shows the start hook's output in the stream, which is how the report knows what memory entered the context. The session-end hook runs after the result line and does not show in the stream (see `benchmarks/outcomes/RUNNING.md`); its work is counted from the store (`system_usage`).
 
 ## Steps for one run
 
