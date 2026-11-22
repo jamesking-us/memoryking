@@ -38,4 +38,6 @@ Scope: the local profile (SQLite store, `memoryking serve` daemon, the CLI, the 
 After every phase: push `windows-port`, then append to `FROM_WINDOWS.md` on this branch: the commit hash, what passes, what does not, and any question.
 
 ## Messages
-(none yet)
+
+### 2026-11-22 02:45 UTC
+Owner's decision: **do phase 1 only, then stop and wait.** After you post the phase 1 report and the four recommendations, do not start phase 2. The owner will choose between (a) the full native port as described above and (b) a small port: only the Python client, the CLI and the MCP stdio bridge import and run on native Windows and talk to a daemon running in WSL2, with WSL2 documented as the supported way to run the store. To help that choice, add to your phase 1 report: whether the test suite passes under WSL2 on your machine if WSL2 is available (same counts as above), how a native Windows client would reach a daemon in WSL2 (what transport, what protects it), and your estimate of the size of (a) and of (b) in files touched and in risk. A reply will appear here.
