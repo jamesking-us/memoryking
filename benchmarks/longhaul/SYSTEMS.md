@@ -1,0 +1,118 @@
+# Systems compared in the long-history benchmark
+
+This file records, for each product other than MemoryKing, what was installed, how it is configured and exposed to a Claude Code session, how a recorded history is seeded into it, what it needs, what it costs in model calls, and what could make the comparison unfair to it. Facts were checked on 2026-11-22 against each package registry and the project's own README or docs. Nothing here is a claim about quality; no model was called to produce it.
+
+Adapters live in `benchmarks/longhaul/systems/<name>.py`. `tools/install_systems.py` reproduces the isolated installs (pinned versions, hashes from `tools/locks/`). Each product is installed under `/tmp/mk-lh-<name>/` (own virtualenv or npm prefix) and keeps all run state under the instance root the adapter is given; nothing is written to the repository or the real HOME. `tests/test_longhaul_systems.py` holds one offline smoke test per adapter, skipped when the product is not installed.
+
+## Summary
+
+| Product | Version | Licence | Needs a chat model | Status |
+| --- | --- | --- | --- | --- |
+| Reference MCP memory server (`@modelcontextprotocol/server-memory`) | 2.2.1 | Apache-2.0 / MIT (the MCP project is mid-transition) | no | ready (offline-proven) |
+| Basic Memory (`basic-memory`) | 1.0.0 | AGPL-3.0-or-later | no | ready (offline-proven) |
+| MCP Memory Service (`mcp-memory-service`), added | 13.0.0 | Apache-2.0 | no | ready (offline-proven) |
+| claude-mem (`claude-mem`) | 16.0.3 | Apache-2.0 | yes: the host's Claude login by default | ready pending the owner's model decision (plumbing proven against the fake endpoint) |
+| Mem0 open source (`mem0ai`) | 2.2.1 | Apache-2.0 | yes | ready pending a model endpoint |
+| Graphiti (`graphiti-core` + `mcp_server`) | 0.31.1 / server 1.1.3 | Apache-2.0 | yes | ready pending a model endpoint |
+| Letta | - | Apache-2.0 | - | out of scope |
+| Cognee MCP, LangMem | - | - | - | assessed, no adapter |
+
+Hosts that were unreachable: `docs.claude-mem.ai` (HTTP 403 from the egress proxy; the same text is in the project's repository and was read there) and `cmem.ai` (the claude-mem installer tries it for an optional sign-in and carries on). `codeload.github.com` (tarballs) is blocked; `git` over HTTPS and `raw.githubusercontent.com` work. Nothing was worked around.
+
+## Model calls: measured
+
+Measured with `tools/measure_model_calls.py` against `tools/fake_openai.py`, which returns canned output and counts requests; tokens are an estimate (characters / 4) and include the full prompt, so they are comparable between products but are not a provider's token counts. One session is 12 turns (three user turns, six tool turns, three assistant turns). Six sessions were ingested per product and three retrievals made. The counts stayed constant per session in every series, so the 20, 200 and 2,000-session columns are linear extrapolations (the per-session series is in the tool's JSON output).
+
+| Product | Calls per 12-turn session | Estimated tokens per session | Calls per retrieval | 20 sessions | 200 sessions | 2,000 sessions |
+| --- | --- | --- | --- | --- | --- | --- |
+| MCP memory server | 0 | 0 | 0 | 0 | 0 | 0 |
+| Basic Memory | 0 | 0 | 0 | 0 | 0 | 0 |
+| MCP Memory Service | 0 | 0 | 0 | 0 | 0 | 0 |
+| claude-mem | 9 (6 observation, 3 summary) | 25,500 | 0 | 180 calls, 0.5M tokens | 1,800 calls, 5.1M tokens | 18,000 calls, 51M tokens |
+| Mem0 | 1 | 8,900 | 0 | 20 calls, 0.18M tokens | 200 calls, 1.8M tokens | 2,000 calls, 17.8M tokens |
+| Graphiti (3 entities per episode) | 6.5 | 13,100 | 0 | 130 calls, 0.26M tokens | 1,300 calls, 2.6M tokens | 13,000 calls, 26M tokens |
+
+Reading the numbers:
+
+- Retrieval makes no chat-model call in any product's default search path. Embedding is local in all of them (see each section).
+- claude-mem makes one call per tool event and one per assistant turn (the Stop hook), and its observer re-sends a growing conversation per session, so tokens grow with session length. Its count depends on the tool-event mix of a session: a session with no tool turns costs only its summaries. With its default provider these are Claude Code agent calls on the owner's plan, model `haiku`, not calls to an endpoint of the harness's choosing.
+- Mem0 makes exactly one call per `add`, with a fixed 33 KB instruction prompt (about 8,400 tokens) plus the conversation and the neighbouring memories it retrieved. Cost is dominated by that fixed prompt; extrapolation is therefore close to linear.
+- Graphiti's count depends on what the model extracts. Each episode costs one entity-extraction call, one edge-extraction call and then two calls per extracted fact (timestamps, deduplication) plus summary calls. The fake returns 3 entities and 2 facts per episode; with 6 entities (`LONGHAUL_FAKE_ENTITIES=6`) the same session cost 11 calls and 17,200 tokens. A real model usually extracts more than the fake, so treat Graphiti's figure as a floor, roughly 6 to 15 calls per session.
+- The fake server cannot say what a real model would extract or how many retries a real endpoint would need; none of these figures say anything about quality or about provider token pricing.
+
+## Common conventions
+
+- Environment: `LONGHAUL_LLM_BASE_URL`, `LONGHAUL_LLM_MODEL`, `LONGHAUL_LLM_API_KEY` are read by the model-needing adapters. With `LONGHAUL_FAKE_LLM=1` and no base URL, an adapter starts the fake server itself (tests and measurements only).
+- Processes: each adapter starts its own servers in their own sessions, records PIDs in `<root>/pids.json`, and stops them by those PIDs (process groups it created). The tests assert that nothing is left running.
+- Harness fixes (not product settings), applied where a product downloads a model from Hugging Face: `HF_HUB_DISABLE_XET=1` (the xet transport does not pass this machine's proxy and the download stalls), and model files are cached once under the product's install directory so each run does not download again.
+- Time: only Graphiti accepts an event time for ingestion (`reference_time`). The others stamp records with the time of ingestion; the session's `started` is kept in metadata or text where the product has a place for it, but it does not affect ordering or recency in search. Record order is preserved.
+- User, project, agent: where the product has no such concept the adapter encodes them in tags, folders or text; nothing enforces isolation unless stated.
+
+## 1. Reference MCP memory server
+
+- What: a knowledge graph (entities, relations, observations) in one JSONL file, nine MCP tools (`create_entities`, `add_observations`, `search_nodes`, `delete_observations`, ...). No model of its own; the agent decides what to write. Source: the MCP project's `servers` repository.
+- Install here: `npm ci --ignore-scripts` from `tools/locks/mcp-memory/` (lock file with npm integrity hashes). The package declares Node 24 or later; it is run with `/opt/node24/bin/node` (`LONGHAUL_NODE24`). Configuration per its README: `MEMORY_FILE_PATH` set to an absolute path.
+- `host()`: the README's NPX configuration, with `node <installed index.js>` instead of `npx -y` so the version stays pinned, `MEMORY_FILE_PATH` set; and the README's suggested system prompt as `CLAUDE.md` (its docs describe it for a Claude.ai Project; Claude Code's equivalent is `CLAUDE.md`).
+- Seeding: the product has no ingest path other than its tools, because it expects the agent to write. The adapter applies one fixed rule: per session, one entity `session:<id>` holding the metadata line and every turn as one observation (clipped at 1,500 characters), plus relations to `project:`, `user:` and `agent:` entities. This is not what an agent would have written (an agent writes short distilled facts); the lived track (T2b) shows that case.
+- Retrieval: `search_nodes` matches the whole query as one literal substring, so a sentence finds nothing. `context_for` searches each content word separately and ranks entities by how many words they matched. This is the adapter's choice, standing in for an agent that issues keyword queries.
+- Mapping that cannot be expressed: no per-project or per-user isolation (one file; scope is in entity names only), no timestamps.
+- Forget: `delete_observations` for observations containing the text. Verified offline.
+- Possibly unfair to it: seeding raw transcripts as observations makes a larger, noisier graph than an agent would write. Every read tool loads the whole file.
+
+## 2. Basic Memory
+
+- What: Markdown notes in a project directory, a local SQLite index with full-text and vector search (FastEmbed `bge-small-en-v1.5`), MCP tools `bm_write`, `bm_search`, `bm_read`, `bm_edit`, `bm_delete`, `bm_context` and others. No chat model. A hosted cloud product exists; it is not used.
+- Install here: `uv pip install --require-hashes` from `tools/locks/basic-memory.lock` (compiled with pre-releases allowed, as its README says; includes a `sqlite-vec` alpha). Configuration: `BASIC_MEMORY_CONFIG_DIR`, `BASIC_MEMORY_HOME`, `BASIC_MEMORY_NO_PROMOS=1` (documented opt-out of promos and telemetry), `auto_update` set to false (README) so the version cannot change mid-run.
+- `host()`: the README's Claude Code MCP command (`claude mcp add basic-memory -- uvx basic-memory mcp`) as an MCP configuration using the installed binary. Its optional Claude Code plugin (session-start briefings, pre-compaction checkpoints, `/basic-memory:*` commands) installs through `claude plugin` from a marketplace and writes to the Claude config directory; it is not included, which may understate what the product does for a user who installs it. The README presents the plugin as an add-on to the MCP server.
+- Seeding: `bm_write` over MCP, one note per session at `<project>/<date>-<session>.md` with frontmatter (`user`, `project`, `agent`, `started`), one `- [role] text` observation line per turn and a `part_of [[Project <p>]]` relation; then the documented `basic-memory reindex` builds embeddings.
+- Mapping: project is a folder and a tag (all in the single default project `main`, as the quick start leaves it); user, agent and start time are frontmatter fields, not used by search ranking. No enforced isolation.
+- Forget: rewrite the note without the matching lines (`bm_write` with `overwrite`), or `bm_delete` if nothing remains, then reindex. Verified offline.
+- Possibly unfair to it: notes in the product's intended style are written by an agent with titles, categories and links; the seeded notes are mechanical. First run downloads a 66 MB model.
+
+## 3. MCP Memory Service (added candidate)
+
+- Why added: a widely used local MCP memory server aimed at coding agents (SQLite with sqlite-vec, local ONNX embeddings, no chat model), updated the week of this check.
+- Install here: `uv pip install --require-hashes` from `tools/locks/mcp-memory-service.lock` (`mcp-memory-service[sqlite]`, which adds the local ONNX embedding model; without the extra, search falls back to hash embeddings).
+- `host()`: its README's Claude Code command, `claude mcp add memory -- memory server`, as an MCP configuration. Its optional Claude Code hooks (`claude-hooks/`, installed from a repository checkout) are not part of that quick start and are not included.
+- Seeding: its own `memory_store_session(turns, session_id, tags, metadata, agent_id)`. Mapping: tags `project:<p>` and `user:<u>`, `agent_id` = agent, session id kept, `started` in metadata (creation time is ingestion time).
+- Retrieval: `memory_search` filtered by the project tag. Forget: exact-mode search then `memory_delete` by content hash. Verified offline.
+
+## 4. claude-mem
+
+- What: a Claude Code (and other agents') plugin. Hooks send each prompt, tool call and assistant reply to a local worker (Bun, SQLite, a Chroma vector index run through `uv`); an observer model turns tool events into observations and each reply into a summary; a new session starts with an index of past observations and an MCP search tool (`search`, `timeline`, `get_observations`).
+- Install here: the documented `claude-mem install --ide claude-code --provider claude --no-auto-start` from the pinned npm package, run under an isolated HOME (`/tmp/mk-lh-claude-mem/home`), with `CLAUDE_MEM_ONLINE_OPTIN=false` and `telemetry disable`. `--provider claude` is the form that needs no claude-mem account. The installer registers the plugin in that HOME's `~/.claude`, places a launcher in `~/.local/bin`, installs Bun and `uv` if absent (both were already present) and tries `cmem.ai` for an optional sign-in (blocked; harmless). Install directory size is about 1.2 GB.
+- What it calls: the default observer is `claude`, the host's own Claude login through the Claude Agent SDK, model `haiku`: a real, billed call per observation and summary. There is also a documented `openai-compatible` provider (base URL, model, key); the offline tests use it against the fake server. The adapter refuses to ingest with the default provider unless `LONGHAUL_ALLOW_HOST_AGENT=1`, and sets the quota fallback to `off` when a base URL is used so it cannot fall back to a real Claude login.
+- `host()`: the plugin's own `hooks.json` (SessionStart context and worker start, UserPromptSubmit, PostToolUse, PreToolUse file context, Stop, SubagentStop, SessionEnd) with the launcher given as an absolute path; its MCP server (`mcp-search`); its `mem-search` skill copied to `.claude/skills/`; and the environment that points hooks at this instance's worker. This is equivalent to installing the plugin but is not done through `claude plugin`, so as not to write to the agent's Claude config directory. The Setup and launcher-repair hook entries are left out.
+- Seeding: replays each session as the hook events a real session would have fired: user turn to `session-init`, tool turn to `observation` (tool name `Bash`, the turn text as its output), assistant turn to `summarize` (that text as the last assistant message), then `session-end`. It then waits for the worker's queue to drain.
+- What cannot be mapped: a synthetic tool turn has no tool name or input, so every tool turn is presented as a `Bash` call; assistant text is seen only as the last reply before a Stop (as in a real session); no timestamps in the hook payload; project is the working-directory name (the adapter uses `<root>/projects/<project>`); user and agent identities are not recorded.
+- Retrieval: the worker's search API (`/api/search`, then the full record of the top hits, matching the plugin's search-then-fetch workflow); filtered by project. No model call. Whether the Chroma semantic part or only keyword search found a hit was not separated.
+- Forget: the worker's delete routes for observations, summaries and prompts. A search of every table in the store found no residue of the deleted text in the offline test; raw tool input and output (kept for the `get_tool_uses` tool) were not exercised by that test and are unverified.
+- Possibly unfair to it: the offline observer is a canned fake; with a real model the observations will be better and slower. In real use the observer sees real tool calls with file paths and edits, which the seeded history lacks. A seeded history exercises capture and recall, not the lived experience of the plugin (T2b).
+
+## 5. Mem0 open source
+
+- What: a Python library. `Memory.add(messages, user_id, agent_id, run_id, metadata)` extracts facts with a chat model (since the April 2026 algorithm, one ADD-only call; no update or delete steps), embeds them and stores them in a vector store (Qdrant local files here) with a SQLite history; `Memory.search(query, filters=...)` retrieves, with BM25 and entity boosting when the `nlp` extra and spaCy model are installed (they are).
+- MCP route, checked: the project's `mem0-mcp-server` (0.2.1) and its Claude Code plugin (0.3.1) require a Mem0 Platform account and API key (hosted). The OpenMemory MCP server is no longer shipped (its documentation URLs redirect to the introduction; the `openmemory` PyPI package is empty). The self-hosted server is a Docker Compose stack with a REST API and no MCP. There is therefore no documented open-source, local MCP route for a Claude Code user. `_mem0_worker.py --mcp` is the harness's own stdio MCP server over the open-source library with the same tool names as the project's server (`add_memory`, `search_memories`, `get_memories`, `get_memory`, `update_memory`, `delete_memory`). This is the harness's construction, not the project's, and results must say so. The project's hosted route was not used (hosted services are excluded).
+- Install here: `mem0ai[nlp]==2.2.1`, `fastembed`, and the spaCy `en_core_web_sm` wheel, all hash-pinned in `tools/locks/mem0.lock`. Embedder: FastEmbed `BAAI/bge-small-en-v1.5` (384 dimensions, local). Chat model: the library's OpenAI provider with `openai_base_url` = `LONGHAUL_LLM_BASE_URL`, accepted without change. `MEM0_TELEMETRY=false` is the documented opt-out.
+- Seeding: one `add` per session; user = user id, agent = agent id, session = `run_id`, project and start time in `metadata`. The library's `timestamp` argument is Platform-only, so recorded times cannot be set. Tool turns are sent as assistant messages prefixed `[tool output]`.
+- Retrieval: `search` filtered by user id. Forget: `get_all` then `delete` for memories containing the text.
+- Possibly unfair to it: the default instruction prompt is tuned for conversations between a user and an assistant, not tool-heavy coding transcripts. The MCP bridge is not the project's, so an agent's use of Mem0 through it may differ from the project's own plugin.
+
+## 6. Graphiti
+
+- What: a temporal knowledge-graph engine (the open-source part of Zep). An episode is run through a chat model that extracts entities and facts, which are deduplicated, time-stamped and embedded. The project ships a reference MCP server (`mcp_server`, tools `add_memory`, `search_memory_facts`, `search_nodes`, `delete_episode`, `get_episodes`, ...).
+- Install here: the project's repository at commit `9b8a4630092084734b080f2e6f409c2c23bdcc3a` (server 1.1.3, resolving `graphiti-core` 0.31.1), `uv sync --frozen --extra providers` so its own `uv.lock` pins everything with hashes (5.8 GB, mostly PyTorch). Graph database: the FalkorDB server shipped inside the `falkordblite` wheel (`falkordblite==0.11.0`, hash-pinned) started on a local port with data under the instance root; no container. Kuzu is documented as deprecated and the server does not support it.
+- Embeddings: the server can only reach an embedder through an OpenAI-compatible endpoint (providers: OpenAI, Azure, Gemini, Voyage). Its README names `sentence_transformers` as a local provider, but the shipped factory has no such provider and fails with "Unsupported Embedder provider". The documented local alternative is an OpenAI-compatible server such as Ollama; the harness fills that role with `tools/local_embeddings.py` serving `all-MiniLM-L6-v2` (384 dimensions) through sentence-transformers. The server takes its configuration file with `--config`; the adapter writes a copy of the project's `config.yaml` pointing only the embedder at the local endpoint.
+- Chat model: the server's OpenAI provider with `api_url` = `LONGHAUL_LLM_BASE_URL`; a non-OpenAI URL selects its generic OpenAI-compatible client (structured output through `json_schema`, with `LLM_STRUCTURED_OUTPUT_MODE=json_object` as the documented fallback). The README warns that small or local models often fail its structured output. `GRAPHITI_TELEMETRY_ENABLED=false` is the documented opt-out.
+- `host()`: the MCP server over stdio with the environment above, and the project's own agent rules (`docs/cursor_rules.md`, written for Cursor) as `CLAUDE.md`, the only instruction text its docs provide.
+- Seeding: `add_memory` over MCP per session: `group_id` = project (each group is its own graph on FalkorDB), `source` = `message`, `reference_time` = the session's start (the one product here that records event time), user, agent and session id in the source description. Episodes are processed asynchronously per group; the adapter waits on the server's log, which is the only completion signal exposed.
+- Retrieval: `search_memory_facts` and `search_nodes` for the project's group; no chat-model call. Facts, not raw transcript text, are returned.
+- Forget: `delete_episode` and `delete_entity_edge`. Offline, the episode and its facts were removed but the summary of a shared entity node (for example the speaker) still held the deleted text, because entity summaries are merged across episodes and the cascade removes only what one episode alone created. Expected of real extraction as well; unverified with a real model.
+- Possibly unfair to it: Graphiti is built for ingesting events and documents with a capable model; synthetic coding transcripts with a model that returns canned output exercise the plumbing only. Its cost and quality depend on the model chosen. A group per project also means a session in a project sees only that project's graph unless it passes another group id.
+
+## 7. Out of scope or assessed only
+
+- Letta (formerly MemGPT), `letta` 0.34.12 (Apache-2.0): out of scope. The package is now Letta Code, a terminal coding agent of its own; the only documented route for a Claude Code session is the `claude-subconscious` demo plugin, which its README says is not for production, requires a Letta API key or a self-hosted Letta server with its own model, and runs a second agent over every reply.
+- Cognee MCP (`cognee-mcp` 0.5.9, Apache-2.0 core): assessed, no adapter. Its `cognify` step builds a graph with structured-output model calls per chunk (OpenAI-compatible endpoints are supported through its LLM settings and FastEmbed for embeddings), the MCP server is run from a repository checkout with its own `uv sync`, and its README notes that Claude Code does not grant the MCP `sampling` capability, which is the no-key option. Integration is plausible but needs a larger harness than the others (dataset, `add`, `cognify`, `search` lifecycle and a call-count study of `cognify`); a candidate if the owner wants a third graph-style product.
+- LangMem (`langmem` 0.0.30, MIT): assessed, no adapter. A library of memory-management tools for LangGraph agents (extraction and a memory manager over a LangGraph store), needing a LangChain chat model (an OpenAI-compatible base URL is possible). It has no server, no MCP and no Claude Code integration in its documentation, so a "Claude Code user's quick start" does not exist; building one would be the harness's design, not the product's.
+- Others seen and not built: Supermemory and Zep Cloud (hosted accounts), Mem0 Platform and its Claude Code plugin (hosted account), OpenMemory (no longer shipped). Claude Code's own memory file is the `native` arm of the benchmark.

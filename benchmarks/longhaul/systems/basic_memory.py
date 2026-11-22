@@ -1,0 +1,258 @@
+"""Adapter: Basic Memory (`basic-memory`), Markdown notes exposed over MCP.
+
+No model of its own. Notes are plain Markdown files in a project directory; a local SQLite
+index (full text plus FastEmbed vectors, `bge-small-en-v1.5`) makes them searchable. Seeding
+uses its documented `bm_write` MCP tool, one note per session in the project's own note format
+(frontmatter, `- [category] observation` lines, `[[wiki]]` relations). Embeddings are built by
+the documented `basic-memory reindex` command after the seed.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import time
+from pathlib import Path
+from typing import Iterable
+
+from . import _common as c
+from ._types import HostConfig, Scope, SeedReport, Session
+
+NAME = "basic-memory"
+PROJECT = "main"  # the project a fresh install creates; the quick-start never makes another
+OBS_CAP = 1500
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "x"
+
+
+class BasicMemory:
+    name = NAME
+    needs_llm = False
+
+    def __init__(self) -> None:
+        self.home = c.install_dir(NAME)
+        self.bin = self.home / "venv/bin/basic-memory"
+        self.version = c.dist_version(self.home / "venv", "basic_memory")
+        self.root: Path | None = None
+        self.procs: c.Procs | None = None
+        self.client: c.McpStdio | None = None
+        self.reads = 0
+        self.writes = 0
+
+    @staticmethod
+    def installed() -> bool:
+        return (c.install_dir(NAME) / "venv/bin/basic-memory").is_file()
+
+    # -- lifecycle -------------------------------------------------------------
+    def _env_vars(self) -> dict[str, str]:
+        assert self.root is not None
+        return {
+            "BASIC_MEMORY_CONFIG_DIR": str(self.root / "cfg"),
+            "BASIC_MEMORY_HOME": str(self.root / "notes"),
+            "BASIC_MEMORY_NO_PROMOS": "1",  # documented opt-out of promos and telemetry
+            # Harness fixes, not product settings: model files are cached once under the install
+            # directory, and the Hugging Face xet transport does not pass this machine's proxy.
+            "BASIC_MEMORY_SEMANTIC_EMBEDDING_CACHE_DIR": str(self.home / "models"),
+            "HF_HUB_DISABLE_XET": "1",
+            "HOME": str(self.root / "home"),
+        }
+
+    def _env(self) -> dict[str, str]:
+        assert self.root is not None
+        return c.clean_env(self._env_vars(), home=self.root / "home")
+
+    def _cli(self, *args: str, timeout: float = 900) -> str:
+        r = subprocess.run(
+            [str(self.bin), *args], env=self._env(), capture_output=True, text=True, timeout=timeout
+        )
+        if r.returncode:
+            raise RuntimeError(
+                f"basic-memory {' '.join(args)}: {r.stderr[-400:] or r.stdout[-400:]}"
+            )
+        return r.stdout
+
+    @property
+    def notes(self) -> Path:
+        assert self.root is not None
+        return self.root / "notes"
+
+    def prepare(self, root: Path) -> None:
+        self.root = Path(root)
+        for d in ("home", "cfg", "notes"):
+            (self.root / d).mkdir(parents=True, exist_ok=True)
+        self.procs = c.Procs(self.root)
+        self.reads = self.writes = 0
+        # The README documents `auto_update` as the one switch that keeps the version still.
+        self._cli("config", "set", "auto_update", "false")
+
+    def _client(self) -> c.McpStdio:
+        if self.client is None:
+            assert self.root is not None and self.procs is not None
+            self.client = c.McpStdio(
+                self.procs,
+                [str(self.bin), "mcp"],
+                env=self._env(),
+                cwd=self.root,
+                log=self.root / "server.log",
+                timeout=600,
+            )
+        return self.client
+
+    def _stop_client(self) -> None:
+        if self.procs is not None:
+            self.procs.stop_all()
+        self.client = None
+
+    def close(self) -> None:
+        self._stop_client()
+
+    # -- ingest ----------------------------------------------------------------
+    @staticmethod
+    def render(s: Session) -> str:
+        sc = s.scope
+        title = f"Session {s.id}"
+        lines = [
+            "---",
+            f"title: {title}",
+            "type: session",
+            f"tags: [session, {_slug(sc.project)}]",
+            f"user: {sc.user}",
+            f"project: {sc.project}",
+            f"agent: {sc.agent}",
+            f"started: '{s.started}'",
+            "---",
+            "",
+            f"# {title}",
+            "",
+            f"Session of project {sc.project} by {sc.user} (agent {sc.agent}), started {s.started}.",
+            "",
+            "## Observations",
+        ]
+        for t in s.turns:
+            text = " ".join(c.clip(t.text, OBS_CAP).split())
+            lines.append(f"- [{t.role}] {text}")
+        lines += ["", "## Relations", f"- part_of [[Project {sc.project}]]"]
+        return "\n".join(lines) + "\n"
+
+    def path_for(self, s: Session) -> str:
+        return f"{_slug(s.scope.project)}/{s.started[:10]}-{_slug(s.id)}.md"
+
+    def seed(self, sessions: Iterable[Session]) -> SeedReport:
+        cl = self._client()
+        started = time.monotonic()
+        n = 0
+        for s in sessions:
+            _, _, err = cl.call(
+                "bm_write",
+                {"identifier": self.path_for(s), "content": self.render(s), "project": PROJECT},
+            )
+            if err:
+                raise RuntimeError(f"bm_write failed for {s.id}")
+            self.writes += 1
+            n += 1
+        # Stop the server first: only one process should write the SQLite index, then build the
+        # vector embeddings with the documented maintenance command.
+        self._stop_client()
+        self._cli("reindex")
+        return SeedReport(
+            sessions=n,
+            seconds=time.monotonic() - started,
+            llm_calls=0,
+            llm_tokens=0,
+            notes="one Markdown note per session via bm_write; local FastEmbed embeddings via `reindex`; "
+            "no chat model",
+        )
+
+    # -- host ------------------------------------------------------------------
+    def host(self, workdir: Path, scope: Scope) -> HostConfig:
+        env = self._env_vars()
+        return HostConfig(
+            mcp={
+                "mcpServers": {
+                    "basic-memory": {"command": str(self.bin), "args": ["mcp"], "env": env}
+                }
+            },
+            settings={},
+            files={},
+            allowed_tools=["mcp__basic-memory"],
+            env={},
+            prompt_note="",
+        )
+
+    # -- retrieval -------------------------------------------------------------
+    def context_for(self, query: str, scope: Scope, budget_chars: int) -> str:
+        cl = self._client()
+        text, data, err = cl.call(
+            "bm_search",
+            {"query": query, "project": PROJECT, "page_size": 10, "output_format": "json"},
+        )
+        self.reads += 1
+        if err:
+            return ""
+        results = []
+        try:
+            results = json.loads(text).get("results", [])
+        except ValueError:
+            if data and isinstance(data.get("results"), list):
+                results = data["results"]
+        out, used = [], 0
+        for r in results:
+            body = r.get("matched_chunk") or r.get("content") or ""
+            block = f"[{r.get('file_path') or r.get('title')}]\n{body}"
+            if used + len(block) > budget_chars:
+                block = c.clip(block, max(0, budget_chars - used))
+                if block:
+                    out.append(block)
+                break
+            out.append(block)
+            used += len(block) + 1
+        return "\n".join(out)
+
+    def forget(self, text_marker: str, scope: Scope) -> bool | None:
+        """Documented delete path: find the notes holding the text, rewrite each without the
+        matching observation lines (`bm_write` with `overwrite`); a note left with no
+        observations is deleted with `bm_delete`."""
+        cl = self._client()
+        done = False
+        for md in sorted(self.notes.rglob("*.md")):
+            body = md.read_text()
+            if text_marker.lower() not in body.lower():
+                continue
+            rel = md.relative_to(self.notes).as_posix()
+            kept = [ln for ln in body.splitlines() if text_marker.lower() not in ln.lower()]
+            has_obs = any(ln.startswith("- [") and not ln.startswith("- part_of") for ln in kept)
+            if has_obs:
+                cl.call(
+                    "bm_write",
+                    {
+                        "identifier": rel,
+                        "content": "\n".join(kept) + "\n",
+                        "project": PROJECT,
+                        "overwrite": True,
+                    },
+                )
+            else:
+                cl.call("bm_delete", {"identifier": rel, "project": PROJECT})
+            self.writes += 1
+            done = True
+        if done:
+            self._stop_client()
+            self._cli("reindex")  # refresh the vector index so the removed text is not returned
+        return done
+
+    def usage(self) -> dict:
+        return {"reads": self.reads, "writes": self.writes}
+
+    def disk_bytes(self) -> int:
+        return c.dir_size(self.root) if self.root else 0
+
+
+def make() -> BasicMemory:
+    return BasicMemory()
+
+
+def installed() -> bool:
+    return BasicMemory.installed()
