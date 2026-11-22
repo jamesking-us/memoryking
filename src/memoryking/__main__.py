@@ -1464,11 +1464,20 @@ def main() -> int:
                 "--project",
                 help="Project to switch (enable: default every project; disable: required)",
             )
-    cap = commands.add_parser("capture", help="Save one observation from text or stdin")
+    cap = commands.add_parser("capture", help="Save one observation from text, a file or stdin")
     cap.add_argument("--socket", type=Path)
     cap.add_argument("--credential", type=Path)
     cap.add_argument("--project", help="Default: MEMORYKING_PROJECT")
-    cap.add_argument("--text", help="The observation; omit to read it from stdin")
+    cap.add_argument(
+        "--text",
+        help="The observation; omit it to read the text from --file or from stdin",
+    )
+    cap.add_argument(
+        "--file",
+        type=Path,
+        help="Read the observation from this file (`-` is stdin), so text with quotes, "
+        "brackets or parentheses needs no shell quoting",
+    )
     cap.add_argument("--source", default="cli", help="Where it came from, e.g. git or pytest")
     cap.add_argument("--event", help="Stable event id so a rerun replays; default: a text hash")
     cap.add_argument(
@@ -1895,7 +1904,14 @@ def main() -> int:
         elif args.command == "capture":
             from memoryking import hooks
 
-            text = args.text if args.text is not None else sys.stdin.read()
+            if args.text is not None and args.file is not None:
+                raise LocalError("invalid_request")
+            if args.text is not None:
+                text = args.text
+            elif args.file is not None and str(args.file) != "-":
+                text = args.file.read_text(encoding="utf-8", errors="replace")
+            else:
+                text = sys.stdin.read()
             result = hooks.capture(
                 text,
                 source=args.source,
