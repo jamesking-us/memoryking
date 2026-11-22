@@ -27,6 +27,7 @@ from memoryking.domain.local import LocalError
 
 if TYPE_CHECKING:
     from memoryking.adapters.local_files import Control
+    from memoryking.application.control_log import ControlLog
 
 ZERO = "0" * 64
 OPERATIONS_DIR = "operations"
@@ -536,7 +537,7 @@ class OperationsLog:
             return len(drop)
 
 
-def oldest_coverage(control: "Control", directory: Path) -> int:
+def oldest_coverage(control: "ControlLog", directory: Path) -> int:
     """The operations position of the oldest retained backup in `directory`; 0 when unknown.
 
     Only backups whose signed manifest verifies for this store count: one that does not

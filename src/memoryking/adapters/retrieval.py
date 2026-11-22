@@ -13,12 +13,10 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
-from memoryking.adapters.blobs import blob_path
 from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.dense_search import claim_scores as dense_claim_scores
 from memoryking.adapters.dense_search import search as dense_search
 from memoryking.adapters.knowledge_store import Knowledge
-from memoryking.adapters.local_files import private_file
 from memoryking.adapters.local_store import (
     ARTIFACT_BYTES_LIMIT,
     ARTIFACT_LIMIT,
@@ -235,7 +233,7 @@ class Retrieval:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     access_id,
@@ -536,7 +534,7 @@ class Retrieval:
         if len(canonical_bytes(diag)) > 65536:
             raise LocalError("diagnostic_limit")
         self.db.execute(
-            "INSERT INTO rendered_artifacts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO rendered_artifacts(tenant,id,principal,project,incarnation,created,expires,state,body,body_hash,request_json,diagnostics,dependencies) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 who["tenant"],
                 receipt,
@@ -1833,11 +1831,7 @@ class Retrieval:
         return result
 
     def _blob(self, row: sqlite3.Row) -> bytes:
-        path = blob_path(self.s.root, row["tenant"], row["blob"])
-        private_file(path)
-        raw: bytes = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != row["blob"]:
-            raise LocalError("blob_corrupt")
+        raw: bytes = self.s.blobs.get(row["tenant"], row["blob"])
         return raw
 
     def _dependencies(self, items: list[dict[str, Any]]) -> list[dict[str, str]]:

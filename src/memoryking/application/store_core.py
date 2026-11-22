@@ -22,12 +22,10 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Self, cast
 
-from memoryking.adapters import blobs as blobfiles
-from memoryking.adapters.blobs import blob_path, locate, sha256_file
-from memoryking.adapters.blobs import remove as remove_blob
 from memoryking.adapters.local_contract import validate_capture
-from memoryking.adapters.local_files import atomic, private_dir, private_file, sync_dir
 from memoryking.application import lexical_index
+from memoryking.application.blob_store import BlobStore
+from memoryking.application.control_log import ControlLog
 from memoryking.application.retention import (
     CHECKPOINT_BYTES_LIMIT,
     CHECKPOINT_LIMIT,
@@ -175,6 +173,16 @@ class Visibility:
         self.projects: dict[tuple[str, str, str, int], bool] = {}  # read grant per project
 
 
+class _Followed:
+    """What one purge has retired so far, shared by the per-type follow-through methods."""
+
+    def __init__(self, depends: Callable[[Any], bool], purged: set[str]) -> None:
+        self.depends, self.purged = depends, purged
+        self.retired = 0  # experience records retired: ranking is disabled when any was
+        self.checkpoints: set[str] = set()
+        self.artifacts: set[str] = set()
+
+
 class StoreCore:
     """What every backend shares; the attributes below are supplied by the backend."""
 
@@ -183,10 +191,11 @@ class StoreCore:
 
     db: Any
     dialect: Dialect
-    control: Any
+    control: ControlLog  # the signed journal, its anchor and the operations log
     control_path: Path
     lease: str  # the holder this process claims the instance lease as
     root: Path
+    blobs: BlobStore  # where observation bodies live (the file store, or a test double)
     clock: Clock
     lock: threading.RLock
     store_id: str
@@ -298,7 +307,7 @@ class StoreCore:
             raise LocalError("invalid_token")
         if body.get("incarnation") != self.incarnation:
             raise LocalError("history_changed")
-        return cast(dict[str, Any], body)
+        return body
 
     def _auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
         identity = self._decode(token, "credential")
@@ -490,18 +499,7 @@ class StoreCore:
         return position
 
     def _blob(self, tenant: str, content: bytes) -> str:
-        digest = hashlib.sha256(content).hexdigest()
-        directory = self.root / "blobs" / identifier(tenant)
-        # Creating the directory syncs its parent; an existing one has nothing new to sync.
-        private_dir(directory, create=True)
-        path = locate(directory, digest)
-        if not path.exists():
-            if not path.parent.exists():
-                private_dir(path.parent, create=True)
-                sync_dir(directory)
-            atomic(path, content)
-        elif sha256_file(path) != digest:
-            raise LocalError("blob_corrupt")
+        digest = self.blobs.put(identifier(tenant), content)
         self.fault("after_blob")
         return digest
 
@@ -605,7 +603,7 @@ class StoreCore:
                     self._enqueue(tenant, position, obs, who["principal"])
                     result = {**self._capture_result(tenant, obs, position), "held": held}
                 self.db.execute(
-                    "INSERT INTO retries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO retries(tenant,incarnation,namespace,principal,operation,key,hash,result,observation,expires) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         *lookup,
                         digest,
@@ -625,7 +623,7 @@ class StoreCore:
         found = extract(text)
         for kind, anchor in found:
             self.db.execute(
-                insert_ignore("anchors", 4),
+                insert_ignore("anchors", "tenant,id,anchor,kind"),
                 (tenant, observation, anchor, kind),
             )
         return len(found)
@@ -784,11 +782,7 @@ class StoreCore:
             for row in rows:
                 last = row["position"]
                 if self._visible(who, row, decision.evaluated_ms):
-                    path = blob_path(self.root, who["tenant"], row["blob"])
-                    private_file(path)
-                    raw = path.read_bytes()
-                    if hashlib.sha256(raw).hexdigest() != row["blob"]:
-                        raise LocalError("blob_corrupt")
+                    raw = self.blobs.get(who["tenant"], row["blob"])
                     items.append(
                         {
                             "id": row["id"],
@@ -838,7 +832,7 @@ class StoreCore:
                 "SELECT policy_epoch,purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
             ).fetchone()
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -1052,7 +1046,8 @@ class StoreCore:
                     ).fetchone()
                     is None
                 ):
-                    removed += remove_blob(self.root, tenant, digest)
+                    removed += self.blobs.delete(tenant, digest)
+            self.blobs.sync()
         return removed
 
     def collect_purged(self) -> int:
@@ -1110,7 +1105,7 @@ class StoreCore:
             else:
                 record = self.control.append(self.anchor, action)
             self.fault("after_journal")
-            return cast(dict[str, Any], record)
+            return record
         except LocalError as exc:
             if exc.code != "journal_record_limit":
                 # Nothing was written for a refused oversized record; the store stays usable.
@@ -1153,59 +1148,17 @@ class StoreCore:
         # A fixed point: whatever is retired here joins the purged set, so anything
         # derived from it (a summary of a purged checkpoint, an atlas page over a
         # handoff view, an artifact over a retired experience record) goes too.
-        retired = 0
-        purged_checkpoints: set[str] = set()
-        purged_artifacts: set[str] = set()
+        followed = _Followed(depends, purged)
         changed = True
         while changed:
             changed = False
-            for row in self.db.execute(
-                "SELECT id,dependencies FROM checkpoints WHERE tenant=? AND state!='purged'",
-                (tenant,),
-            ).fetchall():
-                if depends(row["dependencies"]):
-                    self.db.execute(
-                        "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=? AND id=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.update(
-                        handoff[0]
-                        for handoff in self.db.execute(
-                            "SELECT id FROM handoffs WHERE tenant=? AND checkpoint=?",
-                            (tenant, row["id"]),
-                        ).fetchall()
-                    )
-                    self.db.execute(
-                        "UPDATE handoffs SET state='purged' WHERE tenant=? AND checkpoint=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.add(row["id"])
-                    purged_checkpoints.add(row["id"])
-                    changed = True
-            for row in self.db.execute(
-                "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL",
-                (tenant,),
-            ).fetchall():
-                if depends(row["dependencies"]):
-                    self.db.execute(
-                        "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=? AND id=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.add(row["id"])
-                    retired += 1
-                    changed = True
-            for row in self.db.execute(
-                "SELECT id,dependencies FROM rendered_artifacts WHERE tenant=? AND state='retained'",
-                (tenant,),
-            ).fetchall():
-                if depends(row["dependencies"]):
-                    self.db.execute(
-                        "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
-                        (tenant, row["id"]),
-                    )
-                    purged.add(row["id"])
-                    purged_artifacts.add(row["id"])
-                    changed = True
+            for follow in self._FOLLOW.values():
+                changed |= getattr(self, follow)(tenant, followed)
+        retired, purged_checkpoints, purged_artifacts = (
+            followed.retired,
+            followed.checkpoints,
+            followed.artifacts,
+        )
         # Session summaries hold verbatim checkpoint text: erase every summary of a
         # purged checkpoint or whose artifact was purged.
         for identifier in purged_checkpoints:
@@ -1226,6 +1179,73 @@ class StoreCore:
                 "UPDATE ranking_state SET configuration=NULL,version=version+1,reconciliation=0 WHERE tenant=?",
                 (tenant,),
             )
+
+    # The record types a purge follows (those with a dependency list), each with the method that
+    # retires its rows; tests/test_records.py asserts this is the registry's set.
+    _FOLLOW = {
+        "checkpoints": "_follow_checkpoints",
+        "experience_records": "_follow_experience",
+        "rendered_artifacts": "_follow_artifacts",
+    }
+
+    def _follow_checkpoints(self, tenant: str, followed: "_Followed") -> bool:
+        changed = False
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM checkpoints WHERE tenant=? AND state!='purged'",
+            (tenant,),
+        ).fetchall():
+            if followed.depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE checkpoints SET state='purged',body=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.update(
+                    handoff[0]
+                    for handoff in self.db.execute(
+                        "SELECT id FROM handoffs WHERE tenant=? AND checkpoint=?",
+                        (tenant, row["id"]),
+                    ).fetchall()
+                )
+                self.db.execute(
+                    "UPDATE handoffs SET state='purged' WHERE tenant=? AND checkpoint=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.add(row["id"])
+                followed.checkpoints.add(row["id"])
+                changed = True
+        return changed
+
+    def _follow_experience(self, tenant: str, followed: "_Followed") -> bool:
+        changed = False
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM experience_records WHERE tenant=? AND body IS NOT NULL",
+            (tenant,),
+        ).fetchall():
+            if followed.depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE experience_records SET body=NULL,dependencies='[]',readers=NULL WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.add(row["id"])
+                followed.retired += 1
+                changed = True
+        return changed
+
+    def _follow_artifacts(self, tenant: str, followed: "_Followed") -> bool:
+        changed = False
+        for row in self.db.execute(
+            "SELECT id,dependencies FROM rendered_artifacts WHERE tenant=? AND state='retained'",
+            (tenant,),
+        ).fetchall():
+            if followed.depends(row["dependencies"]):
+                self.db.execute(
+                    "UPDATE rendered_artifacts SET state='purged',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND id=?",
+                    (tenant, row["id"]),
+                )
+                followed.purged.add(row["id"])
+                followed.artifacts.add(row["id"])
+                changed = True
+        return changed
 
     def _apply(self, record: dict[str, Any], at: int) -> None:
         # A record advances the position of the log it came from: operation records have a
@@ -1284,7 +1304,7 @@ class StoreCore:
         elif kind == "purge":
             obs = action["observation"]
             self.db.execute(
-                insert_ignore("retired_sources", 4),
+                insert_ignore("retired_sources", "tenant,principal,source,source_event"),
                 (tenant, *action["source_identity"]),
             )
             held = self.db.execute(
@@ -1440,7 +1460,7 @@ class StoreCore:
         if not self._layout_done:
             # Flat blob files move into their shard directories a little at a time.
             with self.lock:
-                self._layout_done = blobfiles.migrate(self.root)
+                self._layout_done = self.blobs.maintain()
         if self.backup_policy is not None:
             self.backup_policy.maybe_run(self, now)
         if self.summary_idle_ms and now - self._last_summary_scan >= 60_000:
@@ -1553,11 +1573,7 @@ class StoreCore:
                 # A different observation's purge forces a fresh lease with current metadata.
                 raise LocalError("stale_source")
             if outcome == "complete":
-                path = blob_path(self.root, who["tenant"], obs["blob"])
-                private_file(path)
-                raw = path.read_bytes()
-                if hashlib.sha256(raw).hexdigest() != obs["blob"]:
-                    raise LocalError("blob_corrupt")
+                raw = self.blobs.get(who["tenant"], obs["blob"])
                 self.db.execute(
                     upsert("projection_items"),
                     (
@@ -1653,7 +1669,7 @@ class StoreCore:
                 }
             )
             self.db.execute(
-                "INSERT INTO receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO receipts(tenant,id,principal,incarnation,evaluated,deadline,policy_epoch,purge_epoch,response_hash,observation_ids) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     who["tenant"],
                     receipt,
@@ -1820,12 +1836,8 @@ class StoreCore:
                     if self.clock.monotonic_ms() - decision.monotonic_ms > DRAIN_BUDGET_MS:
                         limit = completed  # the rest waits for the next pass
                         break
-                    path = blob_path(self.root, tenant, row["blob"])
                     try:
-                        private_file(path)
-                        raw = path.read_bytes()
-                        if hashlib.sha256(raw).hexdigest() != row["blob"]:
-                            raise LocalError("blob_corrupt")
+                        raw = self.blobs.get(tenant, row["blob"])
                     except (LocalError, OSError):
                         # One unreadable blob costs only its own job an attempt (with the
                         # worker backoff, dead at MAX_ATTEMPTS); the pass continues.
@@ -1925,7 +1937,7 @@ class StoreCore:
                 lexical_index.step(
                     self.db,
                     name,
-                    lambda row, n=name: lexical_index.blob_text(self.root, row, n),
+                    lambda row, n=name: lexical_index.blob_text(self.blobs, row, n),
                     budget_ms=step_ms,
                     reset=lambda low, high, n=name: self._reset_jobs(n, low, high),
                     stats=counted,
@@ -1948,7 +1960,7 @@ class StoreCore:
         while not lexical_index.step(
             self.db,
             tenant,
-            lambda row: lexical_index.blob_text(self.root, row, tenant),
+            lambda row: lexical_index.blob_text(self.blobs, row, tenant),
             budget_ms=10**9,
         ):
             pass

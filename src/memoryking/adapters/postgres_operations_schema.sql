@@ -3,7 +3,7 @@
 -- on_behalf_of names the subject a delegated credential acted for; the request's transaction
 -- supplies it as a setting, so every event and receipt the request writes carries it and every
 -- other write leaves it null.
-INSERT INTO tenant_meta SELECT tenant,'operations','0' FROM tenants ON CONFLICT DO NOTHING;
+INSERT INTO tenant_meta(tenant,key,value) SELECT tenant,'operations','0' FROM tenants ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS instance_lease (
  tenant TEXT NOT NULL REFERENCES tenants, holder TEXT NOT NULL, renewed_ms BIGINT NOT NULL,
  PRIMARY KEY(tenant));
