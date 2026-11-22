@@ -239,10 +239,17 @@ class TimeBriefingCases(LexicalCases):
     def setup_corpus(self):
         self.now = self.store.clock.utc_ms()
         self.last_week = resolve("last week", self.now).ranges[0]
-        text = "the deploy failed with a timeout"
-        self.recent = self.capture("recent", text, observed=self.last_week[0] + 2 * DAY + 10 * HOUR)
-        self.old = self.capture("old", text, observed=self.last_week[0] - 12 * DAY + 10 * HOUR)
-        self.other = self.capture("other", text, observed=self.last_week[0] - 40 * DAY + 10 * HOUR)
+        # Different regions: a briefing shows identical notes once, and these are three events.
+        text = "the deploy failed with a timeout in the {} region"
+        self.recent = self.capture(
+            "recent", text.format("east"), observed=self.last_week[0] + 2 * DAY + 10 * HOUR
+        )
+        self.old = self.capture(
+            "old", text.format("central"), observed=self.last_week[0] - 12 * DAY + 10 * HOUR
+        )
+        self.other = self.capture(
+            "other", text.format("west"), observed=self.last_week[0] - 40 * DAY + 10 * HOUR
+        )
 
     def test_a_relative_date_prefers_records_in_its_range_without_filtering(self):
         self.setup_corpus()
