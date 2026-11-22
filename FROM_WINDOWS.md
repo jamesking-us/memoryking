@@ -477,3 +477,38 @@ I listed the five open questions to the owner in this Windows session, each with
 - **9:** one interactive `claude` session opened and closed with no prompt.
 
 I am building 5, 6 and 8 now, then doing 9, then B4.
+
+### 2026-11-22 17:50 UTC: B3 done: answers 5, 6 and 8 built; one real no-prompt session (evidence level 2 of 3)
+`windows-port` is at `e519c87`, pushed.
+
+#### 5, 6, 8 (owner: "Yes to all")
+- **5, hash-checked store side.** `memoryking/locks/core.lock` and `tokenizers.lock` ship in the wheel; `test_locks` keeps them identical to the root files. The WSL2 install is `pip install --require-hashes -r core.lock [-r tokenizers.lock]`, then MemoryKing with `--no-deps`.
+  - **Exercised:** a fresh venv in the distro (11.0 s). The installed set equals the locks' pins: jsonschema 4.26.0, jsonschema-specifications 2025.9.1, rpds-py 2026.9.1, regex 2026.9.29, tiktoken 0.12.0, memoryking 0.1.0. The install log was empty.
+- **6, undo record.** `%LOCALAPPDATA%\MemoryKing\setup\claude-code.json`, the existing byte-exact `Files` record, no token in it, used only by `--remove`.
+  - **Exercised:** `--remove` deleted the `settings.json` it had created and the `.claude` folder it had made for it, then deleted the record itself. A file changed since setup gets only setup's entries removed. Unit tests cover restore, delete and dry run.
+- **8, extras at connect.** The relay handshake now has `"extras": [...]`. A client using the tokenizers extra refuses a store side without it at connect with `store_extras_mismatch` (`missing_on: store`, `extra: tokenizers`); a handshake with no `extras` field is not refused.
+  - **Exercised:** against a container from the rebuilt image, my dev venv (with tiktoken) was refused at connect, and a core-only venv got its briefing. The container was recreated from the new image with its volumes kept: the store, profile and earlier memory all survived, and setup's check passed.
+- **Tests:** all pass on Windows. POSIX targeted run at `e519c87`: 166 tests, OK except the known missing-`node` error. Both replays (WSL2 and Docker) pass again on the new code.
+
+#### 9, one real Claude Code session with no prompt
+Claude Code 2.1.101, interactive, `--debug`, in a scratch folder under the repository's ignored `tmp/`. Setup wrote the hooks there with `--scope project`; I added one exec-form copy of the SessionStart hook (`command` plus `args`) beside setup's string form. No prompt was typed. Observed in its debug log:
+- **No trust prompt** for that folder.
+- **"Using bash path: C:\Program Files\Git\bin\bash.exe"**: Git Bash, as documented.
+- **Setup's string-form SessionStart hook: "Hook SessionStart:startup (SessionStart) success".** This is the first real Claude Code run of a hook setup wrote.
+- **The exec-form hook was run as a string through bash.** `args` was ignored and bash ate the backslashes: `/usr/bin/bash: F:sourcememoryking.venv-winScriptspython.exe: command not found`.
+  - **So 2.1.101 does not honour the exec form,** and the string form stays the Windows default.
+  - I have not built a version switch to the exec form: the documented string form works in both shells on every version, and no installed version here was seen to honour `args`.
+- **SessionEnd was not observed.** The terminal tool's Ctrl-C did not reach Claude Code's input, so I closed the tab, which ended the process without a SessionEnd. Real SessionEnd and PreCompact remain shown by replay only.
+- **Model API at start:** the client sent one `/v1/messages` request at start-up marked `source=quota_check`, so starting a session is not free of model API calls. This machine's OAuth token had expired (several 401s), so it may not have been served.
+- **Cleanup:** the scratch folder, its hooks and the temporary undo record are removed. Claude Code's own debug log of that session stays in the user's `~/.claude/debug`.
+
+#### Evidence level: **2 of 3, real start without a prompt**
+- Real Claude Code ran setup's SessionStart hook; the rest of the lifecycle is replay-only.
+- No prompted session was run.
+
+#### B3 complete except:
+- `--user-environment` (design step 6) is not built. I think it can wait: the hooks and bridge carry the relay in their own arguments, and doctor prints the hand-typed form. Say if you want it in B4.
+- **Upgrade gap:** an upgrade on the store side does not restart a running daemon. A daemon from the deleted venv kept serving after the reinstall. B4's upgrade docs will say to stop the daemon first; or setup should restart it when the store-side version changed. That is a small change, which I will make in B4 unless you object.
+- On this machine, the Docker Desktop folders `run` and `docker-secrets-engine` were moved aside under `*.stale-*`, as reported.
+
+Starting B4 next.
