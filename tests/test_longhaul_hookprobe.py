@@ -77,6 +77,61 @@ class NeedleTests(unittest.TestCase):
                     self.assertNotIn(slot.current.lower(), query.lower().split())
 
 
+class TwoStepReaderTests(unittest.TestCase):
+    """Step two's query: the prompt and the file the task names, never the history."""
+
+    PROMPT = (
+        "In ledger-sync, implement `write_orders(rows, path)` in `ledger/exporter.py`. "
+        "Follow the conventions this team has already settled for the orders export."
+    )
+    FILE = (
+        "# TODO: the audit trail\n"
+        "class OrderWriter:\n"
+        '    """Write the orders export file, one line per row."""\n'
+        "    def write_orders(self, rows, path):\n"
+        "        raise NotImplementedError\n"
+    )
+
+    def test_the_file_a_task_names_is_the_first_backticked_path_the_repository_holds(self):
+        repo = {"ledger/exporter.py": self.FILE, "README.md": "x"}
+        self.assertEqual("ledger/exporter.py", hookprobe.named_file(self.PROMPT, repo))
+        self.assertIsNone(hookprobe.named_file(self.PROMPT, {"README.md": "x"}))
+        self.assertIsNone(hookprobe.named_file("Nothing named here.", repo))
+
+    def test_the_words_of_a_file_are_its_identifiers_comments_and_docstrings_once_each(self):
+        words = hookprobe.file_words(self.FILE, {"orders"})
+        self.assertEqual(
+            ["todo", "the", "audit", "trail", "order", "writer", "write", "export", "file"],
+            words[:9],
+        )
+        self.assertNotIn("orders", words)  # already in the query
+        self.assertNotIn("self", words)
+        self.assertNotIn("notimplementederror", words)
+        self.assertEqual(len(words), len(set(words)))
+
+    def test_the_query_is_the_careful_query_plus_at_most_sixteen_words_of_the_file(self):
+        query = hookprobe.two_step_query(self.PROMPT, self.FILE)
+        careful = hookprobe.careful_query(self.PROMPT)
+        self.assertTrue(query.startswith(careful + " "))
+        self.assertIn("audit", query.split())
+        extra = query[len(careful) :].split()
+        self.assertLessEqual(len(extra), hookprobe.FILE_WORDS)
+        self.assertEqual(careful, hookprobe.two_step_query(self.PROMPT, ""))
+
+    def test_the_rule_never_reads_a_needle_or_an_answer(self):
+        suite = gen.build("T1", 20, 1)
+        for group in suite.groups:
+            for task in group.tasks:
+                path = hookprobe.named_file(task.prompt, task.repo)
+                self.assertTrue(path, task.id)
+                query = hookprobe.two_step_query(task.prompt, task.repo[path])
+                self.assertEqual(query, hookprobe.two_step_query(task.prompt, task.repo[path]))
+                for slot in task.slots:
+                    self.assertNotIn(slot.current.lower(), query.lower().split())
+                # the file is the stub the agent is given: no oracle, no history
+                self.assertNotIn(task.oracle[path], query)
+
+
 class SummaryTests(unittest.TestCase):
     def test_totals_count_needles_and_tasks_that_are_complete(self):
         def row(carried):
@@ -84,7 +139,7 @@ class SummaryTests(unittest.TestCase):
             return {
                 "task": "t",
                 "needles": 2,
-                "carried": {k: carried for k in sources},
+                "carried": {k: carried for k in (*sources, *hookprobe.STEPS)},
                 "chars": {k: 100 for k in sources},
                 "seconds": {k: 0.5 for k in sources},
             }
@@ -95,6 +150,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(1, summary["hook"]["tasks_complete"])
         self.assertEqual(100, summary["start"]["chars"])
         self.assertIn("recall_careful", hookprobe.render(summary))
+        self.assertEqual(3, summary["step_two"]["needles"])
 
 
 class EndToEndTests(unittest.TestCase):
