@@ -24,7 +24,7 @@ import socket
 import stat
 import sys
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Callable
 
 from memoryking import __version__
 from memoryking.adapters.platform_support import (
@@ -93,7 +93,15 @@ def forward(socket_path: Path, line: bytes) -> bytes:
     return raw
 
 
-def serve(socket_path: Path, credential: Path | None, stdin: BinaryIO, stdout: BinaryIO) -> int:
+def serve(
+    socket_path: Path,
+    credential: Path | None,
+    stdin: BinaryIO,
+    stdout: BinaryIO,
+    restart: Callable[[], object] | None = None,
+) -> int:
+    """Relay until stdin ends. `restart`, when given, starts the daemon again if it is gone:
+    a request that found no daemon never left, so sending it once more is safe."""
     require_local_store()
     if socket_path.exists() or socket_path.is_symlink():
         check_socket(socket_path)
@@ -110,6 +118,9 @@ def serve(socket_path: Path, credential: Path | None, stdin: BinaryIO, stdout: B
                     break
         try:
             reply = forward(socket_path, line)
+            if restart is not None and reply == _refusal("transport_unavailable"):
+                restart()
+                reply = forward(socket_path, line)
         except LocalError as exc:
             reply = _refusal(exc.code)
         except OSError:
@@ -120,13 +131,35 @@ def serve(socket_path: Path, credential: Path | None, stdin: BinaryIO, stdout: B
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="memoryking relay", description=__doc__.split("\n")[0])
-    parser.add_argument("--socket", type=Path, required=True, help="The daemon's socket")
+    parser.add_argument("--socket", type=Path, help="The daemon's socket")
     parser.add_argument(
         "--credential", type=Path, help="Private credential file whose token the client uses"
     )
+    parser.add_argument(
+        "--profile",
+        help="Named store profile on this side: its socket and credential, and the daemon "
+        "started on demand when the profile allows it (as for a local client)",
+    )
+    parser.add_argument(
+        "--config", type=Path, help="Profiles file; default ~/.memoryking/config.toml"
+    )
     args = parser.parse_args(argv)
     try:
-        return serve(args.socket, args.credential, sys.stdin.buffer, sys.stdout.buffer)
+        restart = None
+        if args.profile:
+            from memoryking import daemon, profiles
+
+            resolved = profiles.resolve(args.profile, args.config)
+            args.socket = args.socket or Path(resolved["socket"])
+            args.credential = args.credential or Path(resolved["credential"])
+
+            def restart() -> object:
+                return daemon.ensure(args.profile, args.config)
+
+            restart()
+        if args.socket is None:
+            raise LocalError("socket_required")
+        return serve(args.socket, args.credential, sys.stdin.buffer, sys.stdout.buffer, restart)
     except LocalError as exc:
         sys.stdout.buffer.write(_refusal(exc.code))
         sys.stdout.buffer.flush()

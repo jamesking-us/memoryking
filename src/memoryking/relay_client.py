@@ -176,27 +176,52 @@ class RelayCredential:
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
 
-def relay_argv(spec: str, socket: str, credential: str | None, python: str | None) -> list[str]:
+# Where `memoryking setup` installs MemoryKing inside a WSL2 distro: on the distro's own
+# file system, in the user's home, so it is found without anything on the command line.
+WSL_PYTHON = "$HOME/.local/share/memoryking/venv/bin/python"
+
+
+def relay_argv(
+    spec: str,
+    socket: str | None,
+    credential: str | None,
+    python: str | None,
+    profile: str | None = None,
+) -> list[str]:
     """The command that starts the relay on the store's side, chosen explicitly.
 
-    `spec` is `wsl:DISTRO` or `docker:CONTAINER`; nothing is inferred. `socket` and
-    `credential` are paths on that side. The command runs without a shell (`wsl.exe
-    --exec`, `docker exec`), so no path or name is ever re-parsed by one.
+    `spec` is `wsl:DISTRO` or `docker:CONTAINER`; nothing is inferred. The relay finds the
+    daemon either from `profile`, a named profile on that side (socket, credential, and
+    start on demand), or from `socket` and `credential`, paths on that side. No shell on
+    this side ever sees the command (`wsl.exe --exec`, `docker exec`). Without `python`,
+    WSL2 runs the interpreter setup installs (`WSL_PYTHON`, expanded by `sh` there) and the
+    container its own `python`.
     """
     kind, _, name = spec.partition(":")
     if kind not in {"wsl", "docker"} or not NAME.fullmatch(name):
         raise LocalError("relay_invalid")
-    for path in (socket, credential):
+    if profile is not None and not NAME.fullmatch(profile):
+        raise LocalError("relay_invalid")
+    if profile is None and socket is None:
+        raise LocalError("socket_required")
+    for path in (socket, credential, python):
         if path is not None and (not path.startswith("/") or "\n" in path or "\0" in path):
+            if path is python and "/" not in path:
+                continue  # a command name such as python3, looked up on that side
             raise LocalError("relay_invalid")
-    if kind == "wsl":
-        prefix, default = ["wsl.exe", "-d", name, "--exec"], "python3"
-    else:
-        prefix, default = ["docker", "exec", "-i", name], "python"
-    command = [python or default, "-m", "memoryking.relay", "--socket", socket]
+    tail = ["-m", "memoryking.relay"]
+    if profile is not None:
+        tail += ["--profile", profile]
+    if socket is not None:
+        tail += ["--socket", socket]
     if credential is not None:
-        command += ["--credential", credential]
-    return prefix + command
+        tail += ["--credential", credential]
+    if kind == "docker":
+        return ["docker", "exec", "-i", name, python or "python", *tail]
+    if python is not None:
+        return ["wsl.exe", "-d", name, "--exec", python, *tail]
+    script = f'exec "{WSL_PYTHON}" "$@"'
+    return ["wsl.exe", "-d", name, "--exec", "/bin/sh", "-c", script, "sh", *tail]
 
 
 def remote(path: Any) -> str | None:
@@ -207,13 +232,15 @@ def remote(path: Any) -> str | None:
 
 
 def connect(
-    spec: str, socket: Any, credential: Any, python: str | None = None
+    spec: str,
+    socket: Any,
+    credential: Any,
+    python: str | None = None,
+    profile: str | None = None,
 ) -> tuple[RelayEndpoint, RelayCredential]:
     """Start a relay and return it with the credential it handed over."""
-    path = remote(socket)
-    if path is None:
-        raise LocalError("socket_required")
-    endpoint = RelayEndpoint(relay_argv(spec, path, remote(credential), python))
+    argv = relay_argv(spec, remote(socket), remote(credential), python, profile)
+    endpoint = RelayEndpoint(argv)
     return endpoint, RelayCredential(endpoint)
 
 

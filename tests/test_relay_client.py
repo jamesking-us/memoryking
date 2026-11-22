@@ -120,12 +120,29 @@ class RelayClientTests(unittest.TestCase):
 
     def test_the_relay_command_is_explicit_and_needs_no_shell(self) -> None:
         self.assertEqual(
-            relay_argv("wsl:Ubuntu-24.04", "/home/u/s.sock", "/home/u/c", None),
+            relay_argv("wsl:Ubuntu-24.04", "/home/u/s.sock", "/home/u/c", "python3"),
             [
                 "wsl.exe", "-d", "Ubuntu-24.04", "--exec", "python3", "-m", "memoryking.relay",
                 "--socket", "/home/u/s.sock", "--credential", "/home/u/c",
             ],
         )  # fmt: skip
+        # Setup's own interpreter, found on that side; nothing on this side expands $HOME.
+        self.assertEqual(
+            relay_argv("wsl:Ubuntu", None, None, None, "default-agent"),
+            [
+                "wsl.exe", "-d", "Ubuntu", "--exec", "/bin/sh", "-c",
+                'exec "$HOME/.local/share/memoryking/venv/bin/python" "$@"', "sh",
+                "-m", "memoryking.relay", "--profile", "default-agent",
+            ],
+        )  # fmt: skip
+        self.assertEqual(
+            relay_argv("docker:memoryking", None, None, None, "default-agent"),
+            ["docker", "exec", "-i", "memoryking", "python", "-m", "memoryking.relay",
+             "--profile", "default-agent"],
+        )  # fmt: skip
+        self.fails("socket_required", lambda: relay_argv("wsl:Ubuntu", None, None, None))
+        self.fails("relay_invalid", lambda: relay_argv("wsl:U", None, None, None, "a b"))
+        self.fails("relay_invalid", lambda: relay_argv("wsl:U", "/s", None, "rel/py"))
         self.assertEqual(
             relay_argv("docker:memoryking", "/data/store/service.sock", None, "/opt/py"),
             [

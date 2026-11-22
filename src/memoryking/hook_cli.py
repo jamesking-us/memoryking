@@ -70,8 +70,15 @@ def add_global_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--relay-python",
         default=os.environ.get("MEMORYKING_RELAY_PYTHON"),
-        help="Python with MemoryKing on the store's side; default python3 (WSL) or "
-        "python (container) (MEMORYKING_RELAY_PYTHON)",
+        help="Python with MemoryKing on the store's side; default the one `memoryking setup` "
+        "installs (WSL) or the image's python (container) (MEMORYKING_RELAY_PYTHON)",
+    )
+    parser.add_argument(
+        "--relay-profile",
+        default=os.environ.get("MEMORYKING_RELAY_PROFILE"),
+        help="Named profile on the store's side that gives the relay its socket and "
+        "credential and starts the daemon on demand; no path then crosses to this side "
+        "(MEMORYKING_RELAY_PROFILE)",
     )
 
 
@@ -117,7 +124,9 @@ def attach_relay(args: argparse.Namespace) -> None:
     """Send this command's requests through a relay; the token stays on the store's side."""
     if not hasattr(args, "socket"):
         raise LocalError("relay_invalid")
-    endpoint, credential = connect(args.relay, args.socket, args.credential, args.relay_python)
+    endpoint, credential = connect(
+        args.relay, args.socket, args.credential, args.relay_python, args.relay_profile
+    )
     atexit.register(endpoint.close)
     args.socket = endpoint
     if hasattr(args, "credential"):

@@ -184,5 +184,71 @@ class RelayTests(unittest.TestCase):
         self.assertEqual(json.loads(bad.stdout)["error"], "unsafe_socket")
 
 
+@unittest.skipUnless(
+    LOCAL_STORE_SUPPORTED, "the relay runs beside the daemon, where the store is (not Windows)"
+)
+class RelayProfileTests(unittest.TestCase):
+    """`relay --profile`: the profile's socket and credential, and the daemon on demand."""
+
+    def setUp(self) -> None:
+        from memoryking import profiles
+        from memoryking.adapters.local_store import LocalStore
+
+        self.temp = tempfile.TemporaryDirectory(dir="/tmp", prefix="mk-relayp-")
+        root = Path(self.temp.name)
+        self.credential = LocalStore.initialize(root / "data", root / "control")
+        self.config = root / "home" / "config.toml"
+        self.values = {
+            "store": str(root / "data"),
+            "control": str(root / "control"),
+            "credential": str(self.credential),
+            "autostart": True,
+        }
+        profiles.save("relayed", self.values, self.config)
+
+    def tearDown(self) -> None:
+        from memoryking import daemon, profiles
+
+        try:
+            daemon.stop(profiles.resolve("relayed", self.config))
+        finally:
+            self.temp.cleanup()
+
+    def relay(self, *lines: bytes) -> list[bytes]:
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "memoryking.relay",
+                "--profile", "relayed", "--config", str(self.config),
+            ],
+            input=b"".join(lines),
+            capture_output=True,
+            timeout=120,
+        )  # fmt: skip
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines(keepends=True)
+
+    def context(self, token: str) -> bytes:
+        body = {"version": 1, "credential": token, "operation": "context", "args": {"project": "p"}}
+        return canonical_bytes(body) + b"\n"
+
+    def test_no_daemon_is_started_on_demand_and_the_profiles_credential_is_handed_over(
+        self,
+    ) -> None:
+        socket_path = Path(self.values["store"]) / "service.sock"
+        self.assertFalse(socket_path.exists())
+        token = self.credential.read_text(encoding="utf-8").strip()
+        hello, reply = self.relay(self.context(token))
+        self.assertEqual(json.loads(hello)["credential"], token)
+        self.assertNotIn("error", json.loads(reply))
+        self.assertTrue(socket_path.exists())
+
+    def test_a_profile_without_autostart_says_how_to_start(self) -> None:
+        from memoryking import profiles
+
+        profiles.save("relayed", {**self.values, "autostart": False}, self.config)
+        (first,) = self.relay()
+        self.assertEqual(json.loads(first)["error"], "transport_unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
