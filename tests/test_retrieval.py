@@ -438,6 +438,33 @@ class RetrievalTests(unittest.TestCase):
             },
         )
 
+    def test_an_accepted_claim_answers_the_observations_it_cites(self):
+        claim = self.propose(self.body(text="timeout=30 is the observed limit"))
+        self.review(claim)
+        outside = self.observe(
+            "outside", "The timeout was raised on the staging gateway last week."
+        )
+        result = self.run_r(args=self.brief_args(query="timeout"))
+        references = [i["reference"] for i in result["guidance"]]
+        # the cited observation is not listed again; one that adds text still is
+        self.assertIn(claim["revision"], references)
+        self.assertNotIn(self.obs["observation"], references)
+        self.assertIn(outside["observation"], references)
+        item = next(i for i in result["guidance"] if i["reference"] == claim["revision"])
+        self.assertEqual(
+            {"count": 1, "references": [self.obs["observation"]]}, item["evidence_not_repeated"]
+        )
+        # it stays a dependency of the receipt, as the claim's cited evidence
+        stored = self.store.db.execute(
+            "SELECT dependencies FROM rendered_artifacts WHERE id=?", (result["receipt"],)
+        ).fetchone()[0]
+        self.assertIn(self.obs["observation"], stored)
+        # rendered as text, accepted knowledge and observations are separate sections
+        text = self.run_r(args=self.brief_args(query="timeout", format="text"))["text"]
+        self.assertLess(
+            text.index("## Accepted knowledge"), text.index("## Unreviewed observations")
+        )
+
     def test_multi_word_query_matches_any_term_on_every_backend(self):
         captured = self.observe("deadline", "retry backoff exceeded the total deadline")
         self.observe("unrelated", "astronomy lecture notes")
@@ -458,7 +485,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertTrue(text.startswith("# Briefing: deadline"))
         self.assertIn("## Must follow", text)
         self.assertIn("Never disclose credentials", text)
-        self.assertIn("## Guidance", text)
+        self.assertIn("## Unreviewed observations", text)
         self.assertIn("[g1]", text)
         self.assertIn("retry backoff exceeded the total deadline", text)
         self.assertIn("## Sources", text)

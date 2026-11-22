@@ -174,7 +174,11 @@ class UserScopeTests(unittest.TestCase):
         self.assertEqual(mandatory[0]["scope"], "user")
         scopes = {g["reference"]: g.get("scope") for g in packet["guidance"]}
         self.assertEqual(scopes[proposed["revision"]], "user")
-        self.assertEqual(scopes[obs], "user")
+        # The observation the accepted claim cites is not repeated beside it; the claim names it
+        # and the receipt still depends on it (checked by the purge below).
+        self.assertNotIn(obs, scopes)
+        claim = next(g for g in packet["guidance"] if g["reference"] == proposed["revision"])
+        self.assertEqual(claim["evidence_not_repeated"]["references"], [obs])
         # The same, from a different project the agent also reads.
         self.store.grant(self.owner, "agent-a", "q", ["capture", "read"], for_user="alice")
         other = self.run_r("brief", self.brief_args(project="q", query="pnpm"), self.agent)

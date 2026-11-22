@@ -392,7 +392,16 @@ def run_group(
                     guidance = [s["id"] for s in packet["sources"] if s["ref"].startswith("g")]
                     memory.append(memory_chars(packet["text"]))
                 else:
-                    guidance = [g["reference"] for g in packet["guidance"]]
+                    # An item that stands for duplicate records cites them too (the receipt
+                    # depends on each), so they count, right after the item that names them.
+                    guidance = [
+                        ref
+                        for g in packet["guidance"]
+                        for ref in (
+                            g["reference"],
+                            *g.get("also_recorded_in", {}).get("references", []),
+                        )
+                    ]
                     memory.append(sum(len(g.get("text", "")) for g in packet["guidance"]))
                 cited = [ref for ref in guidance if ref in captured]
                 ranked_sessions = distinct([captured[c][0] for c in cited])

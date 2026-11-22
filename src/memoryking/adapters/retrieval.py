@@ -42,16 +42,18 @@ from memoryking.domain.briefing import (
     terms,
 )
 from memoryking.domain.briefing_text import render_brief, textualize
+from memoryking.domain.duplicates import duplicates, family, shape
 from memoryking.domain.lexicon import (
     QUERY_TERM_LIMIT,
-    STEM_MARK,
     Corpus,
     Term,
     query_terms,
-    stem,
+    rescued,
 )
 from memoryking.domain.lexicon import score as bm25
 from memoryking.domain.local import Decision, LocalError, Released, is_user_project
+from memoryking.domain.passages import EXCERPT_BYTES, split
+from memoryking.domain.passages import excerpt as quote
 from memoryking.domain.selectors import bindings
 from memoryking.domain.timeexpr import Understanding, in_ranges, resolve
 
@@ -677,6 +679,7 @@ class Retrieval:
             # Long queries are searched on their leading terms; the cut is disclosed.
             diag["query_terms_truncated"] = QUERY_TERM_LIMIT
         groups: list[list[dict[str, Any]]] = []
+        behind: dict[str, list[str]] = {}
         drafted: list[list[dict[str, Any]]] = []
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
@@ -707,7 +710,7 @@ class Retrieval:
                     knowledge["status"] = "blocked"
                     knowledge["reason"] = "verification_unavailable"
             eligibility_finished = self.s.clock.monotonic_ms()
-            groups, trace, cache = self._candidates(
+            groups, trace, cache, behind = self._candidates(
                 who,
                 args,
                 knowledge,
@@ -718,6 +721,7 @@ class Retrieval:
                 ranking,
                 evaluation=ranking_override is not None,
                 lexical_current=lexical_current,
+                configuration=configuration,
                 understanding=understanding,
             )
             if (
@@ -781,6 +785,13 @@ class Retrieval:
         output = json.loads(raw)
         rendered_items = output["constraints"] + selected
         deps = self._dependencies(rendered_items)
+        for item in rendered_items:
+            # Records an item stands for (duplicates, older versions, cited evidence) are
+            # still what the briefing depends on: a purge of any of them retires it.
+            for reference in behind.get(item["reference"], []):
+                if {"kind": "observation", "id": reference} not in deps:
+                    deps.append({"kind": "observation", "id": reference})
+        deps.sort(key=lambda d: (d["kind"], d["id"]))
         if ranking["state"] == "experimental":
             deps.append({"kind": "experience_record", "id": ranking["configuration"]})
         diag["ranking_experiment"] = {
@@ -1040,8 +1051,9 @@ class Retrieval:
         *,
         evaluation: bool = False,
         lexical_current: bool = False,
+        configuration: str = LEGACY_CONFIGURATION,
         understanding: Understanding | None = None,
-    ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]], str]:
+    ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]], str, dict[str, list[str]]]:
         tenant = who["tenant"]
         # Date words are not search words: "last week" must not look for "week".
         words = search_text(args["query"], understanding)
@@ -1068,17 +1080,9 @@ class Retrieval:
             if qterms
             else Corpus()
         )
-        wanted_words = {w for t in qterms for w in t.words}
-        wanted_keys = {t.key for t in qterms}
 
         def scorer(text: str) -> int:
             return bm25(qterms, text, corpus) if lexical_current else relevance(query, text)
-
-        def is_wanted(token: str) -> bool:
-            if not lexical_current:
-                return token in query
-            root = stem(token)
-            return token in wanted_words or (root is not None and STEM_MARK + root in wanted_keys)
 
         # The principal's own scope, when it acts for a user: matching observations from it
         # join the project's, labelled, and the cached selection depends on which scope it is.
@@ -1090,7 +1094,7 @@ class Retrieval:
                 "store": self.s.store_id,
                 "incarnation": self.s.incarnation,
                 "generation": source,
-                "configuration": CONFIGURATION if lexical_current else LEGACY_CONFIGURATION,
+                "configuration": configuration,
                 "compiler": COMPILER,
                 "request": args,
                 "user_scope": user,
@@ -1219,6 +1223,7 @@ class Retrieval:
             ranked.append((score, lead, group))
         dense_scores = dense["scores"]
         positions: dict[str, int] = {}
+        families: dict[str, tuple[str, str, str]] = {}
         observed: dict[str, int] = {}
         # Corrections: a record with a visible replacement, or one this reader asked to have
         # retired, is left out; one someone else asked to retire is marked (see corrections.py).
@@ -1237,35 +1242,42 @@ class Retrieval:
                 continue
             observed[observation] = row["observed_at_ms"]
             positions[observation] = row["position"]
+            families[observation] = family(row["principal"], row["source"], row["source_event"])
             tie[observation] = (1, -row["position"], observation)
             raw = self._blob(row)
             # A whole atomic excerpt has attribution and bounds; never a paraphrase.
             full = raw.decode()
             score = scorer(full)
+            # Only a long observation is read as passages: to quote the one that answers,
+            # and (lexical-v2 rescue) to score a long capture by its best passage when that
+            # beats the whole, which length normalisation would otherwise bury.
+            parts = split(full) if len(raw) > EXCERPT_BYTES else []
+            passage_scores = [0] * len(parts)
+            if parts and (score or lexical_current):
+                passage_scores = [scorer(full[p.start : p.end]) for p in parts]
+                if lexical_current:
+                    score = rescued(score, passage_scores)
             anchor_hits = 0
             if anchors:
                 # Exact overlap of the query's anchors with the record's, in millionths,
                 # on the same scale as term overlap; the larger of the two is the score.
                 anchor_hits = sum(1 for a in anchors if a in anchor_sets.get(observation, ()))
                 score = max(score, anchor_hits * 1000000 // len(anchors))
-            offset = 0
-            if (
-                score
-                and len(raw) > 4096
-                and not any(
-                    is_wanted(m.group().casefold())
-                    for m in re.finditer(r"[^\W_]+", raw[:4096].decode("utf-8", errors="ignore"))
-                )
-            ):
-                # Locate an actual term in the original text; avoid byte/character
-                # offsets derived from casefold, which can change Unicode length.
-                match = next(
-                    (m for m in re.finditer(r"[^\W_]+", full) if is_wanted(m.group().casefold())),
-                    None,
-                )
-                if match:
-                    offset = len(full[: max(0, match.start() - 256)].encode())
-            excerpt = raw[offset : offset + 4096].decode("utf-8", errors="ignore")
+                if anchor_hits and parts:
+                    # An anchor hit steers the quote to the passage that names it.
+                    folded = [full[p.start : p.end].casefold() for p in parts]
+                    passage_scores = [
+                        max(
+                            value,
+                            sum(1 for a in anchors if a.casefold() in text)
+                            * 1000000
+                            // len(anchors),
+                        )
+                        for value, text in zip(passage_scores, folded, strict=True)
+                    ]
+            first, last = quote(full, parts, passage_scores) if parts else (0, len(full))
+            excerpt_text = full[first:last]
+            offset = len(full[:first].encode())
             if score or observation in dense_scores:
                 ranked.append(
                     (
@@ -1275,7 +1287,7 @@ class Retrieval:
                             {
                                 "reference": observation,
                                 "authority": "observed_episode",
-                                "text": excerpt,
+                                "text": excerpt_text,
                                 "actor": row["principal"],
                                 "source": row["source"],
                                 "observed_at_ms": row["observed_at_ms"],
@@ -1297,7 +1309,7 @@ class Retrieval:
                                     else {}
                                 ),
                                 "excerpt_start_byte": offset,
-                                "excerpt_end_byte": offset + len(excerpt.encode()),
+                                "excerpt_end_byte": offset + len(excerpt_text.encode()),
                                 "source_bytes": len(raw),
                                 "content_hash": row["blob"],
                                 **({"scope": "user"} if is_user_project(row["project"]) else {}),
@@ -1441,6 +1453,7 @@ class Retrieval:
 
             ranked = adjust(ranked, ranking["adjustments"])
         limit = args.get("top_k", 8)
+        presented, collapsed, behind = self._present(who, ranked, limit, positions, families)
         trace = [
             {"stage": "authorized_eligibility", "visible_claims": len(candidates)},
             {
@@ -1448,7 +1461,7 @@ class Retrieval:
                 "visible_candidates": len(ranked),
                 "candidate_limit_reached": len(ids) > 256,
                 "max_candidates": 256,
-                "configuration": CONFIGURATION if lexical_current else LEGACY_CONFIGURATION,
+                "configuration": configuration,
                 **(
                     {
                         "selection": "informative_tiers_v1",
@@ -1465,7 +1478,7 @@ class Retrieval:
             {
                 "stage": "rank",
                 "metric": "bm25_word_forms_v1" if lexical_current else "literal_term_overlap_v1",
-                "selected_groups": min(limit, len(ranked)),
+                "selected_groups": len(presented),
             },
         ]
         if "dense" in args:
@@ -1486,6 +1499,7 @@ class Retrieval:
         trace.insert(len(trace) - 1, time_trace)
         trace.insert(len(trace) - 1, salience_trace)
         trace.insert(len(trace) - 1, rerank_trace)
+        trace.insert(len(trace) - 1, {"stage": "one_answer_per_fact", **collapsed})
         if ranking["state"] != "disabled":
             trace.append(
                 {
@@ -1493,7 +1507,164 @@ class Retrieval:
                     **{key: value for key, value in ranking.items() if key != "adjustments"},
                 }
             )
-        return [group for _, _, group in ranked[:limit]], trace, "hit" if hit else "miss"
+        return presented, trace, "hit" if hit else "miss", behind
+
+    REFERENCES_SHOWN = 16  # references named in an item's own list; the receipt depends on all
+
+    def _present(
+        self,
+        who: dict[str, Any],
+        ranked: list[tuple[int, str, list[dict[str, Any]]]],
+        limit: int,
+        positions: dict[str, int],
+        families: dict[str, tuple[str, str, str]],
+    ) -> tuple[list[list[dict[str, Any]]], dict[str, int], dict[str, list[str]]]:
+        """One answer per fact, after ranking and before packing.
+
+        Only the item list changes, never what is authorized: every record that was
+        collapsed stays a dependency of the receipt (the kept item names it), so purging
+        or hiding any of them retires the briefing exactly as before.
+
+        1. Several versions of one memory-tool file or vault note (`name`, `name__v2`, ...):
+           the newest is kept and names the older ones in `supersedes`.
+        2. Duplicates (see `domain.duplicates`): the newest record's text is kept, at the
+           best rank any of them had, and `also_recorded_in` names the others.
+        3. An accepted claim in the briefing is the answer for the observations it cites
+           when they hold nothing it lacks: the excerpt lies inside the cited span, or
+           nearly all its words are in the claim. They are listed in the claim's
+           `evidence_not_repeated`; the claim still cites them as its evidence."""
+        count = {"duplicates_collapsed": 0, "versions_collapsed": 0, "evidence_not_repeated": 0}
+        Entry = tuple[int, str, list[dict[str, Any]]]
+
+        def single(entry: Entry) -> bool:
+            return len(entry[2]) == 1 and entry[2][0]["authority"] == "observed_episode"
+
+        every: dict[int, list[str]] = {}  # all references behind an item, for the receipt
+
+        def link(item: dict[str, Any], field: str, references: list[str]) -> None:
+            if references:
+                found = item.get(field, {"count": 0, "references": []})
+                item[field] = {
+                    "count": found["count"] + len(references),
+                    "references": [*found["references"], *references][: self.REFERENCES_SHOWN],
+                }
+                every.setdefault(id(item), []).extend(references)
+
+        def newest(entries: list[Entry], members: list[int]) -> int:
+            return max(members, key=lambda i: (positions[entries[i][1]], entries[i][1]))
+
+        def fold(entries: list[Entry], groups: list[list[int]]) -> list[Entry]:
+            """Each group of indexes becomes its newest member, at the group's first slot."""
+            keep = {min(g): newest(entries, g) for g in groups if len(g) > 1}
+            gone = {i for g in groups if len(g) > 1 for i in g}
+            result: list[Entry] = []
+            for index, entry in enumerate(entries):
+                if index in keep:
+                    result.append((entry[0], entries[keep[index]][1], entries[keep[index]][2]))
+                elif index not in gone:
+                    result.append(entry)
+            return result
+
+        # Only the head of the ranking can reach the briefing once repeats are folded, so
+        # only it is compared (a comparison is quadratic); the rest keeps its order.
+        entries: list[Entry] = list(ranked[: min(3 * limit + 8, 64)])
+        rest: list[Entry] = list(ranked[min(3 * limit + 8, 64) :])
+        # 1. versions of one file
+        by_family: dict[tuple[str, str, str], list[int]] = {}
+        for index, entry in enumerate(entries):
+            if single(entry) and entry[1] in families:
+                by_family.setdefault(families[entry[1]], []).append(index)
+        for members in by_family.values():
+            if len(members) > 1:
+                keep = newest(entries, members)
+                older = [i for i in members if i != keep]
+                link(entries[keep][2][0], "supersedes", [entries[i][1] for i in older])
+                count["versions_collapsed"] += len(older)
+        entries = fold(entries, list(by_family.values()))
+        # 2. duplicates
+        shapes: dict[str, Any] = {}
+        clusters: list[list[int]] = []
+        for index, entry in enumerate(entries):
+            if not single(entry):
+                continue
+            shapes[entry[1]] = shape(entry[2][0]["text"])
+            for cluster in clusters:
+                # a question that names a date keeps a copy in that range apart from the rest
+                same_time = entries[cluster[0]][2][0].get("in_time_range") == entry[2][0].get(
+                    "in_time_range"
+                )
+                if same_time and duplicates(shapes[entries[cluster[0]][1]], shapes[entry[1]]):
+                    cluster.append(index)
+                    break
+            else:
+                clusters.append([index])
+        for cluster in clusters:
+            if len(cluster) > 1:
+                keep = newest(entries, cluster)
+                others = sorted(
+                    (i for i in cluster if i != keep),
+                    key=lambda i: (-positions[entries[i][1]], entries[i][1]),
+                )
+                item = entries[keep][2][0]
+                link(item, "also_recorded_in", [entries[i][1] for i in others])
+                for i in others:  # versions an older copy had superseded stay named
+                    prior = entries[i][2][0]
+                    if "supersedes" in prior:
+                        link(item, "supersedes", every[id(prior)])
+                count["duplicates_collapsed"] += len(others)
+        entries = fold(entries, clusters) + rest
+        # 3. observations an accepted claim already answers
+        while True:
+            covering: dict[str, list[tuple[dict[str, Any], list[tuple[int, int]]]]] = {}
+            for _, _, group in entries[:limit]:
+                for item in group:
+                    if item["authority"] == "observed_episode":
+                        continue
+                    for span in item.get("evidence") or []:
+                        covering.setdefault(span["observation"], []).append(
+                            (item, [(span["start_byte"], span["end_byte"])])
+                        )
+            redundant: dict[str, dict[str, Any]] = {}
+            for entry in entries[:limit]:
+                if not single(entry) or entry[1] not in covering:
+                    continue
+                item = entry[2][0]
+                words = shapes[entry[1]].words if entry[1] in shapes else shape(item["text"]).words
+                for claim, spans in covering[entry[1]]:
+                    inside = any(
+                        a <= item["excerpt_start_byte"] and item["excerpt_end_byte"] <= b
+                        for a, b in spans
+                    )
+                    known = shape(claim["text"]).words
+                    if inside or (words and len(words & known) / len(words) >= 0.9):
+                        redundant[entry[1]] = claim
+                        break
+            if not redundant:
+                break
+            for reference, claim in redundant.items():
+                link(claim, "evidence_not_repeated", [reference])
+            entries = [e for e in entries if e[1] not in redundant]
+            count["evidence_not_repeated"] += len(redundant)
+        chosen = entries[:limit]
+        shown = [positions[e[1]] for e in chosen if single(e) and e[1] in positions]
+        recorded: dict[int, int] = {}
+        if shown:
+            for row in self.db.execute(
+                "SELECT position,at_ms FROM events WHERE tenant=? AND position IN ("
+                + ",".join("?" for _ in shown)
+                + ")",
+                (who["tenant"], *shown),
+            ).fetchall():
+                recorded[row[0]] = row[1]
+        for entry in chosen:
+            if single(entry) and positions.get(entry[1]) in recorded:
+                entry[2][0]["recorded_ms"] = recorded[positions[entry[1]]]
+        collapsed = {
+            entry[2][0]["reference"]: every[id(entry[2][0])]
+            for entry in chosen
+            if id(entry[2][0]) in every
+        }
+        return [group for _, _, group in chosen], count, collapsed
 
     def _salience(
         self, who: dict[str, Any], project: str, positions: dict[str, int], at: int

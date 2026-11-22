@@ -392,3 +392,33 @@ class MemoryToolTests(unittest.TestCase):
         )
         self.assertIn("held for review", held)
         self.fails("does not exist", command="view", path="/memories/demo/scraper/page.md")
+
+    def test_an_edited_note_is_briefed_once_as_its_newest_version(self):
+        from memoryking.adapters.retrieval import Retrieval
+
+        path = "/memories/demo/notes/plan.md"
+        self.run_tool(
+            command="create", path=path, file_text="Release plan: ship the exporter in March.\n"
+        )
+        self.run_tool(command="str_replace", path=path, old_str="March", new_str="April")
+        self.run_tool(command="str_replace", path=path, old_str="April", new_str="June")
+        out = []
+        Retrieval(self.store).execute(
+            self.owner,
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "brief",
+                "args": {
+                    "project": "demo",
+                    "query": "release plan exporter",
+                    "bindings": [{}],
+                    "max_output_tokens": 6000,
+                    "tokenizer": "utf8-byte-estimate-v1",
+                },
+            },
+        ).emit(out.append)
+        guidance = json.loads(out[0])["guidance"]
+        self.assertEqual(1, len(guidance))
+        self.assertIn("June", guidance[0]["text"])
+        self.assertEqual(2, guidance[0]["supersedes"]["count"])
