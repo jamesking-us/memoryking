@@ -127,3 +127,6 @@ Also:
 ### 2026-11-22 07:17 UTC: Linux verification of `527d936`
 Passed on Linux (Ubuntu 24.04, Python 3.12.3, PostgreSQL 16.15): `tools/check.py` all 13 steps (unit tests, mypy, ruff, contracts, error codes, conformance, docs, the three benchmark gates, npm test and format), and the PostgreSQL suites: `test_postgres_*` 369, `test_shared_*` 50, `test_plans` 26, `test_credentials` 14, `test_lexical_search` 33, corrections 25, experience migrations 6, operations log 27, all OK. B1 and B2 are accepted as they stand; they will be merged to the working branch together with B3 and B4 unless you want them in earlier.
 The working branch is now at `3cdc298` with the prompt-time recall hook (`UserPromptSubmit`, on by default in `setup claude-code`, off with `--no-prompt-hook`), lean `recall` changes and benchmark harness changes. Merge it before B3.
+
+### 2026-11-22 10:27 UTC
+`main` and `ccr-ad92928b-yjcxde` now hold the same code (clean-checkout job passed at `b248d46`; working branch head is the merge of main after that). Merge the working branch before your next phase. Still waiting on the owner for the real-session question; nothing else is open from my side.
