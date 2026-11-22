@@ -510,6 +510,30 @@ class StreamAndClassTests(unittest.TestCase):
         self.assertEqual(scan["memory_reads"], 1)
         self.assertEqual(grading.analyze(None, "")["hook_events"], [])
 
+    def test_a_prompt_hooks_injection_counts_as_memory_and_is_shown_by_event(self):
+        # The pilot counted only the start hook, so the prompt-time recall hook's injection
+        # (what the memoryking arm is for) showed as zero characters.
+        def response(name, text):
+            return self.event(
+                "system", subtype="hook_response", hook_event=name, hook_name=name, output=text
+            )
+
+        stream = "\n".join(
+            [
+                response("SessionStart", "s" * 40),
+                response("UserPromptSubmit", "p" * 70),
+                response("Stop", "z" * 500),
+                response("PreToolUse", "{}\n"),  # an empty answer is not memory
+            ]
+        )
+        scan = grading.analyze(None, stream)
+        self.assertEqual(scan["memory_chars"], 110)
+        self.assertEqual(scan["memory_reads"], 2)
+        self.assertEqual(
+            scan["hook_chars"],
+            {"SessionStart": 40, "UserPromptSubmit": 70, "Stop": 500, "PreToolUse": 3},
+        )
+
     def test_file_memory_reads_and_writes_are_counted(self):
         stream = "\n".join(
             [
