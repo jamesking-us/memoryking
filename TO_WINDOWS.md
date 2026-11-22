@@ -81,3 +81,22 @@ The five phases in the brief above are replaced by these four. Merge `origin/ccr
 - The WSL2 test run as an ordinary user, and an explanation of the 50-minute wall time (or a statement that it could not be explained, with what you ruled out).
 - The list of tests skipped on Windows and why; `tools/check.py` on Windows passing or its inapplicable steps named.
 - Docs: `docs/reference.md` runtimes section rewritten to current fact (what runs natively, what needs WSL2 or the container, what is not supported); `docs/deployment.md` Windows section; `SECURITY.md` if the relay changes any statement there; `CHANGELOG.md` under Unreleased. Keep the README unchanged. Leave the roadmap line to the Linux session.
+
+### 2026-11-22 06:00 UTC: two requirements from the owner (they extend B3 and B4)
+The owner wants (1) the documentation to be clear that Windows needs WSL2 or Docker, and (2) running on Windows to be as easy and automated as possible.
+
+**Automation (B3).** The target experience on a Windows machine that already has WSL2 or Docker Desktop: `pip install memoryking`, then one command, then it works in Claude Code. Design it and post the design before building (ask first), covering:
+- One Windows-side command (an extension of `memoryking setup`, not a separate script) that: detects WSL2 distros and a running Docker engine and says which it found; if both or several, asks or takes a flag, never guesses silently; installs MemoryKing on the Linux side at the **same version** as the Windows side; creates the store there with the existing owner-only rules; arranges the daemon's lifetime per your B3 recommendation; writes the Claude Code hooks and MCP configuration; then runs an end-to-end check (capture, recall through the relay) and prints one line saying it works or exactly what failed.
+- How the Linux side gets the same version: the package is not assumed to be on a public index or the image in a public registry (publication is the owner's decision at release time, so support both a released version and a local wheel or locally built image; say what each path needs).
+- A version handshake on every relay connection: a Windows client and a Linux daemon of different versions refuse with one clear error and the command that fixes it, not a protocol failure.
+- When neither WSL2 nor Docker is present: do not install them. Stop with the exact Microsoft or Docker command or page the user needs, and say that admin rights and a restart may be required.
+- `memoryking doctor` on Windows reports, in plain words: which back end is configured, whether it is running, versions on both sides, and the single next step if something is wrong.
+- Everything the command changes is listed before it changes it (`--dry-run` prints the same list), is idempotent, and has an undo (`setup --remove` or the existing equivalent).
+- Nothing in this automation may weaken the store's guarantees: the store stays on the Linux file system (refuse a store under `/mnt/<drive>` or a bind mount of an NTFS path, and say why), credentials stay on the Linux side.
+
+**Documentation (B4).**
+- README: one short, plain sentence in the requirements or install part that Windows runs the agent-side tools natively and needs WSL2 or Docker Desktop for the memory store, linking to the guide. This overrides my earlier "keep the README unchanged"; keep it to that sentence, understandable to a non-technical reader.
+- `docs/getting-started.md` (or wherever installation is taught): a Windows path, start to finish, with the one command and what the user sees.
+- `docs/deployment.md`: the Windows section with both back ends, how the daemon is kept running, upgrade (both sides together), removal, and what is not supported (a native Windows store; machines where WSL2 and Docker are both disabled).
+- `docs/reference.md` runtimes section and the refusal error's hint say the same thing in the same words.
+- Every command shown in the docs must have been run by you on that machine; the repository's rule is to exercise examples before calling them runnable.
