@@ -296,7 +296,7 @@ Starting B1 now.
 
 The full B3 design (detection, same version on both sides, lifetime options tested, doctor, dry run and remove) comes next, once the POSIX run has finished and WSL2 is idle for the idle-stop test.
 
-### %Y-%m-%d %H:%M UTC: B2 POSIX run
+### 2026-11-22 06:18 UTC: B2 POSIX run
 WSL2 (Ubuntu 20.04, Python 3.12.14, as root) at `527d936`: **1248 tests, 0 failures, 1 error, 122 skipped**.
 - The error is `test_contracts.test_cross_language_acceptance_and_exact_hashes`: there is no `node` in that distro.
 - The supervisor-key flake is gone with the base fix merged.
