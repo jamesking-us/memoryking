@@ -1,0 +1,10 @@
+{
+  "default": "Grade by meaning: the answer must state the same fact as the reference.",
+  "single-session-user": "The reference is a fact the user told the assistant. The answer must state that fact.",
+  "single-session-assistant": "The reference is something the assistant said earlier. The answer must state it.",
+  "single-session-preference": "The reference describes the kind of answer that suits the user's preferences, not a literal string. Say yes when the answer fits the preferences the reference describes and does not contradict them.",
+  "multi-session": "The reference combines facts from more than one conversation. The answer must give the combined result; a count or total must be equal.",
+  "temporal-reasoning": "The reference involves dates or the order of events. A number of days, weeks or months that is off by one from the reference is still correct; any larger difference is wrong.",
+  "knowledge-update": "The user's information changed over time and the reference is the latest value. The answer is correct when it gives the latest value; mentioning an earlier value as the old one is fine, giving the earlier value as the current one is wrong.",
+  "abstention": "The question asks about something the user never said. The reference says the information is not available. Say yes only when the answer says it does not know or that the information was not provided."
+}

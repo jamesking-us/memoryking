@@ -273,6 +273,18 @@
     "contains": "\"ok\": true"
   },
   {
+    "id": "longhaul-benchmark-validate",
+    "command": [
+      "{python}",
+      "tools/longhaul_benchmark.py",
+      "validate",
+      "--track",
+      "T4"
+    ],
+    "exit_code": 0,
+    "contains": "\"problems\": []"
+  },
+  {
     "id": "function-calling-adapter",
     "command": [
       "{python}",

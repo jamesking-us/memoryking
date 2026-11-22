@@ -1308,6 +1308,12 @@ def main() -> int:
     )
     setup.add_argument("--no-hooks", action="store_true", help="Register the MCP bridge only")
     setup.add_argument(
+        "--no-prompt-hook",
+        action="store_true",
+        help="Install the session hooks without the prompt-time recall hook (and remove that "
+        "hook if an earlier run installed it)",
+    )
+    setup.add_argument(
         "--register",
         action="store_true",
         help="claude-code only: register the bridge by running `claude mcp add-json` (when `claude` "
@@ -1740,7 +1746,7 @@ def main() -> int:
     hk = commands.add_parser(
         "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
     )
-    hk.add_argument("kind", choices=("session-start", "pre-compact", "session-end"))
+    hk.add_argument("kind", choices=("session-start", "pre-compact", "session-end", "prompt"))
     hk.add_argument("--host", choices=("claude", "codex", "grok"), help="Host that is calling")
     hk.add_argument("--socket", type=Path)
     hk.add_argument("--credential", type=Path)
@@ -1749,7 +1755,22 @@ def main() -> int:
     hk.add_argument(
         "--query", help="Briefing query at session start; default: the query-free session start"
     )
-    hk.add_argument("--budget", type=int, default=6000)
+    hk.add_argument(
+        "--budget",
+        type=int,
+        help="Briefing token budget; default 6000 at session start, 1200 for the prompt hook",
+    )
+    hk.add_argument("--limit", type=int, help="prompt hook: items at most (default 5, at most 32)")
+    hk.add_argument(
+        "--floor",
+        type=int,
+        help="prompt hook: lowest lexical score, in millionths, an item may have (default 300000)",
+    )
+    hk.add_argument(
+        "--deadline",
+        type=float,
+        help="prompt hook: seconds before the lookup is abandoned and nothing is added (default 1.5)",
+    )
     hk.add_argument(
         "--tools",
         choices=("mcp", "cli"),
@@ -1777,6 +1798,11 @@ def main() -> int:
     )
     inst.add_argument("--cwd", type=Path, help="Project directory; default: current")
     add_binding(inst)
+    inst.add_argument(
+        "--no-prompt-hook",
+        action="store_true",
+        help="Leave out the prompt-time recall hook (and remove it from the config)",
+    )
     inst.add_argument("--print", action="store_true", help="Show the merged config, write nothing")
     inst.add_argument("--remove", action="store_true", help="Remove MemoryKing's hooks")
     rpc = commands.add_parser(
@@ -2021,13 +2047,27 @@ def main() -> int:
                     "profile": args.profile,
                     "config": args.config,
                 }
-                if args.kind == "session-start":
+                if args.kind == "prompt":
+                    chosen = {
+                        key: value
+                        for key, value in (
+                            ("budget", args.budget),
+                            ("limit", args.limit),
+                            ("floor", args.floor),
+                            ("deadline", args.deadline),
+                        )
+                        if value is not None
+                    }
+                    sys.stdout.write(
+                        host_hooks.prompt(payload, binding=args.binding, **chosen, **where)
+                    )
+                elif args.kind == "session-start":
                     sys.stdout.write(
                         host_hooks.session_start(
                             payload,
                             query=args.query,
                             task=args.task,
-                            budget=args.budget,
+                            budget=args.budget or 6000,
                             binding=args.binding,
                             tools=args.tools,
                             host=args.host,
@@ -2063,6 +2103,7 @@ def main() -> int:
                 binding=args.binding,
                 remove=args.remove,
                 write=not args.print,
+                prompts=not args.no_prompt_hook,
             )
             if args.print:
                 print(json.dumps(result["config"], indent=2))

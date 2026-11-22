@@ -103,6 +103,12 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "What you are about to work on.",
                 },
                 "budget": {**BUDGET, "description": "Token budget for the briefing. Default 6000."},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 32,
+                    "description": "At most this many items. Default: as many distinct items as fit the budget.",
+                },
                 "task": {
                     **IDENTIFIER,
                     "description": "Task id, when the briefing is for a specific task.",
@@ -813,6 +819,8 @@ def call(
         }
         if "task" in arguments:
             args["task"] = arguments["task"]
+        if "limit" in arguments:
+            args["top_k"] = arguments["limit"]
         if "as_of" in arguments:
             from memoryking.hooks import as_of_ms
 
