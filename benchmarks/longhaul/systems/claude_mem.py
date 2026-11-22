@@ -73,9 +73,11 @@ class ClaudeMem:
     @staticmethod
     def installed() -> bool:
         h = c.install_dir(NAME)
-        return (h / "home/.local/bin/claude-mem").is_file() and (
-            h / "home/.claude/plugins/cache/thedotmack/claude-mem"
-        ).is_dir()
+        return (
+            (h / "home/.local/bin/claude-mem").is_file()
+            and (h / "home/.claude/plugins/cache/thedotmack/claude-mem").is_dir()
+            and ClaudeMem._bun_path() is not None
+        )
 
     # -- environment -----------------------------------------------------------
     @property
@@ -131,13 +133,18 @@ class ClaudeMem:
         return base
 
     @staticmethod
-    def _bun() -> str:
-        for cand in (os.environ.get("LONGHAUL_BUN"), str(Path("/root/.bun/bin/bun"))):
-            if cand and Path(cand).is_file():
-                return cand
+    def _bun_path() -> str | None:
+        """The Bun runtime this user can execute, or None. Another user's install is not ours."""
         from shutil import which
 
-        return which("bun") or "bun"
+        for cand in (os.environ.get("LONGHAUL_BUN"), str(Path("/root/.bun/bin/bun"))):
+            if cand and os.access(cand, os.X_OK):
+                return cand
+        return which("bun")
+
+    @staticmethod
+    def _bun() -> str:
+        return ClaudeMem._bun_path() or "bun"
 
     def _url(self, path: str) -> str:
         return f"http://127.0.0.1:{self.port}{path}"
