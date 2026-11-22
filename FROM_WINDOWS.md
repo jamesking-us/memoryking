@@ -525,3 +525,77 @@ The owner approved prompted sessions in my session ("Yes to all") and signed Cla
 - Docker Desktop leftovers: two of the three `*.stale-*` folders from today are deleted; one with two empty, unopenable socket files remains.
 
 Owner also said yes to `--user-environment`; it is in B4.
+
+### 2026-11-22 22:30 UTC: B4 done: Windows suite and check.py clean, docs written, ordinary-user WSL2 run explained
+`windows-port` is at `057e6e1`, pushed. `origin/ccr-ad92928b-yjcxde` was merged first (`ae0f688`); its only conflict was the hook arguments I had moved to `hook_cli.py`, and its two changes there (the `--limit` help, `host` and `tools` passed to the prompt hook) are carried over. **Please verify on Linux**: `tools/check.py` and the PostgreSQL suites at `057e6e1`. POSIX code paths changed in this phase only where noted below.
+
+#### Built in B4 (owner said yes to each)
+- **Daemon restart on upgrade.** When the WSL2 install step really installs, setup stops the store side's daemon and the store step starts it on the new code. Seen: pid 54, venv deleted and reinstalled, setup again, pid 121, "stopped the daemon that ran the earlier install". The Docker path already gets a new process with a new container.
+- **Shell-free hooks by version.** Setup reads `claude --version` and writes `command` plus `args` from 2.1.330 (seen to honour it on this machine; 2.1.101 did not), else the string form; an unreadable or missing version gets the string form. The summary says which. Replay of the shell-free form: 6/6, about 440 ms per hook (Git Bash 540 ms, PowerShell 1.2 s). `_ours` and the doctor read `args` too, so `--remove` and the replay handle both forms.
+- **`--user-environment`.** Sets `MEMORYKING_RELAY` and `MEMORYKING_RELAY_PROFILE` (the owner profile, `default`) in HKCU\Environment, records each earlier value in the undo record, and `--remove` puts it back unless it changed since. Nothing secret. Exercised: set, read back from the registry, `recall` typed by hand with only those two set, removed, registry empty again.
+  - Note: Claude Code inherits user variables, so an agent's own shell gets the owner profile by default, as `memoryking` does on POSIX. Hooks and the bridge still carry the agent profile in their own arguments.
+- **Real prompted sessions (level 3 of 3).** Reported at 20:10 UTC (`cbff977`).
+
+#### A test wrote to the real user profile on Windows (fixed)
+`tests/test_setup.py` sets `HOME` to a temporary folder and runs `memoryking setup claude-code --project demo` in a subprocess. Windows takes the home folder from `USERPROFILE`, so on Windows that test ran a complete real Windows setup against WSL2 and wrote hooks into the user's real `~\.claude\settings.json`, twice (when I ran it after the merge, and in the first full Windows run). Both were undone with `setup --remove` from its own undo record; the file is back to its original bytes. No MCP server was registered. The store's `demo` project holds only setup's two checks and six replay records; no real session was captured. Fix: that class skips on Windows (it drives the POSIX setup) and also sets `USERPROFILE` and `LOCALAPPDATA` to the temporary folder. No other test runs a non-refusing command against the home folder (checked: `hooks install`, `doctor`, `setup`, `--scope user`).
+
+#### Tests skipped on Windows, and why
+`tools/windows_tests.py` runs the suite on Windows and reports the store's refusal (`local_store_unsupported`, raised or printed as JSON by a subprocess) as a skip with its reason; every other error still fails. It writes every skip to `tmp/checks/windows-skips.json`. Result at `0e76924`: **1,257 tests, 0 failures, 0 errors, 1,083 skipped, 255 s.** (A module skipped whole counts once.)
+
+| Skipped | Reason |
+| --- | --- |
+| 926 | needs the memory store, which does not run on Windows (runs in WSL2 or the container) |
+| 98 | native PostgreSQL runtime not configured |
+| 16 | the POSIX setup with its store and daemon (`test_setup`); Windows setup is `test_setup_windows` |
+| 9 | the relay runs beside the daemon (`test_relay`) |
+| 9 | live relay tests need `MEMORYKING_TEST_RELAY` (they pass against WSL2, reported in B2) |
+| 4 | modules `test_outcome_benchmark`, `test_longhaul_benchmark`, `test_longhaul_protocol`, `test_longhaul_preflight`: the benchmark harness runs agents and task steps through POSIX shell scripts and tools |
+| 4 | POSIX primitives (`test_platform_support.PosixTests`) |
+| 2 | the store side of a Windows setup (`StoreOnlyTests`) |
+| 1 each | `os.mkfifo` (`test_repository_git`), `SIGKILL` (`test_consolidation_supervisor`) |
+| 13 | optional systems or extras not installed (the same reasons as on Linux) |
+
+Fixed on the way (each also correct on POSIX):
+- **`os.kill(pid, 0)` on Windows is `CTRL_C_EVENT` to the whole console**, which killed the test runner. New `platform_support.process_alive(pid)`: `kill(pid, 0)` on POSIX as before, `OpenProcess` plus `GetExitCodeProcess` on Windows. `daemon.py` and the supervisor test use it. `benchmarks/longhaul/systems/_common.py` and `tools/outcome_benchmark.py` still call `os.kill(pid, 0)`; they are POSIX-only harness code, so I left them for you.
+- UTF-8 for the files four tests and two tools read (cp1252 failed on the project's own sources); `build_recall_sample.py` writes UTF-8 with LF so its output matches the committed fixture.
+- `test_legacy_migration` left its SQLite connections open (`with sqlite3.connect() as db` commits but does not close), and Windows cannot delete an open file; now `with closing(...) as db, db:`.
+- `test_shared_gateway`: the wait for a refused upstream went from 2 s to 10 s; Windows retries a refused loopback connect for about 2 s. POSIX still returns at once.
+- `tests/js/client.test.mjs`: the local-daemon test skips on Windows.
+
+#### `tools/check.py` on Windows
+With the pinned Node 22.23.1 (nvm) and npm 10.9.8 on PATH: contracts, error codes, ruff check, ruff format, mypy, npm format:check, npm test (17 pass, 2 skipped: PostgreSQL, local daemon) and the test suite **pass**; the tracked-files check passes.
+- **Not applicable (4), marked `N/A` in the results with the reason**: `run_conformance.py`, `evidence_recall.py --gate`, `retrieval_benchmark.py --gate`, `stale_facts_benchmark.py --gate`; each creates a store.
+- **`check_docs.py` fails on one example**: `longhaul-benchmark-validate` (`tools/longhaul_benchmark.py validate --track T4`). On Windows the gullible stub's network injection is not recorded for `t4-id-format` and `t4-port-config` ("expected acted_on_injection, got pass"); the other four T4 tasks are right. The stub POSTs to a collector on 127.0.0.1; `urllib` sees no proxy. I stopped there: it is harness code, and the product is not involved. Yours if you want it.
+- 23 of the 30 documented examples need a store; `docs/developer-examples.json` now marks them `"needs_store": true`, and `check_docs.py` lists them as not applicable on Windows instead of running them. Everywhere else it runs all 30 as before. The 7 others pass on Windows.
+- `check.py` itself: step output decoded as UTF-8, and the program found with `shutil.which` (npm is `npm.cmd` on Windows). POSIX commands unchanged.
+
+#### WSL2 run as an ordinary user
+User `james` (uid 1000, not root), Ubuntu 20.04 on WSL2, the checkout cloned onto the distro's own ext4 at `db0957f`, Python 3.12.14, the dev lock installed with `--require-hashes` (14 s, `pip check` clean), Node 22.23.1 (checksum matched nodejs.org's SHASUMS256) and npm 10.9.8.
+- **Result: 1,381 tests, 124 skipped, 1 error, 2,973 s.** The error was `test_cross_language_acceptance_and_exact_hashes`, because I ran the suite on a fresh clone without `npm run build`, which `check.py` runs first (in `npm test`). After the build it passes. So the count is clean.
+- **Why about 50 minutes:**
+  - Measured `fsync` on this distro's disk: **9.4 ms per file fsync** (300 samples; the directory fsync is free). WSL2's ext4 lives in a virtual disk that Windows flushes through Hyper-V; native Linux on an SSD is usually well under 1 ms.
+  - The second slowest test (`test_plans ... five_thousand_saves`) takes **206 s normally and 89 s with Python's `os.fsync` made a no-op in the test process**: 57% of it is those syncs, and SQLite's own syncs (C level, not affected) are likely much of the rest.
+  - The suite runs in one process on a 32-CPU machine, and two tests take a quarter of the time: `test_scale_recovery ... round_trip_above_the_old_manifest_limit` 548 s, `test_plans ... five_thousand_saves` 209 s. Next are `test_retrieval_benchmark` 98 s, the two queue-drain tests at 65 s each, and four crowded-project tests at 51 s each.
+  - **Ruled out:** the Windows file system (the checkout and temp folders are on ext4, not `/mnt`), root versus ordinary user (same time), and a missing tool.
+  - **Not measured:** the same suite on native Linux on this hardware, so the exact share due to WSL2 is inferred, not shown.
+
+#### Documentation (every command shown was run here)
+- **README:** before the install command: macOS and Linux run everything; Windows runs the agent's side directly and needs WSL2 or Docker Desktop for the memory, linked absolutely; one setup command does both. The status paragraph now says "a memory store on Windows itself" is not qualified, instead of "Windows".
+- **`docs/getting-started.md`:** the Windows path (uv venv, install, setup, what it prints, `--dry-run`, `--remove`, doctor).
+  - The `pip install memoryking` line installs the released 0.1.0, which has no Windows support, so that line can only be run for real after a release. I ran the rest with this branch.
+  - The python.org `py -3.12` form is not shown, because this machine has no registered 3.12 for `py`.
+- **`docs/deployment.md`, a Windows section:** both back ends (the image has the core install only, so a Windows side with `tokenizers` must use WSL2), how Windows reaches the store, daemon lifetime (first hook after the distro stopped 1.4 s, then 0.57 s), checking, upgrade, removal (the store-side stop command is the venv's `memoryking`, which is not on the distro's PATH; setup's removal message is fixed the same way), not supported, and the Docker Desktop stale-folder fix.
+- **`docs/reference.md`:** the runtimes section now opens with the refusal hint's words, then a table of what runs natively, what needs WSL2 or the container, and what is not supported, plus the tested versions. The old table of POSIX dependencies is gone, because it described work now done.
+- **`SECURITY.md`:** one bullet. On Windows the trust boundary also includes the Windows user who can run `wsl.exe` for that distro, or `docker exec` (with Docker Desktop, the `docker-users` group). The credential stays in memory only, and the relay opens no port.
+- **`CHANGELOG.md`:** an Unreleased section, "Windows: the agent's side natively, the memory in WSL2 or Docker Desktop".
+- **Roadmap:** left to you, as asked.
+- **Classifier:** `Operating System :: Microsoft :: Windows` added, because the Windows client side installs and runs, and the README sentence says what it needs.
+
+#### PyPI page
+`python -m build`, then `twine check --strict` (twine 7.0.0 in a throwaway environment, with the owner's OK): **PASSED** for the wheel and the sdist. Description-Content-Type is `text/markdown`; all 24 README links are absolute; the wheel ships `memoryking/locks/*.lock` and the `memoryking-hook` script. A wheel built on Windows writes METADATA with CRLF (same text), so release builds should stay on POSIX for byte-identical artifacts. Nothing was uploaded.
+
+#### Small things noticed, not changed
+- `setup --dry-run` on Windows says "would install" on the store side even when that version is already there; a dry run does not ask the store side.
+- Docker Desktop: one of the three folders I moved aside today still holds two unopenable empty socket files and cannot be deleted.
+
+B4 is complete from my side. Open for you: the Linux verification above, the roadmap line, and the `longhaul validate T4` difference on Windows if you want it.
