@@ -905,6 +905,13 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(result["passed"], expected)
         self.assertEqual(self.one("off", "t1-id-format", "null")["failure_class"], "missing")
 
+    def test_a_run_keeps_its_stream_and_final_code_beside_the_results(self):
+        self.one("off", "t1-export-delimiter", "oracle", rep=3)
+        raw = self.base / "results/raw/T1-20-t1-export-delimiter-off-r3"
+        self.assertTrue((raw / "agent.stdout").exists())
+        self.assertIn("write_orders", (raw / "final/ledger/exporter.py").read_text())
+        self.assertFalse((raw / "final/history").exists())
+
     def test_reader_finds_the_facts_in_every_plain_arm_at_size_20(self):
         for arm in ("notes", "log", "native"):
             seed = self.run_cli(

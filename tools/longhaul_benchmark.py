@@ -322,6 +322,27 @@ def auto_loaded_chars(arm: str, host) -> int:
     return len(host.files.get("CLAUDE.md", "")) if arm == "native" else 0
 
 
+def keep_raw(target: Path, bench: Path, workdir: Path) -> None:
+    """Keep what a failure analysis or a regrade needs after the run directory is removed: the
+    agent's event stream and what is left of its working directory (small files, no history).
+    These hold model output; they stay beside the results and are never committed."""
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("agent.stdout", "agent.stderr"):
+        if (bench / name).exists():
+            shutil.copy(bench / name, target / name)
+    for p in sorted(workdir.rglob("*")):
+        rel = p.relative_to(workdir)
+        if (
+            p.is_file()
+            and not p.is_symlink()
+            and rel.parts[0] != "history"
+            and "__pycache__" not in rel.parts
+            and p.stat().st_size <= 200_000
+        ):
+            (target / "final" / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(p, target / "final" / rel)
+
+
 def snapshot_notes(workdir: Path, baseline: dict[str, str]) -> list[str]:
     """Files the agent added or changed that are not code, for the record."""
     code = {".py", ".pyi", ".json", ".toml", ".cfg", ".ini", ".txt", ".lock"}
@@ -484,6 +505,7 @@ def cmd_run(args) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     file = out / f"{args.track}-{args.size}-{name}.json"
     file.write_text(json.dumps(result, indent=1, sort_keys=True))
+    keep_raw(Path(args.results) / "raw" / f"{args.track}-{args.size}-{name}", bench, workdir)
     if not args.keep:
         shutil.rmtree(run_dir, ignore_errors=True)
     return {
