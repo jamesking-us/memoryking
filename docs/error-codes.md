@@ -88,6 +88,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `budget_insufficient` | The required content does not fit the token budget; raise max_output_tokens or narrow scope. |
 
+## chat
+
+| Code | What to do |
+| --- | --- |
+| `chat_review_disabled` | Confirming in chat is off for this bridge; ask the user to run `memoryking review accept` or start the bridge with --allow-chat-review. |
+
 ## checkpoint
 
 | Code | What to do |
@@ -121,6 +127,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `concurrency_limit` | Four job leases are already live; finish or let them expire before claiming more. |
 
+## consolidation
+
+| Code | What to do |
+| --- | --- |
+| `consolidation_run_invalid` | The consolidation run is unknown, belongs to another principal, or was already admitted or abandoned; prepare a new one. |
+| `consolidation_source_invalid` | A consolidation reply must be the exact reply recorded in a delivered egress audit for this principal and project, from a permit that cited this run's input; pass the permit and the unmodified text. |
+
 ## constraint
 
 | Code | What to do |
@@ -140,6 +153,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `control_busy` | Another process holds the control lock; wait or stop it. |
+| `control_lease_held` | Another instance holds this tenant (a copied control tree or a different --instance-id); it lapses 60 s after its last renewal. Stop it, or give every process one --instance-id. |
 | `control_must_be_independent` | Store and control directories may not contain each other. |
 | `control_required` | Pass `--control PATH` or use `--profile NAME`. |
 
@@ -172,6 +186,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `cursor_context_changed` | The paging cursor belongs to another session or history; start over. |
 
+## daemon
+
+| Code | What to do |
+| --- | --- |
+| `daemon_start_failed` | The daemon did not start; read daemon.log in the store directory for the reason. |
+| `daemon_stop_failed` | The daemon did not stop on request; it may have been started outside this profile: stop its process by hand. |
+
 ## dashboard
 
 | Code | What to do |
@@ -194,6 +215,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `delegation_depth_exceeded` | Delegated credentials cannot delegate again; request a grant from an administrator. |
+| `delegation_superseded` | This delegated credential predates the rule that a delegation acts for its issuer; ask the issuer to delegate again. |
 
 ## delta
 
@@ -244,6 +266,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `egress_audit_reported` | That egress audit record already has a final outcome; a report is written once. |
 | `egress_classification_denied` | A message cites content above the provider's classification ceiling; rebuild the conversation without it or raise the ceiling in the policy. |
 | `egress_policy_invalid` | The egress policy file is malformed: check revision, provider names, hosts, models, classification ceilings and that plain HTTP is loopback-only. |
+| `egress_policy_required` | Consolidation sends text to a model: pass --egress-policy FILE with --provider and --model (the daemon needs the same policy), or --provider local-recording to dry-run. |
 | `egress_provider_denied` | The provider or model is not in the daemon's egress policy; add it to the policy file and restart `serve --egress-policy`. |
 
 ## embedding
@@ -251,15 +274,15 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `embedding_batch_invalid` | The batch's items do not match the leased job. |
-| `embedding_disabled` | Embeddings are not configured for this project; configure a partition first. |
+| `embedding_disabled` | Semantic search is off for this project; `memoryking semantic enable --project P` turns it on. |
 | `embedding_dispatch_expired` | The embedding lease expired; claim again. |
 | `embedding_fingerprint_mismatch` | The model fingerprint differs from the partition's. |
 | `embedding_generation_conflict` | The partition moved to a new generation; claim again. |
 | `embedding_input_limit` | Embedding inputs are at most 16 KiB each. |
 | `embedding_model_checksum_mismatch` | The downloaded model does not match its manifest checksum. |
 | `embedding_model_invalid` | The model manifest is malformed. |
-| `embedding_model_not_installed` | Install the model with `python -m memoryking.model_install`. |
-| `embedding_model_unsupported` | Only the pinned model manifest is supported. |
+| `embedding_model_not_installed` | Run `memoryking semantic enable` to install and verify the pinned model. |
+| `embedding_model_unsupported` | That model has no pinned manifest; see `memoryking semantic enable`. |
 | `embedding_partition_limit` | Too many embedding partitions. |
 | `embedding_partition_unavailable` | No partition for this project and fingerprint. |
 | `embedding_provider_failure` | The embedding runtime failed; see the worker log. |
@@ -267,7 +290,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `embedding_query_mismatch` | The query vector's dimension or fingerprint does not match the partition. |
 | `embedding_release_invalid` | The embedding release is malformed. |
 | `embedding_runtime_mismatch` | The installed runtime differs from the pinned version. |
-| `embedding_runtime_unavailable` | Install the embeddings lock to run the local model. |
+| `embedding_runtime_unavailable` | Install the embeddings extra (requirements-embeddings.lock) to run the local model. |
 | `embedding_source_unavailable` | The observation to embed is missing or purged. |
 | `embedding_vector_invalid` | Vectors must have the model's dimension and finite values. |
 
@@ -391,6 +414,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `host_authorization_expired` | The host's authorization for this content expired; authorize again. |
 | `host_authorization_required` | Host-supplied content needs a host authorization with a source hash. |
+| `host_config_conflict` | The host's file already defines a memoryking server MemoryKing did not write; edit it by hand or remove that entry. |
 | `host_rejected` | The Host header is not one the service was started with; pass it with `--host` or use the configured name. |
 | `host_unsupported` | Hooks are generated for claude, codex or grok; other hosts can run the same `memoryking hook` commands by hand. |
 
@@ -463,15 +487,18 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `invalid_anchor_interval` | The anchor interval is whole milliseconds from 0 (every committing request anchored before release) to 60,000. |
 | `invalid_binding` | Binding values are strings of at most 256 bytes over known fields. |
 | `invalid_capabilities` | Capabilities must be a non-empty list of known names without admin; see the deployment guide. |
 | `invalid_checkpoint` | The checkpoint body does not match the contract; start from the fixture shape. |
+| `invalid_concurrency` | Concurrency limits are whole numbers: workers 1 to 256, waiters 0 to 1,024, shared requests 1 to 1,024. |
 | `invalid_constraint` | Constraints need a rule key, value and effect. |
 | `invalid_content_type` | Send `Content-Type: application/json`. |
 | `invalid_dashboard_configuration` | The dashboard port must be between 0 and 65535. |
 | `invalid_delegation` | A delegation must narrow an existing grant with a bounded ttl_ms; check the caller's own capabilities. |
 | `invalid_duration` | Use a number followed by m, h or d, for example `45m`, `12h` or `30d`. |
 | `invalid_evidence_span` | An evidence span needs an observation, byte range and content hash that match the text. |
+| `invalid_health_configuration` | The health port must be a whole number from 0 to 65535; 0 chooses a free port. |
 | `invalid_identifier` | Identifiers are 1 to 96 ASCII letters, digits, `_` or `-`. |
 | `invalid_interval` | The interval's start must precede its end. |
 | `invalid_operation_id` | Operation ids are identifiers of at most 96 characters. |
@@ -486,7 +513,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `invalid_secret_file` | The secret file is missing, empty, not private, or not valid text; recreate it with mode 0600. |
 | `invalid_shared_url` | Use `https://host[:port]` with no path, query, fragment or embedded credentials. |
 | `invalid_token` | The token is malformed, signed by another store, or too long; obtain a fresh credential from this store. |
-| `invalid_tool_arguments` | The tool arguments do not match the catalog schema; compare with the tool's description. |
+| `invalid_tool_arguments` | A tool argument is wrong: `path`, `problem` and `expected` in this reply name the field; fix it and call again. |
 | `invalid_transition` | That lifecycle transition is not allowed from the current state. |
 | `invalid_usage` | Usage figures must be consistent non-negative integers. |
 
@@ -694,6 +721,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `profile_config_invalid` | The profiles file must hold `[profiles.NAME]` tables with absolute store and control paths. |
+| `profile_required` | Name the store with `--profile NAME` (or MEMORYKING_PROFILE) so the command knows which daemon to stop. |
 | `profile_unknown` | No profile with that name; run `memoryking profile list` or `profile add`. |
 
 ## project
@@ -815,7 +843,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `reranker_failure` | The reranker runtime failed on this request; the briefing fell back to the fused order. |
-| `reranker_input_limit` | The reranker scores at most 32 texts of at most 16 KiB each per call. |
+| `reranker_input_limit` | The reranker scores at most 64 texts of at most 16 KiB each per call. |
 | `reranker_model_checksum_mismatch` | The reranker files do not match the manifest checksums. |
 | `reranker_model_invalid` | The reranker model could not be loaded by the pinned runtime. |
 | `reranker_model_not_installed` | Install the reranker with `python -m memoryking.model_install --model reranker --destination DIR`. |
@@ -887,6 +915,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `session_limit` | Sixteen dashboard sessions are already open; sign out of one or wait for expiry. |
 | `session_required` | Sign in to the dashboard first; the request carried no session cookie. |
 
+## setup
+
+| Code | What to do |
+| --- | --- |
+| `setup_config_unsupported` | Setup writes the default profiles file, ~/.memoryking/config.toml; unset MEMORYKING_CONFIG and --config, or register the bridge by hand. |
+
 ## shared
 
 | Code | What to do |
@@ -943,12 +977,18 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `temporal_requirement_failed` | A claim's validity window does not cover the requested time. |
 
+## tenant
+
+| Code | What to do |
+| --- | --- |
+| `tenant_required` | Pass the shared tenant name or set `MEMORYKING_TENANT`. |
+
 ## tokenizer
 
 | Code | What to do |
 | --- | --- |
 | `tokenizer_integrity_failure` | The bundled vocabulary file is corrupt; reinstall the package. |
-| `tokenizer_unavailable` | Install the tokenizers lock for exact counts, or request `utf8-byte-estimate-v1`. |
+| `tokenizer_unavailable` | Install the tokenizers lock for exact counts, or request `chars-estimate-v1`. |
 | `tokenizer_version_unsupported` | The installed tiktoken version differs from the pinned one; install the tokenizers lock. |
 
 ## tool
@@ -971,7 +1011,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `transport_unavailable` | The daemon socket is unreachable; is `memoryking serve` running? |
+| `transport_unavailable` | The daemon is not running; start it with the `start` command in this reply, or run `memoryking setup <host> --project P`, which makes it start on demand. |
 
 ## trust
 
@@ -989,6 +1029,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
+| `unknown_profile` | The MCP profile is `lean` (the default) or `full`; select it with `?profile=` on the endpoint URL. |
 | `unknown_tool` | No tool with that name; call tools/list for the catalog. |
 
 ## unrelated
@@ -1020,6 +1061,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `usage_cohort_limit` | The usage cohort is full; start a new cohort. |
 | `usage_record_invalid` | The usage record is malformed. |
 | `usage_retention_limit` | 100,000 usage attempts are retained; expired rows are pruned automatically, otherwise wait for retention to pass. |
+
+## user
+
+| Code | What to do |
+| --- | --- |
+| `user_evidence_scope` | A user-scope claim may cite only that scope's own observations, and a project claim may not cite them; capture the fact in the claim's own scope. |
+| `user_link_conflict` | An agent acts for one user. End its link to the other user first (`credential revoke <agent> --project _user_<name>`). |
 
 ## vault
 

@@ -9,13 +9,21 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from memoryking.adapters.local_embeddings import MODEL, model_manifest
+from memoryking.adapters.local_embeddings import SUPPORTED, model_manifest
 from memoryking.adapters.local_store import MAX_COUNTER, RETRY_MS, USAGE_LIMIT, uid
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.application.retention import index_receipt
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
-from memoryking.domain.embeddings import EmbeddingBatch, fingerprint
+from memoryking.domain.embeddings import EmbeddingBatch, fingerprint, pack
 from memoryking.domain.local import LocalError, Released
+from memoryking.domain.passages import split
+
+# Embed each observation passage by passage (`domain.passages`) rather than from its opening.
+# Off: on the pooled LongMemEval oracle set passage vectors lowered four of the five headline
+# metrics against the opening 512 tokens (docs/reference.md), so the default embeds the
+# opening. The passage path is complete and tested; this is the one switch.
+EMBED_PASSAGES = False
 
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("embedding.schema.json").read_text())
@@ -72,6 +80,7 @@ class Embeddings:
                     json.dumps([result["observation"]] if "observation" in result else []),
                 ),
             )
+            index_receipt(self.db, who["tenant"], receipt)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, receipt)
@@ -108,7 +117,7 @@ class Embeddings:
 
     def configure(self, who: dict[str, Any], command: dict[str, Any], at: int) -> dict[str, Any]:
         args = command["args"]
-        if args["model"] != MODEL:
+        if args["model"] not in SUPPORTED:
             raise LocalError("embedding_model_unsupported")
         lookup = (
             who["tenant"],
@@ -128,7 +137,7 @@ class Embeddings:
             if previous["result"] is None or at >= previous["expires"]:
                 raise LocalError("idempotency_result_expired")
             return {**json.loads(previous["result"]), "replayed": True}
-        configuration = model_manifest()
+        configuration = model_manifest(args["model"])
         fp = fingerprint(configuration)
         key = (who["tenant"], args["project"], fp)
         row = self.db.execute(
@@ -147,7 +156,7 @@ class Embeddings:
             >= 16
         ):
             raise LocalError("embedding_partition_limit")
-        for table in ("embedding_jobs", "embedding_items"):
+        for table in ("embedding_jobs", "embedding_items", "embedding_vectors"):
             self.db.execute(
                 f"DELETE FROM {table} WHERE tenant=? AND project=? AND fingerprint=?", key
             )
@@ -246,7 +255,219 @@ class Embeddings:
             (*key, max(0, frontier - 256)),
         )
 
-    def source(self, who: dict[str, Any], row: Any, at: int) -> str:
+    def convert_legacy(self, part: Any, batch: int = 500) -> int:
+        """Move vectors that an earlier release stored as JSON into the binary table.
+
+        A bounded batch each time the indexing loop asks for work, so an upgraded store
+        converts itself over a few passes and answers searches throughout: the search reads
+        both tables until the old one is empty."""
+        key = (part["tenant"], part["project"], part["fingerprint"], part["generation"])
+        rows = self.db.execute(
+            "SELECT * FROM embedding_items WHERE tenant=? AND project=? AND fingerprint=? AND generation=? ORDER BY observation LIMIT ?",
+            (*key, batch),
+        ).fetchall()
+        for row in rows:
+            self.db.execute(
+                "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO NOTHING",
+                (
+                    *key,
+                    "observation",
+                    row["observation"],
+                    0,
+                    row["incarnation"],
+                    row["source_revision"],
+                    row["blob_hash"],
+                    row["input_hash"],
+                    pack(json.loads(row["vector_json"])),
+                    row["start_byte"],
+                    row["end_byte"],
+                    row["input_tokens"],
+                    1,  # later passages, if there are any, are embedded next
+                    row["position"],
+                ),
+            )
+            self.db.execute(
+                "DELETE FROM embedding_items WHERE tenant=? AND project=? AND fingerprint=? AND generation=? AND observation=?",
+                (*key, row["observation"]),
+            )
+        return len(rows)
+
+    def claim_text(self, who: dict[str, Any], project: str, revision: str, at: int) -> str | None:
+        """The text of an accepted-or-proposed claim revision this worker may read, or None."""
+        try:
+            row = self.r.k._revision(who["tenant"], revision, project)
+        except LocalError:
+            return None
+        if not self.r.k._available(who, row, at):
+            return None
+        text = json.loads(row["body"]).get("text")
+        return text[:16384] if isinstance(text, str) and text.strip() else None
+
+    def claim_revision(
+        self, who: dict[str, Any], part: Any, args: dict[str, Any], at: int
+    ) -> dict[str, Any] | None:
+        """Hand out the oldest claim revision of the project that has no vector yet.
+
+        Claims are embedded after the observations, so reviewed knowledge can be found by
+        meaning. Only text the worker may read is released, and a vector is stored only for
+        the exact text that was released (the lease names its hash)."""
+        rows = self.db.execute(
+            "SELECT r.id FROM revisions r JOIN families f ON r.tenant=f.tenant AND r.family=f.id WHERE r.tenant=? AND f.project=? AND r.purged=0 AND r.body IS NOT NULL "
+            "AND NOT EXISTS(SELECT 1 FROM embedding_vectors v WHERE v.tenant=r.tenant AND v.project=f.project AND v.fingerprint=? AND v.generation=? AND v.kind='claim' AND v.subject=r.id) "
+            "AND NOT EXISTS(SELECT 1 FROM embedding_skips k WHERE k.tenant=r.tenant AND k.fingerprint=? AND k.generation=? AND k.subject=r.id) ORDER BY r.created,r.id LIMIT 32",
+            (
+                who["tenant"],
+                args["project"],
+                part["fingerprint"],
+                part["generation"],
+                part["fingerprint"],
+                part["generation"],
+            ),
+        ).fetchall()
+        for row in rows:
+            text = self.claim_text(who, args["project"], row["id"], at)
+            if text is None:
+                continue
+            attempt = uid("usage")
+            self.db.execute(
+                "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    who["tenant"],
+                    attempt,
+                    args["project"],
+                    who["principal"],
+                    self.s.incarnation,
+                    "local-onnx",
+                    part["fingerprint"],
+                    "embedding_backfill",
+                    "started",
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    canonical_hash(text),
+                    None,
+                    json.dumps([{"kind": "claim", "id": row["id"]}]),
+                    at,
+                    at + RETRY_MS,
+                ),
+            )
+            lease = self.s._token(
+                "embedding_lease",
+                tenant=who["tenant"],
+                principal=who["principal"],
+                project=args["project"],
+                fingerprint=part["fingerprint"],
+                generation=part["generation"],
+                position=0,
+                fence=0,
+                attempt=attempt,
+                input_hash=canonical_hash(text),
+                subject_kind="claim",
+                subject=row["id"],
+            )
+            return {
+                "job": 0,
+                "kind": "claim",
+                "lease": lease,
+                "lease_until_ms": at + 30000,
+                "input": text,
+                "input_hash": canonical_hash(text),
+                "fingerprint": part["fingerprint"],
+                "dimensions": part["dimensions"],
+                "observation": row["id"],
+                "blob_hash": None,
+                "start_byte": 0,
+                "end_byte": len(text.encode()),
+                "egress": "local_cpu_only",
+            }
+        return None
+
+    def finish_claim(
+        self,
+        who: dict[str, Any],
+        args: dict[str, Any],
+        token: dict[str, Any],
+        part: Any,
+        complete: bool,
+        at: int,
+    ) -> dict[str, Any]:
+        revision = token["subject"]
+        if part["generation"] != token["generation"] or part["state"] != "experimental":
+            raise LocalError("stale_lease")
+        text = self.claim_text(who, args["project"], revision, at)
+        if text is None or canonical_hash(text) != token["input_hash"]:
+            raise LocalError("stale_source")
+        output_hash = None
+        if complete:
+            batch = EmbeddingBatch(
+                args["fingerprint"],
+                part["dimensions"],
+                [args["vector"]],
+                [args["input_hash"]],
+                args["input_tokens"],
+                [args["truncated"]],
+            )
+            batch.validate(token["fingerprint"], part["dimensions"], [text])
+            output_hash = canonical_hash(args["vector"])
+            row = self.r.k._revision(who["tenant"], revision, args["project"])
+            self.db.execute(
+                "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO UPDATE SET incarnation=excluded.incarnation,source_revision=excluded.source_revision,blob_hash=excluded.blob_hash,input_hash=excluded.input_hash,vector=excluded.vector,start_byte=excluded.start_byte,end_byte=excluded.end_byte,input_tokens=excluded.input_tokens,truncated=excluded.truncated,position=excluded.position",
+                (
+                    who["tenant"],
+                    args["project"],
+                    token["fingerprint"],
+                    token["generation"],
+                    "claim",
+                    revision,
+                    0,
+                    self.s.incarnation,
+                    0,
+                    row["body_hash"],
+                    args["input_hash"],
+                    pack(args["vector"]),
+                    0,
+                    len(text.encode()),
+                    args["input_tokens"],
+                    int(args["truncated"]),
+                    row["created"],
+                ),
+            )
+        else:
+            # A claim that cannot be embedded is skipped for this generation, not retried
+            # on every pass.
+            self.db.execute(
+                "INSERT INTO embedding_skips VALUES (?,?,?,?) ON CONFLICT(tenant,fingerprint,generation,subject) DO NOTHING",
+                (who["tenant"], token["fingerprint"], token["generation"], revision),
+            )
+        self.db.execute(
+            "UPDATE processing_usage SET status=?,input_tokens=?,duration_ms=?,output_hash=? WHERE tenant=? AND id=? AND principal=?",
+            (
+                "succeeded" if complete else "failed",
+                args["input_tokens"],
+                args["duration_ms"],
+                output_hash,
+                who["tenant"],
+                token["attempt"],
+                who["principal"],
+            ),
+        )
+        return {
+            "status": "complete" if complete else "dead",
+            "fingerprint": token["fingerprint"],
+            "observation": revision,
+            "usage_attempt": token["attempt"],
+        }
+
+    def source(
+        self, who: dict[str, Any], row: Any, at: int, number: int = 0
+    ) -> tuple[str, int, int, bool]:
+        """Passage `number` of the observation's text: (text, start byte, end byte, more).
+
+        The observation stays the unit of evidence and authorization: it must be visible
+        to the worker and unchanged since the job was planned; a passage is only a view of
+        it, cut by the same rule the lexical index and the briefing's quotes use."""
         observation = self.db.execute(
             "SELECT * FROM observations WHERE tenant=? AND id=? AND project=?",
             (who["tenant"], row["observation"], row["project"]),
@@ -258,13 +479,240 @@ class Embeddings:
             or observation["blob"] != row["blob_hash"]
         ):
             raise LocalError("stale_source")
-        return self.r._blob(observation)[:16384].decode("utf-8", errors="ignore")
+        full = self.r._blob(observation)[:16384].decode("utf-8", errors="ignore")
+        if not EMBED_PASSAGES:
+            if number:
+                raise LocalError("stale_source")
+            return full, 0, len(full.encode()), False
+        passages = split(full)
+        if number >= len(passages):
+            raise LocalError("stale_source")
+        piece = passages[number]
+        prefix = len(full[: piece.start].encode())
+        return (
+            full[piece.start : piece.end],
+            prefix,
+            prefix + len(full[piece.start : piece.end].encode()),
+            number + 1 < len(passages),
+        )
+
+    def claim_passage(
+        self, who: dict[str, Any], part: Any, args: dict[str, Any], at: int
+    ) -> dict[str, Any] | None:
+        """Hand out the next passage of an observation whose earlier passages are embedded.
+
+        A vector row marked `truncated` has more passages after it; the next one is offered
+        until the last, so a long capture is found by any of its passages."""
+        rows = self.db.execute(
+            "SELECT v.* FROM embedding_vectors v WHERE v.tenant=? AND v.project=? AND v.fingerprint=? AND v.generation=? AND v.kind='observation' AND v.truncated=1 "
+            "AND NOT EXISTS(SELECT 1 FROM embedding_vectors n WHERE n.tenant=v.tenant AND n.project=v.project AND n.fingerprint=v.fingerprint AND n.generation=v.generation AND n.kind=v.kind AND n.subject=v.subject AND n.part=v.part+1) "
+            "ORDER BY v.position,v.subject LIMIT 16",
+            (who["tenant"], args["project"], part["fingerprint"], part["generation"]),
+        ).fetchall()
+        for row in rows:
+            job = {
+                "observation": row["subject"],
+                "project": args["project"],
+                "source_revision": row["source_revision"],
+                "blob_hash": row["blob_hash"],
+            }
+            try:
+                text, start, end, _ = self.source(who, job, at, row["part"] + 1)
+            except LocalError:
+                # No further passage (or the source moved on): stop offering this one.
+                self.db.execute(
+                    "UPDATE embedding_vectors SET truncated=0 WHERE tenant=? AND project=? AND fingerprint=? AND generation=? AND kind='observation' AND subject=? AND part=?",
+                    (
+                        who["tenant"],
+                        args["project"],
+                        part["fingerprint"],
+                        part["generation"],
+                        row["subject"],
+                        row["part"],
+                    ),
+                )
+                continue
+            attempt = uid("usage")
+            self.db.execute(
+                "INSERT INTO processing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    who["tenant"],
+                    attempt,
+                    args["project"],
+                    who["principal"],
+                    self.s.incarnation,
+                    "local-onnx",
+                    part["fingerprint"],
+                    "embedding_backfill",
+                    "started",
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    canonical_hash(text),
+                    None,
+                    json.dumps([{"kind": "observation", "id": row["subject"]}]),
+                    at,
+                    at + RETRY_MS,
+                ),
+            )
+            lease = self.s._token(
+                "embedding_lease",
+                tenant=who["tenant"],
+                principal=who["principal"],
+                project=args["project"],
+                fingerprint=part["fingerprint"],
+                generation=part["generation"],
+                position=0,
+                fence=0,
+                attempt=attempt,
+                input_hash=canonical_hash(text),
+                subject_kind="passage",
+                subject=row["subject"],
+                part=row["part"] + 1,
+                source_revision=row["source_revision"],
+                blob_hash=row["blob_hash"],
+                vector_position=row["position"],
+            )
+            return {
+                "job": 0,
+                "kind": "passage",
+                "lease": lease,
+                "lease_until_ms": at + 30000,
+                "input": text,
+                "input_hash": canonical_hash(text),
+                "fingerprint": part["fingerprint"],
+                "dimensions": part["dimensions"],
+                "observation": row["subject"],
+                "blob_hash": row["blob_hash"],
+                "start_byte": start,
+                "end_byte": end,
+                "egress": "local_cpu_only",
+            }
+        return None
+
+    def finish_passage(
+        self,
+        who: dict[str, Any],
+        args: dict[str, Any],
+        token: dict[str, Any],
+        part: Any,
+        complete: bool,
+        at: int,
+    ) -> dict[str, Any]:
+        if part["generation"] != token["generation"] or part["state"] != "experimental":
+            raise LocalError("stale_lease")
+        job = {
+            "observation": token["subject"],
+            "project": args["project"],
+            "source_revision": token["source_revision"],
+            "blob_hash": token["blob_hash"],
+        }
+        text, start, end, more = self.source(who, job, at, token["part"])
+        if canonical_hash(text) != token["input_hash"]:
+            raise LocalError("stale_source")
+        output_hash = None
+        if complete:
+            batch = EmbeddingBatch(
+                args["fingerprint"],
+                part["dimensions"],
+                [args["vector"]],
+                [args["input_hash"]],
+                args["input_tokens"],
+                [args["truncated"]],
+            )
+            batch.validate(token["fingerprint"], part["dimensions"], [text])
+            output_hash = canonical_hash(args["vector"])
+            self.write_vector(
+                who,
+                token,
+                args,
+                "observation",
+                token["subject"],
+                token["part"],
+                token["source_revision"],
+                token["blob_hash"],
+                start,
+                end,
+                more,
+                token["vector_position"],
+            )
+            # The previous passage no longer has a successor to wait for.
+            self.db.execute(
+                "UPDATE embedding_vectors SET truncated=0 WHERE tenant=? AND project=? AND fingerprint=? AND generation=? AND kind='observation' AND subject=? AND part=?",
+                (
+                    who["tenant"],
+                    args["project"],
+                    token["fingerprint"],
+                    token["generation"],
+                    token["subject"],
+                    token["part"] - 1,
+                ),
+            )
+        self.db.execute(
+            "UPDATE processing_usage SET status=?,input_tokens=?,duration_ms=?,output_hash=? WHERE tenant=? AND id=? AND principal=?",
+            (
+                "succeeded" if complete else "failed",
+                args["input_tokens"],
+                args["duration_ms"],
+                output_hash,
+                who["tenant"],
+                token["attempt"],
+                who["principal"],
+            ),
+        )
+        return {
+            "status": "complete" if complete else "dead",
+            "fingerprint": token["fingerprint"],
+            "observation": token["subject"],
+            "usage_attempt": token["attempt"],
+        }
+
+    def write_vector(
+        self,
+        who: dict[str, Any],
+        token: dict[str, Any],
+        args: dict[str, Any],
+        kind: str,
+        subject: str,
+        number: int,
+        revision: int,
+        blob: str | None,
+        start: int,
+        end: int,
+        more: bool,
+        position: int,
+    ) -> None:
+        self.db.execute(
+            "INSERT INTO embedding_vectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,kind,subject,part) DO UPDATE SET incarnation=excluded.incarnation,source_revision=excluded.source_revision,blob_hash=excluded.blob_hash,input_hash=excluded.input_hash,vector=excluded.vector,start_byte=excluded.start_byte,end_byte=excluded.end_byte,input_tokens=excluded.input_tokens,truncated=excluded.truncated,position=excluded.position",
+            (
+                who["tenant"],
+                args["project"],
+                token["fingerprint"],
+                token["generation"],
+                kind,
+                subject,
+                number,
+                self.s.incarnation,
+                revision,
+                blob,
+                args["input_hash"],
+                pack(args["vector"]),
+                start,
+                end,
+                args["input_tokens"],
+                int(more),  # for an observation: more passages follow this one
+                position,
+            ),
+        )
 
     def claim(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
         part = self.partition(who, args)
         if part["state"] != "experimental":
             raise LocalError("embedding_disabled")
         self.schedule(part, at)
+        self.convert_legacy(part)
         self.db.execute(
             "UPDATE embedding_jobs SET state='dead',fence=fence+1 WHERE tenant=? AND state='leased' AND lease_until<=? AND attempts>=5",
             (who["tenant"], at),
@@ -290,6 +738,11 @@ class Embeddings:
             ),
         ).fetchone()
         if row is None:
+            handed = self.claim_passage(who, part, args, at) or self.claim_revision(
+                who, part, args, at
+            )
+            if handed is not None:
+                return handed
             return {"job": None, **self.status(self.partition(who, args))}
         if (
             self.db.execute(
@@ -309,7 +762,7 @@ class Embeddings:
                 >= USAGE_LIMIT
             ):
                 raise LocalError("usage_retention_limit")
-        text = self.source(who, row, at)
+        text, start_byte, end_byte, _ = self.source(who, row, at)
         key = (
             who["tenant"],
             args["project"],
@@ -371,8 +824,8 @@ class Embeddings:
             "dimensions": part["dimensions"],
             "observation": row["observation"],
             "blob_hash": row["blob_hash"],
-            "start_byte": 0,
-            "end_byte": len(text.encode()),
+            "start_byte": start_byte,
+            "end_byte": end_byte,
             "egress": "local_cpu_only",
         }
 
@@ -388,6 +841,10 @@ class Embeddings:
         part = self.partition(
             who, {"project": args["project"], "fingerprint": token["fingerprint"]}
         )
+        if token.get("subject_kind") == "claim":
+            return self.finish_claim(who, args, token, part, complete, at)
+        if token.get("subject_kind") == "passage":
+            return self.finish_passage(who, args, token, part, complete, at)
         key = (
             who["tenant"],
             args["project"],
@@ -408,7 +865,7 @@ class Embeddings:
             or part["state"] != "experimental"
         ):
             raise LocalError("stale_lease")
-        text = self.source(who, row, at)
+        text, start_byte, end_byte, more = self.source(who, row, at)
         epoch = self.db.execute(
             "SELECT purge_epoch FROM tenants WHERE tenant=?", (who["tenant"],)
         ).fetchone()[0]
@@ -426,22 +883,23 @@ class Embeddings:
             )
             batch.validate(token["fingerprint"], part["dimensions"], [text])
             output_hash = canonical_hash(args["vector"])
+            self.write_vector(
+                who,
+                token,
+                args,
+                "observation",
+                row["observation"],
+                0,
+                row["source_revision"],
+                row["blob_hash"],
+                start_byte,
+                end_byte,
+                more,
+                row["position"],
+            )
             self.db.execute(
-                "INSERT INTO embedding_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,project,fingerprint,generation,observation) DO UPDATE SET incarnation=excluded.incarnation,source_revision=excluded.source_revision,blob_hash=excluded.blob_hash,input_hash=excluded.input_hash,vector_json=excluded.vector_json,start_byte=excluded.start_byte,end_byte=excluded.end_byte,input_tokens=excluded.input_tokens,truncated=excluded.truncated,position=excluded.position",
-                (
-                    *key[:4],
-                    row["observation"],
-                    self.s.incarnation,
-                    row["source_revision"],
-                    row["blob_hash"],
-                    args["input_hash"],
-                    json.dumps(args["vector"]),
-                    0,
-                    len(text.encode()),
-                    args["input_tokens"],
-                    int(args["truncated"]),
-                    row["position"],
-                ),
+                "DELETE FROM embedding_items WHERE tenant=? AND project=? AND fingerprint=? AND generation=? AND observation=?",
+                (*key[:4], row["observation"]),
             )
         state = "complete" if complete else "dead" if row["attempts"] >= 5 else "pending"
         self.db.execute(

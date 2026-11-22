@@ -21,13 +21,15 @@ from memoryking.adapters.token_count import counter
 from memoryking.application.retention import (
     CHECKPOINT_BYTES_LIMIT,
     CHECKPOINT_LIMIT,
+    index_receipt,
     live_checkpoints,
     release_checkpoints,
 )
 from memoryking.application.storage import insert_ignore
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, canonical_hash
-from memoryking.domain.briefing import counted
+from memoryking.domain.briefing import budget_scope, counted
+from memoryking.domain.briefing_text import render_resume
 from memoryking.domain.checkpoint import dependencies, operation_transition, stream_name
 from memoryking.domain.local import Decision, LocalError, Released
 
@@ -192,7 +194,7 @@ class Working:
                 credential, "checkpoint" if action in MUTATIONS else "read", args["project"], at
             )
             self.s._auth(credential, "read", args["project"], at)
-            self.r._expire(at)
+            self.r._expire(at, who["tenant"])
             if action == "save" and args["readers"] is None:
                 # Null keeps the stream's current audience; a first save is the writer's.
                 args = {**args, "readers": self._current_readers(who, args)}
@@ -279,6 +281,7 @@ class Working:
                     json.dumps([d["id"] for d in deps if d["kind"] == "observation"]),
                 ),
             )
+            index_receipt(self.db, who["tenant"], receipt)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, receipt)
@@ -309,7 +312,7 @@ class Working:
         total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
         if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
             # Release at write time: old revisions of ordinary streams stop counting.
-            release_checkpoints(self.db, who["tenant"])
+            release_checkpoints(self.db, self.s.dialect, who["tenant"])
             total, size = live_checkpoints(self.db, self.s.dialect, who["tenant"])
             if total >= CHECKPOINT_LIMIT or size + len(body) > CHECKPOINT_BYTES_LIMIT:
                 raise LocalError("checkpoint_capacity")
@@ -855,8 +858,19 @@ class Working:
                 )
         if extras:
             base.update(extras)
+        text_mode = args.get("format") == "text"
+
+        def measured(packet: dict[str, Any]) -> tuple[bytes, int]:
+            """The envelope and its token count; for text, the budget counts the rendered text."""
+            if not text_mode:
+                return counted(packet, count)
+            shown = json.loads(canonical_bytes(packet))
+            packet["usage"]["output_tokens"] = count(render_resume(shown)[0])
+            packet["usage"]["counted"] = "rendered_text"
+            return canonical_bytes(packet), packet["usage"]["output_tokens"]
+
         try:
-            raw, used = counted(base, count)
+            raw, used = measured(base)
             minimum: int | None = used
         except ContractError:
             raw, used, minimum = b"", 0, None
@@ -874,7 +888,7 @@ class Working:
             base.pop("recovery_gaps", None)
             base.pop("unrecorded_sections", None)
             base["usage"]["budget_compliant"] = False
-            raw, used = counted(base, count)
+            raw, used = measured(base)
             deps = []
         result = json.loads(raw)
         diag = {
@@ -884,9 +898,7 @@ class Working:
             "checkpoint_hash": row["body_hash"],
             "usage": {**result["usage"], "output_tokens": used, "serialized_bytes": len(raw)},
             "minimum_required_tokens": result.get("minimum_required_tokens"),
-            "budget_count_scope": "failure_envelope"
-            if result["status"] == "budget_insufficient"
-            else "context",
+            "budget_count_scope": budget_scope(result),
             "trace": [],
             "context_binding": base["context_binding"],
         }
@@ -906,7 +918,9 @@ class Working:
             if self.db.execute(
                 "SELECT 1 FROM operation_intents WHERE tenant=? AND id=?",
                 (who["tenant"], args["operation"]),
-            ).fetchone():
+            ).fetchone() or self.s.control.operations.consumed(who["tenant"], args["operation"]):
+                # Also an identity whose log segment was compacted away: the consumed-identity
+                # index outlives compaction and a restore to an older backup.
                 raise LocalError("operation_identity_consumed")
             # Resolved intents keep their consumed identity but release capacity.
             if (

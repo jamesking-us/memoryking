@@ -161,6 +161,64 @@ class SharedHTTPTests(unittest.TestCase):
         )
         self.assertEqual("invalid_request", self.raw({**read, "credential": reader})[1]["error"])
 
+    def test_housekeeping_runs_on_its_own_pass_without_a_request_and_logs_a_failure(self):
+        # An expired replay result and an artifact tombstone older than its grace are
+        # released by the service's own pass; no request from the tenant is involved.
+        self.client.capture("old", observation())
+        now = int(time.time() * 1000)
+        with self.store() as store, store.transaction():
+            store.db.execute("UPDATE retries SET expires=? WHERE tenant=?", (now - 1, self.tenant))
+            store.db.execute(
+                "INSERT INTO rendered_artifacts VALUES (?,?,?,?,?,?,?,?,NULL,?,NULL,NULL,'[]')",
+                (self.tenant, "old", "owner", "demo", store.incarnation, 1, 2, "expired", "h" * 64),
+            )
+        self.assertEqual(0, self.service.housekeeping_pass())
+        with self.store() as store, store.transaction():
+            self.assertEqual(
+                0,
+                store.db.execute(
+                    "SELECT count(*) FROM retries WHERE tenant=? AND result IS NOT NULL",
+                    (self.tenant,),
+                ).fetchone()[0],
+            )
+            self.assertEqual(
+                0,
+                store.db.execute(
+                    "SELECT count(*) FROM rendered_artifacts WHERE tenant=?", (self.tenant,)
+                ).fetchone()[0],
+            )
+        self.assertIn(self.tenant, self.service._housekeeping)
+        # A failing tenant is logged, counted, and does not stop the pass.
+        with (
+            mock.patch.object(self.service, "maintain", side_effect=RuntimeError("boom")),
+            self.assertLogs("memoryking", level="ERROR") as logs,
+        ):
+            self.assertEqual(len(self.service.tenants()), self.service.housekeeping_pass())
+        self.assertIn("event=internal_error", logs.output[0])
+        self.assertNotIn("boom", logs.output[0])
+        # The thread form runs a first pass right away and stops with the service.
+        passes = self.service.housekeeping_passes
+        thread = self.service.start_housekeeping(interval_s=3600)
+        deadline = time.monotonic() + 10
+        while self.service.housekeeping_passes == passes and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertGreater(self.service.housekeeping_passes, passes)
+        self.service.stopping.set()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+
+    def test_client_methods_over_https_match_the_local_surface(self):
+        saved = self.client.remember("shared retry finding", source="pytest")
+        self.assertEqual(self.client.remember("shared retry finding", source="pytest"), saved)
+        brief = self.client.recall("retry finding")
+        self.assertEqual(brief.sources[0]["id"], saved.observation)
+        progress = self.client.save_progress("shared-task", "Fix retries", "Investigating")
+        self.assertEqual(progress.revision, 1)
+        self.assertIn("Investigating", self.client.resume("shared-task").text)
+        with self.assertRaises(LocalError) as caught:
+            self.client.hand_off("shared-task", "nobody")
+        self.assertTrue(caught.exception.hint)
+
     def test_missing_tenant_answers_like_a_bad_credential_for_an_existing_one(self):
         read = {"version": 1, "operation": "context", "args": {"project": "demo"}}
         with self.assertNoLogs("memoryking", level="ERROR"):
@@ -407,7 +465,7 @@ class SharedHTTPTests(unittest.TestCase):
         from mcp.client.streamable_http import streamable_http_client
 
         async def exercise():
-            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp?profile=full"
             async with httpx2.AsyncClient(
                 headers={"Authorization": "Bearer " + self.credential}, timeout=10
             ) as http:
@@ -427,6 +485,10 @@ class SharedHTTPTests(unittest.TestCase):
                             "memory_capture", {"key": "mcp", "request": observation(8)}
                         )
                         self.assertFalse(captured.is_error)
+                        briefed = await session.call_tool(
+                            "memory_brief", {"action": "brief", "args": {"query": "durable"}}
+                        )
+                        self.assertFalse(briefed.is_error, briefed.content)
                         outcome = json.loads(
                             (
                                 Path(__file__).resolve().parents[1]
@@ -444,6 +506,181 @@ class SharedHTTPTests(unittest.TestCase):
                         )
 
         anyio.run(exercise)
+
+    def test_lean_is_the_default_profile_over_http_mcp_with_a_markdown_reply(self):
+        import anyio
+        import httpx2
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        async def exercise():
+            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+            async with httpx2.AsyncClient(
+                headers={"Authorization": "Bearer " + self.credential}, timeout=10
+            ) as http:
+                async with streamable_http_client(
+                    endpoint, http_client=http, terminate_on_close=False
+                ) as (read, write):
+                    async with ClientSession(read, write, read_timeout_seconds=10) as session:
+                        initialized = await session.initialize()
+                        self.assertIn("recall", initialized.instructions)
+                        self.assertEqual(
+                            __import__("memoryking").__version__, initialized.server_info.version
+                        )
+                        listed = await session.list_tools()
+                        names = {tool.name for tool in listed.tools}
+                        self.assertIn("recall", names)
+                        self.assertNotIn("memory_brief", names)
+                        self.assertNotIn("confirm", names)  # chat review is not served here
+                        saved = await session.call_tool("remember", {"text": "http lean memory"})
+                        self.assertFalse(saved.is_error)
+                        self.assertTrue(saved.content[0].text.startswith("Saved memory as obs_"))
+                        self.assertIsNone(saved.structured_content)  # the text alone
+                        again = await session.call_tool("remember", {"text": "http lean memory"})
+                        self.assertTrue(again.content[0].text.startswith("Already saved as obs_"))
+                        brief = await session.call_tool("recall", {"query": "lean memory"})
+                        self.assertFalse(brief.is_error)
+                        self.assertTrue(brief.content[0].text.startswith("# Briefing: lean memory"))
+                        self.assertIsNone(brief.structured_content)
+                        self.assertRegex(
+                            brief.content[0].text, r"\n\n\[receipt rcpt_\w+; status \w+"
+                        )
+                        bad = await session.call_tool("recall", {})
+                        self.assertTrue(bad.is_error)
+                        self.assertEqual("$.query", bad.structured_content["path"])
+                        self.assertEqual(["query"], bad.structured_content["missing"])
+
+        anyio.run(exercise)
+
+    def test_unknown_profile_is_refused_and_older_protocol_revisions_are_accepted(self):
+        endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+        body = canonical_bytes({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+
+        def send(version, query=""):
+            request = urllib.request.Request(
+                endpoint + query,
+                body,
+                headers={
+                    "Authorization": "Bearer " + self.credential,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                    "MCP-Protocol-Version": version,
+                },
+            )
+            try:
+                response = urllib.request.urlopen(request, timeout=5)
+            except urllib.error.HTTPError as exc:
+                response = exc
+            with response:
+                return response.status, response.read()
+
+        from memoryking.adapters.mcp_common import HANDSHAKE_VERSIONS
+
+        for version in HANDSHAKE_VERSIONS:
+            self.assertEqual(200, send(version)[0], version)
+        self.assertEqual(
+            "unknown_profile", json.loads(send("2025-11-25", "?profile=x")[1])["error"]
+        )
+
+    def test_the_stateless_2026_07_28_revision_lists_and_calls_tools(self):
+        """The pinned library serves the per-request-envelope revision; so does the endpoint."""
+        endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp"
+        envelope = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"},
+        }
+
+        def send(method, params, name=None):
+            body = canonical_bytes(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": {**params, "_meta": envelope},
+                }
+            )
+            headers = {
+                "Authorization": "Bearer " + self.credential,
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2026-07-28",
+                "Mcp-Method": method,
+            }
+            if name:
+                headers["Mcp-Name"] = name
+            request = urllib.request.Request(endpoint, body, headers=headers)
+            try:
+                response = urllib.request.urlopen(request, timeout=5)
+            except urllib.error.HTTPError as exc:
+                response = exc
+            with response:
+                return response.status, json.loads(response.read())
+
+        status, listed = send("tools/list", {})
+        self.assertEqual(200, status, listed)
+        self.assertIn("recall", {t["name"] for t in listed["result"]["tools"]})
+        status, called = send(
+            "tools/call", {"name": "remember", "arguments": {"text": "stateless call"}}, "remember"
+        )
+        self.assertEqual(200, status, called)
+        self.assertTrue(called["result"]["content"][0]["text"].startswith("Saved memory as"))
+
+    def test_an_mcp_tool_call_makes_one_context_decision_in_both_profiles(self):
+        import anyio
+        import httpx2
+        import mcp_types as types
+        from mcp.client.session import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+
+        def receipts():
+            with self.store() as store:
+                with store.transaction():
+                    return store.db.execute("SELECT count(*) FROM receipts").fetchone()[0]
+
+        seen = {}
+
+        async def exercise(profile, status_call, brief_call):
+            endpoint = self.url + f"/v1/tenants/{self.tenant}/projects/demo/mcp?profile={profile}"
+            async with httpx2.AsyncClient(
+                headers={"Authorization": "Bearer " + self.credential}, timeout=10
+            ) as http:
+                async with streamable_http_client(
+                    endpoint, http_client=http, terminate_on_close=False
+                ) as (read, write):
+                    async with ClientSession(read, write, read_timeout_seconds=10) as session:
+                        await session.initialize()
+                        await session.list_tools()  # lets the initialized notification settle
+
+                        async def spent(call):
+                            before = await anyio.to_thread.run_sync(receipts)
+                            result = await call()
+                            self.assertFalse(result.is_error, getattr(result, "content", None))
+                            return await anyio.to_thread.run_sync(receipts) - before
+
+                        async def listing():
+                            await session.list_tools()
+                            return types.CallToolResult(content=[])
+
+                        seen[profile] = {"list": await spent(listing)}
+                        if status_call:
+                            seen[profile]["status"] = await spent(
+                                lambda: session.call_tool(*status_call)
+                            )
+                        seen[profile]["brief"] = await spent(lambda: session.call_tool(*brief_call))
+
+        anyio.run(exercise, "lean", None, ("recall", {"query": "durable"}))
+        anyio.run(
+            exercise,
+            "full",
+            ("memory_status", {"project": "demo"}),
+            ("memory_brief", {"action": "brief", "args": {"query": "durable"}}),
+        )
+        # The request's own context decision (what a listing costs) serves the tool: a status
+        # call adds nothing to it and a briefing adds only its own receipt.
+        for profile, counts in seen.items():
+            self.assertEqual(counts["list"] + 1, counts["brief"], profile)
+        self.assertEqual(seen["full"]["list"], seen["full"]["status"])
 
     def test_delegation_expiry_and_no_self_escalation(self):
         from memoryking.adapters.postgres_store import PostgresStore

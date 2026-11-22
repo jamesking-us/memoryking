@@ -33,8 +33,10 @@ class SharedClient(LocalClient):
         ca_file: Path | None = None,
         loopback_http: bool = False,
         namespace: str = "sdk",
+        bindings: list[dict[str, Any]] | None = None,
     ):
         self.namespace = namespace
+        self.bindings = [dict(b) for b in bindings] if bindings else [{}]
         parsed = urllib.parse.urlsplit(url)
         if (
             parsed.username
@@ -97,5 +99,5 @@ class SharedClient(LocalClient):
         if not isinstance(value, dict):
             raise LocalError("invalid_response")
         if "error" in value:
-            raise LocalError(value["error"])
+            raise LocalError(value["error"], value.get("hint"))
         return value

@@ -19,7 +19,19 @@ from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.domain.local import LocalError, SystemClock
 
-LATER_TABLES = {"credential_generations", "lexical_state", "lexical_projects", "lexical_terms"}
+LATER_TABLES = {
+    "credential_generations",
+    "lexical_state",
+    "lexical_projects",
+    "lexical_terms",
+    "supersessions",
+    "retirement_requests",
+    "pins",
+    "consolidation_runs",
+    "unreviewed_tier",
+    "embedding_vectors",
+    "embedding_skips",
+}
 
 
 class PostgresCredentialTests(unittest.TestCase):

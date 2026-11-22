@@ -70,6 +70,8 @@ def parser() -> argparse.ArgumentParser:
         "end-maintenance",
         "rotate-owner",
         "journal-pending",
+        "compact-operations",
+        "reindex",
     ):
         item = commands.add_parser(name)
         item.add_argument("--dsn-file", type=Path, required=True)
@@ -82,7 +84,28 @@ def parser() -> argparse.ArgumentParser:
             )
         if name == "journal-pending":
             item.add_argument("--control", type=Path, required=True)
-        if name in {"init-tenant", "serve", "worker-once", "backup", "restore", "rotate-owner"}:
+        if name in {
+            "serve",
+            "worker-once",
+            "backup",
+            "compact-operations",
+            "rotate-owner",
+            "reindex",
+        }:
+            item.add_argument(
+                "--instance-id",
+                help="Name this deployment for the instance lease; set it on every process of a multi-host deployment (default: derived from the control directory)",
+            )
+        if name in {
+            "init-tenant",
+            "serve",
+            "worker-once",
+            "backup",
+            "restore",
+            "rotate-owner",
+            "compact-operations",
+            "reindex",
+        }:
             item.add_argument("--content", type=Path, required=True)
             item.add_argument("--control", type=Path, required=True)
             item.add_argument("--audience", default="memoryking-shared")
@@ -94,6 +117,8 @@ def parser() -> argparse.ArgumentParser:
             "end-maintenance",
             "rotate-owner",
             "journal-pending",
+            "compact-operations",
+            "reindex",
         }:
             item.add_argument("--tenant", required=True)
         if name == "end-maintenance":
@@ -105,12 +130,33 @@ def parser() -> argparse.ArgumentParser:
             )
         if name == "init-tenant":
             item.add_argument("--principal", default="owner")
-        if name in {"worker-once", "backup"}:
+        if name in {"worker-once", "backup", "compact-operations", "reindex"}:
             item.add_argument("--credential", type=Path, required=True)
+        if name == "reindex":
+            item.add_argument(
+                "--wait",
+                action="store_true",
+                help="Do the batched rebuild in this process and show progress on stderr until "
+                "it completes (without it, the serving process finishes it in the background)",
+            )
+        if name == "compact-operations":
+            item.add_argument(
+                "--archive-dir",
+                type=Path,
+                required=True,
+                help="Directory holding the retained archives; operation history they already "
+                "hold may be dropped, and none is without one",
+            )
         if name == "worker-once":
             item.add_argument("--project", required=True)
         if name == "backup":
             item.add_argument("--backup-dsn-file", type=Path, required=True)
+            item.add_argument(
+                "--previous",
+                type=Path,
+                help="An earlier archive of this tenant: blobs it holds are hard-linked "
+                "(after their hash is verified) instead of copied",
+            )
         if name in {"backup", "restore"}:
             item.add_argument("--archive", type=Path, required=True)
         if name == "restore":
@@ -124,6 +170,18 @@ def parser() -> argparse.ArgumentParser:
             item.add_argument("--tls-key", type=Path)
             item.add_argument("--loopback-http", action="store_true")
             item.add_argument("--pool-size", type=int, default=8)
+            item.add_argument(
+                "--max-requests",
+                type=int,
+                default=32,
+                help="Requests in flight at once (1 to 1,024); more are refused as service_busy",
+            )
+            item.add_argument(
+                "--anchor-interval-ms",
+                type=int,
+                default=0,
+                help="Opt in to less anchor durability for throughput: the commit serial and clock high-water mark of a request that moved no position are written at most this many ms late (default 0: every committing request is anchored before release). A rollback that discards only receipts from that window is then not detected, and a clock that went back by less than the window across a restart is not refused",
+            )
             item.add_argument("--dashboard-tenant")
             item.add_argument("--log-level", default="warning", choices=LEVELS)
             item.add_argument(
@@ -147,6 +205,35 @@ def parser() -> argparse.ArgumentParser:
     request.add_argument("--ca-file", type=Path)
     request.add_argument("--loopback-http", action="store_true")
     return result
+
+
+def progress_line(lexical: dict[str, Any]) -> str:
+    left, total = lexical.get("remaining_observations"), lexical.get("total_observations")
+    if left is None or total is None:
+        return f"lexical index {lexical.get('state')}"
+    return (
+        f"lexical index {lexical['state']}: {lexical['percent_complete']}% "
+        f"({total - left:,} of {total:,} observations), about "
+        f"{lexical.get('estimated_seconds', 0)} s left"
+    )
+
+
+def reindex(store: PostgresStore, credential: str, tenant: str, wait: bool) -> dict[str, Any]:
+    """Start the tenant's rebuild into the current lexical configuration (admin credential).
+
+    The starting call is short whatever the corpus size. With `wait`, this process then runs
+    the batched rebuild itself and reports progress on stderr; otherwise the serving process's
+    housekeeping finishes it."""
+    from memoryking.application import lexical_index
+
+    lexical = store.reindex(credential)
+    while wait and lexical.get("state") != lexical_index.CURRENT:
+        store.rebuild_lexical(tenant, wall_ms=1500)
+        with store.transaction():
+            lexical = lexical_index.describe(store.db, tenant, store._lexical_rate)
+        sys.stderr.write(progress_line(lexical) + "\n")
+        sys.stderr.flush()
+    return {"status": "complete" if wait else "started", "lexical": lexical}
 
 
 def run(args: Any) -> dict[str, Any]:
@@ -260,18 +347,29 @@ def run(args: Any) -> dict[str, Any]:
                 raise LocalError("shared_tls_required")
             if args.tls_key:
                 private_file(args.tls_key)
-            service = SharedService(pool, args.content, args.control, audience=args.audience)
+            service = SharedService(
+                pool,
+                args.content,
+                args.control,
+                audience=args.audience,
+                instance_id=args.instance_id,
+            )
+            if not 0 <= args.anchor_interval_ms <= 60_000:
+                raise LocalError("invalid_anchor_interval")
+            service.anchor_interval_ms = args.anchor_interval_ms
             if args.egress_policy is not None:
                 from memoryking.adapters.egress_policy import EgressPolicy
 
                 service.egress_policy = EgressPolicy.load(args.egress_policy)
             threading.Thread(target=service.warm, name="journal-warm", daemon=True).start()
+            service.start_housekeeping()
             app = create_app(
                 service,
                 hosts=args.host,
                 origins=args.origin,
                 loopback_http=args.loopback_http,
                 dashboard_tenant=args.dashboard_tenant,
+                capacity=args.max_requests,
             )
             uvicorn.run(
                 app,
@@ -288,13 +386,31 @@ def run(args: Any) -> dict[str, Any]:
             return pending_journal(pool, args.control, args.tenant)
         if args.command == "rotate-owner":
             path = rotate_owner(
-                pool, args.content, args.control, args.tenant, audience=args.audience
+                pool,
+                args.content,
+                args.control,
+                args.tenant,
+                audience=args.audience,
+                instance_id=args.instance_id,
             )
             return {"credential_file": str(path), "rotated": True}
         credential = secret(args.credential)
         with PostgresStore(
-            pool, args.content, args.control, args.tenant, credential, audience=args.audience
+            pool,
+            args.content,
+            args.control,
+            args.tenant,
+            credential,
+            audience=args.audience,
+            instance_id=args.instance_id,
         ) as store:
+            if args.command == "compact-operations":
+                return {
+                    "status": "complete",
+                    "segments_dropped": store.compact_operations(args.archive_dir),
+                }
+            if args.command == "reindex":
+                return reindex(store, credential, args.tenant, args.wait)
             if args.command == "worker-once":
                 lease = store.claim(credential, args.project)
                 if lease is None:
@@ -302,7 +418,7 @@ def run(args: Any) -> dict[str, Any]:
                 store.finish(credential, args.project, lease["lease"], "complete")
                 return {"status": "complete", "provider_calls": 0, "projection": "audit_probe"}
             with psycopg.connect(dsn(args.backup_dsn_file), autocommit=True) as connection:
-                manifest = backup(store, connection, args.archive)
+                manifest = backup(store, connection, args.archive, previous=args.previous)
                 return {
                     "status": "complete",
                     "archive": str(args.archive),

@@ -190,6 +190,178 @@ class OperatorCommandTests(unittest.TestCase):
         self.assertNotIn("Timeout finding", then)
         self.assertIn("as of 2000-01-01", then)
 
+    def test_reindex_starts_the_rebuild_and_waits_with_progress_through_the_daemon(self):
+        from memoryking.application import lexical_index, store_core
+
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        namespace = self.store.namespace(self.credential.read_text(), "demo")
+        for number in range(6):
+            self.store.capture(
+                self.credential.read_text(),
+                namespace,
+                f"r{number}",
+                {
+                    "version": 1,
+                    "project": "demo",
+                    "source": "cli-test",
+                    "source_event": f"r{number}",
+                    "text": f"Retry note {number} for the nightly export.",
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+        original = (store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS)
+        store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS = 0, 1
+        try:
+            started = self.cli("reindex", "--project", "demo", *common)
+            self.assertIn("Reindex started: rebuilding (lexical-v1)", started)
+            self.assertIn("rebuilding in batches", started)
+            waited = self.cli("reindex", "--project", "demo", "--wait", *common)
+        finally:
+            store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS = original
+        self.assertIn("Reindex started:", waited)
+        self.assertIn("Lexical    current (lexical-v2)", waited)
+        self.assertTrue(waited.rstrip().endswith("Reindex complete."), waited)
+        status = self.cli("status", "--project", "demo", *common)
+        self.assertIn("Lexical    current (lexical-v2)", status)
+        report = json.loads(self.cli("reindex", "--project", "demo", "--json", *common))
+        self.assertIn(report["lexical"]["state"], {"rebuilding", "current"})
+        # An agent's credential is not an admin one.
+        agent = self.store.grant(
+            self.credential.read_text(), principal="agent", project="demo", capabilities=["read"]
+        )
+        token = Path(self.temp.name) / "agent.token"
+        token.write_text(agent)
+        token.chmod(0o600)
+        refused = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "memoryking",
+                "reindex",
+                "--socket",
+                str(self.server.path),
+                "--credential",
+                str(token),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(refused.returncode, 0)
+
+    def test_status_and_doctor_show_percent_complete_and_an_estimate_for_a_rebuild(self):
+        from memoryking.__main__ import lexical_line
+
+        line = lexical_line(
+            {
+                "state": "rebuilding",
+                "configuration": "lexical-v1",
+                "target_configuration": "lexical-v2",
+                "total_observations": 1000,
+                "remaining_observations": 750,
+                "percent_complete": 25,
+                "estimated_seconds": 2,
+                "action": "rebuilding in batches",
+            }
+        )
+        self.assertIn("25% rebuilt into lexical-v2 (250 of 1,000 observations, about", line)
+        self.assertIn("left)", line)
+        self.assertEqual(
+            "current (lexical-v2)",
+            lexical_line({"state": "current", "configuration": "lexical-v2"}),
+        )
+        # The doctor reads the same from the files while no daemon is needed.
+        namespace = self.store.namespace(self.credential.read_text(), "demo")
+        for number in range(4):
+            self.store.capture(
+                self.credential.read_text(),
+                namespace,
+                f"d{number}",
+                {
+                    "version": 1,
+                    "project": "demo",
+                    "source": "cli-test",
+                    "source_event": f"d{number}",
+                    "text": f"Doctor note {number}.",
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+        tenant = self.store.db.execute("SELECT tenant FROM tenants").fetchone()[0]
+        with self.store.transaction():
+            self.store.db.execute("DELETE FROM lexical_state WHERE tenant=?", (tenant,))
+        report = self.cli(
+            "doctor", "--store", str(self.store_dir), "--control", str(self.control_dir)
+        )
+        self.assertIn("0% rebuilt", report)
+        self.assertIn("run `memoryking reindex`", report)
+
+    def test_recall_from_and_to_restrict_the_search_to_a_time_range(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        token = self.credential.read_text()
+        namespace = self.store.namespace(token, "demo")
+        for key, text, observed in (
+            ("early", "Timeout finding from the early incident.", 1_700_000_000_000),  # 2023-11-14
+            ("late", "Timeout finding from the late incident.", 1_800_000_000_000),  # 2027-01-15
+        ):
+            self.store.capture(
+                token,
+                namespace,
+                key,
+                {
+                    "version": 1,
+                    "project": "demo",
+                    "source": "cli-test",
+                    "source_event": key,
+                    "text": text,
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": observed,
+                },
+            )
+        recall = ["recall", "--project", "demo", "--query", "timeout finding", *common]
+        both = self.cli(*recall)
+        self.assertIn("early incident", both)
+        self.assertIn("late incident", both)
+        early = self.cli(*recall, "--from", "2023-11-14", "--to", "2023-11-14")
+        self.assertIn("early incident", early)
+        self.assertNotIn("late incident", early)
+        late = self.cli(*recall, "--from", "2024-01-01")
+        self.assertIn("late incident", late)
+        self.assertNotIn("early incident", late)
+        self.cli(*recall, "--from", "not-a-date", expect=2)
+
+    def test_the_smallest_advertised_budget_gives_a_usable_briefing(self):
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+        empty = self.cli(
+            "recall", "--project", "demo", "--query", "timeout", "--budget", "256", *common
+        )
+        self.assertIn("No relevant memory", empty)
+        self.assertNotIn("budget_insufficient", empty)
+        namespace = self.store.namespace(self.credential.read_text(), "demo")
+        self.store.capture(
+            self.credential.read_text(),
+            namespace,
+            "small",
+            {
+                "version": 1,
+                "project": "demo",
+                "source": "cli-test",
+                "source_event": "small",
+                "text": "Timeout finding for the smallest budget.",
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        small = self.cli(
+            "recall", "--project", "demo", "--query", "timeout", "--budget", "256", *common
+        )
+        self.assertIn("Timeout finding for the smallest budget", small)
+        self.assertNotIn("budget_insufficient", small)
+
     def test_summarize_prints_the_summary_and_its_receipt(self):
         from test_working import checkpoint
 
@@ -682,6 +854,116 @@ class CaptureCommandTests(OperatorCommandTests):
             env=env,
         )
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_project_defaults_from_the_environment_for_capture_recall_and_summarize(self):
+        base = {k: v for k, v in os.environ.items() if k != "MEMORYKING_PROJECT"}
+        common = ["--socket", str(self.server.path), "--credential", str(self.credential)]
+
+        def run(*args, project="demo"):
+            env = {**base, "MEMORYKING_PROJECT": project} if project else base
+            return subprocess.run(
+                [sys.executable, "-m", "memoryking", *args, *common],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+        saved = run("capture", "--text", "The deadline moved to Friday")
+        self.assertEqual(saved.returncode, 0, saved.stderr)
+        recalled = run("recall", "--query", "deadline")
+        self.assertEqual(recalled.returncode, 0, recalled.stderr)
+        self.assertIn("deadline moved to Friday", recalled.stdout)
+        # summarize reaches the store (this task has no checkpoint) instead of asking for a project.
+        unsaved = run("summarize", "--task", "none")
+        self.assertNotEqual(unsaved.returncode, 0)
+        self.assertNotIn("project_required", unsaved.stderr)
+        self.assertIn("project_required", run("summarize", "--task", "none", project="").stderr)
+        for command in (("capture", "--text", "x"), ("recall", "--query", "x")):
+            missing = run(*command, project="")
+            self.assertEqual(missing.returncode, 2, missing.stdout)
+            self.assertIn("project_required", missing.stderr)
+        # An explicit flag wins over the environment.
+        other = run("recall", "--query", "deadline", "--project", "elsewhere")
+        self.assertNotIn("deadline moved to Friday", other.stdout)
+
+    def test_save_progress_and_resume_commands_match_the_lean_tools(self):
+        env = {
+            **os.environ,
+            "MEMORYKING_SOCKET": str(self.server.path),
+            "MEMORYKING_CREDENTIAL": str(self.credential),
+            "MEMORYKING_PROJECT": "demo",
+        }
+
+        def run(*args, expect=0):
+            proc = subprocess.run(
+                [sys.executable, "-m", "memoryking", *args],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
+            return proc
+
+        saved = json.loads(
+            run(
+                "save-progress",
+                "--task",
+                "cli-task",
+                "--objective",
+                "Fix the retry deadline",
+                "--state",
+                "Investigating",
+                "--next",
+                "Run the regression",
+                "--next",
+                "Update the changelog",
+                "--finding",
+                "Backoff exceeds the deadline",
+                "--blocker",
+                "Need a full regression result",
+                "--failed",
+                "Raise every timeout => Still failed",
+            ).stdout
+        )
+        self.assertEqual(saved["revision"], 1)
+        text = run("resume", "--task", "cli-task").stdout
+        self.assertIn("# Resume: Fix the retry deadline", text)
+        self.assertIn("Update the changelog", text)
+        self.assertIn("Raise every timeout", text)
+        self.assertIn("Still failed", text)
+        self.assertIn("Need a full regression result", text)
+        # A section left out carries over; the revision moves on.
+        second = json.loads(
+            run(
+                "save-progress",
+                "--task",
+                "cli-task",
+                "--objective",
+                "Fix the retry deadline",
+                "--state",
+                "Regression passes",
+            ).stdout
+        )
+        self.assertEqual(second["revision"], 2)
+        again = run("resume", "--task", "cli-task").stdout
+        self.assertIn("Regression passes", again)
+        self.assertIn("Update the changelog", again)
+        packet = json.loads(run("resume", "--task", "cli-task", "--json").stdout)
+        self.assertEqual(packet["format"], "text")
+        # Malformed --failed is refused by the parser.
+        bad = run(
+            "save-progress",
+            "--task",
+            "t",
+            "--objective",
+            "o",
+            "--state",
+            "s",
+            "--failed",
+            "no arrow",
+            expect=2,
+        )
+        self.assertIn("action => outcome", bad.stderr)
 
     def test_pytest_plugin_records_failures_only_when_configured(self):
         from memoryking import pytest_plugin

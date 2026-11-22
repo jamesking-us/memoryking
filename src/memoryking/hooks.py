@@ -23,15 +23,15 @@ TEXT_LIMIT = 65536
 DAY_MS = 86_400_000
 
 
-def connection(
+def connection_files(
     *,
     profile: str | None = None,
     socket: Path | None = None,
     credential: Path | None = None,
     project: str | None = None,
     config: Path | None = None,
-) -> tuple[Path, str, str]:
-    """(socket, credential token, project) from arguments, then the environment."""
+) -> tuple[Path, Path, str]:
+    """(socket, credential file, project) from arguments, then the environment."""
     name = profile or os.environ.get("MEMORYKING_PROFILE")
     if name and (socket is None or credential is None):
         resolved = profiles.resolve(name, config)
@@ -53,6 +53,12 @@ def connection(
     if not project:
         raise LocalError("project_required")
     private_file(credential)
+    return socket, credential, project
+
+
+def connection(**where: Any) -> tuple[Path, str, str]:
+    """(socket, credential token, project) from arguments, then the environment."""
+    socket, credential, project = connection_files(**where)
     return socket, credential.read_text().strip(), project
 
 
@@ -69,15 +75,24 @@ def capture(
     classification: str = "internal",
     observed_ms: int | None = None,
     namespace: str = "hooks",
+    supersedes: str | None = None,
+    scope: str = "project",
     **where: Any,
 ) -> dict[str, Any]:
     """Capture one observation; the text is truncated to the capture limit with a marker.
+
+    With `scope="user"` it goes to the user scope the credential acts for instead of the
+    project: durable facts and preferences about the user, shared by all their projects.
 
     A replayed capture must send identical bytes, so the default observed time is the
     current day rather than the millisecond; the store's event log records the exact
     moment of the capture itself. Pass `observed_ms` to keep a precise time.
     """
     socket, token, project = connection(**where)
+    if scope == "user":
+        project = request(socket, token, "user", {"action": "scope"})["project"]
+    elif scope != "project":
+        raise LocalError("invalid_request")
     # Unpaired surrogates (e.g. from a decoded traceback) become replacement characters.
     text = text.encode("utf-8", "replace").decode("utf-8")
     if len(text.encode()) > TEXT_LIMIT:
@@ -90,6 +105,18 @@ def capture(
     # The derived key covers everything the payload varies by (project, observed time,
     # text), so a rerun replays and another day or project is a new capture.
     event = event or event_id(source, text, f"{project}\n{observed}")
+    body: dict[str, Any] = {
+        "version": 1,
+        "project": project,
+        "source": source,
+        "source_event": event,
+        "text": text,
+        "readers": readers,
+        "classification": classification,
+        "observed_at_ms": observed,
+    }
+    if supersedes:
+        body["supersedes"] = supersedes
     space = request(socket, token, "namespace", {"project": project, "name": namespace})
     return request(
         socket,
@@ -98,16 +125,7 @@ def capture(
         {
             "namespace": space["namespace"],
             "key": event,
-            "request": {
-                "version": 1,
-                "project": project,
-                "source": source,
-                "source_event": event,
-                "text": text,
-                "readers": readers,
-                "classification": classification,
-                "observed_at_ms": observed,
-            },
+            "request": body,
         },
     )
 
@@ -131,6 +149,59 @@ def as_of_ms(value: str) -> int:
     return int(parsed.timestamp() * 1000)
 
 
+def range_ms(value: str, *, end: bool) -> int:
+    """An end of a `--from`/`--to` range: Unix ms, a date, or an ISO date-time (UTC default).
+
+    A bare date is the start of that day for `--from` and the end of it for `--to`, so
+    `--from 2026-03-01 --to 2026-03-31` covers all of March."""
+    from datetime import datetime, timezone
+
+    if value.strip().isdigit() or end or len(value.strip()) != 10:
+        return as_of_ms(value)
+    try:
+        parsed = datetime.fromisoformat(value.strip()).replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise LocalError("invalid_request") from exc
+    return int(parsed.timestamp() * 1000)
+
+
+def start(
+    *,
+    budget: int = 6000,
+    text: bool = True,
+    task: str | None = None,
+    days: int | None = None,
+    binding: list[str] | None = None,
+    **where: Any,
+) -> dict[str, Any]:
+    """The query-free session-start briefing: constraints, pins, the task's last checkpoint
+    and recent decisions (see `adapters/session_start.py`), as Markdown by default."""
+    socket, token, project = connection(**where)
+    points = session_bindings.resolve(
+        binding, profile=where.get("profile"), config=where.get("config")
+    )
+    context = request(socket, token, "context", {"project": project})
+    args: dict[str, Any] = {
+        "project": project,
+        "bindings": points,
+        "max_output_tokens": budget,
+        "tokenizer": "chars-estimate-v1",
+    }
+    if text:
+        args["format"] = "text"
+    if task:
+        args["task"] = task
+    if days:
+        args["recent_days"] = days
+    command = {
+        "version": 1,
+        "incarnation": context["incarnation"],
+        "action": "start",
+        "args": args,
+    }
+    return request(socket, token, "retrieval", {"command": command})
+
+
 def recall(
     query: str,
     *,
@@ -141,9 +212,12 @@ def recall(
     salience: bool = False,
     rerank: bool = False,
     binding: list[str] | None = None,
+    time_range: dict[str, int] | None = None,
     **where: Any,
 ) -> dict[str, Any]:
     """A briefing through the socket, as cited Markdown by default; `as_of` in Unix ms.
+
+    `time_range` (`from_ms` and/or `to_ms`) restricts the search to records observed in it.
 
     `binding` is a list of `key=value` strings; with none, `MEMORYKING_BINDINGS` and the
     named profile's `bindings` apply (see `session_bindings`)."""
@@ -157,7 +231,7 @@ def recall(
         "query": query,
         "bindings": points,
         "max_output_tokens": budget,
-        "tokenizer": "utf8-byte-estimate-v1",
+        "tokenizer": "chars-estimate-v1",
     }
     if text:
         args["format"] = "text"
@@ -169,6 +243,8 @@ def recall(
         args["salience"] = "on"
     if rerank:
         args["rerank"] = "on"
+    if time_range:
+        args["time_range"] = time_range
     command = {
         "version": 1,
         "incarnation": context["incarnation"],

@@ -175,6 +175,7 @@ function renderProjects(
     tasks: number;
     receipts: number;
     last_activity_ms?: number | null;
+    scope?: string;
   }>,
   current: string,
 ): void {
@@ -191,7 +192,10 @@ function renderProjects(
     );
     card.type = "button";
     card.append(
-      el("strong", item.project),
+      el(
+        "strong",
+        item.scope === "user" ? "Your own memory (all projects)" : item.project,
+      ),
       el(
         "small",
         `${item.observations} memories · ${item.claims} claims · ${item.tasks} tasks · ${item.receipts} receipts`,

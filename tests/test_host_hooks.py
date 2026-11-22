@@ -31,6 +31,18 @@ CLAUDE_LINES = [
 ]
 
 
+class StartNoteTests(unittest.TestCase):
+    def test_the_note_for_a_command_line_agent_saves_from_a_file_or_stdin_not_a_quoted_text(self):
+        # A host refused `capture --text "..."` commands whose text had parentheses, and a
+        # heredoc whose text had braces and quotes; a file written with the file tool passes.
+        note = host_hooks.start_note("claude", "cli")
+        self.assertIn("`memoryking capture --source agent --file FILE`", note)
+        self.assertIn("pipe", note)
+        self.assertNotIn('--text "..."`', note)
+        self.assertLess(len(note), 900)
+        self.assertIn("mcp__memoryking__remember", host_hooks.start_note("claude", "mcp"))
+
+
 class HostHookTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir="/tmp", prefix="mk-hooks-")

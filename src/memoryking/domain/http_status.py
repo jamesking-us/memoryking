@@ -27,11 +27,13 @@ UNAVAILABLE_CODES = {
     "service_unavailable",
     "dashboard_unavailable",
     "journal_rollback",
+    "control_lease_held",
     "owner_busy_or_unsafe",
     "index_not_ready",
     "provider_unavailable",
     "database_durability_required",
     "transport_unavailable",
+    "schema_unsupported",
 }
 
 

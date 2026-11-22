@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 
 class LocalError(Exception):
     """Stable non-disclosing error code; never embeds supplied content."""
 
-    def __init__(self, code: str, hint: str | None = None):
+    def __init__(self, code: str, hint: str | None = None, detail: dict[str, Any] | None = None):
         self.code = code
         self.hint = hint
+        # Public, non-content context for a reply (the failing field path, the capability an
+        # operation needs, the command that starts the daemon); never caller text or secrets.
+        self.detail = detail or {}
         super().__init__(code)
 
 
@@ -44,6 +47,29 @@ class Decision:
             raise LocalError("release_expired")
         if abs((utc - self.evaluated_ms) - elapsed) > 1000:
             raise LocalError("clock_untrusted")
+
+
+USER_PREFIX = "_user_"
+# The capabilities an agent that acts for a user may hold in that user's scope. Reviewing and
+# deciding policy for the scope stay with the user (and the owner's own credential).
+USER_AGENT_CAPABILITIES = frozenset({"capture", "read", "export"})
+# What the user's own principal may hold in their scope; never `admin`.
+USER_OWNER_CAPABILITIES = frozenset(
+    {"capture", "read", "export", "review", "policy", "attest", "task_constraint"}
+)
+
+
+def is_user_project(project: str) -> bool:
+    """A user scope is the reserved project `_user_<principal>`: memory about one user."""
+    return project.startswith(USER_PREFIX)
+
+
+def user_project(principal: str) -> str:
+    return USER_PREFIX + principal
+
+
+def project_owner(project: str) -> str:
+    return project[len(USER_PREFIX) :]
 
 
 def temporal_valid(at: int, start: int | None, end: int | None) -> bool:

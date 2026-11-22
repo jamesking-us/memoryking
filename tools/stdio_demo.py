@@ -119,6 +119,8 @@ def main():
                         str(credential),
                         "--project",
                         "demo",
+                        "--profile",
+                        "full",
                     ],
                     input=b"".join(canonical_bytes(m) + b"\n" for m in messages),
                     capture_output=True,

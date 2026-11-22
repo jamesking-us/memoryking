@@ -202,6 +202,32 @@
                       "action",
                       "args"
                     ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "version": {
+                        "const": 1
+                      },
+                      "incarnation": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96
+                      },
+                      "action": {
+                        "const": "start"
+                      },
+                      "args": {
+                        "$ref": "#/$defs/Start"
+                      }
+                    },
+                    "required": [
+                      "version",
+                      "incarnation",
+                      "action",
+                      "args"
+                    ]
                   }
                 ],
                 "$defs": {
@@ -326,6 +352,24 @@
                           "on",
                           "off"
                         ]
+                      },
+                      "time_range": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "from_ms": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "to_ms": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "minProperties": 1,
+                        "description": "Only records observed in this range (Unix ms, both ends inclusive, either may be left out) are searched; a claim counts when its validity interval overlaps it. Without it, dates in the query only raise matching records in the ranking."
                       }
                     },
                     "required": [
@@ -565,6 +609,65 @@
                       "fingerprint",
                       "query_hash",
                       "vector"
+                    ]
+                  },
+                  "Start": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "project": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                      },
+                      "bindings": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 256,
+                        "items": {
+                          "type": "object"
+                        }
+                      },
+                      "max_output_tokens": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 65536
+                      },
+                      "tokenizer": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 96
+                      },
+                      "task": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                      },
+                      "run": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+                      },
+                      "format": {
+                        "enum": [
+                          "json",
+                          "text"
+                        ],
+                        "description": "json (default) returns the structured packet; text returns the cited Markdown rendering."
+                      },
+                      "recent_days": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 365
+                      },
+                      "recent_limit": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 16
+                      }
+                    },
+                    "required": [
+                      "project",
+                      "bindings",
+                      "max_output_tokens",
+                      "tokenizer"
                     ]
                   }
                 }

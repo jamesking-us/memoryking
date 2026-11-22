@@ -2,7 +2,7 @@
 
 export interface Configure {
   project: string;
-  model: "minilm-l6-v2-onnx";
+  model: "bge-small-en-v1-5-onnx" | "minilm-l6-v2-onnx";
   state: "experimental" | "disabled";
   expected_generation: number;
 }

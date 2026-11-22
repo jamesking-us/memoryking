@@ -6,11 +6,16 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
+from memoryking.adapters.blobs import blob_path
+from memoryking.adapters.corrections import Corrections
+from memoryking.adapters.dense_search import claim_scores as dense_claim_scores
 from memoryking.adapters.dense_search import search as dense_search
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_files import private_file
@@ -22,33 +27,49 @@ from memoryking.adapters.local_store import (
 )
 from memoryking.adapters.token_count import counter
 from memoryking.application import lexical_index
-from memoryking.application.store_core import StoreCore
+from memoryking.application.retention import index_receipt
+from memoryking.application.store_core import StoreCore, Visibility
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.anchors import anchors_in
 from memoryking.domain.briefing import (
     COMPILER,
     CONFIGURATION,
     LEGACY_CONFIGURATION,
+    budget_scope,
     counted,
     pack,
     relevance,
     term_window,
     terms,
 )
-from memoryking.domain.briefing_text import textualize
+from memoryking.domain.briefing_text import render_brief, textualize
+from memoryking.domain.duplicates import duplicates, family, shape
 from memoryking.domain.lexicon import (
     QUERY_TERM_LIMIT,
-    STEM_MARK,
     Corpus,
     Term,
     query_terms,
-    stem,
+    rescued,
 )
 from memoryking.domain.lexicon import score as bm25
-from memoryking.domain.local import Decision, LocalError, Released
+from memoryking.domain.local import Decision, LocalError, Released, is_user_project
+from memoryking.domain.passages import EXCERPT_BYTES, split
+from memoryking.domain.passages import excerpt as quote
 from memoryking.domain.selectors import bindings
+from memoryking.domain.timeexpr import Understanding, in_ranges, resolve
 
 # Salience: a bounded, documented nudge from use, never a rewrite of the record.
+# How the lexical and semantic channels are combined; the receipt's rank stage names it.
+# Chosen on the pooled LongMemEval oracle set against equal-weight reciprocal-rank fusion
+# (`equal_channel_rrf60_v1`, still selectable); see docs/reference.md. A convex combination of
+# the lexical score over the best lexical score and the similarity scaled over the semantic
+# candidates, equal weights; ties break as before, so the order is deterministic.
+DEFAULT_FUSION: dict[str, Any] = {
+    "name": "convex_lex50_v1",
+    "method": "convex",
+    "lexical": 1,
+    "dense": 1,
+}
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
 RERANK_TEXT_BYTES = 16384  # the reranker's per-text limit
 SALIENCE_WEIGHT = (
@@ -61,14 +82,49 @@ SALIENCE_WINDOW_MS = 90 * 86_400_000  # deliveries older than this do not count
 SALIENCE_HALF_LIFE_MS = 30 * 86_400_000  # use fades by half every thirty days
 ARCHIVE_AFTER_MS = 180 * 86_400_000  # never-used records older than this rank last
 ARCHIVAL_PENALTY = 4_000_000  # below any reachable score; archival stays searchable
+# Time in the question: records whose time falls in a range the query names are raised by this
+# share of the best score in the candidate list, so a date never beats a clearly better match
+# on words but does decide between near-equal ones. A hard filter only on an explicit time_range.
+TIME_BOOST_PPM = 250_000
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("retrieval.schema.json").read_text())
 )
 
 
+class _Inference(Exception):
+    """Control flow, never an error: the briefing needs a model's answer and must not wait for
+    it inside the transaction. `execute` abandons the attempt (rolling back everything, nothing
+    was persisted or released), runs `compute` with no gate and no store lock held, and starts a
+    fresh attempt that finds the answer in its memo."""
+
+    def __init__(self, key: tuple[Any, ...], compute: Callable[[], Any]):
+        super().__init__("model inference outside the transaction")
+        self.key, self.compute = key, compute
+
+
+# Attempts that may wait for a model before it is run inside the transaction as before.
+INFERENCE_ATTEMPTS = 3
+# Whole-briefing retries after PostgreSQL picks this transaction as a deadlock victim.
+DEADLOCK_ATTEMPTS = 3
+
+
+MAX_MS = 9007199254740991
+
+
+def search_text(query: str, understanding: Understanding | None) -> str:
+    """The words to search: the query without its date expressions, unless nothing is left."""
+    if understanding is not None and understanding.expressions:
+        if terms(understanding.remaining):
+            return understanding.remaining
+    return query
+
+
 class Retrieval:
     def __init__(self, store: StoreCore):
         self.s, self.db, self.k = store, store.db, Knowledge(store)
+        # Model answers computed outside the transaction for this call; None runs a model
+        # inline (callers that are not `execute`, and the last attempt).
+        self.models: dict[tuple[Any, ...], Any] | None = None
         if not hasattr(store, "retrieval_cache"):
             store.retrieval_cache = {}
 
@@ -77,12 +133,44 @@ class Retrieval:
             raise LocalError("invalid_request")
         if command["incarnation"] != self.s.incarnation:
             raise LocalError("history_changed")
+        memo: dict[tuple[Any, ...], Any] = {}
+        waited = deadlocks = 0
+        while True:
+            # The last attempt runs models inline, so the loop always ends in a release.
+            self.models = memo if waited < INFERENCE_ATTEMPTS else None
+            try:
+                return self._execute(credential, command)
+            except _Inference as need:
+                waited += 1
+                try:
+                    memo[need.key] = need.compute()
+                except LocalError as exc:
+                    memo[need.key] = exc
+            except Exception as exc:
+                # A victim of PostgreSQL's deadlock detector wrote nothing and released nothing.
+                if getattr(exc, "sqlstate", None) != "40P01" or deadlocks >= DEADLOCK_ATTEMPTS:
+                    raise
+                deadlocks += 1
+            finally:
+                self.models = None
+
+    @contextmanager
+    def _visibility(self) -> Iterator[None]:
+        self.s.visibility = Visibility()
+        try:
+            yield
+        finally:
+            self.s.visibility = None
+
+    def _execute(self, credential: str, command: dict[str, Any]) -> Released:
         action, args = command["action"], command["args"]
         access_id = uid("rcpt")
-        with self.s.transaction() as decision:
+        # The memo lives inside the transaction (the store lock or the tenant gate is held),
+        # so another request's briefing can never see this one's answers.
+        with self.s.transaction() as decision, self._visibility():
             at = decision.evaluated_ms
             who = self.s._auth(credential, "read", args["project"], at)
-            self._expire(at)
+            self._expire(at, who["tenant"])
             predecessor = None
             if action == "rerun":
                 previous = self.db.execute(
@@ -101,8 +189,13 @@ class Retrieval:
                 args = args["brief"]
                 action = "brief"
             deps: list[dict[str, str]] = []
-            if action in {"brief", "fetch", "atlas"}:
-                if action == "atlas":
+            if action in {"brief", "fetch", "atlas", "start"}:
+                if action == "start":
+                    from memoryking.adapters.session_start import start
+
+                    raw, diag, deps = start(self, who, args, decision, access_id)
+                    raw, diag = self.textual(args, "brief", raw, diag)
+                elif action == "atlas":
                     from memoryking.adapters.atlas import query
 
                     raw, diag, deps = query(self, who, args, decision, access_id)
@@ -155,6 +248,7 @@ class Retrieval:
                     json.dumps([d["id"] for d in deps if d["kind"] == "observation"]),
                 ),
             )
+            index_receipt(self.db, who["tenant"], access_id)
             self.s.fault("after_validation")
         self.s._expose()
         return Released(raw, decision, self.s.clock, access_id)
@@ -167,26 +261,56 @@ class Retrieval:
         partition the briefing stays lexical, exactly as before.
         """
         embedder = self.s.embedder
-        if embedder is None or "dense" in args:
+        self.lexical_only = None
+        if "dense" in args:
+            return args
+        if embedder is None:
+            self.lexical_only = "no_model_loaded"
             return args
         row = self.db.execute(
             "SELECT 1 FROM embedding_partitions WHERE tenant=? AND project=? AND fingerprint=? AND state='experimental' AND incarnation=?",
             (who["tenant"], args["project"], embedder.fingerprint, self.s.incarnation),
         ).fetchone()
         if row is None:
+            self.lexical_only = "project_not_enabled"
             return args
-        try:
-            batch = embedder.embed([args["query"]])
-        except Exception:  # a model failure degrades to lexical retrieval, never a refusal
+        key = ("embed", embedder.fingerprint, args["query"])
+        if self.models is not None and key not in self.models:
+            raise _Inference(key, lambda: self._embed(embedder, args["query"]))
+        vector = (
+            self.models[key] if self.models is not None else self._embed(embedder, args["query"])
+        )
+        if vector is None:  # a model failure degrades to lexical retrieval, never a refusal
+            self.lexical_only = "query_embedding_failed"
             return args
         return {
             **args,
             "dense": {
                 "fingerprint": embedder.fingerprint,
                 "query_hash": canonical_hash(args["query"]),
-                "vector": batch.vectors[0],
+                "vector": vector,
+                "origin": "service_model",
             },
         }
+
+    @staticmethod
+    def _embed(embedder: Any, query: str) -> list[int] | None:
+        try:
+            batch = (
+                embedder.embed([query], kind="query")
+                if getattr(embedder, "kinds", False)
+                else embedder.embed([query])
+            )
+            return cast("list[int]", batch.vectors[0])
+        except Exception:
+            return None
+
+    @staticmethod
+    def renderer(args: dict[str, Any]) -> Callable[[dict[str, Any]], str] | None:
+        """What the budget counts: the text the model reads when the caller asked for text."""
+        if args.get("format") != "text":
+            return None
+        return lambda packet: render_brief(packet)[0]
 
     def textual(
         self, args: dict[str, Any], kind: str, raw: bytes, diag: dict[str, Any]
@@ -242,10 +366,11 @@ class Retrieval:
             )
             evicted += 1
 
-    def _expire(self, at: int) -> None:
+    def _expire(self, at: int, tenant: str) -> None:
+        # The tenant predicate lets the partial index over retained rows answer it.
         self.db.execute(
-            "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE state='retained' AND expires<=?",
-            (at,),
+            "UPDATE rendered_artifacts SET state='expired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]' WHERE tenant=? AND state='retained' AND expires<=?",
+            (tenant, at),
         )
 
     def _artifact(self, who: dict[str, Any], project: str, receipt: str, at: int) -> sqlite3.Row:
@@ -476,10 +601,13 @@ class Retrieval:
             # (the last event recorded by that wall time) and the claim validity time.
             if "recorded_position" in args or "valid_ms" in args:
                 raise LocalError("invalid_request")
-            frontier = self.db.execute(
-                "SELECT coalesce(max(position),0) FROM events WHERE tenant=? AND at_ms<=?",
+            # Event times never decrease with position (the clock refuses to go back), so
+            # the last event at or before the instant is the newest one the index finds.
+            latest = self.db.execute(
+                "SELECT position FROM events WHERE tenant=? AND at_ms<=? ORDER BY at_ms DESC,position DESC LIMIT 1",
                 (tenant, args["as_of_ms"]),
-            ).fetchone()[0]
+            ).fetchone()
+            frontier = 0 if latest is None else latest[0]
             args = {**args, "recorded_position": int(frontier), "valid_ms": args["as_of_ms"]}
         ranking: dict[str, Any] = (
             ranking_override
@@ -501,6 +629,8 @@ class Retrieval:
         if recorded > source:
             raise LocalError("invalid_recorded_position")
         args = self._auto_dense(who, args)
+        # Dates in the question, resolved against the briefing's reference instant.
+        understanding = resolve(args["query"], args.get("as_of_ms", at))
         dense = dense_search(self.s, who, args, recorded, target_position)
         missing = [
             c
@@ -569,10 +699,12 @@ class Retrieval:
             "cache": "not_used",
             "trace": [],
         }
-        if term_window(args["query"])[1]:
+        if term_window(search_text(args["query"], understanding))[1]:
             # Long queries are searched on their leading terms; the cut is disclosed.
             diag["query_terms_truncated"] = QUERY_TERM_LIMIT
         groups: list[list[dict[str, Any]]] = []
+        behind: dict[str, list[str]] = {}
+        drafted: list[list[dict[str, Any]]] = []
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
             if mandatory.get("unbound_fields"):
@@ -602,7 +734,7 @@ class Retrieval:
                     knowledge["status"] = "blocked"
                     knowledge["reason"] = "verification_unavailable"
             eligibility_finished = self.s.clock.monotonic_ms()
-            groups, trace, cache = self._candidates(
+            groups, trace, cache, behind = self._candidates(
                 who,
                 args,
                 knowledge,
@@ -613,7 +745,22 @@ class Retrieval:
                 ranking,
                 evaluation=ranking_override is not None,
                 lexical_current=lexical_current,
+                configuration=configuration,
+                understanding=understanding,
             )
+            if (
+                "recorded_position" not in args
+                and "valid_ms" not in args
+                and args.get("freshness", "any") != "attested"
+            ):
+                # Off unless an admin turned the project's tier on; then unreviewed drafts
+                # follow the accepted guidance in a section of their own.
+                from memoryking.adapters.unreviewed import Unreviewed
+
+                drafted = Unreviewed(self.s).groups(who, args, at, recorded)
+                if drafted:
+                    groups = [*groups, *drafted]
+                    base["warnings"].append("unreviewed_drafts_included")
             for stage in trace:
                 if stage.get("stage") == "rerank_v1" and "model" in stage:
                     diag["model_fingerprints"].append(stage["model"])
@@ -644,6 +791,7 @@ class Retrieval:
                 and knowledge["status"] == "complete"
                 and not missing
                 and "dense" not in args
+                and not drafted
             ):
                 base["status"] = "no_relevant_memory"
                 base["coverage"]["optional"] = "no_literal_overlap"
@@ -655,10 +803,19 @@ class Retrieval:
                 base["warnings"].append("optional_conflict_possible")
             if any(t.get("candidate_limit_reached", False) for t in trace):
                 base["warnings"].append("optional_candidate_limit")
-        raw, used, selected, omitted = pack(base, groups, count, args["max_output_tokens"])
+        raw, used, selected, omitted = pack(
+            base, groups, count, args["max_output_tokens"], self.renderer(args)
+        )
         output = json.loads(raw)
         rendered_items = output["constraints"] + selected
         deps = self._dependencies(rendered_items)
+        for item in rendered_items:
+            # Records an item stands for (duplicates, older versions, cited evidence) are
+            # still what the briefing depends on: a purge of any of them retires it.
+            for reference in behind.get(item["reference"], []):
+                if {"kind": "observation", "id": reference} not in deps:
+                    deps.append({"kind": "observation", "id": reference})
+        deps.sort(key=lambda d: (d["kind"], d["id"]))
         if ranking["state"] == "experimental":
             deps.append({"kind": "experience_record", "id": ranking["configuration"]})
         diag["ranking_experiment"] = {
@@ -667,9 +824,7 @@ class Retrieval:
         diag.update(
             status=output["status"],
             minimum_required_tokens=output.get("minimum_required_tokens"),
-            budget_count_scope="failure_envelope"
-            if output["status"] == "budget_insufficient"
-            else "context",
+            budget_count_scope=budget_scope(output),
             usage={**output["usage"], "output_tokens": used, "serialized_bytes": len(raw)},
             coverage=output["coverage"],
             selected=[
@@ -711,6 +866,7 @@ class Retrieval:
             if body["kind"] == "constraint"
             else "literal_overlap",
             "conflicts": [],
+            **({"scope": "user"} if is_user_project(item.get("project", "")) else {}),
             **(
                 {
                     "procedure": body["procedure"],
@@ -746,6 +902,62 @@ class Retrieval:
             sizes.append(1)
         return list(dict.fromkeys(sizes))
 
+    @staticmethod
+    def _when(args: dict[str, Any]) -> tuple[str, tuple[int, ...]]:
+        """The SQL clause (and its parameters) for an explicit `time_range`, else nothing."""
+        window = args.get("time_range")
+        if not window:
+            return "", ()
+        return "o.observed_at_ms>=? AND o.observed_at_ms<=? AND ", (
+            window.get("from_ms", 0),
+            window.get("to_ms", MAX_MS),
+        )
+
+    @staticmethod
+    def _time_boost(
+        understanding: Understanding | None,
+        window: dict[str, int] | None,
+        ranked: list[tuple[int, str, list[dict[str, Any]]]],
+        observed: dict[str, int],
+        rank_key: Any,
+    ) -> tuple[dict[str, Any], list[tuple[int, str, list[dict[str, Any]]]]]:
+        """Raise matches whose time is in a range the question names (never filters).
+
+        An observation counts by its observed time; a claim by its validity interval, and only
+        when that interval has a bound (an open-ended claim is in no particular time)."""
+        trace: dict[str, Any] = {"stage": "time_v1", "language": "en"}
+        if window:
+            trace["explicit_range"] = {
+                "from_ms": window.get("from_ms", 0),
+                "to_ms": window.get("to_ms", MAX_MS),
+                "filter": "hard",
+            }
+        if understanding is None or not understanding.expressions:
+            trace["state"] = "no_time_in_query"
+            return trace, ranked
+        trace.update(understanding.trace())
+        ranges = understanding.ranges
+        top = max((score for score, _, _ in ranked), default=0)
+        bonus = top * TIME_BOOST_PPM // 1_000_000
+        boosted = 0
+        rescored = []
+        for score, reference, group in ranked:
+            hit = False
+            for entry in group:
+                if entry.get("authority") == "observed_episode":
+                    when = observed.get(reference)
+                    hit = hit or (when is not None and in_ranges(ranges, when, when))
+                elif entry.get("valid_start") is not None or entry.get("valid_end") is not None:
+                    hit = hit or in_ranges(ranges, entry["valid_start"], entry["valid_end"])
+            if hit and score > 0:
+                for entry in group:
+                    entry["in_time_range"] = True
+                score += bonus
+                boosted += 1
+            rescored.append((score, reference, group))
+        trace.update(state="applied", boost_ppm_of_best=TIME_BOOST_PPM, boosted=boosted)
+        return trace, sorted(rescored, key=rank_key)
+
     def _select(
         self,
         who: dict[str, Any],
@@ -764,7 +976,8 @@ class Retrieval:
         recorded position, readers, not held) before its limit, so a reader never competes
         with, or is crowded out by, records they cannot read."""
         tenant, project = who["tenant"], args["project"]
-        scope = (tenant, project, recorded, who["principal"])
+        when, bounds = self._when(args)
+        scope = (tenant, project, recorded, who["principal"], *bounds)
         chosen: dict[str, int] = {}
         if anchors:
             hits: dict[str, int] = {}
@@ -772,6 +985,7 @@ class Retrieval:
             for anchor in anchors:
                 for row in self.db.execute(
                     self.SCOPE
+                    + when
                     + "o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
                     (*scope, tenant, anchor),
                 ).fetchall():
@@ -794,6 +1008,7 @@ class Retrieval:
             ran += 1
             for row in self.db.execute(
                 self.SCOPE
+                + when
                 + "o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
                 + self.s.dialect.lexical_boolean()
                 + ") ORDER BY o.position DESC,o.id DESC LIMIT ?",
@@ -814,13 +1029,15 @@ class Retrieval:
     ) -> list[str]:
         """The pre-lexical-v2 selection, kept for a store whose index is not rebuilt yet."""
         tenant = who["tenant"]
-        scope = (tenant, args["project"], recorded, who["principal"])
+        when, bounds = self._when(args)
+        scope = (tenant, args["project"], recorded, who["principal"], *bounds)
         coverage: dict[str, int] = {}
         position: dict[str, int] = {}
         limited = False
         for term in query:
             rows = self.db.execute(
                 self.SCOPE
+                + when
                 + "o.id IN(SELECT id FROM lexical WHERE tenant=? AND "
                 + self.s.dialect.lexical_match()
                 + ") ORDER BY o.position DESC,o.id DESC LIMIT 257",
@@ -834,6 +1051,7 @@ class Retrieval:
         for anchor in anchors:
             rows = self.db.execute(
                 self.SCOPE
+                + when
                 + "o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) ORDER BY o.position DESC,o.id DESC LIMIT 257",
                 (*scope, tenant, anchor),
             ).fetchall()
@@ -857,10 +1075,25 @@ class Retrieval:
         *,
         evaluation: bool = False,
         lexical_current: bool = False,
-    ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]], str]:
+        configuration: str = LEGACY_CONFIGURATION,
+        understanding: Understanding | None = None,
+    ) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]], str, dict[str, list[str]]]:
         tenant = who["tenant"]
-        query = terms(args["query"])
-        qterms = query_terms(args["query"]) if lexical_current else []
+        # Date words are not search words: "last week" must not look for "week".
+        words = search_text(args["query"], understanding)
+        query = terms(words)
+        qterms = query_terms(words) if lexical_current else []
+        window = args.get("time_range")
+        if window:
+            span = [(window.get("from_ms", 0), window.get("to_ms", MAX_MS))]
+            knowledge = {
+                **knowledge,
+                "items": [
+                    i
+                    for i in knowledge["items"]
+                    if in_ranges(span, i["body"]["valid_start"], i["body"]["valid_end"])
+                ],
+            }
         anchors = anchors_in(args["query"])[:16]
         candidates = knowledge["items"]
         # Term weights come from whole-project statistics (not what this reader may see)
@@ -871,18 +1104,13 @@ class Retrieval:
             if qterms
             else Corpus()
         )
-        wanted_words = {w for t in qterms for w in t.words}
-        wanted_keys = {t.key for t in qterms}
 
         def scorer(text: str) -> int:
             return bm25(qterms, text, corpus) if lexical_current else relevance(query, text)
 
-        def is_wanted(token: str) -> bool:
-            if not lexical_current:
-                return token in query
-            root = stem(token)
-            return token in wanted_words or (root is not None and STEM_MARK + root in wanted_keys)
-
+        # The principal's own scope, when it acts for a user: matching observations from it
+        # join the project's, labelled, and the cached selection depends on which scope it is.
+        user = self.s.user_scope(who, "read", at)
         key = canonical_hash(
             {
                 "tenant": who["tenant"],
@@ -890,9 +1118,10 @@ class Retrieval:
                 "store": self.s.store_id,
                 "incarnation": self.s.incarnation,
                 "generation": source,
-                "configuration": CONFIGURATION if lexical_current else LEGACY_CONFIGURATION,
+                "configuration": configuration,
                 "compiler": COMPILER,
                 "request": args,
+                "user_scope": user,
                 "eligible": [[i["revision"], i.get("body_hash")] for i in candidates],
             }
         )
@@ -910,6 +1139,14 @@ class Retrieval:
                     ids, selection = self._select(who, args, recorded, qterms, corpus, anchors)
                 else:
                     ids = self._legacy_select(who, args, recorded, query, anchors)
+                if user is not None and user != args["project"]:
+                    mine = {**args, "project": user}
+                    extra = (
+                        self._select(who, mine, recorded, qterms, corpus, anchors)[0]
+                        if lexical_current
+                        else self._legacy_select(who, mine, recorded, query, anchors)
+                    )
+                    ids = list(dict.fromkeys([*ids, *extra]))
             if len(cache) >= 64:
                 cache.pop(next(iter(cache)))
             cache[key] = {"expires": at + 60000, "ids": ids, "selection": selection}
@@ -982,9 +1219,14 @@ class Retrieval:
         # observations), then newest recorded first, then the reference for determinism.
         tie: dict[str, tuple[int, int, str]] = {}
         visited: set[str] = set()
+        claim_dense: dict[str, int] = {}
+        if "dense" in args and by_id:
+            claim_dense = dense_claim_scores(
+                self.s, who, args, list(by_id), len(args["dense"]["vector"])
+            )
         for key_id, item in by_id.items():
             score = scorer(item["body"]["text"])
-            if not score or key_id in visited:
+            if (not score and key_id not in claim_dense) or key_id in visited:
                 continue
             group_ids, pending = set(), [key_id]
             while pending:
@@ -1001,8 +1243,12 @@ class Retrieval:
                 claim["conflict_resolution"] = (
                     "incomplete" if group_ids & unresolved else "complete"
                 )
+                if revision in claim_dense:
+                    claim["dense_score_ppm"] = claim_dense[revision]
                 if revision != key_id:
                     claim["selection_reason"] = "conflict_expansion"
+                elif not claim["lexical_score_ppm"]:
+                    claim["selection_reason"] = "semantic_similarity"
                 group.append(claim)
             score = max(scorer(by_id[i]["body"]["text"]) for i in group_ids)
             lead = min(group_ids)
@@ -1010,42 +1256,61 @@ class Retrieval:
             ranked.append((score, lead, group))
         dense_scores = dense["scores"]
         positions: dict[str, int] = {}
-        for observation in dict.fromkeys([*ids[:256], *dense_scores]):
-            row = self.db.execute(
-                "SELECT * FROM observations WHERE tenant=? AND id=?", (who["tenant"], observation)
-            ).fetchone()
+        families: dict[str, tuple[str, str, str]] = {}
+        observed: dict[str, int] = {}
+        # Corrections: a record with a visible replacement, or one this reader asked to have
+        # retired, is left out; one someone else asked to retire is marked (see corrections.py).
+        corrected, retiring = Corrections(self.s).screen(
+            who, list(dict.fromkeys([*ids[:256], *dense_scores])), recorded, at
+        )
+        considered = [o for o in dict.fromkeys([*ids[:256], *dense_scores]) if o not in corrected]
+        rows = self.s.observation_rows(who["tenant"], considered)
+        for observation in considered:
+            row = rows.get(observation)
             if row is None or not self.s._visible(who, row, at):
                 continue
+            if window and not (
+                window.get("from_ms", 0) <= row["observed_at_ms"] <= window.get("to_ms", MAX_MS)
+            ):
+                continue
+            observed[observation] = row["observed_at_ms"]
             positions[observation] = row["position"]
+            families[observation] = family(row["principal"], row["source"], row["source_event"])
             tie[observation] = (1, -row["position"], observation)
             raw = self._blob(row)
             # A whole atomic excerpt has attribution and bounds; never a paraphrase.
             full = raw.decode()
             score = scorer(full)
+            # Only a long observation is read as passages: to quote the one that answers,
+            # and (lexical-v2 rescue) to score a long capture by its best passage when that
+            # beats the whole, which length normalisation would otherwise bury.
+            parts = split(full) if len(raw) > EXCERPT_BYTES else []
+            passage_scores = [0] * len(parts)
+            if parts and (score or lexical_current):
+                passage_scores = [scorer(full[p.start : p.end]) for p in parts]
+                if lexical_current:
+                    score = rescued(score, passage_scores)
             anchor_hits = 0
             if anchors:
                 # Exact overlap of the query's anchors with the record's, in millionths,
                 # on the same scale as term overlap; the larger of the two is the score.
                 anchor_hits = sum(1 for a in anchors if a in anchor_sets.get(observation, ()))
                 score = max(score, anchor_hits * 1000000 // len(anchors))
-            offset = 0
-            if (
-                score
-                and len(raw) > 4096
-                and not any(
-                    is_wanted(m.group().casefold())
-                    for m in re.finditer(r"[^\W_]+", raw[:4096].decode("utf-8", errors="ignore"))
-                )
-            ):
-                # Locate an actual term in the original text; avoid byte/character
-                # offsets derived from casefold, which can change Unicode length.
-                match = next(
-                    (m for m in re.finditer(r"[^\W_]+", full) if is_wanted(m.group().casefold())),
-                    None,
-                )
-                if match:
-                    offset = len(full[: max(0, match.start() - 256)].encode())
-            excerpt = raw[offset : offset + 4096].decode("utf-8", errors="ignore")
+                if anchor_hits and parts:
+                    # An anchor hit steers the quote to the passage that names it.
+                    folded = [full[p.start : p.end].casefold() for p in parts]
+                    passage_scores = [
+                        max(
+                            value,
+                            sum(1 for a in anchors if a.casefold() in text)
+                            * 1000000
+                            // len(anchors),
+                        )
+                        for value, text in zip(passage_scores, folded, strict=True)
+                    ]
+            first, last = quote(full, parts, passage_scores) if parts else (0, len(full))
+            excerpt_text = full[first:last]
+            offset = len(full[:first].encode())
             if score or observation in dense_scores:
                 ranked.append(
                     (
@@ -1055,7 +1320,7 @@ class Retrieval:
                             {
                                 "reference": observation,
                                 "authority": "observed_episode",
-                                "text": excerpt,
+                                "text": excerpt_text,
                                 "actor": row["principal"],
                                 "source": row["source"],
                                 "observed_at_ms": row["observed_at_ms"],
@@ -1067,44 +1332,82 @@ class Retrieval:
                                 else "semantic_similarity",
                                 "lexical_score_ppm": score,
                                 **(
+                                    {"retirement_requested": True}
+                                    if observation in retiring
+                                    else {}
+                                ),
+                                **(
                                     {"dense_score_ppm": dense_scores[observation]}
                                     if observation in dense_scores
                                     else {}
                                 ),
                                 "excerpt_start_byte": offset,
-                                "excerpt_end_byte": offset + len(excerpt.encode()),
+                                "excerpt_end_byte": offset + len(excerpt_text.encode()),
                                 "source_bytes": len(raw),
                                 "content_hash": row["blob"],
+                                **({"scope": "user"} if is_user_project(row["project"]) else {}),
                             }
                         ],
                     )
                 )
         rank_key = lambda item: (-item[0], tie.get(item[1], (2, 0, item[1])))  # noqa: E731
         ranked.sort(key=rank_key)
+        fusion = getattr(self.s, "fusion", None) or DEFAULT_FUSION
         if "dense" in args:
-            # Equal-channel reciprocal-rank fusion; similarity never changes
-            # authority, policy completeness or registered conflict expansion.
+            # Similarity never changes authority, policy completeness or registered
+            # conflict expansion; it only orders what is already eligible.
+            dense_all = dict(dense_scores)
+            for _, reference, group in ranked:
+                best = max((c.get("dense_score_ppm", 0) for c in group), default=0)
+                if reference not in dense_all and best:
+                    dense_all[reference] = best
+            dense_order = {
+                reference: rank
+                for rank, reference in enumerate(
+                    sorted(dense_all, key=lambda r: (-dense_all[r], r)), 1
+                )
+            }
             lexical_order = {
                 reference: rank
                 for rank, (_, reference, _) in enumerate(
                     (item for item in ranked if item[0] > 0), 1
                 )
             }
-            dense_order = {reference: rank for rank, reference in enumerate(dense_scores, 1)}
-            ranked = [
-                (
-                    (
-                        1000000 // (60 + lexical_order[reference])
-                        if reference in lexical_order
-                        else 0
+            top_lexical = max((item[0] for item in ranked), default=0) or 1
+            d_low, d_high = min(dense_all.values(), default=0), max(dense_all.values(), default=0)
+            spread = (d_high - d_low) or 1
+            lexical_weight, dense_weight = fusion["lexical"], fusion["dense"]
+
+            def fused(score: int, reference: str) -> int:
+                return int(fuse(score, reference))
+
+            def fuse(score: int, reference: str) -> Any:
+                if fusion["method"] == "convex":
+                    lex = score / top_lexical if reference in lexical_order else 0.0
+                    sem = (
+                        (dense_all[reference] - d_low) / spread if reference in dense_order else 0.0
                     )
-                    + (1000000 // (60 + dense_order[reference]) if reference in dense_order else 0),
-                    reference,
-                    group,
+                    return round(
+                        1_000_000
+                        * (lexical_weight * lex + dense_weight * sem)
+                        / (lexical_weight + dense_weight)
+                    )
+                k = fusion["k"]
+                return round(
+                    (lexical_weight * 1_000_000 // (k + lexical_order[reference]))
+                    if reference in lexical_order
+                    else 0
+                ) + round(
+                    (dense_weight * 1_000_000 // (k + dense_order[reference]))
+                    if reference in dense_order
+                    else 0
                 )
-                for _, reference, group in ranked
+
+            ranked = [
+                (fused(score, reference), reference, group) for score, reference, group in ranked
             ]
             ranked.sort(key=rank_key)
+        time_trace, ranked = self._time_boost(understanding, window, ranked, observed, rank_key)
         historical = "recorded_position" in args or "valid_ms" in args
         salience_trace: dict[str, Any] = {"stage": "salience_v1"}
         if historical:
@@ -1171,7 +1474,8 @@ class Retrieval:
             # a model failure keeps it too. Authority, policy and conflict expansion are
             # untouched: the model moves records, it never admits or removes one.
             started = self.s.clock.monotonic_ms()
-            head = ranked[:RERANK_WINDOW]
+            window = getattr(self.s, "rerank_window", None) or RERANK_WINDOW
+            head = ranked[:window]
             texts = [
                 (group[0].get("text") or reference)
                 .encode()[:RERANK_TEXT_BYTES]
@@ -1179,8 +1483,20 @@ class Retrieval:
                 or reference
                 for _, reference, group in head
             ]
+            scoring = ("rerank", reranker.fingerprint, args["query"], tuple(texts))
+            if head and self.models is not None and scoring not in self.models:
+                # Scored with no gate or lock held; the next attempt decides afresh and finds
+                # the scores here only if it ranks the same window (a pure function of text).
+                raise _Inference(scoring, lambda: reranker.score(args["query"], texts))
             try:
-                scores = reranker.score(args["query"], texts) if head else []
+                if not head:
+                    scores = []
+                elif self.models is not None:
+                    scores = self.models[scoring]
+                    if isinstance(scores, LocalError):
+                        raise scores
+                else:
+                    scores = reranker.score(args["query"], texts)
             except LocalError as exc:
                 rerank_trace.update(state="failed_fused_order_kept", error=exc.code)
             else:
@@ -1192,7 +1508,7 @@ class Retrieval:
                 rerank_trace.update(
                     state="applied",
                     model=reranker.fingerprint,
-                    window=RERANK_WINDOW,
+                    window=window,
                     candidates=len(head),
                     moved=sum(1 for new, old in enumerate(order) if new != old),
                     duration_ms=max(0, self.s.clock.monotonic_ms() - started),
@@ -1202,6 +1518,7 @@ class Retrieval:
 
             ranked = adjust(ranked, ranking["adjustments"])
         limit = args.get("top_k", 8)
+        presented, collapsed, behind = self._present(who, ranked, limit, positions, families)
         trace = [
             {"stage": "authorized_eligibility", "visible_claims": len(candidates)},
             {
@@ -1209,7 +1526,7 @@ class Retrieval:
                 "visible_candidates": len(ranked),
                 "candidate_limit_reached": len(ids) > 256,
                 "max_candidates": 256,
-                "configuration": CONFIGURATION if lexical_current else LEGACY_CONFIGURATION,
+                "configuration": configuration,
                 **(
                     {
                         "selection": "informative_tiers_v1",
@@ -1226,9 +1543,20 @@ class Retrieval:
             {
                 "stage": "rank",
                 "metric": "bm25_word_forms_v1" if lexical_current else "literal_term_overlap_v1",
-                "selected_groups": min(limit, len(ranked)),
+                "selected_groups": len(presented),
             },
         ]
+        if "dense" not in args and getattr(self, "lexical_only", None):
+            # No semantic channel this time, and the trace says why: briefings use it
+            # automatically whenever a model is loaded and the project is enabled.
+            trace.insert(
+                2,
+                {
+                    "stage": "dense",
+                    "availability": "unavailable",
+                    "reason": self.lexical_only,
+                },
+            )
         if "dense" in args:
             trace[1]["visible_candidates"] = len(lexical_order)
             trace.insert(
@@ -1239,13 +1567,21 @@ class Retrieval:
                     "candidate_limit_reached": dense["candidate_limit_reached"],
                     "availability": dense["availability"],
                     "max_candidates": 256,
+                    **{
+                        key: dense[key]
+                        for key in ("scan", "eligible_vectors", "scan_truncated", "scan_limit")
+                        if key in dense
+                    },
                 },
             )
-            trace[-1]["metric"] = "equal_channel_rrf60_v1"
+            trace[-1]["metric"] = fusion["name"]
+            trace[-1]["fusion"] = {k: v for k, v in fusion.items() if k != "name"}
         # The rank stage stays last among the fixed stages; salience and the reranker
         # sit before it, in the order they ran.
+        trace.insert(len(trace) - 1, time_trace)
         trace.insert(len(trace) - 1, salience_trace)
         trace.insert(len(trace) - 1, rerank_trace)
+        trace.insert(len(trace) - 1, {"stage": "one_answer_per_fact", **collapsed})
         if ranking["state"] != "disabled":
             trace.append(
                 {
@@ -1253,7 +1589,164 @@ class Retrieval:
                     **{key: value for key, value in ranking.items() if key != "adjustments"},
                 }
             )
-        return [group for _, _, group in ranked[:limit]], trace, "hit" if hit else "miss"
+        return presented, trace, "hit" if hit else "miss", behind
+
+    REFERENCES_SHOWN = 16  # references named in an item's own list; the receipt depends on all
+
+    def _present(
+        self,
+        who: dict[str, Any],
+        ranked: list[tuple[int, str, list[dict[str, Any]]]],
+        limit: int,
+        positions: dict[str, int],
+        families: dict[str, tuple[str, str, str]],
+    ) -> tuple[list[list[dict[str, Any]]], dict[str, int], dict[str, list[str]]]:
+        """One answer per fact, after ranking and before packing.
+
+        Only the item list changes, never what is authorized: every record that was
+        collapsed stays a dependency of the receipt (the kept item names it), so purging
+        or hiding any of them retires the briefing exactly as before.
+
+        1. Several versions of one memory-tool file or vault note (`name`, `name__v2`, ...):
+           the newest is kept and names the older ones in `supersedes`.
+        2. Duplicates (see `domain.duplicates`): the newest record's text is kept, at the
+           best rank any of them had, and `also_recorded_in` names the others.
+        3. An accepted claim in the briefing is the answer for the observations it cites
+           when they hold nothing it lacks: the excerpt lies inside the cited span, or
+           nearly all its words are in the claim. They are listed in the claim's
+           `evidence_not_repeated`; the claim still cites them as its evidence."""
+        count = {"duplicates_collapsed": 0, "versions_collapsed": 0, "evidence_not_repeated": 0}
+        Entry = tuple[int, str, list[dict[str, Any]]]
+
+        def single(entry: Entry) -> bool:
+            return len(entry[2]) == 1 and entry[2][0]["authority"] == "observed_episode"
+
+        every: dict[int, list[str]] = {}  # all references behind an item, for the receipt
+
+        def link(item: dict[str, Any], field: str, references: list[str]) -> None:
+            if references:
+                found = item.get(field, {"count": 0, "references": []})
+                item[field] = {
+                    "count": found["count"] + len(references),
+                    "references": [*found["references"], *references][: self.REFERENCES_SHOWN],
+                }
+                every.setdefault(id(item), []).extend(references)
+
+        def newest(entries: list[Entry], members: list[int]) -> int:
+            return max(members, key=lambda i: (positions[entries[i][1]], entries[i][1]))
+
+        def fold(entries: list[Entry], groups: list[list[int]]) -> list[Entry]:
+            """Each group of indexes becomes its newest member, at the group's first slot."""
+            keep = {min(g): newest(entries, g) for g in groups if len(g) > 1}
+            gone = {i for g in groups if len(g) > 1 for i in g}
+            result: list[Entry] = []
+            for index, entry in enumerate(entries):
+                if index in keep:
+                    result.append((entry[0], entries[keep[index]][1], entries[keep[index]][2]))
+                elif index not in gone:
+                    result.append(entry)
+            return result
+
+        # Only the head of the ranking can reach the briefing once repeats are folded, so
+        # only it is compared (a comparison is quadratic); the rest keeps its order.
+        entries: list[Entry] = list(ranked[: min(3 * limit + 8, 64)])
+        rest: list[Entry] = list(ranked[min(3 * limit + 8, 64) :])
+        # 1. versions of one file
+        by_family: dict[tuple[str, str, str], list[int]] = {}
+        for index, entry in enumerate(entries):
+            if single(entry) and entry[1] in families:
+                by_family.setdefault(families[entry[1]], []).append(index)
+        for members in by_family.values():
+            if len(members) > 1:
+                keep = newest(entries, members)
+                older = [i for i in members if i != keep]
+                link(entries[keep][2][0], "supersedes", [entries[i][1] for i in older])
+                count["versions_collapsed"] += len(older)
+        entries = fold(entries, list(by_family.values()))
+        # 2. duplicates
+        shapes: dict[str, Any] = {}
+        clusters: list[list[int]] = []
+        for index, entry in enumerate(entries):
+            if not single(entry):
+                continue
+            shapes[entry[1]] = shape(entry[2][0]["text"])
+            for cluster in clusters:
+                # a question that names a date keeps a copy in that range apart from the rest
+                same_time = entries[cluster[0]][2][0].get("in_time_range") == entry[2][0].get(
+                    "in_time_range"
+                )
+                if same_time and duplicates(shapes[entries[cluster[0]][1]], shapes[entry[1]]):
+                    cluster.append(index)
+                    break
+            else:
+                clusters.append([index])
+        for cluster in clusters:
+            if len(cluster) > 1:
+                keep = newest(entries, cluster)
+                others = sorted(
+                    (i for i in cluster if i != keep),
+                    key=lambda i: (-positions[entries[i][1]], entries[i][1]),
+                )
+                item = entries[keep][2][0]
+                link(item, "also_recorded_in", [entries[i][1] for i in others])
+                for i in others:  # versions an older copy had superseded stay named
+                    prior = entries[i][2][0]
+                    if "supersedes" in prior:
+                        link(item, "supersedes", every[id(prior)])
+                count["duplicates_collapsed"] += len(others)
+        entries = fold(entries, clusters) + rest
+        # 3. observations an accepted claim already answers
+        while True:
+            covering: dict[str, list[tuple[dict[str, Any], list[tuple[int, int]]]]] = {}
+            for _, _, group in entries[:limit]:
+                for item in group:
+                    if item["authority"] == "observed_episode":
+                        continue
+                    for span in item.get("evidence") or []:
+                        covering.setdefault(span["observation"], []).append(
+                            (item, [(span["start_byte"], span["end_byte"])])
+                        )
+            redundant: dict[str, dict[str, Any]] = {}
+            for entry in entries[:limit]:
+                if not single(entry) or entry[1] not in covering:
+                    continue
+                item = entry[2][0]
+                words = shapes[entry[1]].words if entry[1] in shapes else shape(item["text"]).words
+                for claim, spans in covering[entry[1]]:
+                    inside = any(
+                        a <= item["excerpt_start_byte"] and item["excerpt_end_byte"] <= b
+                        for a, b in spans
+                    )
+                    known = shape(claim["text"]).words
+                    if inside or (words and len(words & known) / len(words) >= 0.9):
+                        redundant[entry[1]] = claim
+                        break
+            if not redundant:
+                break
+            for reference, claim in redundant.items():
+                link(claim, "evidence_not_repeated", [reference])
+            entries = [e for e in entries if e[1] not in redundant]
+            count["evidence_not_repeated"] += len(redundant)
+        chosen = entries[:limit]
+        shown = [positions[e[1]] for e in chosen if single(e) and e[1] in positions]
+        recorded: dict[int, int] = {}
+        if shown:
+            for row in self.db.execute(
+                "SELECT position,at_ms FROM events WHERE tenant=? AND position IN ("
+                + ",".join("?" for _ in shown)
+                + ")",
+                (who["tenant"], *shown),
+            ).fetchall():
+                recorded[row[0]] = row[1]
+        for entry in chosen:
+            if single(entry) and positions.get(entry[1]) in recorded:
+                entry[2][0]["recorded_ms"] = recorded[positions[entry[1]]]
+        collapsed = {
+            entry[2][0]["reference"]: every[id(entry[2][0])]
+            for entry in chosen
+            if id(entry[2][0]) in every
+        }
+        return [group for _, _, group in chosen], count, collapsed
 
     def _salience(
         self, who: dict[str, Any], project: str, positions: dict[str, int], at: int
@@ -1340,7 +1833,7 @@ class Retrieval:
         return result
 
     def _blob(self, row: sqlite3.Row) -> bytes:
-        path = self.s.root / "blobs" / row["tenant"] / row["blob"]
+        path = blob_path(self.s.root, row["tenant"], row["blob"])
         private_file(path)
         raw: bytes = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != row["blob"]:

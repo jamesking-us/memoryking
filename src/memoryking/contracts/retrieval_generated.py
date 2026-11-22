@@ -22,6 +22,7 @@ class Brief(TypedDict):
     as_of_ms: NotRequired[int]
     salience: NotRequired[Literal["on", "off"]]
     rerank: NotRequired[Literal["on", "off"]]
+    time_range: NotRequired[dict[str, Any]]
 
 class Fetch(TypedDict):
     project: str
@@ -65,6 +66,17 @@ class DenseQuery(TypedDict):
     minimum_similarity_ppm: NotRequired[int]
     engine: NotRequired[Literal["python_exact", "pgvector_exact"]]
 
+class Start(TypedDict):
+    project: str
+    bindings: list[dict[str, Any]]
+    max_output_tokens: int
+    tokenizer: str
+    task: NotRequired[str]
+    run: NotRequired[str]
+    format: NotRequired[Literal["json", "text"]]
+    recent_days: NotRequired[int]
+    recent_limit: NotRequired[int]
+
 class Command0(TypedDict):
     version: Literal[1]
     incarnation: str
@@ -107,4 +119,10 @@ class Command6(TypedDict):
     action: Literal["atlas"]
     args: Atlas
 
-RetrievalCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6
+class Command7(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    action: Literal["start"]
+    args: Start
+
+RetrievalCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7

@@ -11,6 +11,7 @@ import threading
 import unittest
 from pathlib import Path
 
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import RETRY_MS, LocalStore
@@ -135,7 +136,7 @@ class LocalTests(unittest.TestCase):
             observation(),
         )
         self.assertEqual(0, self.store.db.execute("SELECT count(*) FROM lexical").fetchone()[0])
-        self.assertEqual([], list((self.root / "blobs" / "main").iterdir()))
+        self.assertEqual([], list(blobfiles.iterate(self.root / "blobs" / "main")))
 
     def test_shared_blob_purge_preserves_other_occurrence(self):
         first = self.capture()
@@ -553,7 +554,8 @@ with LocalStore(root, ctl, fault=fail) as store:
 
     def test_blob_tampering_cannot_be_released(self):
         self.capture()
-        path = self.root / "blobs" / "main" / hashlib.sha256(b"durable memory").hexdigest()
+        digest = hashlib.sha256(b"durable memory").hexdigest()
+        path = self.root / "blobs" / "main" / digest[:2] / digest
         atomic(path, b"wrong")
         self.error("blob_corrupt", self.store.read, self.credential, "demo")
 
@@ -694,7 +696,7 @@ with LocalStore(root, ctl, fault=fail) as store:
             self.store.db.execute("SELECT state FROM jobs ORDER BY position").fetchone()[0], "dead"
         )
         with Server(self.store) as server:
-            server.service_actions()  # neither drain nor housekeeping escapes
+            server.maintain()  # neither drain nor housekeeping escapes
 
     def test_daemon_drains_audit_jobs_so_default_captures_never_hit_queue_full(self):
         # Default configuration, no patched limits, no separate worker: the serving
@@ -712,7 +714,8 @@ with LocalStore(root, ctl, fault=fail) as store:
                 thread.join(timeout=5)
         self.store.drain()
         states = dict(self.store.db.execute("SELECT state,count(*) FROM jobs GROUP BY state"))
-        self.assertEqual(states, {"complete": 1001})
+        # Finished jobs behind the frontier are deleted; the newest 512 stay.
+        self.assertEqual(states, {"complete": 512})
         status = self.store.status(self.credential, "demo")
         self.assertEqual(status["projection"]["frontier"], status["position"])
         self.assertEqual(status["capacity"]["jobs"], {"used": 0, "limit": 1000, "warning": False})

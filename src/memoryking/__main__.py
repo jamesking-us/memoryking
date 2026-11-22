@@ -14,11 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__, profiles, session_bindings
+from memoryking import __version__, daemon, profiles, session_bindings
 from memoryking.adapters.dashboard import Dashboard
+from memoryking.adapters.local_embeddings import MODEL
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
-from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
+from memoryking.adapters.local_store import CAPABILITIES, SCHEMA_VERSION, LocalStore
+from memoryking.application.lexical_index import RATE_PER_SECOND
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, SystemClock
@@ -59,6 +61,55 @@ def lexical_findings(db: Any, version: int) -> list[tuple[str, str, int]]:
     return found
 
 
+def lexical_line(lexical: dict[str, Any]) -> str:
+    """One line for the lexical index: state, and for a rebuild its progress and estimate."""
+    line = f"{lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
+    if lexical.get("state") == "current":
+        return line
+    left, total = lexical.get("remaining_observations"), lexical.get("total_observations")
+    if left is not None and total is not None:
+        line += (
+            f"; {lexical.get('percent_complete', 0)}% rebuilt into "
+            f"{lexical.get('target_configuration', '?')} ({total - left:,} of {total:,} observations"
+        )
+        if left:
+            line += f", about {duration(int(lexical.get('estimated_seconds', 0)) * 1000)} left"
+        line += ")"
+    return line + f". {lexical.get('action', '')}"
+
+
+def semantic_line(semantic: dict[str, Any]) -> str:
+    """One line for the semantic index: the model, and how far each project has got."""
+    if not semantic.get("loaded"):
+        return (
+            "off (no model loaded; `memoryking semantic enable` installs one and turns it on)"
+            if not semantic.get("partitions")
+            else "no model loaded in the daemon; briefings use lexical search only"
+        )
+    parts = []
+    for item in semantic.get("partitions", []):
+        if not item["current_model"] or item["state"] != "experimental":
+            continue
+        done = item["percent_indexed"]
+        parts.append(
+            f"{item['project']} {item['vectors']:,} vectors"
+            + ("" if done >= 100 else f", {done}% indexed")
+        )
+    return f"{semantic.get('model')}: " + ("; ".join(parts) if parts else "no project enabled yet")
+
+
+def lexical_total(database: Path, tenant: str) -> int:
+    """Live observations of a tenant, from a read-only connection (for the doctor's percent)."""
+    import sqlite3
+
+    with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as db:
+        return int(
+            db.execute(
+                "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0", (tenant,)
+            ).fetchone()[0]
+        )
+
+
 def render_status(result: dict[str, Any], version: str) -> str:
     """A human summary of the status operation; `--json` prints the raw result instead."""
     projection = result.get("projection", {})
@@ -80,13 +131,26 @@ def render_status(result: dict[str, Any], version: str) -> str:
     ]
     lexical = result.get("lexical")
     if lexical:
-        line = f"Lexical    {lexical.get('state', '?')} ({lexical.get('configuration', '?')})"
-        if lexical.get("state") != "current":
-            line += (
-                f"; {lexical.get('remaining_observations', '?')} observations to rewrite for "
-                f"{lexical.get('target_configuration', '?')}. {lexical.get('action', '')}"
+        lines.append("Lexical    " + lexical_line(lexical))
+    for item in result.get("consolidation") or []:
+        when = (
+            f", next pass in {max(0, item['next_run_ms'] - int(time.time() * 1000)) // 60_000} min"
+            if item["next_run_ms"] is not None
+            else ""
+        )
+        lines.append(
+            f"Consolidation {item['project']}: {item['state']}"
+            + (f" (pid {item['pid']})" if item["pid"] else "")
+            + when
+            + (
+                f", last exit {item['last_exit']}, {item['consecutive_failures']} failure(s)"
+                if item["consecutive_failures"]
+                else ""
             )
-        lines.append(line)
+        )
+    semantic = result.get("semantic")
+    if semantic:
+        lines.append("Semantic   " + semantic_line(semantic))
     capacity = result.get("capacity", {})
     if capacity:
         lines.append("Capacity")
@@ -99,6 +163,19 @@ def render_status(result: dict[str, Any], version: str) -> str:
             )
             flag = "  warning" if value.get("warning") else ""
             lines.append(f"  {name:<20}{shown:>22}  {bar(used, limit)}{flag}")
+    if result.get("daemon"):
+        info = result["daemon"]
+        lines.append(
+            f"Daemon     running{' (pid ' + str(info['pid']) + ')' if info.get('pid') else ''}"
+            f", {'starts on demand' if info.get('autostart') else 'started by hand'}"
+            f", log {info['log']}"
+        )
+    scopes = result.get("user_scopes")
+    if scopes and scopes["scopes"]:
+        lines.append(
+            f"User memory {scopes['observations']:,} observations in {scopes['scopes']} user scope(s)"
+            " (counts only; readable by each user and their agents)"
+        )
     if result.get("satisfied") is not None:
         lines.append(f"Watermark  {'satisfied' if result['satisfied'] else 'not yet reached'}")
     return "\n".join(lines)
@@ -131,6 +208,108 @@ def add_binding(parser: Any) -> None:
     parser.add_argument(
         "--binding", action="append", default=[], metavar="KEY=VALUE", help=BINDING_HELP
     )
+
+
+def failed_attempt(value: str) -> dict[str, str]:
+    action, arrow, outcome = value.partition("=>")
+    if not arrow or not action.strip() or not outcome.strip():
+        raise argparse.ArgumentTypeError('expected "action => outcome"')
+    return {"action": action.strip(), "outcome": outcome.strip()}
+
+
+def lean_command(args: Any) -> dict[str, Any]:
+    """Run the lean save_progress or resume tool for the CLI, through the same code."""
+    from memoryking import hooks, lean
+    from memoryking.adapters.stdio import LEAN_VALIDATORS
+    from memoryking.sdk import LocalClient
+
+    name = args.command.replace("-", "_")
+    arguments: dict[str, Any] = {"task": args.task, "run": args.run}
+    if name == "save_progress":
+        arguments.update(objective=args.objective, current_state=args.state)
+        for key, value in (
+            ("next_actions", args.next),
+            ("findings", args.finding),
+            ("blockers", args.blocker),
+            ("hard_constraints", args.constraint),
+            ("failed_attempts", args.failed),
+            ("share_with", args.share_with),
+        ):
+            if value:
+                arguments[key] = value
+    else:
+        arguments["budget"] = args.budget
+    if not LEAN_VALIDATORS[name].is_valid(arguments):
+        raise LocalError("invalid_tool_arguments")
+    socket, credential, project = hooks.connection_files(
+        profile=args.profile,
+        socket=args.socket,
+        credential=args.credential,
+        project=args.project,
+        config=args.config,
+    )
+    bindings = session_bindings.resolve(args.binding, profile=args.profile, config=args.config)
+    return lean.call(LocalClient(socket, credential, project, bindings=bindings), name, arguments)
+
+
+def user_command(args: Any) -> int:
+    """`memoryking user show|export|purge`: the user's own memory across projects."""
+    from memoryking import vault as vault_module
+
+    credential = read_credential(args.credential)
+
+    def ask(**body: Any) -> dict[str, Any]:
+        return request(args.socket, credential, "user", body)
+
+    if args.user_command == "export":
+        client = vault_module.connect(
+            socket=args.socket, credential=args.credential, project=None, scope="user"
+        )
+        report = vault_module.export(args.dir, client, "user")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"Exported {report['observations']} file(s) from {report['versions']} "
+                f"observation(s) and {report['claims']} claim(s) to {report['directory']}"
+            )
+    elif args.user_command == "purge":
+        if not args.yes:
+            print(
+                "This erases the user memory and everything built from it, and cannot be"
+                " undone. Run again with --yes.",
+                file=sys.stderr,
+            )
+            return 2
+        body = {"user": args.user} if args.user else {}
+        total = 0
+        while True:
+            report = ask(action="purge", **body)
+            total += report["purged"]
+            if not report["remaining"] or not report["purged"]:
+                break
+        report["purged"] = total
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(f"Erased {total} observation(s) and what was built from them.")
+    else:
+        try:
+            ask(action="ensure")  # the owner is the default user; a no-op for anyone else
+        except LocalError:
+            pass
+        report = ask(action="show")
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+        else:
+            print(
+                f"User memory of {report['user']}: {report['observations']} observation(s), "
+                f"{report['claims']} claim(s), {report['constraints']} constraint(s), "
+                f"{report['held']} held"
+            )
+            for agent in report["agents"]:
+                print(f"  acts for you: {agent['principal']} ({','.join(agent['capabilities'])})")
+    return 0
 
 
 def summarize(args: Any) -> dict[str, Any]:
@@ -168,7 +347,7 @@ def summarize(args: Any) -> dict[str, Any]:
                     "checkpoint": None,
                     "bindings": client.bindings,
                     "max_output_tokens": 6000,
-                    "tokenizer": "utf8-byte-estimate-v1",
+                    "tokenizer": "chars-estimate-v1",
                     "format": "text",
                 },
             }
@@ -201,6 +380,120 @@ def summarize(args: Any) -> dict[str, Any]:
             },
         }
     )
+
+
+def consolidate_command(args: Any) -> dict[str, Any]:
+    """One consolidation pass, or with --watch a loop that runs until interrupted."""
+    import tempfile
+
+    from memoryking import consolidation
+    from memoryking.sdk import LocalClient
+
+    scratch = Path(tempfile.mkdtemp(prefix="mk-cons-"))
+    os.chmod(scratch, 0o700)
+    if args.parent_pid:
+        consolidation.watch_parent(args.parent_pid)
+
+    def make(project: str) -> tuple[Any, Any, str | None]:
+        client = LocalClient(args.socket, args.credential, project)
+        conversation, ceiling = consolidation.build_conversation(
+            client, args.egress_policy, args.provider, args.model, scratch / "rec"
+        )
+        return client, conversation, ceiling
+
+    if args.watch:
+        loop = consolidation.ConsolidationLoop(
+            make,
+            [args.project],
+            every_s=duration_ms(args.watch) / 1000,
+            idle_ms=duration_ms(args.idle),
+            limit=args.limit,
+        )
+        make(args.project)  # refuse at once when the policy or provider is unusable
+        try:
+            loop.run()
+        except KeyboardInterrupt:
+            pass
+        return {"status": "stopped", "passes": loop.passes}
+    client, conversation, ceiling = make(args.project)
+    since = int(time.time() * 1000) - duration_ms(args.since) if args.since else None
+    return consolidation.consolidate(
+        client,
+        conversation,
+        project=args.project,
+        since_ms=since,
+        limit=args.limit,
+        max_classification=ceiling,
+        idle_ms=args.idle_ms,
+    )
+
+
+def render_consolidation(result: dict[str, Any]) -> str:
+    status = result["status"]
+    if status == "nothing_new":
+        return f"Nothing new to consolidate (frontier {result.get('frontier', 0)})."
+    if status == "busy":
+        return "The project is not idle yet; nothing was sent."
+    if status == "not_admitted":
+        return (
+            f"Dispatched {result['observations']} observation(s) to the local recording provider; "
+            "it writes no audit record, so nothing was admitted or filed."
+        )
+    if status == "stopped":
+        return f"Stopped after {result['passes']} pass(es)."
+    lines = [
+        f"Consolidation {status}: {len(result['filed'])} claim(s) filed for review from "
+        f"{result['observations']} observation(s); {result['claims_seen']} drafted."
+    ]
+    if result["dropped"]:
+        lines.append("Dropped, with reasons: " + json.dumps(result["dropped"], sort_keys=True))
+    for item in result["filed"]:
+        note = (
+            f" ({item['relation']['type']} {item['relation']['claim']})"
+            if "relation" in item
+            else ""
+        )
+        lines.append(f"  {item['revision']} [{item['kind']}]{note}")
+    lines.append("Review them with `memoryking review list`; nothing here is accepted.")
+    return "\n".join(lines)
+
+
+def start_consolidation(args: Any, socket: Path) -> Any:
+    """The opt-in schedule of the daemon: a supervisor that launches separate `consolidate`
+    processes with the same egress policy. The daemon never reads a provider key; the child
+    that runs the adapter does."""
+    from memoryking import consolidation
+    from memoryking.adapters.egress_policy import LOCAL_PROVIDER, EgressPolicy
+    from memoryking.providers import adapter
+
+    if args.egress_policy is None or not args.consolidate_project:
+        raise LocalError("egress_policy_required")
+    every_s = duration_ms(args.consolidate_every) / 1000
+    idle_ms = duration_ms(args.consolidate_idle)
+    if args.consolidate_provider != LOCAL_PROVIDER:
+        if not args.consolidate_provider or not args.consolidate_model:
+            raise LocalError("egress_policy_required")
+        # An unknown provider stops the daemon at start; this builds the adapter, reads no key.
+        adapter(
+            EgressPolicy.load(args.egress_policy),
+            args.consolidate_provider,
+            args.consolidate_model,
+        )
+    supervisor = consolidation.ConsolidationSupervisor(
+        lambda project: consolidation.child_command(
+            socket,
+            args.control / "owner.credential",
+            project,
+            args.egress_policy,
+            args.consolidate_provider,
+            args.consolidate_model,
+            idle_ms,
+        ),
+        list(args.consolidate_project),
+        every_s=every_s,
+    )
+    supervisor.start()
+    return supervisor
 
 
 def render_audit(result: dict[str, Any]) -> str:
@@ -266,6 +559,120 @@ def render_grants(items: list[dict[str, Any]]) -> str:
     return "\n".join("  ".join(c.ljust(widths[i]) for i, c in enumerate(r)).rstrip() for r in rows)
 
 
+def review_command(args: Any) -> int:
+    """`memoryking review ...`: the daemon decides authority; this only asks and prints."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    action = args.review_command
+    if action == "list":
+        found = [i for i in reviewer.waiting(args.kind) if i["created_position"] > args.after]
+        page, more = found[: args.limit], len(found) > args.limit
+        page = [reviewer.revision(i["revision"]) for i in page]
+        try:
+            asked = reviewer.retirements()["items"]
+        except LocalError as exc:
+            if exc.code != "denied":
+                raise
+            asked = []
+        if args.json:
+            report = {
+                "proposals": page,
+                "more": more,
+                "next_after": page[-1]["created_position"] if more else None,
+                "retirement_requests": asked,
+            }
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            return 0
+        for item in page:
+            print(reviewing.render(item, full=False))
+        if not page:
+            print("No proposals are waiting.")
+        if more:
+            print(f"More are waiting: continue with --after {page[-1]['created_position']}")
+        for entry in asked:
+            print(
+                f"{entry['request']}  retirement requested for {entry['observation']} by "
+                f"{entry['requested_by']}: {entry['note']}"
+            )
+            if entry.get("preview"):
+                print(f"    record: {entry['preview']!r}")
+        return 0
+    if action == "show":
+        item = reviewer.revision(args.id)
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(item) + b"\n")
+        else:
+            print(reviewing.render(item, full=True))
+        return 0
+    if action == "accept":
+        result = reviewer.accept(args.id, args.as_kind, args.reason, args.effect)
+        print(json.dumps(result if args.json else {**result["accepted"], "state": "accepted"}))
+        return 0
+    if action == "reject":
+        item = reviewer.revision(args.id, excerpts=False)
+        result = reviewer.decide(item, "reject", "rejected_in_cli", args.reason)
+        print(json.dumps(result))
+        return 0
+    decision = "approve" if action == "retire-approve" else "dismiss"
+    args_: dict[str, Any] = {
+        "request": args.id,
+        "decision": decision,
+        "reason": "approved_in_cli" if decision == "approve" else "dismissed_in_cli",
+    }
+    if args.reason:
+        args_["note"] = args.reason
+    result = reviewer.call("retire_decide", args_, "cli-retire-" + decision + "-" + args.id)
+    print(json.dumps(result))
+    return 0
+
+
+def pin_command(args: Any) -> None:
+    """`memoryking pin add|remove|list`: a policy decision by an admin or reviewer."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    if args.pin_command == "list":
+        report = reviewer.call("pins", {})
+        if args.json:
+            sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
+            return
+        for pin in report["items"]:
+            print(f"{pin['target_kind']:<12} {pin['target']}  (pinned by {pin['pinned_by']})")
+        if not report["items"]:
+            print("Nothing is pinned.")
+        return
+    kind, target = ("claim", args.claim) if args.claim else ("observation", args.observation)
+    result = reviewer.call(
+        "pin",
+        {"mode": args.pin_command, "target_kind": kind, "target": target},
+        f"cli-pin-{args.pin_command}-{kind}-{target}-{int(time.time() * 1000)}",
+    )
+    print(json.dumps(result))
+
+
+def unreviewed_command(args: Any) -> None:
+    """`memoryking unreviewed on|off|show`: the per-project tier policy (an admin decision)."""
+    from memoryking import reviewing
+
+    reviewer = reviewing.Reviewer(args.project, **reviewing.connection_args(args))
+    if args.unreviewed_command == "show":
+        result = reviewer.call("unreviewed_tier_show", {})
+    else:
+        result = reviewer.call(
+            "unreviewed_tier",
+            {"mode": args.unreviewed_command},
+            f"cli-unreviewed-{args.unreviewed_command}-{int(time.time() * 1000)}",
+        )
+    if args.json:
+        sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+    else:
+        print(
+            f"Unreviewed drafts in briefings for {args.project}: "
+            + ("ON" if result["enabled"] else "off")
+        )
+
+
 def read_credential(path: Path) -> str:
     private_file(path)
     return path.read_text().strip()
@@ -304,10 +711,10 @@ def doctor(
     def record(level: str, name: str, detail: str) -> None:
         findings.append((level, name, detail))
 
-    if sys.version_info[:2] == (3, 12):
+    if sys.version_info[:2] in {(3, 12), (3, 13)}:
         record("ok", "python", sys.version.split()[0])
     else:
-        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12")
+        record("fail", "python", f"{sys.version.split()[0]} found; MemoryKing needs 3.12 or 3.13")
     for label, path in (("store", store), ("control", control)):
         try:
             private_dir(path)
@@ -350,13 +757,24 @@ def doctor(
                 if state == "current":
                     record("ok", "lexical index", f"{tenant}: current (lexical-v2)")
                 else:
+                    total = lexical_total(database, tenant)
+                    done = (
+                        f"{(total - remaining) * 100 // total}% rebuilt, about "
+                        f"{duration((remaining // RATE_PER_SECOND + 1) * 1000)} left at the reference rate; "
+                        if total
+                        else ""
+                    )
                     record(
                         "warn",
                         "lexical index",
                         f"{tenant}: {state}, still on the previous configuration (lexical-v1) with "
-                        f"{remaining} observations to rewrite; run a reindex "
-                        "(`memoryking request` with the operation reindex and empty args); "
-                        "the daemon finishes it in batches and captures keep working",
+                        f"{remaining} observations to rewrite; {done}"
+                        + (
+                            "run `memoryking reindex`; "
+                            if state == "legacy"
+                            else "`memoryking reindex --wait` shows progress; "
+                        )
+                        + "the daemon finishes it in batches and captures keep working",
                     )
         except sqlite3.Error as exc:
             record("fail", "schema", f"cannot read {database}: {type(exc).__name__}")
@@ -388,7 +806,11 @@ def doctor(
         encoding()
         record("ok", "tokenizer", "exact cl100k_base available")
     except LocalError:
-        record("warn", "tokenizer", "exact tokenizer missing; byte estimate is used and disclosed")
+        record(
+            "warn",
+            "tokenizer",
+            "exact tokenizer missing; a characters-per-token estimate is used and disclosed",
+        )
     from importlib.util import find_spec
 
     if find_spec("onnxruntime") is not None:
@@ -401,9 +823,10 @@ def doctor(
         )
     if embedding_model is not None:
         try:
-            from memoryking.adapters.local_embeddings import model_files
+            from memoryking import semantic
+            from memoryking.adapters.local_embeddings import model_files, model_manifest
 
-            model_files(embedding_model)
+            model_files(embedding_model, model_manifest(semantic.name_of(embedding_model)))
             record("ok", "embedding model", f"{embedding_model} verified")
         except (LocalError, OSError) as exc:
             code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
@@ -413,11 +836,21 @@ def doctor(
                 f"{embedding_model}: {code}; run `python -m memoryking.model_install --destination DIR`",
             )
     else:
-        record(
-            "warn",
-            "embedding model",
-            "no model configured; `serve --embedding-model DIR` after installing one enables semantic search",
-        )
+        from memoryking import semantic
+
+        if semantic.verified():
+            record(
+                "ok",
+                "embedding model",
+                f"{semantic.MODEL} installed in {semantic.models_dir()}; the daemon loads it without a flag",
+            )
+        else:
+            record(
+                "warn",
+                "embedding model",
+                "no model installed; `memoryking semantic enable` installs and turns it on, "
+                "and until then briefings are lexical",
+            )
     if reranker_model is not None:
         try:
             from memoryking.adapters.local_embeddings import RERANKER, model_files, model_manifest
@@ -540,6 +973,13 @@ def render_health(report: dict[str, Any]) -> str:
         )
     if backlog["truncated"]:
         lines.append("  - ...")
+    drafts = report.get("drafts", {"by_method": {}})
+    for method, entry in drafts["by_method"].items():
+        lines.append(
+            f"Drafts by {method}: {entry['drafted']} drafted, {entry['accepted']} accepted, "
+            f"{entry['rejected']} rejected, {entry['waiting']} waiting; accepted of decided "
+            f"{ratio(entry['accepted_of_decided_ppm'])}"
+        )
     lines += ["", f"Coverage: {report['coverage'].replace('_', ' ')}"]
     return "\n".join(lines) + "\n"
 
@@ -557,7 +997,122 @@ def default_trust_key(project: str, source: str, level: str) -> str:
     return f"trust-{digest[:32]}"
 
 
+def semantic_configure(args: Any, token: str, project: str, state: str) -> dict[str, Any]:
+    """Create, enable or disable the project's semantic partition for the default model."""
+    from memoryking import semantic
+
+    context = request(args.socket, token, "context", {"project": project})
+    fp = semantic.fingerprint_of()
+
+    def call(action: str, extra: dict[str, Any], key: str | None = None) -> Any:
+        command: dict[str, Any] = {
+            "version": 1,
+            "incarnation": context["incarnation"],
+            "action": action,
+            "args": {"project": project, **extra},
+        }
+        if key:
+            command["key"] = key
+        return request(args.socket, token, "embedding", {"command": command})
+
+    try:
+        current = call("status", {"fingerprint": fp})
+    except LocalError as exc:
+        if exc.code != "embedding_partition_unavailable":
+            raise
+        current = {}
+    generation = int(current.get("generation") or 0)
+    if current.get("state") == state:
+        return {**current, "already": state}
+    if not current and state == "disabled":
+        return {"project": project, "already": "disabled"}
+    result: dict[str, Any] = call(
+        "configure",
+        {"model": semantic.MODEL, "state": state, "expected_generation": generation},
+        key=f"{state}-{generation}",
+    )
+    return result
+
+
+def semantic_command(args: Any) -> int:
+    """`semantic enable|disable|status`: the whole job of turning semantic search on."""
+    from memoryking import model_install, semantic
+
+    token = read_credential(args.credential)
+
+    def say(text: str) -> None:
+        print(text, flush=True)
+
+    if args.semantic_command == "status":
+        result = request(args.socket, token, "status", {"project": "main"})
+        say("Semantic   " + semantic_line(result.get("semantic", {})))
+        return 0
+    project = args.project or os.environ.get("MEMORYKING_PROJECT")
+    if args.semantic_command == "disable":
+        if not project:
+            raise LocalError("project_required")
+        semantic_configure(args, token, project, "disabled")
+        say(f"Semantic search is off for project {project}; its vectors are kept until reindexed.")
+        return 0
+    problem = semantic.runtime_problem()
+    if problem is not None:
+        say(f"Semantic search is not enabled: {problem}.")
+        say("Install the extra, then run `memoryking semantic enable` again.")
+        say("Search stays lexical until then.")
+        return 1
+    if semantic.verified():
+        say(f"Model {semantic.MODEL} is already installed and verified.")
+    else:
+        say(semantic.consent())
+        outcome = model_install.install(semantic.model_dir(), semantic.MODEL)
+        say(f"Model {outcome['status'].replace('_', ' ')} in {semantic.model_dir()}.")
+    status = request(args.socket, token, "status", {"project": "main"})
+    if status.get("semantic", {}).get("model") != semantic.MODEL:
+        if args.profile:
+            profile = profiles.resolve(args.profile, args.config)
+            daemon.stop(profile)
+            try:
+                daemon.ensure(args.profile, args.config)
+                say("Restarted the daemon so that it loads the model.")
+            except LocalError:
+                say(
+                    f"Start the daemon again (`{daemon.start_hint(args.profile)}`) to load the model."
+                )
+                return 0
+        else:
+            say("Restart `memoryking serve` so that the daemon loads the model.")
+            return 0
+    if project:
+        semantic_configure(args, token, project, "experimental")
+        say(f"Semantic search is on for project {project}.")
+    else:
+        say("The daemon turns semantic search on for every project that has memory.")
+    status = request(args.socket, token, "status", {"project": "main"})
+    say("Semantic   " + semantic_line(status.get("semantic", {})))
+    say("Indexing runs in the background; `memoryking status` shows its progress.")
+    return 0
+
+
+def autostart(args: Any) -> None:
+    """Start the profile's daemon when a command needs its socket and the profile allows it."""
+    if (
+        not args.profile
+        or args.command in {"doctor", "stop"}
+        or getattr(args, "socket", None) is None
+        or getattr(args, "store", None) is not None
+    ):
+        return
+    profile = profiles.resolve(args.profile, args.config)
+    if profile.get("autostart") and Path(args.socket) == Path(profile["socket"]):
+        daemon.ensure(args.profile, args.config)
+
+
 def main() -> int:
+    if sys.argv[1:2] == ["mcp"]:
+        # The bridge has its own options; argparse would claim the ones that start with `--`.
+        from memoryking.adapters import stdio
+
+        return stdio.main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version=f"memoryking {__version__}")
     parser.add_argument(
@@ -579,6 +1134,11 @@ def main() -> int:
     adder.add_argument("--credential", type=Path, help="Default admin credential file")
     adder.add_argument("--socket", type=Path, help="Default: STORE/service.sock")
     adder.add_argument("--dashboard-port", type=int)
+    adder.add_argument(
+        "--autostart",
+        action="store_true",
+        help="Let the CLI and the stdio bridge start this store's daemon when it is not running",
+    )
     adder.add_argument("--embedding-model", type=Path, help="Installed local model directory")
     adder.add_argument("--reranker-model", type=Path, help="Installed local reranker directory")
     adder.add_argument("--backup-dir", type=Path)
@@ -593,6 +1153,11 @@ def main() -> int:
         cmd = commands.add_parser(name)
         cmd.add_argument("--store", type=Path)
         cmd.add_argument("--control", type=Path)
+        if name in {"serve", "backup", "gc"}:
+            cmd.add_argument(
+                "--instance-id",
+                help="Name this deployment for the instance lease; set it on every process of a multi-host deployment (default: derived from the control directory)",
+            )
         if name == "serve":
             cmd.add_argument(
                 "--dashboard-port",
@@ -609,6 +1174,17 @@ def main() -> int:
                 type=Path,
                 help="Installed local model directory; the daemon then embeds queries and "
                 "indexes every enabled project itself (a profile may set it)",
+            )
+            cmd.add_argument(
+                "--rerank-window",
+                type=int,
+                choices=(16, 32, 64),
+                help="Candidates the cross-encoder reorders when a briefing asks (default 16)",
+            )
+            cmd.add_argument(
+                "--no-semantic",
+                action="store_true",
+                help="Do not load an installed embedding model on your own",
             )
             cmd.add_argument(
                 "--reranker-model",
@@ -635,16 +1211,61 @@ def main() -> int:
                 "context may reach; without it only the local recorder is accepted",
             )
             cmd.add_argument(
+                "--anchor-interval-ms",
+                type=int,
+                default=0,
+                help="Opt in to less anchor durability for throughput: the commit serial and clock high-water mark of a request that moved no position are written at most this many ms late (default 0: every committing request is anchored before release). A rollback that discards only receipts from that window is then not detected, and a clock that went back by less than the window across a restart is not refused",
+            )
+            cmd.add_argument(
+                "--workers",
+                type=int,
+                help="Requests served at once (default 8; 1 to 256)",
+            )
+            cmd.add_argument(
+                "--waiters",
+                type=int,
+                help="Connections that may wait for a free worker, up to five seconds each "
+                "(default 16; 0 to 1024); more are refused as service_busy",
+            )
+            cmd.add_argument(
+                "--health-port",
+                type=int,
+                help="Loopback port serving /healthz (liveness) and /readyz (readiness) "
+                "without credentials; 0 chooses a free port; off by default",
+            )
+            cmd.add_argument(
                 "--summary-idle",
                 default="30m",
                 help="Derive a 'where this left off' summary for a task idle this long "
                 "(e.g. 30m, 2h); 0 disables",
+            )
+            cmd.add_argument(
+                "--consolidate-every",
+                help="Off by default. Run background consolidation this often (e.g. 6h) for "
+                "each --consolidate-project, when it has been idle; needs --egress-policy. "
+                "The daemon launches and supervises a separate `consolidate` process for it "
+                "and never reads the provider's key file itself",
+            )
+            cmd.add_argument(
+                "--consolidate-project", action="append", default=[], metavar="PROJECT"
+            )
+            cmd.add_argument("--consolidate-provider", help="A provider in the egress policy")
+            cmd.add_argument("--consolidate-model", help="A model the policy allows for it")
+            cmd.add_argument(
+                "--consolidate-idle", default="15m", help="Quiet time before a pass (15m)"
             )
         if name == "init":
             cmd.add_argument("--tenant", default="main")
             cmd.add_argument("--principal", default="owner")
         if name in {"backup", "restore"}:
             cmd.add_argument("--backup", type=Path, required=True)
+        if name == "backup":
+            cmd.add_argument(
+                "--incremental-from",
+                type=Path,
+                help="An earlier backup of this store on the same filesystem: blobs it holds "
+                "are hard-linked after their hash is verified, not copied",
+            )
         if name == "restore":
             cmd.add_argument(
                 "--lost-anchor-journal-head",
@@ -657,6 +1278,65 @@ def main() -> int:
     status.add_argument("--credential", type=Path)
     status.add_argument("--project", default="main")
     status.add_argument("--json", action="store_true", help="Print the raw status result")
+    stopper = commands.add_parser("stop", help="Stop the background daemon of the profile")
+    stopper.add_argument("--store", type=Path)
+    stopper.add_argument("--control", type=Path)
+    stopper.add_argument("--socket", type=Path)
+    setup = commands.add_parser(
+        "setup",
+        help="Connect a host in one idempotent run: store, daemon, agent credential, MCP, hooks",
+    )
+    setup.add_argument("host", choices=("claude-code", "codex", "generic"))
+    setup.add_argument("--project", required=True, help="The project the agent works in")
+    setup.add_argument("--principal", default="agent", help="Agent principal (default agent)")
+    setup.add_argument(
+        "--data-dir", type=Path, help="Where a new store lives; default ~/.memoryking/NAME"
+    )
+    setup.add_argument(
+        "--scope",
+        choices=("user", "project"),
+        default="user",
+        help="Where the session hooks go: your home directory (default) or this directory",
+    )
+    setup.add_argument("--cwd", type=Path, help="Project directory for --scope project")
+    setup.add_argument("--task", help="Task the hooks resume and checkpoint")
+    setup.add_argument("--expires", help="Credential validity such as 90d; default none")
+    setup.add_argument(
+        "--dashboard-port",
+        type=int,
+        help="Also serve the loopback dashboard on this port (0 chooses one); needs a daemon restart",
+    )
+    setup.add_argument("--no-hooks", action="store_true", help="Register the MCP bridge only")
+    setup.add_argument(
+        "--register",
+        action="store_true",
+        help="claude-code only: register the bridge by running `claude mcp add-json` (when `claude` "
+        "is on PATH) instead of printing the command",
+    )
+    setup.add_argument(
+        "--no-semantic",
+        action="store_true",
+        help="Do not install or turn on semantic search even when its runtime is installed",
+    )
+    setup.add_argument("--dry-run", action="store_true", help="Print every change, make none")
+    setup.add_argument("--remove", action="store_true", help="Undo this host's registration")
+    add_binding(setup)
+    mcp = commands.add_parser(
+        "mcp",
+        help="Run the MCP stdio bridge (arguments as for `python -m memoryking.adapters.stdio`)",
+    )
+    mcp.add_argument("rest", nargs="*", help="Bridge options; run `memoryking mcp --help`")
+    reindex = commands.add_parser(
+        "reindex",
+        help="Start the rebuild into the current lexical configuration; --wait shows progress",
+    )
+    reindex.add_argument("--socket", type=Path)
+    reindex.add_argument("--credential", type=Path, help="An admin credential file")
+    reindex.add_argument("--project", default="main", help="Project used to read the progress")
+    reindex.add_argument(
+        "--wait", action="store_true", help="Show progress until the rebuild completes"
+    )
+    reindex.add_argument("--json", action="store_true", help="Print the raw result")
     doc = commands.add_parser("doctor", help="Check the installation and report fixes")
     doc.add_argument("--store", type=Path)
     doc.add_argument("--control", type=Path)
@@ -685,6 +1365,9 @@ def main() -> int:
     )
     rotate_owner.add_argument("--store", type=Path)
     rotate_owner.add_argument("--control", type=Path)
+    rotate_owner.add_argument(
+        "--instance-id", help="The id the running instance uses, when it sets one"
+    )
     for name in ("issue", "list", "revoke"):
         item = cred_commands.add_parser(name)
         item.add_argument("--socket", type=Path)
@@ -702,15 +1385,47 @@ def main() -> int:
                 action="store_true",
                 help="Replace the principal's credential: every earlier one stops working",
             )
+            who = item.add_mutually_exclusive_group()
+            who.add_argument(
+                "--for-user",
+                metavar="USER",
+                help="The user this agent acts for, so it reads and writes their own memory "
+                "across projects; default: the issuing owner",
+            )
+            who.add_argument(
+                "--no-user",
+                action="store_true",
+                help="Do not let this credential see anyone's user memory",
+            )
             item.add_argument("--output", type=Path, required=True, help="New private file")
         if name == "list":
             item.add_argument("--json", action="store_true")
+    usr = commands.add_parser(
+        "user", help="Your own memory across projects: show, export or erase it"
+    )
+    usr_commands = usr.add_subparsers(dest="user_command", required=True)
+    for name, text in (
+        ("show", "What your user memory holds and which agents act for you"),
+        ("export", "Write your user memory as Markdown files"),
+        ("purge", "Erase your user memory and everything built from it"),
+    ):
+        sub = usr_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--json", action="store_true")
+        if name == "export":
+            sub.add_argument("--dir", type=Path, required=True, help="Directory to write")
+        if name == "purge":
+            sub.add_argument(
+                "--user", help="Administrators only: purge this user's scope without reading it"
+            )
+            sub.add_argument("--yes", action="store_true", help="Confirm: this cannot be undone")
     summ = commands.add_parser(
         "summarize", help="Derive a 'where this left off' summary of a task, with its own receipt"
     )
     summ.add_argument("--socket", type=Path)
     summ.add_argument("--credential", type=Path)
-    summ.add_argument("--project", required=True)
+    summ.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     summ.add_argument("--task", required=True)
     summ.add_argument("--run")
     summ.add_argument("--egress-policy", type=Path, help="With --provider: the daemon's policy")
@@ -718,6 +1433,27 @@ def main() -> int:
     summ.add_argument("--model", help="A model the policy allows for that provider")
     summ.add_argument("--json", action="store_true")
     add_binding(summ)
+    cons = commands.add_parser(
+        "consolidate",
+        help="Have a model draft claims from recent observations, for review; never accepts",
+    )
+    cons.add_argument("--socket", type=Path)
+    cons.add_argument("--credential", type=Path, help="Credential with capture and inference")
+    cons.add_argument("--project", required=True)
+    cons.add_argument("--since", help="Only observations recorded within this span, e.g. 7d")
+    cons.add_argument("--limit", type=int, help="Observations per pass, 1 to 64 (24)")
+    cons.add_argument("--egress-policy", type=Path, help="The daemon's policy file")
+    cons.add_argument("--provider", help="A policy provider, or local-recording to dry-run")
+    cons.add_argument("--model", help="A model the policy allows for that provider")
+    cons.add_argument(
+        "--watch",
+        metavar="EVERY",
+        help="Keep running: a pass this often (e.g. 6h) while the project is idle",
+    )
+    cons.add_argument("--idle", default="15m", help="With --watch: quiet time before a pass")
+    cons.add_argument("--idle-ms", type=int, help=argparse.SUPPRESS)  # set by the daemon
+    cons.add_argument("--parent-pid", type=int, help=argparse.SUPPRESS)  # set by the daemon
+    cons.add_argument("--json", action="store_true")
     audit = commands.add_parser(
         "egress-audit",
         help="List what left this store for a model provider, and whether it arrived",
@@ -742,11 +1478,37 @@ def main() -> int:
         item.add_argument("--socket", type=Path)
         item.add_argument("--credential", type=Path, help="Admin credential")
         item.add_argument("--project", required=True)
-    cap = commands.add_parser("capture", help="Save one observation from text or stdin")
+    sem = commands.add_parser(
+        "semantic", help="Semantic search: install the local model, load it and turn it on"
+    )
+    sem_commands = sem.add_subparsers(dest="semantic_command", required=True)
+    for name, text in (
+        ("enable", "Install and verify the pinned model, then turn semantic search on"),
+        ("disable", "Turn semantic search off for a project"),
+        ("status", "Show the semantic index"),
+    ):
+        item = sem_commands.add_parser(name, help=text)
+        item.add_argument("--socket", type=Path)
+        item.add_argument("--credential", type=Path, help="Admin credential")
+        if name != "status":
+            item.add_argument(
+                "--project",
+                help="Project to switch (enable: default every project; disable: required)",
+            )
+    cap = commands.add_parser("capture", help="Save one observation from text, a file or stdin")
     cap.add_argument("--socket", type=Path)
     cap.add_argument("--credential", type=Path)
-    cap.add_argument("--project", required=True)
-    cap.add_argument("--text", help="The observation; omit to read it from stdin")
+    cap.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+    cap.add_argument(
+        "--text",
+        help="The observation; omit it to read the text from --file or from stdin",
+    )
+    cap.add_argument(
+        "--file",
+        type=Path,
+        help="Read the observation from this file (`-` is stdin), so text with quotes, "
+        "brackets or parentheses needs no shell quoting",
+    )
     cap.add_argument("--source", default="cli", help="Where it came from, e.g. git or pytest")
     cap.add_argument("--event", help="Stable event id so a rerun replays; default: a text hash")
     cap.add_argument(
@@ -760,15 +1522,44 @@ def main() -> int:
         type=int,
         help="Observation time in Unix ms; default is today to the day so a rerun replays",
     )
+    cap.add_argument(
+        "--scope",
+        choices=("project", "user"),
+        default="project",
+        help="`user` saves a durable fact or preference about you that applies in every "
+        "project (never project facts or secrets)",
+    )
+    cap.add_argument(
+        "--supersedes",
+        metavar="OBSERVATION",
+        help="An earlier observation you can read that this one replaces; it stays as evidence "
+        "but briefings prefer this one",
+    )
     rec = commands.add_parser("recall", help="Print a cited Markdown briefing for a query")
     rec.add_argument("--socket", type=Path)
     rec.add_argument("--credential", type=Path)
-    rec.add_argument("--project", required=True)
-    rec.add_argument("--query", required=True)
+    rec.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+    rec.add_argument("--query", help="What you are about to work on (or use --start)")
+    rec.add_argument(
+        "--start",
+        action="store_true",
+        help="No query: constraints, pinned items, the task's last checkpoint and recent decisions",
+    )
+    rec.add_argument("--days", type=int, help="With --start: how far back recent decisions go")
     rec.add_argument("--budget", type=int, default=6000)
     rec.add_argument("--task")
     rec.add_argument(
         "--as-of", help="Brief as the project stood then: a date, ISO date-time, or Unix ms"
+    )
+    rec.add_argument(
+        "--from",
+        dest="from_time",
+        help="Only records observed at or after this: a date, ISO date-time, or Unix ms",
+    )
+    rec.add_argument(
+        "--to",
+        dest="to_time",
+        help="Only records observed at or before this (a bare date means the end of the day)",
     )
     rec.add_argument(
         "--salience",
@@ -782,6 +1573,95 @@ def main() -> int:
     )
     rec.add_argument("--json", action="store_true", help="Print the structured packet instead")
     add_binding(rec)
+    sp = commands.add_parser(
+        "save-progress", help="Save where a task stands (the lean save_progress tool)"
+    )
+    res = commands.add_parser(
+        "resume", help="Print a task's latest saved progress (the lean resume tool)"
+    )
+    for item in (sp, res):
+        item.add_argument("--socket", type=Path)
+        item.add_argument("--credential", type=Path)
+        item.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        item.add_argument("--task", required=True, help="Task id, stable across sessions")
+        item.add_argument("--run")
+        item.add_argument("--json", action="store_true", help="Print the structured result")
+        add_binding(item)
+    sp.add_argument("--objective", required=True)
+    sp.add_argument("--state", required=True, help="Where the task stands now")
+    sp.add_argument("--next", action="append", metavar="ACTION", help="Repeatable")
+    sp.add_argument("--finding", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument("--blocker", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument("--constraint", action="append", metavar="TEXT", help="Repeatable")
+    sp.add_argument(
+        "--failed",
+        action="append",
+        type=failed_attempt,
+        metavar='"ACTION => OUTCOME"',
+        help="A failed attempt and why; repeatable",
+    )
+    sp.add_argument("--share-with", action="append", metavar="PRINCIPAL", help="Repeatable")
+    res.add_argument("--budget", type=int, default=12000)
+    rv = commands.add_parser(
+        "review", help="Review waiting proposals and retirement requests from the terminal"
+    )
+    rv_commands = rv.add_subparsers(dest="review_command", required=True)
+    for name, text in (
+        ("list", "List proposals waiting for a decision, oldest first, with their evidence"),
+        ("show", "Show one proposal in full"),
+        ("accept", "Accept a proposal (knowledge, or --as constraint)"),
+        ("reject", "Reject a proposal; --reason is required"),
+        ("retire-approve", "Approve a retirement request: purge the record (admin)"),
+        ("retire-dismiss", "Dismiss a retirement request; the record stays"),
+    ):
+        sub = rv_commands.add_parser(name, help=text)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
+        if name == "list":
+            sub.add_argument("--limit", type=int, default=10, help="Proposals per page")
+            sub.add_argument("--after", type=int, default=0, help="Continue after this position")
+            sub.add_argument("--kind", choices=("knowledge", "constraint"), default="knowledge")
+        else:
+            sub.add_argument("id", help="A revision id, or a retirement request id")
+        if name == "accept":
+            sub.add_argument("--as", dest="as_kind", choices=("knowledge", "constraint"))
+            sub.add_argument(
+                "--effect",
+                choices=("require", "prohibit"),
+                default="require",
+                help="With --as constraint: whether the text requires or prohibits",
+            )
+        if name in {"accept", "reject", "retire-approve", "retire-dismiss"}:
+            sub.add_argument(
+                "--reason",
+                required=name in {"reject", "retire-dismiss"},
+                help="Why, in your own words; recorded with the decision",
+            )
+    pn = commands.add_parser("pin", help="Keep an accepted claim or observation in session start")
+    pn_commands = pn.add_subparsers(dest="pin_command", required=True)
+    for name in ("add", "remove", "list"):
+        sub = pn_commands.add_parser(name)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
+        if name != "list":
+            target = sub.add_mutually_exclusive_group(required=True)
+            target.add_argument("--claim", metavar="REVISION_OR_FAMILY")
+            target.add_argument("--observation", metavar="OBSERVATION")
+    un = commands.add_parser(
+        "unreviewed",
+        help="Let briefings show unreviewed drafts in a labelled section (admin; off by default)",
+    )
+    un_commands = un.add_subparsers(dest="unreviewed_command", required=True)
+    for name in ("on", "off", "show"):
+        sub = un_commands.add_parser(name)
+        sub.add_argument("--socket", type=Path)
+        sub.add_argument("--credential", type=Path)
+        sub.add_argument("--project", required=True)
+        sub.add_argument("--json", action="store_true")
     dr = commands.add_parser(
         "draft-proposals", help="File claim drafts from repeated evidence into the review queue"
     )
@@ -789,6 +1669,11 @@ def main() -> int:
     dr.add_argument("--credential", type=Path)
     dr.add_argument("--project", required=True)
     dr.add_argument("--limit", type=int, default=16)
+    dr.add_argument(
+        "--no-procedures",
+        action="store_true",
+        help="Skip procedure drafts from outcomes that recur across tasks",
+    )
     dr.add_argument("--key", help="Retry key; default: one per project and day")
     dr.add_argument("--json", action="store_true")
     vault = commands.add_parser(
@@ -803,6 +1688,12 @@ def main() -> int:
         sub.add_argument("--socket", type=Path)
         sub.add_argument("--credential", type=Path)
         sub.add_argument("--project", help="Default: MEMORYKING_PROJECT")
+        sub.add_argument(
+            "--scope",
+            choices=("project", "user"),
+            default="project",
+            help="`user` is your own memory across projects, as the `user` folder",
+        )
         sub.add_argument("--dir", type=Path, required=True, help="The vault directory")
         sub.add_argument("--json", action="store_true")
         if name == "import":
@@ -855,8 +1746,16 @@ def main() -> int:
     hk.add_argument("--credential", type=Path)
     hk.add_argument("--project", help="Default: MEMORYKING_PROJECT")
     hk.add_argument("--task", help="Resume this task at start; checkpoint it before loss")
-    hk.add_argument("--query", help="Briefing query at session start; default: task or project")
+    hk.add_argument(
+        "--query", help="Briefing query at session start; default: the query-free session start"
+    )
     hk.add_argument("--budget", type=int, default=6000)
+    hk.add_argument(
+        "--tools",
+        choices=("mcp", "cli"),
+        help="How the agent reaches memory; the session-start note then names the tools to "
+        "save with (hooks installed by `memoryking setup` pass mcp)",
+    )
     add_binding(hk)
     hk.add_argument(
         "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
@@ -871,6 +1770,11 @@ def main() -> int:
     inst.add_argument("--credential", type=Path)
     inst.add_argument("--task", help="Task the hooks resume and checkpoint")
     inst.add_argument("--query", help="Fixed briefing query for session start")
+    inst.add_argument(
+        "--tools",
+        choices=("mcp", "cli"),
+        help="How the agent reaches memory; the session-start note names the tools to save with",
+    )
     inst.add_argument("--cwd", type=Path, help="Project directory; default: current")
     add_binding(inst)
     inst.add_argument("--print", action="store_true", help="Show the merged config, write nothing")
@@ -891,6 +1795,10 @@ def main() -> int:
     login.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
+        if args.command == "setup":
+            from memoryking import setup_host
+
+            return setup_host.run(args)
         if args.command == "profile":
             if args.profile_command == "add":
                 values: dict[str, Any] = {
@@ -909,6 +1817,8 @@ def main() -> int:
                 for field in ("dashboard_port", "backup_every", "backup_keep"):
                     if getattr(args, field) is not None:
                         values[field] = getattr(args, field)
+                if args.autostart:
+                    values["autostart"] = True
                 if args.binding:
                     values["bindings"] = session_bindings.parse_pairs(args.binding)
                 path = profiles.save(args.name, values, args.config)
@@ -923,6 +1833,7 @@ def main() -> int:
                         print(f"  {field} = {value}")
             return 0
         profiles.apply(args, args.profile, args.config)
+        autostart(args)
         optional = (
             {"socket", "credential"}
             if args.command
@@ -935,9 +1846,19 @@ def main() -> int:
                 "influence",
                 "trust",
                 "draft-proposals",
+                "unreviewed",
+                "consolidate",
+                "save-progress",
+                "resume",
+                "review",
+                "pin",
             }
             else set()
         )
+        if args.command in {"capture", "recall", "summarize"} and args.project is None:
+            args.project = os.environ.get("MEMORYKING_PROJECT")
+            if not args.project:
+                raise LocalError("project_required")
         for field in ("store", "control", "socket", "credential"):
             if hasattr(args, field) and getattr(args, field) is None and field not in optional:
                 raise LocalError(field + "_required")
@@ -952,6 +1873,11 @@ def main() -> int:
                 lost_anchor_journal_head=args.lost_anchor_journal_head,
             )
             print(json.dumps({"credential_file": str(path), "reconciliation_required": True}))
+        elif args.command == "stop":
+            if not args.profile:
+                raise LocalError("profile_required")
+            result = daemon.stop(profiles.resolve(args.profile, args.config))
+            print(json.dumps(result))
         elif args.command == "dashboard-login":
             private_file(args.credential)
             private_dir(args.output.parent)
@@ -962,6 +1888,8 @@ def main() -> int:
             )
             atomic(args.output, json.dumps(result).encode())
             print(json.dumps({"bootstrap_file": str(args.output), "url": result["url"]}))
+        elif args.command == "semantic":
+            return semantic_command(args)
         elif args.command == "embeddings":
             from memoryking.adapters.local_embeddings import model_manifest
             from memoryking.domain.embeddings import fingerprint
@@ -997,7 +1925,7 @@ def main() -> int:
                     result = embedding(
                         "configure",
                         {
-                            "model": "minilm-l6-v2-onnx",
+                            "model": MODEL,
                             "state": "experimental",
                             "expected_generation": generation,
                         },
@@ -1007,7 +1935,14 @@ def main() -> int:
         elif args.command == "capture":
             from memoryking import hooks
 
-            text = args.text if args.text is not None else sys.stdin.read()
+            if args.text is not None and args.file is not None:
+                raise LocalError("invalid_request")
+            if args.text is not None:
+                text = args.text
+            elif args.file is not None and str(args.file) != "-":
+                text = args.file.read_text(encoding="utf-8", errors="replace")
+            else:
+                text = sys.stdin.read()
             result = hooks.capture(
                 text,
                 source=args.source,
@@ -1015,6 +1950,8 @@ def main() -> int:
                 readers=args.readers.split(",") if args.readers else None,
                 classification=args.classification,
                 observed_ms=args.observed_ms,
+                supersedes=args.supersedes,
+                scope=args.scope,
                 socket=args.socket,
                 credential=args.credential,
                 project=args.project,
@@ -1023,20 +1960,49 @@ def main() -> int:
         elif args.command == "recall":
             from memoryking import hooks
 
-            packet = hooks.recall(
-                args.query,
-                budget=args.budget,
-                text=not args.json,
-                task=args.task,
-                as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
-                salience=args.salience,
-                rerank=args.rerank,
-                binding=args.binding,
-                socket=args.socket,
-                credential=args.credential,
-                project=args.project,
-                profile=args.profile,
-                config=args.config,
+            if bool(args.query) == bool(args.start):
+                raise LocalError("invalid_request")
+            where = {
+                "socket": args.socket,
+                "credential": args.credential,
+                "project": args.project,
+                "profile": args.profile,
+                "config": args.config,
+            }
+            packet = (
+                hooks.start(
+                    budget=args.budget,
+                    text=not args.json,
+                    task=args.task,
+                    days=args.days,
+                    binding=args.binding,
+                    **where,
+                )
+                if args.start
+                else hooks.recall(
+                    args.query,
+                    budget=args.budget,
+                    text=not args.json,
+                    task=args.task,
+                    as_of=hooks.as_of_ms(args.as_of) if args.as_of else None,
+                    time_range={
+                        **(
+                            {"from_ms": hooks.range_ms(args.from_time, end=False)}
+                            if args.from_time
+                            else {}
+                        ),
+                        **(
+                            {"to_ms": hooks.range_ms(args.to_time, end=True)}
+                            if args.to_time
+                            else {}
+                        ),
+                    }
+                    or None,
+                    salience=args.salience,
+                    rerank=args.rerank,
+                    binding=args.binding,
+                    **where,
+                )
             )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(packet) + b"\n")
@@ -1063,6 +2029,8 @@ def main() -> int:
                             task=args.task,
                             budget=args.budget,
                             binding=args.binding,
+                            tools=args.tools,
+                            host=args.host,
                             **where,
                         )
                     )
@@ -1091,6 +2059,7 @@ def main() -> int:
                 credential=args.credential if args.profile is None else None,
                 task=args.task,
                 query=args.query,
+                tools=args.tools,
                 binding=args.binding,
                 remove=args.remove,
                 write=not args.print,
@@ -1123,7 +2092,7 @@ def main() -> int:
         elif args.command == "journal":
             print(json.dumps(LocalStore.pending_journal(args.store, args.control)))
         elif args.command == "credential" and args.credential_command == "rotate-owner":
-            path = LocalStore.rotate_owner(args.store, args.control)
+            path = LocalStore.rotate_owner(args.store, args.control, instance_id=args.instance_id)
             print(json.dumps({"owner_credential": str(path), "rotated": True}))
         elif args.command == "credential":
             credential = read_credential(args.credential)
@@ -1150,14 +2119,37 @@ def main() -> int:
                     "project": args.project,
                     "capabilities": sorted(set(args.capabilities.split(","))),
                 }
+                unknown = sorted(set(grant["capabilities"]) - (CAPABILITIES - {"admin"}))
+                if unknown:
+                    # Say which name is wrong and which exist, not a bare invalid_request.
+                    raise LocalError(
+                        "invalid_capabilities",
+                        detail={
+                            "path": "--capabilities",
+                            "problem": "unknown capability " + ", ".join(unknown[:4]),
+                            "expected": "any of " + ", ".join(sorted(CAPABILITIES - {"admin"})),
+                        },
+                    )
                 if args.rotate:
                     grant["rotate"] = True
+                if not args.no_user and {"capture", "read"} & set(grant["capabilities"]):
+                    grant["for_user"] = args.for_user or "@self"
                 if args.expires:
                     grant["expires"] = int(time.time() * 1000) + duration_ms(args.expires)
                 result = request(args.socket, credential, "grant", grant)
                 atomic(args.output, result.pop("credential").encode())
                 result.update(credential_file=str(args.output), **grant)
                 print(json.dumps(result))
+        elif args.command == "user":
+            return user_command(args)
+        elif args.command in {"save-progress", "resume"}:
+            result = lean_command(args)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+            elif args.command == "resume":
+                print(result["text"], end="")
+            else:
+                print(json.dumps({k: result[k] for k in ("task", "revision", "id") if k in result}))
         elif args.command == "summarize":
             result = summarize(args)
             if args.json:
@@ -1168,6 +2160,20 @@ def main() -> int:
                     f"receipt {result['receipt']} · {result['method']} · "
                     f"checkpoint {result['checkpoint']} revision {result['revision']}"
                 )
+        elif args.command == "consolidate":
+            result = consolidate_command(args)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
+            else:
+                print(render_consolidation(result))
+        elif args.command == "review":
+            outcome = review_command(args)
+            if outcome:
+                return outcome
+        elif args.command == "pin":
+            pin_command(args)
+        elif args.command == "unreviewed":
+            unreviewed_command(args)
         elif args.command == "draft-proposals":
             token = read_credential(args.credential)
             context = request(args.socket, token, "context", {"project": args.project})
@@ -1182,7 +2188,11 @@ def main() -> int:
                         "incarnation": context["incarnation"],
                         "action": "draft",
                         "key": args.key or f"draft-{args.project}-{day}",
-                        "args": {"project": args.project, "limit": args.limit},
+                        "args": {
+                            "project": args.project,
+                            "limit": args.limit,
+                            "procedures": not args.no_procedures,
+                        },
                     }
                 },
             )
@@ -1197,16 +2207,33 @@ def main() -> int:
                     f"{len(report['drafted'])} draft(s) filed for review from {report['window']} observations; "
                     f"skipped {json.dumps(report['skipped'], sort_keys=True)}"
                 )
+                procedures = report.get("procedures")
+                if procedures is not None:
+                    for item in procedures["drafted"]:
+                        print(
+                            f"{item['revision']} [{item['polarity']} procedure, {item['tasks']} tasks] {item['text']}"
+                        )
+                    print(
+                        f"{len(procedures['drafted'])} procedure draft(s) filed for review "
+                        f"(they still need a review and a separate activation); "
+                        f"skipped {json.dumps(procedures['skipped'], sort_keys=True)}"
+                    )
         elif args.command == "vault":
             from memoryking import vault as vault_module
 
             client = vault_module.connect(
-                socket=args.socket, credential=args.credential, project=args.project
+                socket=args.socket,
+                credential=args.credential,
+                project=args.project,
+                scope=args.scope,
             )
+            folder = "user" if args.scope == "user" else None
             if args.vault_command == "export":
-                report = vault_module.export(args.dir, client)
+                report = vault_module.export(args.dir, client, folder)
             else:
-                report = vault_module.import_(args.dir, client, dry_run=args.dry_run)
+                report = vault_module.import_(
+                    args.dir, client, dry_run=args.dry_run, directory_name=folder
+                )
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(report) + b"\n")
             elif args.vault_command == "export":
@@ -1357,10 +2384,30 @@ def main() -> int:
                 "status",
                 {"project": args.project},
             )
+            if args.profile:
+                result["daemon"] = daemon.state(profiles.resolve(args.profile, args.config))
             if args.json:
                 sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
             else:
                 print(render_status(result, __version__))
+        elif args.command == "reindex":
+            private_file(args.credential)
+            token = args.credential.read_text().strip()
+            started = request(args.socket, token, "reindex", {})
+            lexical = started.get("lexical", {})
+            if not args.json:
+                print("Reindex started: " + lexical_line(lexical))
+            while args.wait and lexical.get("state") != "current":
+                time.sleep(1)
+                lexical = request(args.socket, token, "status", {"project": args.project})[
+                    "lexical"
+                ]
+                if not args.json:
+                    print("Lexical    " + lexical_line(lexical), flush=True)
+            if args.json:
+                sys.stdout.buffer.write(canonical_bytes({"lexical": lexical}) + b"\n")
+            elif args.wait:
+                print("Reindex complete.")
         elif args.command == "request":
             private_file(args.credential)
             body = load_strict(sys.stdin.buffer.read(262145))
@@ -1380,13 +2427,18 @@ def main() -> int:
                 result["credential_file"] = str(args.credential_output)
             sys.stdout.buffer.write(canonical_bytes(result) + b"\n")
         else:
-            with LocalStore(args.store, args.control) as store:
+            with LocalStore(
+                args.store, args.control, instance_id=getattr(args, "instance_id", None)
+            ) as store:
                 if args.command == "serve":
                     configure(args.log_level, trace=args.trace)
                     if args.egress_policy is not None:
                         from memoryking.adapters.egress_policy import EgressPolicy
 
                         store.egress_policy = EgressPolicy.load(args.egress_policy)
+                    if not 0 <= args.anchor_interval_ms <= 60_000:
+                        raise LocalError("invalid_anchor_interval")
+                    store.anchor_interval_ms = args.anchor_interval_ms
                     store.summary_idle_ms = (
                         0 if args.summary_idle in {"0", "off"} else duration_ms(args.summary_idle)
                     )
@@ -1397,33 +2449,58 @@ def main() -> int:
                     signal.signal(signal.SIGTERM, stop)
                     dashboard = None
                     embeddings = None
+                    consolidation_loop = None
                     if args.backup_dir is not None:
                         from memoryking.backups import Policy
 
                         store.backup_policy = Policy(
                             args.backup_dir, args.backup_every or "1d", args.backup_keep or 14
                         )
+                    from memoryking import semantic
+                    from memoryking.embedding_loop import EmbeddingLoop
+
                     if args.embedding_model is not None:
                         from memoryking.adapters.local_embeddings import LocalOnnxEmbedding
-                        from memoryking.embedding_loop import EmbeddingLoop
 
-                        store.embedder = LocalOnnxEmbedding(args.embedding_model)
+                        store.embedder = LocalOnnxEmbedding(
+                            args.embedding_model, semantic.name_of(args.embedding_model)
+                        )
+                    elif not args.no_semantic:
+                        # An installed, verified model is used without a flag; none installed
+                        # (or no runtime) leaves briefings lexical, which they say.
+                        store.embedder = semantic.load_installed()
+                        if store.embedder is not None:
+                            event("serve", "semantic_loaded", model=store.embedder.name)
                     if args.reranker_model is not None:
                         from memoryking.adapters.local_embeddings import LocalOnnxReranker
 
                         store.reranker = LocalOnnxReranker(args.reranker_model)
+                        store.rerank_window = args.rerank_window
+                    health_server = None
+                    if args.health_port is not None:
+                        from memoryking.health import LocalHealthServer
+
+                        if not 0 <= args.health_port <= 65535:
+                            raise LocalError("invalid_health_configuration")
+                        health_server = LocalHealthServer(store.readiness, args.health_port)
+                        event("serve", "health", port=health_server.start())
                     if args.dashboard_port is not None:
                         if not 0 <= args.dashboard_port <= 65535:
                             raise LocalError("invalid_dashboard_configuration")
                         dashboard = Dashboard(store, args.dashboard_port)
                         store.dashboard = dashboard
                         dashboard.start()
+                    pid_file = store.root / daemon.PID
                     try:
-                        with Server(store) as server:
+                        with Server(store, workers=args.workers, waiters=args.waiters) as server:
+                            atomic(pid_file, (str(os.getpid()) + "\n").encode())
                             print(
                                 json.dumps({"ready": True, "socket": str(server.path)}), flush=True
                             )
                             event("serve", "ready", dashboard=dashboard is not None)
+                            if args.consolidate_every:
+                                consolidation_loop = start_consolidation(args, server.path)
+                                store.consolidation = consolidation_loop
                             if store.embedder is not None:
                                 embeddings = EmbeddingLoop(
                                     store,
@@ -1436,12 +2513,17 @@ def main() -> int:
                     except KeyboardInterrupt:
                         pass
                     finally:
+                        pid_file.unlink(missing_ok=True)
+                        if consolidation_loop is not None:
+                            consolidation_loop.stop()
                         if embeddings is not None:
                             embeddings.stop()
                         if dashboard:
                             dashboard.stop()
+                        if health_server:
+                            health_server.stop()
                 elif args.command == "backup":
-                    print(json.dumps(store.backup(args.backup)))
+                    print(json.dumps(store.backup(args.backup, previous=args.incremental_from)))
                 elif args.command == "gc":
                     print(
                         json.dumps(
@@ -1465,14 +2547,11 @@ def main() -> int:
                     )
         return 0
     except (LocalError, ContractError) as exc:
-        print(
-            json.dumps(
-                {"error": code, "hint": hint(code)}
-                if (code := exc.code if isinstance(exc, LocalError) else "invalid_request")
-                else {}
-            ),
-            file=sys.stderr,
-        )
+        code = exc.code if isinstance(exc, LocalError) else "invalid_request"
+        extra = dict(exc.detail) if isinstance(exc, LocalError) else {}
+        if code == "transport_unavailable" and "start" not in extra:
+            extra["start"] = daemon.start_hint(args.profile)
+        print(json.dumps({"error": code, "hint": hint(code), **extra}), file=sys.stderr)
         return 2
     except (OSError, ValueError):
         code = "local_io_or_configuration_error"

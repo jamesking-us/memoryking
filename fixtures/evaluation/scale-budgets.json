@@ -1,0 +1,29 @@
+{
+  "measured": "Linux x86_64, 4 CPUs, Python 3.12.3, SQLite profile, ranking lexical-v2 at commit 165280c, while two other benchmarks ran on the same host. Measured at 20,000 observations: capture p95 26 ms, drain 0.087 ms per job, briefing p50/p95 129/176 ms (3 terms) and 196/252 ms (20 terms), status p95 16 ms, reindex 16 s, backup 63 s, restore 79 s. At 100,000: capture p95 59 ms, drain 0.135 ms, briefing 270/628 ms and 657/815 ms, status p95 39 ms, reindex 203 s, backup 251 s, restore 506 s. Budgets are about two to two and a half times the measurement: they catch a step change, not a few percent. Single requests are separately held under the five-second request deadline.",
+  "sizes": {
+    "20000": {
+      "capture_ms_p95": 60,
+      "drain_ms_per_job": 0.5,
+      "brief_3_terms_ms_p50": 300,
+      "brief_3_terms_ms_p95": 450,
+      "brief_20_terms_ms_p50": 450,
+      "brief_20_terms_ms_p95": 600,
+      "status_ms_p95": 50,
+      "reindex_total_seconds": 40,
+      "backup_seconds": 150,
+      "restore_seconds": 180
+    },
+    "100000": {
+      "capture_ms_p95": 130,
+      "drain_ms_per_job": 0.5,
+      "brief_3_terms_ms_p50": 600,
+      "brief_3_terms_ms_p95": 1400,
+      "brief_20_terms_ms_p50": 1400,
+      "brief_20_terms_ms_p95": 1800,
+      "status_ms_p95": 100,
+      "reindex_total_seconds": 450,
+      "backup_seconds": 560,
+      "restore_seconds": 1100
+    }
+  }
+}

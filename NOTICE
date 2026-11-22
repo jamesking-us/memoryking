@@ -10,3 +10,9 @@ project, Copyright (c) 2022 OpenAI, Shantanu Jain, under the MIT License; its no
 is kept at src/memoryking/adapters/tokenizers/LICENSE. The optional local embedding
 model is not included; its manifest records the model's own Apache-2.0 licence and
 it is downloaded only on request.
+
+The test fixture fixtures/evaluation/longmemeval-regression-sample.json contains 72
+questions and their evidence sessions from the LongMemEval dataset (Wu et al., the
+"longmemeval-cleaned" release), Copyright (c) 2024 Di Wu, under the MIT License; its
+notice is kept at fixtures/evaluation/LONGMEMEVAL-LICENSE. The fixture is not part of
+the installed package.

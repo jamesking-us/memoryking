@@ -14,6 +14,7 @@ from memoryking.adapters.retrieval import Retrieval
 from memoryking.application import lexical_index
 from memoryking.domain.briefing import CONFIGURATION, LEGACY_CONFIGURATION
 from memoryking.domain.lexicon import index_terms
+from memoryking.domain.local import LocalError
 
 
 class LexicalCases:
@@ -292,6 +293,119 @@ class LexicalCases:
         self.assertIn(mid, self.refs(self.brief("retry")))
         self.assertNotIn(keys[0], self.refs(self.brief("retry")))
 
+    def job_rows(self):
+        return {
+            r[0]: tuple(r[1:])
+            for r in self.store.db.execute(
+                "SELECT id,generation,fence,state FROM jobs WHERE tenant=?", (self.tenant_id(),)
+            ).fetchall()
+        }
+
+    def projection_generation(self):
+        return self.store.db.execute(
+            "SELECT generation FROM projections WHERE tenant=?", (self.tenant_id(),)
+        ).fetchone()[0]
+
+    def test_the_reindex_call_does_no_work_proportional_to_the_corpus(self):
+        from memoryking.application import store_core
+
+        keys = [self.capture(f"d{n}", f"Note {n} about retries and charges.") for n in range(9)]
+        while self.store.drain():
+            pass
+        before, generation = self.job_rows(), self.projection_generation()
+        items = self.store.db.execute("SELECT count(*) FROM projection_items").fetchone()[0]
+        self.assertEqual(len(keys) + 1, items)  # and the fixture's own observation
+        original = (store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS)
+        store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS = 0, 2
+        try:
+            result = self.store.reindex(self.owner)
+            # The call moved the generation on and started the rebuild; it touched no job row,
+            # deleted no projection item and counted nothing over the corpus.
+            self.assertEqual("rebuilding", result["state"])
+            self.assertNotIn("remaining_observations", result)
+            self.assertEqual(generation + 1, self.projection_generation())
+            self.assertEqual(before, self.job_rows())
+            self.assertEqual(
+                items, self.store.db.execute("SELECT count(*) FROM projection_items").fetchone()[0]
+            )
+            # Each batch resets the jobs of the positions it covers, no more.
+            partial = False
+            percent = []
+            steps = 0
+            while not self.store.rebuild_lexical(wall_ms=0):
+                steps += 1
+                self.assertLess(steps, 60)
+                lexical = self.store.status(self.owner, "q")["lexical"]
+                percent.append(lexical.get("percent_complete"))
+                generations = {row[0] for row in self.job_rows().values()}
+                partial = partial or len(generations) == 2
+                if steps == 2:
+                    mid = self.capture("mid", "A late note about retries.")
+        finally:
+            store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS = original
+        self.assertTrue(partial, "jobs were reset in batches, not all at once")
+        self.assertTrue(all(0 <= p <= 99 for p in percent if p is not None))
+        current = self.projection_generation()
+        rows = self.job_rows()
+        self.assertEqual({current}, {row[0] for row in rows.values()})
+        self.assertTrue(all(rows[k][1] > before[k][1] for k in before), "stale leases are fenced")
+        self.assertEqual("current", self.store.status(self.owner, "q")["lexical"]["state"])
+        self.assertEqual(self.recomputed(), self.statistics())
+        # The reset jobs rebuild every projection item and the frontier reaches the head.
+        while self.store.drain():
+            pass
+        status = self.store.status(self.owner, "q")
+        self.assertEqual(status["position"], status["projection"]["frontier"])
+        self.assertEqual(
+            len(keys) + 2,
+            self.store.db.execute("SELECT count(*) FROM projection_items").fetchone()[0],
+        )
+        self.assertIn(mid, self.refs(self.brief("late retries")))
+
+    def test_a_store_above_the_inline_limit_is_not_touched_by_the_call_at_all(self):
+        from memoryking.application import store_core
+
+        for n in range(9):
+            self.capture(f"d{n}", f"Note {n} about retries.")
+        original = store_core.REINDEX_INLINE_LIMIT
+        store_core.REINDEX_INLINE_LIMIT = 3
+        try:
+            result = self.store.reindex(self.owner)
+        finally:
+            store_core.REINDEX_INLINE_LIMIT = original
+        self.assertEqual("rebuilding", result["state"])
+        cursor = self.store.db.execute(
+            "SELECT cursor FROM lexical_state WHERE tenant=?", (self.tenant_id(),)
+        ).fetchone()[0]
+        self.assertEqual(-1, cursor, "not even the first step ran inside the call")
+        # A store at or under the limit finishes inside the call.
+        self.assertEqual("current", self.store.reindex(self.owner)["state"])
+
+    def test_status_reports_percent_complete_and_an_estimate_while_rebuilding(self):
+        for n in range(6):
+            self.capture(f"d{n}", f"Note {n} about retries and charges.")
+        self.make_legacy()
+        lexical = self.store.status(self.owner, "q")["lexical"]
+        self.assertEqual("legacy", lexical["state"])
+        total = lexical["total_observations"]
+        self.assertEqual(7, total)  # six here and the fixture's own
+        self.assertEqual(0, lexical["percent_complete"])
+        self.assertGreaterEqual(lexical["estimated_seconds"], 1)
+        tenant = self.tenant_id()
+        original = lexical_index.BATCH_DOCUMENTS
+        lexical_index.BATCH_DOCUMENTS = 2
+        try:
+            with self.store.transaction():
+                lexical_index.begin(self.store.db, tenant)
+            self.store.rebuild_lexical(wall_ms=0)  # clears the old statistics
+            self.store.rebuild_lexical(wall_ms=0)  # first two observations
+            lexical = self.store.status(self.owner, "q")["lexical"]
+        finally:
+            lexical_index.BATCH_DOCUMENTS = original
+        self.assertEqual("rebuilding", lexical["state"])
+        self.assertEqual(total - 2, lexical["remaining_observations"])
+        self.assertEqual(2 * 100 // total, lexical["percent_complete"])
+
     def test_a_new_store_starts_current(self):
         self.assertEqual("current", self.store.status(self.owner, "q")["lexical"]["state"])
 
@@ -347,8 +461,8 @@ class LocalMigrationTests(unittest.TestCase):
         self.store.db.execute("PRAGMA user_version=15")
         self.store.close()
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(16, SCHEMA_VERSION)
-        self.assertEqual(16, self.store.db.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(21, SCHEMA_VERSION)
+        self.assertEqual(21, self.store.db.execute("PRAGMA user_version").fetchone()[0])
         status = self.store.status(self.owner, "q")["lexical"]
         self.assertEqual("legacy", status["state"])
         self.assertEqual("lexical-v1", status["configuration"])
@@ -358,7 +472,7 @@ class LocalMigrationTests(unittest.TestCase):
         import sqlite3
 
         with sqlite3.connect(f"file:{self.data / 'store.sqlite'}?mode=ro", uri=True) as db:
-            found = lexical_findings(db, 16)
+            found = lexical_findings(db, 19)
         self.assertEqual([(tenant, "legacy", 3)], found)
         self.store = LocalStore(self.data, self.control)
         self.store.reindex(self.owner)
@@ -366,7 +480,90 @@ class LocalMigrationTests(unittest.TestCase):
 
 
 class PostgresLexicalTests(LexicalCases, pg.NativeFixture):
-    pass
+    def test_the_shared_command_starts_the_rebuild_and_with_wait_shows_progress_to_the_end(self):
+        import contextlib
+        import io
+
+        from memoryking import shared
+        from memoryking.application import store_core
+
+        for n in range(5):
+            self.capture(f"s{n}", f"Shared note {n} about retries.")
+        self.make_legacy()
+        dsn = self.root / "runtime.dsn"
+        dsn.write_text(self.cluster.dsn("mk_runtime"))
+        dsn.chmod(0o600)
+        credential = self.root / "owner.credential"
+        credential.write_text(self.owner)
+        credential.chmod(0o600)
+        argv = [
+            "reindex",
+            "--dsn-file",
+            str(dsn),
+            "--content",
+            str(self.data),
+            "--control",
+            str(self.control),
+            "--tenant",
+            self.tenant,
+            "--credential",
+            str(credential),
+        ]
+        original = (store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS)
+        store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS = 0, 1
+        try:
+            started = shared.run(shared.parser().parse_args(argv))
+            self.assertEqual("started", started["status"])
+            self.assertEqual("rebuilding", started["lexical"]["state"])
+            self.assertEqual("rebuilding", self.store.status(self.owner, "q")["lexical"]["state"])
+            progress = io.StringIO()
+            with contextlib.redirect_stderr(progress):
+                done = shared.run(shared.parser().parse_args([*argv, "--wait"]))
+        finally:
+            store_core.REINDEX_CALL_MS, lexical_index.BATCH_DOCUMENTS = original
+        self.assertEqual("complete", done["status"])
+        self.assertEqual("current", done["lexical"]["state"])
+        self.assertIn("lexical index current", progress.getvalue())
+        self.assertEqual(
+            "lexical index rebuilding: 40% (2 of 5 observations), about 3 s left",
+            shared.progress_line(
+                {
+                    "state": "rebuilding",
+                    "total_observations": 5,
+                    "remaining_observations": 3,
+                    "percent_complete": 40,
+                    "estimated_seconds": 3,
+                }
+            ),
+        )
+        self.assertEqual("current", self.store.status(self.owner, "q")["lexical"]["state"])
+        self.assertEqual(self.recomputed(), self.statistics())
+
+    def test_the_shared_command_needs_an_admin_credential(self):
+        from memoryking import shared
+
+        agent = self.store.grant(self.owner, "agent", "q", ["read"])
+        dsn = self.root / "runtime.dsn"
+        dsn.write_text(self.cluster.dsn("mk_runtime"))
+        dsn.chmod(0o600)
+        credential = self.root / "agent.credential"
+        credential.write_text(agent)
+        credential.chmod(0o600)
+        argv = [
+            "reindex",
+            "--dsn-file",
+            str(dsn),
+            "--content",
+            str(self.data),
+            "--control",
+            str(self.control),
+            "--tenant",
+            self.tenant,
+            "--credential",
+            str(credential),
+        ]
+        with self.assertRaises(LocalError):
+            shared.run(shared.parser().parse_args(argv))
 
 
 if __name__ == "__main__":

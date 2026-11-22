@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Self
 
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.local_files import (
     Control,
     Ownership,
@@ -47,6 +48,7 @@ from memoryking.application.store_core import (  # noqa: F401
     USAGE_LIMIT,
     StoreCore,
     identifier,
+    lease_holder,
     uid,
 )
 from memoryking.contracts.canonical import canonical_bytes
@@ -131,7 +133,7 @@ __all__ = [
 ]
 
 
-SCHEMA_VERSION = 16  # the SQLite user_version the daemon migrates every store to
+SCHEMA_VERSION = 21  # the SQLite user_version the daemon migrates every store to
 
 
 class LocalStore(StoreCore):
@@ -142,11 +144,13 @@ class LocalStore(StoreCore):
         *,
         clock: Clock | None = None,
         fault: Callable[[str], None] | None = None,
+        instance_id: str | None = None,
     ):
         paths(root, control)
         private_dir(root)
         private_dir(control)
         self.root, self.control_path = root, control
+        self.lease = lease_holder(control, instance_id)
         self.owner = Ownership(root)
         try:
             self.control_owner = Ownership(control)
@@ -156,15 +160,19 @@ class LocalStore(StoreCore):
         self.clock = clock or SystemClock()
         self.fault = fault or (lambda _: None)
         self.lock = threading.RLock()
+        self._anchor_at = self.clock.monotonic_ms()  # when the anchor was last written
         self.dialect = SQLiteDialect()
         # Per-thread transaction timings, collected only while a traced request runs.
         self.timings = threading.local()
         self.healthy = True
         self.retrieval_cache: dict[str, Any] = {}
         self._last_housekeeping = 0
+        self._layout_done = False
         self.counters = Metrics()
         # A loaded local embedding model lets briefings embed their own queries.
         self.embedder: Any | None = None
+        self.rerank_window: int | None = None  # candidates a cross-encoder reorders; None is 16
+        self.fusion: dict[str, Any] | None = None  # None is the default combination
         self.reranker: Any | None = None
         # A scheduled backup policy the daemon checks between requests.
         self.backup_policy: Any | None = None
@@ -195,7 +203,10 @@ class LocalStore(StoreCore):
                     raise LocalError("recovery_required")
             self._replay_journal()
             self.last_utc = self.anchor.get("last_utc", 0)
-            self.gc()
+            # A purge that committed but did not finish deleting its file (a crash) is the
+            # only reason to sweep the blob directory at start; a normal start never does.
+            if self._gc_pending():
+                self.gc()
         except Exception:
             if hasattr(self, "db"):
                 self.db.close()
@@ -237,6 +248,20 @@ class LocalStore(StoreCore):
             self.db.executescript(Path(__file__).with_name("credential_schema.sql").read_text())
         if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}:
             self.db.executescript(Path(__file__).with_name("lexical_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}:
+            self.db.executescript(Path(__file__).with_name("corrections_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}:
+            if "on_behalf_of" not in {
+                row[1] for row in self.db.execute("PRAGMA table_info(events)").fetchall()
+            }:
+                self.db.execute("ALTER TABLE events ADD COLUMN on_behalf_of TEXT")
+            self.db.executescript(Path(__file__).with_name("operations_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}:
+            self.db.executescript(Path(__file__).with_name("retention_schema.sql").read_text())
+        if version in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}:
+            self.db.executescript(Path(__file__).with_name("consolidation_schema.sql").read_text())
+        if version in set(range(1, 21)):
+            self.db.executescript(Path(__file__).with_name("vectors_schema.sql").read_text())
         elif version != SCHEMA_VERSION:
             raise LocalError("schema_unsupported")
         meta = dict(self.db.execute("SELECT key,value FROM meta"))
@@ -306,6 +331,8 @@ class LocalStore(StoreCore):
                 "frontiers": {},
                 "journal_sequence": 0,
                 "journal_head": "0" * 64,
+                "operations_sequence": 0,
+                "operations_head": "0" * 64,
                 "last_utc": 0,
                 "commit_serial": 0,
             }
@@ -347,11 +374,22 @@ class LocalStore(StoreCore):
                     applied = int(
                         db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
                     )
+                    row = db.execute("SELECT value FROM meta WHERE key='operations'").fetchone()
+                    applied_operations = int(row[0]) if row is not None else 0
                 if applied > held:
                     raise LocalError("journal_rollback")
-                return controller.describe_pending(
+                result = controller.describe_pending(
                     controller.records_after(anchor, applied), applied, held
                 )
+                held_operations = controller.operations.verified_count(anchor)
+                if applied_operations > held_operations:
+                    raise LocalError("journal_rollback")
+                result["operations"] = controller.describe_pending(
+                    controller.operations.records_after(anchor, applied_operations),
+                    applied_operations,
+                    held_operations,
+                )
+                return result
             finally:
                 control_owner.close()
         finally:
@@ -365,6 +403,7 @@ class LocalStore(StoreCore):
         *,
         clock: Clock | None = None,
         fault: Callable[[str], None] | None = None,
+        instance_id: str | None = None,
     ) -> Path:
         """Offline: replace the owner credential with one of the next generation.
 
@@ -378,7 +417,7 @@ class LocalStore(StoreCore):
         the commit; the new one is on disk from before it.
         """
         target, pending = control / "owner.credential", control / "owner.credential.next"
-        with cls(root, control, clock=clock, fault=fault) as store:
+        with cls(root, control, clock=clock, fault=fault, instance_id=instance_id) as store:
             at = store.clock.utc_ms()
             tenant = principal = None
             try:
@@ -443,6 +482,10 @@ class LocalStore(StoreCore):
         return target
 
     def close(self) -> None:
+        try:
+            self.flush_anchor(force=True)
+        except Exception:
+            pass  # the store reopens against the last anchor, which never leads the database
         self.db.close()
         self.control_owner.close()
         self.owner.close()
@@ -477,21 +520,26 @@ class LocalStore(StoreCore):
         self.db.execute("BEGIN IMMEDIATE")
         try:
             decision = self._now()
+            before = self.db.total_changes
+            self._hold_lease(decision.evaluated_ms)
             yield decision
             self.fault("before_commit")
             decision.check(self.clock)
-            if (
-                int(
-                    self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[
-                        0
-                    ]
+            # A transaction that changed no row has nothing to order: the serial counts commits
+            # that changed the database, so a status read or a refused request costs no fsync.
+            if self.db.total_changes != before:
+                if (
+                    int(
+                        self.db.execute(
+                            "SELECT value FROM meta WHERE key='commit_serial'"
+                        ).fetchone()[0]
+                    )
+                    >= MAX_COUNTER
+                ):
+                    raise LocalError("counter_exhausted")
+                self.db.execute(
+                    "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
                 )
-                >= MAX_COUNTER
-            ):
-                raise LocalError("counter_exhausted")
-            self.db.execute(
-                "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='commit_serial'"
-            )
             self.db.commit()
             self.fault("after_commit")
             decision.check(self.clock)
@@ -501,11 +549,16 @@ class LocalStore(StoreCore):
                 applied = int(
                     self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0]
                 )
-                if self.anchor["journal_sequence"] > applied:
+                operations = self._meta_int("operations")
+                if (
+                    self.anchor["journal_sequence"] > applied
+                    or self.anchor.get("operations_sequence", 0) > operations
+                ):
                     self.healthy = False
                     if (
                         isinstance(exc, LocalError)
                         and exc.code == "release_expired"
+                        and self.anchor.get("operations_sequence", 0) <= operations
                         and all(
                             record["action"]["kind"] != "operation"
                             for record in self.control.records_after(self.anchor, applied)
@@ -530,20 +583,86 @@ class LocalStore(StoreCore):
             self._expose_locked()
 
     def _expose_locked(self) -> None:
+        """Make the anchor cover everything this process has committed before it acknowledges.
+
+        The anchor refuses a database or journal rolled back behind an acknowledged write, so
+        every transaction that committed a row (a capture, a policy change, and a receipt too)
+        is anchored before its bytes are released, exactly as before. A request that committed
+        nothing needs no anchor and costs no fsync, and writers whose commits precede one
+        anchor write share it: that write is made under this lock, so it has finished before
+        the next writer looks, and each acknowledges only after the anchor covering its commit
+        is durable.
+
+        `anchor_interval_ms` above zero is the operator's opt-in to less: the commit serial and
+        the clock's high-water mark of a transaction that moved no position are then written at
+        most that late (on `close` and from the daemon's maintenance pass too). The cost is
+        stated in docs/deployment.md."""
         if not self.healthy:
             raise LocalError("recovery_required")
         try:
-            self.fault("before_anchor")
-            self.anchor["frontiers"] = dict(self.db.execute("SELECT tenant,position FROM tenants"))
-            self.anchor["last_utc"] = self.last_utc
-            self.anchor["commit_serial"] = int(
-                self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[0]
-            )
-            self.control.anchor(self.anchor)
-            self.fault("after_anchor")
+            frontiers, serial = self._anchor_state()
+            now = self.clock.monotonic_ms()
+            covered = frontiers == self.anchor["frontiers"]
+            committed = serial != self.anchor["commit_serial"]
+            interval = self.anchor_interval_ms
+            if interval:
+                dirty = committed or self.last_utc != self.anchor["last_utc"]
+                due = dirty and (
+                    now - self._anchor_at >= interval
+                    or self.last_utc - self.anchor["last_utc"] >= interval
+                )
+            else:
+                due = committed
+            if covered and not due:
+                return
+            self._write_anchor(frontiers, serial, now)
         except BaseException:
             self.healthy = False
             raise
+
+    def _anchor_state(self) -> tuple[dict[str, int], int]:
+        frontiers = dict(self.db.execute("SELECT tenant,position FROM tenants"))
+        serial = int(
+            self.db.execute("SELECT value FROM meta WHERE key='commit_serial'").fetchone()[0]
+        )
+        return frontiers, serial
+
+    def _write_anchor(self, frontiers: dict[str, int], serial: int, now: int) -> None:
+        self.fault("before_anchor")
+        anchor = {
+            **self.anchor,
+            "frontiers": frontiers,
+            "last_utc": self.last_utc,
+            "commit_serial": serial,
+        }
+        self.control.anchor(anchor)
+        self.anchor, self._anchor_at = anchor, now
+        self.fault("after_anchor")
+
+    def flush_anchor(self, *, force: bool = False) -> None:
+        """Write what `_expose` left for later, when it is due (or at once with `force`)."""
+        with self.lock:
+            if not self.healthy:
+                return
+            if not force:
+                self._expose_locked()
+                return
+            try:
+                # Only ever the history this store opened: a control tree that was restored or
+                # replaced underneath it is left exactly as the operation made it.
+                disk = self.control.read_anchor()
+                if disk["state"] != "active" or disk["incarnation"] != self.incarnation:
+                    return
+                frontiers, serial = self._anchor_state()
+                if (
+                    frontiers != self.anchor["frontiers"]
+                    or serial != self.anchor["commit_serial"]
+                    or self.last_utc != self.anchor["last_utc"]
+                ):
+                    self._write_anchor(frontiers, serial, self.clock.monotonic_ms())
+            except BaseException:
+                self.healthy = False
+                raise
 
     def _replay_journal(self) -> None:
         applied = int(self.db.execute("SELECT value FROM meta WHERE key='journal'").fetchone()[0])
@@ -573,6 +692,7 @@ class LocalStore(StoreCore):
                 ).hexdigest()
                 self.control.anchor(self.anchor)
             self.control.clear_apply_failure(record["sequence"])
+        self._replay_operations()
         if self.anchor["journal_sequence"] < held:
             # An append that crashed before its anchor write: the records verified, so the
             # anchor is moved over them now, as a replay always did.
@@ -580,7 +700,119 @@ class LocalStore(StoreCore):
             self.anchor["journal_head"] = self.control.head(held)
             self.control.anchor(self.anchor)
 
+    def readiness(self) -> dict[str, bool]:
+        """The checks behind `/readyz`: the database answers, the control tree is readable and
+        the active anchor belongs to this store, and the schema version is the one served."""
+        checks = {"database": False, "control": False, "schema": False}
+        if self.lock.acquire(timeout=1):
+            try:
+                self.db.execute("SELECT 1").fetchone()
+                checks["database"] = self.healthy
+                checks["schema"] = (
+                    self.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+                )
+            except Exception:
+                pass
+            finally:
+                self.lock.release()
+        try:
+            anchor = self.control.read_anchor()
+            checks["control"] = anchor["state"] == "active" and anchor["store"] == self.store_id
+        except Exception:
+            pass
+        return checks
+
+    def extra_gauges(self) -> list[Any]:
+        """Gauges the metrics endpoint adds to the status figures: journal size, backup age,
+        readiness and the daemon's concurrency limits."""
+        from memoryking.health import CHECKS
+
+        try:
+            journal = (self.control_path / "journal").stat().st_size
+        except OSError:
+            journal = 0
+        try:
+            age = max(
+                0.0, time.time() - int((self.control_path / "last-backup").read_text()) / 1000
+            )
+        except (OSError, ValueError):
+            age = -1.0
+        ready = self.readiness()
+        gauges: list[Any] = [
+            ("memoryking_journal_bytes", "Size of the control journal.", [({}, journal)]),
+            (
+                "memoryking_backup_age_seconds",
+                "Seconds since the last completed backup; -1 when there is none.",
+                [({}, age)],
+            ),
+            (
+                "memoryking_ready",
+                "1 when a readiness check passes.",
+                [({"check": name}, float(ready.get(name, False))) for name in CHECKS],
+            ),
+        ]
+        if self.concurrency_gauge is not None:
+            gauges.append(
+                (
+                    "memoryking_concurrency",
+                    "Configured limit and current use of each bounded concurrency resource.",
+                    [
+                        ({"resource": name, "kind": kind}, value)
+                        for name, (limit, used) in sorted(self.concurrency_gauge().items())
+                        for kind, value in (("limit", limit), ("in_use", used))
+                    ],
+                )
+            )
+        return gauges
+
+    def _gc_pending(self) -> bool:
+        row = self.db.execute("SELECT value FROM meta WHERE key='gc_pending'").fetchone()
+        return row is not None and row[0] == "1"
+
+    def _mark_gc_pending(self) -> None:
+        if not isinstance(self.db, sqlite3.Connection):
+            return  # the shared restore replays through this class on PostgreSQL
+        self.db.execute(
+            "INSERT INTO meta(key,value) VALUES ('gc_pending','1')"
+            " ON CONFLICT(key) DO UPDATE SET value='1'"
+        )
+
+    def _gc_settled(self) -> None:
+        if not isinstance(self.db, sqlite3.Connection):
+            return
+        with self.lock:
+            if self.healthy and not self.db.in_transaction:
+                self.db.execute("UPDATE meta SET value='0' WHERE key='gc_pending'")
+
+    def _replay_operations(self) -> None:
+        """Apply operations-log records the database has not applied, as the journal's are."""
+        log = self.control.operations
+        applied = self._meta_int("operations")
+        held = log.verified_count(self.anchor)
+        if applied > held:
+            raise LocalError("journal_rollback")
+        for record in log.records_after(self.anchor, applied):
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self._apply(record, self.clock.utc_ms())
+                self.db.commit()
+            except BaseException as exc:
+                self.db.rollback()
+                self.control.note_apply_failure(record, exc)
+                raise
+            if self.anchor.get("operations_sequence", 0) < record["sequence"]:
+                self.anchor["operations_sequence"] = record["sequence"]
+                self.anchor["operations_head"] = log.head(record["sequence"])
+                self.control.anchor(self.anchor)
+        if self.anchor.get("operations_sequence", 0) < held:
+            # An append that crashed before its anchor write: the records verified.
+            self.anchor["operations_sequence"] = held
+            self.anchor["operations_head"] = log.head(held)
+            self.control.anchor(self.anchor)
+
     def gc(self) -> int:
+        """The explicit full sweep: delete every blob file no observation names (in either
+        layout). Purge deletes its own file directly; this finds what a crash left behind."""
         with self.lock:
             live = {
                 (row[0], row[1])
@@ -591,16 +823,43 @@ class LocalStore(StoreCore):
             removed = 0
             for directory in (self.root / "blobs").iterdir():
                 private_dir(directory)
-                for path in directory.iterdir():
+                touched = {directory}
+                for name, path in blobfiles.iterate(directory):
                     private_file(path)
-                    if (directory.name, path.name) not in live:
+                    if (directory.name, name) not in live:
                         path.unlink()
+                        touched.add(path.parent)
                         removed += 1
-                sync_dir(directory)
+                blobfiles.sync_directories(touched)
+            if not self.db.in_transaction:
+                self.db.execute("UPDATE meta SET value='0' WHERE key='gc_pending'")
             return removed
 
-    def backup(self, destination: Path) -> dict[str, Any]:
-        """Offline administrative method; intentionally absent from the agent socket."""
+    def _previous_backup(self, previous: Path | None) -> tuple[Path, set[str]] | None:
+        """The blobs a verified earlier backup holds, or None when it cannot be trusted.
+
+        The earlier backup must carry a manifest signed by this store and a blob index that
+        matches the hash the manifest commits to; anything else means a full copy."""
+        if previous is None:
+            return None
+        try:
+            manifest = self.control.verify_document(previous / "manifest")
+            if manifest.get("store") != self.store_id or "blob_index" not in manifest:
+                return None
+            entries = read_blob_index(previous, manifest["blob_index"])
+            return previous, {e for e in entries if blobfiles.valid_relative(e)}
+        except (OSError, LocalError):
+            return None
+
+    def backup(self, destination: Path, previous: Path | None = None) -> dict[str, Any]:
+        """Offline administrative method; intentionally absent from the agent socket.
+
+        The store lock is held only to snapshot the database (SQLite's online backup) and to
+        list the live blobs. Blob files are immutable and named by their hash, so they are
+        copied afterwards without the lock, each hashed while streamed and fsynced once.
+        With `previous` (an earlier backup of this store), a blob that backup holds is
+        hard-linked after its copy hashes correctly, and only new blobs are copied; every
+        backup stays complete and restorable on its own."""
         with self.lock:
             self.owner.check()
             if (
@@ -619,34 +878,90 @@ class LocalStore(StoreCore):
                 self.db.backup(target)
             finally:
                 target.close()
-            with (destination / "store.sqlite").open("rb") as stream:
-                durable_sync(stream.fileno())
-            private_dir(destination / "blobs", create=True)
-            blobs: list[str] = []
-            for tenant, digest in self.db.execute(
-                "SELECT DISTINCT tenant,blob FROM observations WHERE blob IS NOT NULL"
+            live = [
+                (row[0], row[1])
+                for row in self.db.execute(
+                    "SELECT DISTINCT tenant,blob FROM observations WHERE blob IS NOT NULL"
+                )
+            ]
+            frontiers = dict(self.db.execute("SELECT tenant,position FROM tenants"))
+            store_id, incarnation = self.store_id, self.incarnation
+            operations_sequence = self._meta_int("operations")
+        # The lock is released: requests run while the files are copied.
+        with (destination / "store.sqlite").open("rb") as stream:
+            durable_sync(stream.fileno())
+        database_sha256 = blobfiles.sha256_file(destination / "store.sqlite")
+        earlier = self._previous_backup(previous)
+        private_dir(destination / "blobs", create=True)
+        entries: list[str] = []
+        linked = copied = total = 0
+        touched: set[Path] = {destination / "blobs"}
+        for tenant, digest in live:
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                raise LocalError("blob_corrupt")
+            relative = blobfiles.relative(tenant, digest)
+            output = destination / relative
+            if output.parent not in touched:
+                private_dir(output.parent.parent, create=True)
+                private_dir(output.parent, create=True)
+                touched.update({output.parent, output.parent.parent})
+            source = blobfiles.blob_path(self.root, tenant, digest)
+            try:
+                how, size = self._place_blob(earlier, tenant, digest, source, output)
+            except FileNotFoundError:
+                # A purge deleted the file after the snapshot. The snapshot still lists it, and
+                # a restore replays the purge from the control journal, so it is left out;
+                # a file that is missing while an observation still names it is corruption.
+                with self.lock:
+                    named = self.db.execute(
+                        "SELECT 1 FROM observations WHERE tenant=? AND blob=? LIMIT 1",
+                        (tenant, digest),
+                    ).fetchone()
+                if named is not None:
+                    raise LocalError("blob_corrupt") from None
+                continue
+            linked += how == "linked"
+            copied += how == "copied"
+            total += size
+            entries.append(relative)
+        blobfiles.sync_directories(touched)
+        manifest = {
+            "schema": 14,
+            "store": store_id,
+            "incarnation": incarnation,
+            # How far the operations log was applied when this backup was taken; compaction
+            # never drops records above the oldest retained backup's position.
+            "operations_sequence": operations_sequence,
+            "frontiers": frontiers,
+            "database_sha256": database_sha256,
+            "blob_index": write_blob_index(destination, entries),
+            "blobs_linked": linked,
+            "blobs_copied": copied,
+            "archive_bytes": total,
+        }
+        atomic(destination / "manifest", self.control.sign(manifest).encode())
+        sync_dir(destination)
+        sync_dir(destination.parent)
+        atomic(self.control_path / "last-backup", str(self.clock.utc_ms()).encode())
+        return manifest
+
+    def _place_blob(
+        self,
+        earlier: tuple[Path, set[str]] | None,
+        tenant: str,
+        digest: str,
+        source: Path,
+        output: Path,
+    ) -> tuple[str, int]:
+        if earlier is not None:
+            root, held = earlier
+            for relative in (
+                blobfiles.relative(tenant, digest),
+                f"blobs/{tenant}/{digest}",
             ):
-                relative = f"blobs/{tenant}/{digest}"
-                private_dir((destination / relative).parent, create=True)
-                raw = (self.root / relative).read_bytes()
-                if hashlib.sha256(raw).hexdigest() != digest:
-                    raise LocalError("blob_corrupt")
-                atomic(destination / relative, raw)
-                blobs.append(relative)
-            manifest = {
-                "schema": 11,
-                "store": self.store_id,
-                "incarnation": self.incarnation,
-                "frontiers": dict(self.db.execute("SELECT tenant,position FROM tenants")),
-                "database_sha256": hashlib.sha256(
-                    (destination / "store.sqlite").read_bytes()
-                ).hexdigest(),
-                "blob_index": write_blob_index(destination, blobs),
-            }
-            atomic(destination / "manifest", self.control.sign(manifest).encode())
-            sync_dir(destination)
-            sync_dir(destination.parent)
-            return manifest
+                if relative in held:
+                    return blobfiles.link_or_copy(root / relative, source, output, digest)
+        return "copied", blobfiles.copy_verified(source, output, digest)
 
     @classmethod
     def restore(
@@ -687,6 +1002,9 @@ class LocalStore(StoreCore):
                     "journal_head": "0" * 64,
                 }
                 records = controller.journal(anchor)
+                # The operations log has no separate checkpoint: its own verified chain stands.
+                state = controller.operations.sync(anchor, trust_anchor=True)
+                anchor.update(operations_sequence=state.count, operations_head=state.head)
                 head = (
                     hashlib.sha256(controller.sign(records[-1]).encode()).hexdigest()
                     if records
@@ -698,14 +1016,17 @@ class LocalStore(StoreCore):
             else:
                 anchor = controller.read_anchor()
             controller.journal(anchor)
+            controller.operations.sync(anchor)
             manifest = controller.verify_document(backup / "manifest")
             if (
-                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+                manifest.get("schema") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
                 or manifest.get("store") != controller.store
             ):
                 raise LocalError("backup_invalid")
-            data = (backup / "store.sqlite").read_bytes()
-            if hashlib.sha256(data).hexdigest() != manifest["database_sha256"]:
+            # A backup older than what compaction kept cannot find its operation intents.
+            if manifest.get("operations_sequence", 0) < controller.operations.compacted_through():
+                raise LocalError("backup_invalid")
+            if blobfiles.sha256_file(backup / "store.sqlite") != manifest["database_sha256"]:
                 raise LocalError("backup_invalid")
             # Backups before schema 9 embed the list; later ones commit to a separate index.
             blobs = (
@@ -713,13 +1034,11 @@ class LocalStore(StoreCore):
                 if "blob_index" in manifest
                 else manifest["blobs"]
             )
+            # Either layout is accepted: backups before sharding recorded `blobs/<tenant>/<digest>`.
             for relative in blobs:
-                if not re.fullmatch(r"blobs/[A-Za-z0-9_-]{1,96}/[a-f0-9]{64}", relative):
+                if not blobfiles.valid_relative(relative):
                     raise LocalError("backup_invalid")
-                if (
-                    hashlib.sha256((backup / relative).read_bytes()).hexdigest()
-                    != relative.rsplit("/", 1)[1]
-                ):
+                if blobfiles.sha256_file(backup / relative) != blobfiles.digest_of(relative):
                     raise LocalError("backup_invalid")
             anchor["state"] = "restoring"
             anchor["reconciliation_required"] = True
@@ -728,10 +1047,21 @@ class LocalStore(StoreCore):
             hook("restore_fenced")
             for suffix in ("-wal", "-shm"):
                 (root / ("store.sqlite" + suffix)).unlink(missing_ok=True)
-            atomic(root / "store.sqlite", data)
+            with (backup / "store.sqlite").open("rb") as stream:
+                blobfiles.write_durable(root / "store.sqlite", stream, manifest["database_sha256"])
+            sync_dir(root)
+            touched: set[Path] = set()
             for relative in blobs:
-                private_dir((root / relative).parent, create=True)
-                atomic(root / relative, (backup / relative).read_bytes())
+                tenant_name, digest = relative.split("/")[1], blobfiles.digest_of(relative)
+                tenant_directory = root / "blobs" / tenant_name
+                private_dir(tenant_directory, create=True)
+                shard = blobfiles.shard_directory(tenant_directory, digest)
+                with (backup / relative).open("rb") as stream:
+                    blobfiles.write_durable(shard / digest, stream, digest)
+                # A flat copy of the same blob (the layout before sharding) is now redundant.
+                (tenant_directory / digest).unlink(missing_ok=True)
+                touched.update({shard, tenant_directory})
+            blobfiles.sync_directories(touched)
             # Build an unavailable instance under the already-held ownership locks.
             recovery = cls.__new__(cls)
             recovery.root, recovery.control_path = root, control
@@ -748,6 +1078,7 @@ class LocalStore(StoreCore):
                     "UPDATE meta SET value=? WHERE key='incarnation'", (recovery.incarnation,)
                 )
                 recovery.db.execute("UPDATE retries SET result=NULL")
+                recovery.db.execute("DELETE FROM instance_lease")
                 recovery.db.execute("DELETE FROM receipts")
                 recovery.db.execute(
                     "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]'"
@@ -806,6 +1137,8 @@ class LocalStore(StoreCore):
         )
         self.db.execute("DELETE FROM adapter_bases" + scope, bound)
         self.db.execute("DELETE FROM embedding_items" + scope, bound)
+        self.db.execute("DELETE FROM embedding_vectors" + scope, bound)
+        self.db.execute("DELETE FROM embedding_skips" + scope, bound)
         self.db.execute("DELETE FROM embedding_jobs" + scope, bound)
         self.db.execute(
             "UPDATE embedding_partitions SET incarnation=?,state='disabled',generation=1,scheduled=0,frontier=0"

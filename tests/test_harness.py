@@ -12,6 +12,7 @@ import test_knowledge as knowledge_helpers
 import test_retrieval as retrieval_helpers
 from test_working import checkpoint
 
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_ipc import Server
 from memoryking.contracts.canonical import canonical_bytes
@@ -296,7 +297,7 @@ class HarnessTests(unittest.TestCase):
         row = self.store.db.execute(
             "SELECT blob FROM observations WHERE id=?", (artifact["observation"],)
         ).fetchone()
-        (self.store.root / "blobs" / "main" / row["blob"]).unlink()
+        blobfiles.blob_path(self.store.root, "main", row["blob"]).unlink()
         self.assertIn("stored_artifact_unavailable", h.resume()["recovery_gaps"])
 
     def test_prepared_handoff_survives_unchanged_sender_shutdown(self):

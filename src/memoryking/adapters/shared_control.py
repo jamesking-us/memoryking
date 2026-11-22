@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from memoryking.adapters.local_files import Control, JournalCache, private_file
+from memoryking.adapters.operations_log import OperationsLog
 from memoryking.domain.local import LocalError
 
 # A store, and so a `SharedControl`, is built per request. The verified journal prefix is kept
@@ -38,6 +39,7 @@ class SharedControl(Control):
     def __init__(self, path: Path):
         super().__init__(path)
         self._cache = _journal_cache(path, self.key)
+        self.operations = OperationsLog(self, self._cache.operations)
         self.thread_lock = threading.RLock()
 
     @contextmanager
@@ -48,6 +50,7 @@ class SharedControl(Control):
             try:
                 private_file(path)
                 deadline = time.monotonic() + timeout
+                pause = 0.0005  # the lock is held for one small write: poll fast, then back off
                 while True:
                     try:
                         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -55,7 +58,8 @@ class SharedControl(Control):
                     except BlockingIOError:
                         if time.monotonic() >= deadline:
                             raise LocalError("control_busy") from None
-                        time.sleep(0.01)
+                        time.sleep(pause)
+                        pause = min(pause * 2, 0.01)
                 yield
             finally:
                 os.close(fd)

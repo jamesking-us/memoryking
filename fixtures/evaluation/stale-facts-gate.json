@@ -1,0 +1,30 @@
+{
+  "measured": "90 cases (10 per variant), top 8, ranking lexical-v2 at commit 165280c: current_returned 1.0 everywhere; current_first 0.3667 overall (capture 0.2, memory_file 1.0, claim 0.15); stale_first 0.6333 overall. Thresholds sit a few cases below the measurement and record what the code achieves, not what it should: a correction worded differently from the fact, and a replaced accepted claim, still rank below the stale statement.",
+  "minimum": {
+    "overall": {
+      "current_returned_rate": 0.95,
+      "current_first_rate": 0.33
+    },
+    "capture": {
+      "current_returned_rate": 0.95
+    },
+    "capture/plain": {
+      "current_first_rate": 0.9
+    },
+    "memory_file": {
+      "current_returned_rate": 0.95,
+      "current_first_rate": 0.9
+    },
+    "claim": {
+      "current_returned_rate": 0.95
+    }
+  },
+  "maximum": {
+    "overall": {
+      "stale_first_rate": 0.67
+    },
+    "memory_file": {
+      "stale_first_rate": 0.1
+    }
+  }
+}

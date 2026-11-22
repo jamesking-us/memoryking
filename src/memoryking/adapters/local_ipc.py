@@ -21,15 +21,27 @@ from memoryking.adapters.local_contract import OPERATIONS, VALIDATOR
 from memoryking.adapters.processing_store import Processing
 from memoryking.adapters.repository_store import Repository
 from memoryking.adapters.retrieval import Retrieval
+from memoryking.adapters.user_scope import UserScope
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
+from memoryking.contracts.problems import explain
 from memoryking.domain.hints import hint
 from memoryking.domain.local import LocalError, Released
 from memoryking.observability import failure, summarize, timings, trace, tracing
 
 WIRE_LIMIT = 262144
+# Public fields a refusal may carry beside `error` and `hint`.
+REPLY_DETAIL = ("required_capability", "path", "problem", "expected", "missing")
+
+
+def refusal(exc: LocalError) -> bytes:
+    """The wire reply for a refusal: code, hint and any public detail."""
+    return canonical_bytes(
+        {"error": exc.code, "hint": hint(exc.code)}
+        | {k: v for k, v in exc.detail.items() if k in REPLY_DETAIL}
+    )
 
 
 class StoreOperations:
@@ -87,8 +99,9 @@ class StoreOperations:
         return action if isinstance(action, str) and action.isidentifier() else "-"
 
     def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
-        if not VALIDATOR.is_valid(request):
-            raise LocalError("invalid_request")
+        found = explain(VALIDATOR, request)
+        if found is not None:
+            raise LocalError("invalid_request", detail=found)
         op, args, credential = request["operation"], request["args"], request["credential"]
         store = self.store
         if op == "experience":
@@ -128,6 +141,8 @@ class StoreOperations:
             return store.status(credential, **args)
         if op == "grants":
             return {"items": store.grants(credential)}
+        if op == "user":
+            return UserScope(store).execute(credential, args)
         if op == "claim":
             return {"job": store.claim(credential, **args)}
         if op == "finish":
@@ -139,7 +154,7 @@ class StoreOperations:
         elif op == "purge":
             store.purge(credential, **args)
         elif op == "reindex":
-            store.reindex(credential)
+            return {"ok": True, "lexical": store.reindex(credential)}
         return {"ok": True}
 
 
@@ -161,7 +176,9 @@ class Handler(socketserver.StreamRequestHandler):
                 self.request.sendall(canonical_bytes(response) + b"\n")
         except (LocalError, ContractError) as exc:
             code = exc.code if isinstance(exc, LocalError) else "invalid_request"
-            self.request.sendall(canonical_bytes({"error": code, "hint": hint(code)}) + b"\n")
+            self.request.sendall(
+                (refusal(exc) if isinstance(exc, LocalError) else refusal(LocalError(code))) + b"\n"
+            )
         except (TimeoutError, BrokenPipeError, ConnectionResetError):
             return
         except Exception as exc:
@@ -183,9 +200,21 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     max_waiting = 16
     wait_seconds = 5
 
-    def __init__(self, store: StoreCore):
+    def __init__(self, store: StoreCore, *, workers: int | None = None, waiters: int | None = None):
+        """`workers` requests run at once and up to `waiters` more wait for a worker (defaults 8
+        and 16); a connection beyond both is refused as `service_busy`."""
+        if workers is not None:
+            if not 1 <= workers <= 256:
+                raise LocalError("invalid_concurrency")
+            self.max_concurrent = workers
+        if waiters is not None:
+            if not 0 <= waiters <= 1024:
+                raise LocalError("invalid_concurrency")
+            self.max_waiting = waiters
         self.slots = threading.BoundedSemaphore(self.max_concurrent)
-        self.waiting = threading.BoundedSemaphore(self.max_waiting)
+        self.waiting = threading.BoundedSemaphore(max(1, self.max_waiting))
+        if self.max_waiting == 0:
+            self.waiting.acquire()  # no waiting room at all
         self.path = store.root / "service.sock"
         if len(os.fsencode(self.path)) > 100:
             raise LocalError("socket_path_too_long")
@@ -196,6 +225,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             self.path.unlink()
         self.operations: LocalOperations = StoreOperations(store)
         self.store = store
+        store.concurrency_gauge = self.saturation
         super().__init__(str(self.path), Handler)
         os.chmod(self.path, 0o600)
 
@@ -248,20 +278,50 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         finally:
             self.slots.release()
 
-    def service_actions(self) -> None:
-        """Between requests, complete trivial audit jobs so the queue never fills.
+    def saturation(self) -> dict[str, tuple[int, int]]:
+        """(limit, in use) for the worker slots and the waiting room."""
+        free = getattr(self.slots, "_value", self.max_concurrent)
+        room = getattr(self.waiting, "_value", 0)
+        waiting = 0 if self.max_waiting == 0 else self.max_waiting - room
+        return {
+            "local_workers": (self.max_concurrent, self.max_concurrent - free),
+            "local_waiters": (self.max_waiting, waiting),
+        }
 
-        Draining and housekeeping are independent: a failure in one never skips the
-        other or escapes serve_forever. A fenced or unhealthy store reports its state
-        on the next request; anything else is logged.
-        """
-        for action in (self.store.drain, self.store.housekeeping):
+    def service_actions(self) -> None:
+        """Called by the accept loop between polls. It does nothing: draining, housekeeping and
+        scheduled backups run on the maintenance thread, because a backup or a long expiry on
+        the accept thread would stop the daemon accepting connections for as long as it ran."""
+
+    def maintain(self) -> None:
+        """One maintenance pass: complete trivial audit jobs so the queue never fills, then
+        housekeeping (expiry, retention, the blob layout move and scheduled backups).
+
+        Draining and housekeeping are independent: a failure in one never skips the other
+        or ends the thread. A fenced or unhealthy store reports its state on the next
+        request; anything else is logged."""
+        for action in (self.store.drain, self.store.housekeeping, self.store.flush_anchor):
             try:
                 action()
             except LocalError:
                 pass
             except Exception as exc:
                 failure("local_ipc", exc, action=action.__name__)
+
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
+        stop = threading.Event()
+
+        def loop() -> None:
+            while not stop.wait(poll_interval):
+                self.maintain()
+
+        thread = threading.Thread(target=loop, name="maintenance", daemon=True)
+        thread.start()
+        try:
+            super().serve_forever(poll_interval)
+        finally:
+            stop.set()
+            thread.join(60)
 
     def server_close(self) -> None:
         super().server_close()
@@ -278,7 +338,11 @@ def request(
         raise LocalError("invalid_request")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
         stream.settimeout(10)
-        stream.connect(str(socket_path))
+        try:
+            stream.connect(str(socket_path))
+        except (FileNotFoundError, ConnectionRefusedError) as exc:
+            # Nothing is listening: the request never left this process, so it is safe to retry.
+            raise LocalError("transport_unavailable") from exc
         stream.sendall(payload + b"\n")
         with stream.makefile("rb") as response:
             raw = response.readline(1048577)
@@ -286,5 +350,9 @@ def request(
         if not isinstance(value, dict):
             raise LocalError("invalid_response")
         if "error" in value:
-            raise LocalError(value["error"], value.get("hint"))
+            raise LocalError(
+                value["error"],
+                value.get("hint"),
+                {k: v for k, v in value.items() if k in REPLY_DETAIL},
+            )
         return value

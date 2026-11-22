@@ -90,9 +90,13 @@ class Policy:
         private_dir(self.directory, create=True)
         target = self.directory / ("backup-" + stamp(now_ms))
         created = not target.exists()
+        # The newest complete backup in the same directory shares its blob files by hard link.
+        earlier = existing(self.directory)
         try:
-            manifest = store.backup(target)
+            manifest = store.backup(target, previous=earlier[-1][1] if earlier else None)
             removed = prune(self.directory, self.keep)
+            # Operation history that the oldest retained backup already holds may now go.
+            store.compact_operations(self.directory)
             event(
                 "backup",
                 "complete",
@@ -100,6 +104,7 @@ class Policy:
                 blobs=manifest["blob_index"]["count"]
                 if "blob_index" in manifest
                 else len(manifest.get("blobs", [])),
+                linked=manifest.get("blobs_linked", 0),
                 pruned=len(removed),
             )
             self.failed_ms = None

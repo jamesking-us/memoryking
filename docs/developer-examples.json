@@ -241,5 +241,44 @@
     ],
     "exit_code": 0,
     "contains": "Memory tool demo passed."
+  },
+  {
+    "id": "client-python",
+    "command": [
+      "{python}",
+      "examples/client_python.py"
+    ],
+    "exit_code": 0,
+    "contains": "Client example passed."
+  },
+  {
+    "id": "client-typescript",
+    "command": [
+      "{python}",
+      "examples/client_typescript.py"
+    ],
+    "exit_code": 0,
+    "contains": "TypeScript client example passed."
+  },
+  {
+    "id": "outcome-benchmark-validate",
+    "command": [
+      "{python}",
+      "tools/outcome_benchmark.py",
+      "validate",
+      "--task",
+      "legacy-rounding"
+    ],
+    "exit_code": 0,
+    "contains": "\"ok\": true"
+  },
+  {
+    "id": "function-calling-adapter",
+    "command": [
+      "{python}",
+      "examples/integrations/with_function_calling.py"
+    ],
+    "exit_code": 0,
+    "contains": "Function-calling example passed."
   }
 ]

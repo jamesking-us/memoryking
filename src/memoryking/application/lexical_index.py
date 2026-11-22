@@ -40,6 +40,10 @@ CURRENT, REBUILDING, LEGACY = "current", "rebuilding", "legacy"
 CHUNK = 200  # index terms per statement
 BATCH_DOCUMENTS = 64  # observations rewritten per step before the clock is consulted
 STEP_MS = 1000  # one rebuild step stops after about this long, well inside the deadline
+TAIL_POSITIONS = 20_000  # event positions past the last observation covered per step
+RATE_PER_SECOND = (
+    400  # observations rewritten per second on the reference host; the estimate's floor
+)
 
 
 def state(db: Any, tenant: str) -> tuple[str, int]:
@@ -169,23 +173,62 @@ def remaining(db: Any, tenant: str) -> int:
     )
 
 
-def describe(db: Any, tenant: str) -> dict[str, Any]:
+def progress(db: Any, tenant: str, rate: float | None = None) -> dict[str, Any]:
+    """Observations total, left, percent complete and a time estimate for a rebuild.
+
+    `rate` is observations per second seen by this process; without a sample the reference
+    rate is used, so the estimate is a rough guide, never a promise."""
+    current, _ = state(db, tenant)
+    if current == CURRENT:
+        return {"percent_complete": 100, "remaining_observations": 0}
+    total = int(
+        db.execute(
+            "SELECT count(*) FROM observations WHERE tenant=? AND deleted=0", (tenant,)
+        ).fetchone()[0]
+    )
+    left = remaining(db, tenant)
+    speed = rate if rate and rate > 0 else RATE_PER_SECOND
+    return {
+        "total_observations": total,
+        "remaining_observations": left,
+        "percent_complete": 100 if total == 0 else max(0, min(99, (total - left) * 100 // total)),
+        "estimated_seconds": int(left / speed) + 1 if left else 0,
+    }
+
+
+def describe(
+    db: Any, tenant: str, rate: float | None = None, counts: bool = True
+) -> dict[str, Any]:
     current, cursor = state(db, tenant)
     result: dict[str, Any] = {"state": current, "configuration": INDEX_CONFIGURATION}
     if current != CURRENT:
         result["configuration"] = "lexical-v1"  # the ranking in use until the rebuild finishes
         result["target_configuration"] = INDEX_CONFIGURATION
-        result["remaining_observations"] = remaining(db, tenant)
+        if counts:
+            result.update(progress(db, tenant, rate))
         result["action"] = (
-            "run reindex to rebuild the lexical index; the daemon finishes it in batches"
+            "run `memoryking reindex` to rebuild the lexical index; the daemon finishes it in batches"
+            if current == LEGACY
+            else "rebuilding in batches; `memoryking reindex --wait` shows progress"
         )
     return result
 
 
-def step(db: Any, tenant: str, text_of: Any, budget_ms: int = STEP_MS) -> bool:
+def step(
+    db: Any,
+    tenant: str,
+    text_of: Any,
+    budget_ms: int = STEP_MS,
+    reset: Any = None,
+    stats: dict[str, int] | None = None,
+) -> bool:
     """One bounded unit of the rebuild; True when the tenant's index is current.
 
-    `text_of(row)` returns an observation's retained text or None when it cannot be read."""
+    `text_of(row)` returns an observation's retained text or None when it cannot be read.
+    `reset(low, high)`, when given, is called inside the same transaction with the event
+    positions this step has now covered (`low` exclusive, `high` inclusive), so work that
+    must follow the rebuild across the store (the projection jobs) is batched with it and
+    resumes from the same cursor."""
     current, cursor = state(db, tenant)
     if current != REBUILDING:
         return current == CURRENT
@@ -212,6 +255,15 @@ def step(db: Any, tenant: str, text_of: Any, budget_ms: int = STEP_MS) -> bool:
         (tenant, cursor, BATCH_DOCUMENTS),
     ).fetchall()
     if not rows:
+        if reset is not None:
+            top = int(
+                db.execute("SELECT position FROM tenants WHERE tenant=?", (tenant,)).fetchone()[0]
+            )
+            if cursor < top:  # events after the last observation, in bounded slices
+                upper = min(top, cursor + TAIL_POSITIONS)
+                reset(cursor, upper)
+                db.execute("UPDATE lexical_state SET cursor=? WHERE tenant=?", (upper, tenant))
+                return False
         db.execute("UPDATE lexical_state SET state=? WHERE tenant=?", (CURRENT, tenant))
         return True
     done: list[tuple[Any, ...]] = []
@@ -239,18 +291,23 @@ def step(db: Any, tenant: str, text_of: Any, budget_ms: int = STEP_MS) -> bool:
     )
     for entry in done:
         db.execute("INSERT INTO lexical VALUES (?,?,?)", entry)
+    if stats is not None:
+        stats["documents"] = stats.get("documents", 0) + len(done)
+    if reset is not None:
+        reset(cursor, last)
     db.execute("UPDATE lexical_state SET cursor=? WHERE tenant=?", (last, tenant))
     return False
 
 
 def blob_text(root: Any, row: Any, tenant: str) -> str | None:
     """The retained text of an observation, verified against its content hash."""
+    from memoryking.adapters.blobs import blob_path
     from memoryking.adapters.local_files import private_file
     from memoryking.domain.local import LocalError
 
     if row["blob"] is None:
         return None
-    path = root / "blobs" / tenant / row["blob"]
+    path = blob_path(root, tenant, row["blob"])
     try:
         private_file(path)
         raw = path.read_bytes()

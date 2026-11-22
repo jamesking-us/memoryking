@@ -18,6 +18,7 @@ export interface Brief {
   as_of_ms?: number;
   salience?: "on" | "off";
   rerank?: "on" | "off";
+  time_range?: Record<string, unknown>;
 }
 
 export interface Fetch {
@@ -66,6 +67,18 @@ export interface DenseQuery {
   vector: Array<number>;
   minimum_similarity_ppm?: number;
   engine?: "python_exact" | "pgvector_exact";
+}
+
+export interface Start {
+  project: string;
+  bindings: Array<Record<string, unknown>>;
+  max_output_tokens: number;
+  tokenizer: string;
+  task?: string;
+  run?: string;
+  format?: "json" | "text";
+  recent_days?: number;
+  recent_limit?: number;
 }
 
 export interface Command0 {
@@ -117,4 +130,11 @@ export interface Command6 {
   args: Atlas;
 }
 
-export type RetrievalCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6;
+export interface Command7 {
+  version: 1;
+  incarnation: string;
+  action: "start";
+  args: Start;
+}
+
+export type RetrievalCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6 | Command7;

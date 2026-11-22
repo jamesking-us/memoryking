@@ -79,7 +79,7 @@ def main():
                     ).fetchall()
                 ]
                 assert len(usage) == 3 and all(r["input_tokens"] > 0 for r in usage)
-                assert store.db.execute("SELECT count(*) FROM embedding_items").fetchone()[0] == 3
+                assert store.db.execute("SELECT count(*) FROM embedding_vectors").fetchone()[0] == 3
                 query = "SQL latency"
                 query_batch = provider.embed([query])
                 brief_args = {

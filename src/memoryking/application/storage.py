@@ -52,6 +52,14 @@ UPSERTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("tenant", "project", "source", "level", "decided_by", "decided"),
         ("tenant", "project", "source"),
     ),
+    "pins": (
+        ("tenant", "project", "kind", "target", "pinned_by", "pinned"),
+        ("tenant", "project", "kind", "target"),
+    ),
+    "unreviewed_tier": (
+        ("tenant", "project", "enabled", "decided_by", "decided"),
+        ("tenant", "project"),
+    ),
     "code_validations": (
         (
             "tenant",

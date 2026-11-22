@@ -15,6 +15,7 @@ from test_journal import observation
 from test_local_store import FakeClock
 
 from memoryking import backups
+from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.local_files import atomic
 from memoryking.adapters.local_store import SCHEMA_VERSION, LocalStore
 from memoryking.contracts.canonical import MAX_BYTES, ContractError
@@ -84,7 +85,10 @@ def fabricate(store, count, *, jobs=False, shared_blob=None):
             )
         )
     store.db.execute("BEGIN IMMEDIATE")
-    store.db.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?,?)", events)
+    store.db.executemany(
+        "INSERT INTO events(tenant,position,event_id,kind,subject,origin,at_ms,actor) VALUES (?,?,?,?,?,?,?,?)",
+        events,
+    )
     store.db.executemany(
         "INSERT INTO observations(tenant,id,project,principal,source,source_event,payload_hash,"
         "blob,readers,position,origin,classification,observed_at_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -138,7 +142,10 @@ class BackupScaleTests(ScaleCase):
         self.assertEqual(
             20_001, self.store.db.execute("SELECT count(*) FROM observations").fetchone()[0]
         )
-        self.assertEqual(20_001, len(list((self.root / "blobs" / "main").iterdir())))
+        # Restored blobs are sharded by hash prefix, and no flat duplicate remains.
+        names = [name for name, _ in blobfiles.iterate(self.root / "blobs" / "main")]
+        self.assertEqual(20_001, len(names))
+        self.assertFalse(any(p.is_file() for p in (self.root / "blobs" / "main").iterdir()))
 
 
 class BackupIntegrityTests(ScaleCase):
@@ -286,6 +293,10 @@ class QueueScaleTests(ScaleCase):
         self.capture(0)
         fabricate(self.store, 2_000)
         self.store.reindex(self.credential)
+        # The call itself resets nothing at this size; the batches of the rebuild reset the
+        # jobs as they pass, and the reset backlog never counts against the queue limit.
+        while not self.store.rebuild_lexical(wall_ms=1500):
+            pass
         pending = self.store.db.execute(
             "SELECT count(*) FROM jobs WHERE state='pending'"
         ).fetchone()[0]

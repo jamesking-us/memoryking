@@ -126,7 +126,7 @@ function renderProjects(items, current) {
     for (const item of items) {
         const card = el("button", "", "project-card" + (item.project === current ? " selected" : ""));
         card.type = "button";
-        card.append(el("strong", item.project), el("small", `${item.observations} memories · ${item.claims} claims · ${item.tasks} tasks · ${item.receipts} receipts`), el("small", item.last_activity_ms
+        card.append(el("strong", item.scope === "user" ? "Your own memory (all projects)" : item.project), el("small", `${item.observations} memories · ${item.claims} claims · ${item.tasks} tasks · ${item.receipts} receipts`), el("small", item.last_activity_ms
             ? "last activity " + new Date(item.last_activity_ms).toLocaleString()
             : "no recorded activity"));
         card.onclick = () => openProject(item.project);

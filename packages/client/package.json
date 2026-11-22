@@ -1,0 +1,36 @@
+{
+  "name": "@memoryking/client",
+  "version": "0.1.0-alpha.1",
+  "description": "Typed client for the MemoryKing agent-memory service: remember, recall, save progress, resume and hand off.",
+  "license": "Apache-2.0",
+  "keywords": [
+    "memoryking",
+    "agent",
+    "memory",
+    "mcp"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/*.js",
+    "dist/*.d.ts",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@memoryking/contracts": "0.1.0-alpha.1"
+  }
+}

@@ -322,6 +322,16 @@
                 "valid_start",
                 "valid_end"
               ]
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "channel": {
+              "enum": [
+                "chat"
+              ]
             }
           },
           "required": [
@@ -401,6 +411,19 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
+            },
+            "excerpts": {
+              "type": "boolean"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "kind": {
+              "enum": [
+                "knowledge",
+                "constraint"
+              ]
             }
           },
           "required": [
@@ -615,6 +638,9 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 64
+            },
+            "procedures": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -632,6 +658,451 @@
         "action",
         "args",
         "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "retire"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "observation": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "project",
+            "observation",
+            "note"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "retirements"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "retire_decide"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "request": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "decision": {
+              "enum": [
+                "approve",
+                "dismiss"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "project",
+            "request",
+            "decision",
+            "reason"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "pin"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "mode": {
+              "enum": [
+                "add",
+                "remove"
+              ]
+            },
+            "target_kind": {
+              "enum": [
+                "claim",
+                "observation"
+              ]
+            },
+            "target": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project",
+            "mode",
+            "target_kind",
+            "target"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "pins"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "consolidate_prepare"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            },
+            "since_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "idle_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "max_classification": {
+              "enum": [
+                "public",
+                "internal",
+                "restricted"
+              ]
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "consolidate_admit"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "run": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "permit": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "project",
+            "run",
+            "permit",
+            "text"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "unreviewed_tier"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "mode": {
+              "enum": [
+                "on",
+                "off"
+              ]
+            }
+          },
+          "required": [
+            "project",
+            "mode"
+          ]
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args",
+        "key"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "incarnation": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+        },
+        "action": {
+          "const": "unreviewed_tier_show"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "incarnation",
+        "action",
+        "args"
       ]
     }
   ]
