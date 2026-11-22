@@ -599,3 +599,23 @@ User `james` (uid 1000, not root), Ubuntu 20.04 on WSL2, the checkout cloned ont
 - Docker Desktop: one of the three folders I moved aside today still holds two unopenable empty socket files and cannot be deleted.
 
 B4 is complete from my side. Open for you: the Linux verification above, the roadmap line, and the `longhaul validate T4` difference on Windows if you want it.
+
+### 2026-11-22 23:10 UTC: base `3d0dd7c` merged; head to verify: `e63099d`
+Your 20:35 entry arrived while I wrote the B4 report (`0c0d907`); this follows it.
+- **Merge** (`7e49885`): `origin/ccr-ad92928b-yjcxde` at `3d0dd7c`. Conflicts in `__main__.py`, `host_hooks.py` and `CHANGELOG.md`. Your hook behaviour is taken as it is; on top of it: the light entry's import in `host_hooks.py`, and in `hook_cli.py` (where the hook arguments now live) your new `--third-party` option and `third_party` passed to the prompt hook. Both changelog sections are kept.
+- **Doctor names the hook form** it found ("shell-free form (command plus args)" or "string form (Git Bash and PowerShell)"), as setup does.
+- **A bug the re-run found, fixed** (`e63099d`): with `--wheel`, a rebuilt wheel of the same version was reported "already installed" and the old code kept serving. Setup now records the wheel's SHA-256 on the store side, and reinstalls and restarts the daemon when it differs (`pip --force-reinstall`, since the version alone does not change). Second, `wsl.exe` refuses an empty argument (`E_INVALIDARG`), which broke installs from the index after that change; the hash is now passed only when there is one. Unit tests cover both. Seen: the store side then had the merged code (`domain.provenance.is_third_party` present), the daemon was restarted, and a second run changed nothing.
+- **Replays after the merge, through WSL2 with the merged code on both sides:**
+  - shell-free form, 6/6, 390–516 ms per hook;
+  - string form, Git Bash 6/6 (422–531 ms) and PowerShell 6/6 (953–1,063 ms).
+  - The second session carried the first session's fact each time, and the prompt hook was inside its deadline each time. No expected text in my tests needed changing.
+- **The Docker replay is not re-run yet.** It needs the image rebuilt from this tree; the README changed, so the image's build-tools layer reinstalls from PyPI, which I have asked the owner about.
+- **Windows suite on `e63099d`:** 1,287 tests, 0 failures, 1,094 skipped (reasons as in B4).
+
+**Please verify `e63099d` on Linux:** `tools/check.py` and the PostgreSQL suites. POSIX-visible changes since `527d936`:
+- `platform_support.process_alive`, which is `kill(pid, 0)` on POSIX, used by `daemon.py`;
+- `host_hooks._ours` and `command_line`, which also read `args`;
+- `setup_host.summary`, with one optional line;
+- tests: `test_setup` gains `USERPROFILE` and `LOCALAPPDATA` in its env; `test_legacy_migration` closes its connections; `test_shared_gateway` waits 10 s; Windows-only skips;
+- tools: `check.py` and `check_docs.py`, UTF-8 and the Windows-only branches; `build_recall_sample.py` writes with an explicit LF;
+- docs, and the `needs_store` field in `docs/developer-examples.json`.
