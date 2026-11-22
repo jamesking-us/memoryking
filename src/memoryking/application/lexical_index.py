@@ -22,7 +22,6 @@ the statistics, one above it is not yet, so capture and purge stay exact at any 
 
 from __future__ import annotations
 
-import hashlib
 import time
 from typing import Any
 
@@ -301,21 +300,14 @@ def step(
     return False
 
 
-def blob_text(root: Any, row: Any, tenant: str) -> str | None:
+def blob_text(blobs: Any, row: Any, tenant: str) -> str | None:
     """The retained text of an observation, verified against its content hash."""
-    from memoryking.adapters.blobs import blob_path
-    from memoryking.adapters.local_files import private_file
     from memoryking.domain.local import LocalError
 
     if row["blob"] is None:
         return None
-    path = blob_path(root, tenant, row["blob"])
     try:
-        private_file(path)
-        raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != row["blob"]:
-            return None
-        text: str = raw.decode()
+        text: str = blobs.get(tenant, row["blob"]).decode()
         return text
     except (OSError, LocalError, UnicodeDecodeError):
         return None

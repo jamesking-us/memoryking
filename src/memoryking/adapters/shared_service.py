@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 from typing import Any, NoReturn
 
-from memoryking.adapters import blobs as blobfiles
 from memoryking.adapters.local_contract import VALIDATOR
 from memoryking.adapters.local_ipc import StoreOperations
 from memoryking.adapters.postgres_store import PostgresStore
@@ -252,7 +251,7 @@ class SharedService:
                 # Flat blob files move into their shard directories, under the exclusive gate
                 # so no request of this tenant reads a file while it is renamed.
                 with store.transaction():
-                    if blobfiles.migrate(self.root, budget_s=1.0, tenant=tenant):
+                    if store.blobs.maintain(budget_s=1.0, tenant=tenant):
                         self._layout_done.add(tenant)
             if self.housekeeping_passes % self.SWEEP_EVERY == 0:
                 # The explicit orphan sweep, off the request path: purge deletes its own file,

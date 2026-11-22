@@ -15,8 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from memoryking.adapters import blobs as blobfiles
-from memoryking.adapters.local_files import private_dir, private_file
+from memoryking.adapters.blobs import FileBlobStore
+from memoryking.adapters.local_files import private_dir
 from memoryking.adapters.local_store import (
     CAPABILITIES,
     MAX_COUNTER,
@@ -27,6 +27,7 @@ from memoryking.adapters.local_store import (
 )
 from memoryking.adapters.postgres_sql import PostgresSQL, take_gate
 from memoryking.adapters.shared_control import SharedControl
+from memoryking.application.blob_store import BlobStore
 from memoryking.application.storage import PostgresDialect
 from memoryking.application.store_core import StoreCore, lease_holder
 from memoryking.domain.local import Clock, Decision, LocalError, SystemClock
@@ -131,6 +132,7 @@ class PostgresStore(StoreCore):
         audience: str = "memoryking-shared",
         request_deadline: float | None = None,
         instance_id: str | None = None,
+        blobs: BlobStore | None = None,
     ):
         """`request_deadline` is a monotonic instant: checkout, the checkout checks and
         every statement in this store's transactions stop at it, so a saturated pool or
@@ -147,6 +149,7 @@ class PostgresStore(StoreCore):
             # verify for one that does, so the response never reveals which tenants exist.
             raise LocalError("invalid_token") from None
         self.root, self.control_path = root, control / tenant
+        self.blobs = blobs if blobs is not None else FileBlobStore(root)
         self.lease = lease_holder(self.control_path, instance_id)
         self.control = SharedControl(self.control_path)
         self.anchor = self.control.read_anchor()
@@ -652,18 +655,11 @@ class PostgresStore(StoreCore):
                     (self.tenant,),
                 )
             }
-            directory = self.root / "blobs" / self.tenant
             removed = 0
-            if directory.exists():
-                private_dir(directory)
-                touched = {directory}
-                for name, path in blobfiles.iterate(directory):
-                    private_file(path)
-                    if name not in live:
-                        path.unlink()
-                        touched.add(path.parent)
-                        removed += 1
-                blobfiles.sync_directories(touched)
+            for digest in self.blobs.digests(self.tenant):
+                if digest not in live:
+                    removed += self.blobs.delete(self.tenant, digest)
+            self.blobs.sync()
         return removed
 
     def _delete_unreferenced(self, items: list[tuple[str, str]]) -> int:
@@ -681,7 +677,8 @@ class PostgresStore(StoreCore):
                     ).fetchone()
                     is None
                 ):
-                    removed += blobfiles.remove(self.root, tenant, digest)
+                    removed += self.blobs.delete(tenant, digest)
+            self.blobs.sync()
         return removed
 
     def backup(self, destination: Path) -> dict[str, Any]:

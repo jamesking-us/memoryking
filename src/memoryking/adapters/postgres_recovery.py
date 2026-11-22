@@ -25,6 +25,7 @@ from typing import Any, Callable
 from psycopg import sql
 
 from memoryking.adapters import blobs as blobfiles
+from memoryking.adapters.blobs import FileBlobStore
 from memoryking.adapters.local_files import (
     Ownership,
     atomic,
@@ -40,6 +41,7 @@ from memoryking.adapters.postgres_admin import Roles
 from memoryking.adapters.postgres_sql import PostgresSQL, record_factory, take_gate
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
+from memoryking.application.blob_store import BlobStore
 from memoryking.application.records import ARCHIVE_SCHEMA, archive_tables, retire_for_new_history
 from memoryking.contracts.canonical import canonical_bytes, load_strict
 from memoryking.domain.local import Clock, LocalError, SystemClock, temporal_valid
@@ -309,14 +311,19 @@ def _copy_blobs(
         if shard not in touched:
             private_dir(shard, create=True)
             touched.add(shard)
-        source = blobfiles.blob_path(store.root, store.tenant, digest)
         try:
-            if earlier is not None and digest in earlier[1]:
-                how, size = blobfiles.link_or_copy(
-                    archived_blob(earlier[0], digest), source, shard / digest, digest
-                )
+            linked_size = (
+                blobfiles.link_previous(archived_blob(earlier[0], digest), shard / digest, digest)
+                if earlier is not None and digest in earlier[1]
+                else None
+            )
+            if linked_size is not None:
+                how, size = "linked", linked_size
             else:
-                how, size = "copied", blobfiles.copy_verified(source, shard / digest, digest)
+                how, size = (
+                    "copied",
+                    store.blobs.copy_to(store.tenant, digest, shard / digest),
+                )
         except FileNotFoundError:
             # Purged after the snapshot: the restore replays the purge from the control journal.
             # A file missing while an observation still names it is corruption.
@@ -349,6 +356,7 @@ def restore(
     clock: Clock | None = None,
     fault: Callable[[str], None] | None = None,
     lost_anchor_journal_head: str | None = None,
+    blob_store: BlobStore | None = None,
 ) -> Path:
     """Offline operator action, retaining current independent policy/operation journal.
 
@@ -356,6 +364,7 @@ def restore(
     against the verified archive; old watermarks, credentials and retries retire.
     """
     roles = roles or Roles()
+    store_blobs = blob_store if blob_store is not None else FileBlobStore(root)
     identifier(tenant)
     identifier(audience)
     for directory in (root, control, control / tenant, archive):
@@ -475,16 +484,10 @@ def restore(
                 )
                 controller.anchor(anchor)
             hook("restore_fenced")
-            directory = root / "blobs" / tenant
-            private_dir(directory, create=True)
-            touched: set[Path] = {directory}
             for digest in blobs:
-                shard = blobfiles.shard_directory(directory, digest)
                 with archived_blob(archive, digest).open("rb") as stream:
-                    blobfiles.write_durable(shard / digest, stream, digest)
-                (directory / digest).unlink(missing_ok=True)  # a flat copy is now redundant
-                touched.add(shard)
-            blobfiles.sync_directories(touched)
+                    store_blobs.put_stream(tenant, digest, stream)
+            store_blobs.sync()
             for table in reversed(TABLES):
                 if table not in {"tenants", "tenant_gates"}:
                     connection.execute(
@@ -536,6 +539,7 @@ def restore(
             # Reuse reviewed journal reconciliation, under an explicit native DB gate.
             recovery = LocalStore.__new__(LocalStore)
             recovery.root, recovery.control_path = root, control / tenant
+            recovery.blobs = store_blobs
             recovery.control, recovery.anchor = controller, anchor
             recovery.clock, recovery.lock = clock, threading.RLock()
             recovery.healthy = True
@@ -611,13 +615,10 @@ def restore(
             controller.anchor(anchor)
         # Orphan blobs go only after the database and anchor are committed, so an
         # interrupted restore never deletes content a retry would still need.
-        swept = {directory}
-        for name, path in blobfiles.iterate(directory):
-            private_file(path)
-            if name not in live:
-                path.unlink()
-                swept.add(path.parent)
-        blobfiles.sync_directories(swept)
+        for digest in store_blobs.digests(tenant):
+            if digest not in live:
+                store_blobs.delete(tenant, digest)
+        store_blobs.sync()
         return credential_path
     finally:
         owner.close()

@@ -14,11 +14,19 @@ import hashlib
 import os
 import re
 import secrets
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import BinaryIO
 
-from memoryking.adapters.local_files import durable_sync, private_dir, private_file, sync_dir
+from memoryking.adapters.local_files import (
+    atomic,
+    durable_sync,
+    private_dir,
+    private_file,
+    sync_dir,
+)
 from memoryking.domain.local import LocalError
 
 SHARD = 2
@@ -197,19 +205,111 @@ def migrate(
     return done
 
 
-def remove(root: Path, tenant: str, digest: str) -> int:
-    """Delete a blob's file wherever it lives; the directory entry is synced. Returns 0 or 1."""
-    directory = root / "blobs" / tenant
-    removed = 0
-    for path in (sharded(directory, digest), directory / digest):
-        if path.is_file() or path.is_symlink():
+def link_previous(previous: Path, destination: Path, digest: str) -> int | None:
+    """Hard-link an earlier backup's copy of a blob into a new backup when that copy hashes to
+    `digest` (verified by reading it, never trusted by name). Returns the size, or None when
+    it cannot be linked (a different filesystem, no hard links, a copy that does not verify)."""
+    try:
+        if sha256_file(previous) == digest:
+            os.link(previous, destination)
+            return destination.stat().st_size
+    except (OSError, LocalError):
+        pass
+    return None
+
+
+class FileBlobStore:
+    """The blob store on a local filesystem: `blobs/<tenant>/<shard>/<digest>` under a root.
+
+    Implements `memoryking.application.blob_store.BlobStore`."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._touched: set[Path] = set()
+        self._guard = threading.Lock()
+
+    def _directory(self, tenant: str) -> Path:
+        return self.root / "blobs" / tenant
+
+    def _remember(self, *paths: Path) -> None:
+        with self._guard:
+            self._touched.update(paths)
+
+    def put(self, tenant: str, content: bytes) -> str:
+        digest = hashlib.sha256(content).hexdigest()
+        directory = self._directory(tenant)
+        # Creating the directory syncs its parent; an existing one has nothing new to sync.
+        private_dir(directory, create=True)
+        path = locate(directory, digest)
+        if not path.exists():
+            if not path.parent.exists():
+                private_dir(path.parent, create=True)
+                sync_dir(directory)
+            atomic(path, content)
+        elif sha256_file(path) != digest:
+            raise LocalError("blob_corrupt")
+        return digest
+
+    def put_stream(self, tenant: str, digest: str, stream: BinaryIO) -> None:
+        directory = self._directory(tenant)
+        private_dir(directory, create=True)
+        shard = shard_directory(directory, digest)
+        write_durable(shard / digest, stream, digest)
+        (directory / digest).unlink(missing_ok=True)  # a flat copy is now redundant
+        self._remember(shard, directory)
+
+    def get(self, tenant: str, digest: str) -> bytes:
+        path = blob_path(self.root, tenant, digest)
+        private_file(path)
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != digest:
+            raise LocalError("blob_corrupt")
+        return raw
+
+    def head(self, tenant: str, digest: str, size: int) -> bytes:
+        path = blob_path(self.root, tenant, digest)
+        private_file(path)
+        with path.open("rb") as stream:
+            return stream.read(size)
+
+    def delete(self, tenant: str, digest: str) -> int:
+        directory = self._directory(tenant)
+        removed = 0
+        for path in (sharded(directory, digest), directory / digest):
+            if path.is_file() or path.is_symlink():
+                private_file(path)
+                path.unlink()
+                if path.parent != directory:
+                    try:
+                        path.parent.rmdir()  # an emptied shard directory goes too
+                    except OSError:
+                        pass
+                self._remember(directory if not path.parent.exists() else path.parent)
+                removed = 1
+        return removed
+
+    def digests(self, tenant: str) -> list[str]:
+        directory = self._directory(tenant)
+        if not directory.is_dir():
+            return []
+        private_dir(directory)
+        names = []
+        for name, path in iterate(directory):
             private_file(path)
-            path.unlink()
-            if path.parent != directory:
-                try:
-                    path.parent.rmdir()  # an emptied shard directory goes too
-                except OSError:
-                    pass
-            sync_dir(directory if not path.parent.exists() else path.parent)
-            removed = 1
-    return removed
+            names.append(name)
+        return names
+
+    def tenants(self) -> list[str]:
+        directory = self.root / "blobs"
+        return sorted(p.name for p in directory.iterdir()) if directory.is_dir() else []
+
+    def copy_to(self, tenant: str, digest: str, destination: Path) -> int:
+        return copy_verified(blob_path(self.root, tenant, digest), destination, digest)
+
+    def sync(self) -> None:
+        with self._guard:
+            touched, self._touched = self._touched, set()
+        sync_directories(touched)
+
+    def maintain(self, budget_s: float = 0.2, tenant: str | None = None) -> bool:
+        return migrate(self.root, budget_s=budget_s, tenant=tenant)

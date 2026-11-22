@@ -22,12 +22,9 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Self, cast
 
-from memoryking.adapters import blobs as blobfiles
-from memoryking.adapters.blobs import blob_path, locate, sha256_file
-from memoryking.adapters.blobs import remove as remove_blob
 from memoryking.adapters.local_contract import validate_capture
-from memoryking.adapters.local_files import atomic, private_dir, private_file, sync_dir
 from memoryking.application import lexical_index
+from memoryking.application.blob_store import BlobStore
 from memoryking.application.retention import (
     CHECKPOINT_BYTES_LIMIT,
     CHECKPOINT_LIMIT,
@@ -197,6 +194,7 @@ class StoreCore:
     control_path: Path
     lease: str  # the holder this process claims the instance lease as
     root: Path
+    blobs: BlobStore  # where observation bodies live (the file store, or a test double)
     clock: Clock
     lock: threading.RLock
     store_id: str
@@ -497,18 +495,7 @@ class StoreCore:
         return position
 
     def _blob(self, tenant: str, content: bytes) -> str:
-        digest = hashlib.sha256(content).hexdigest()
-        directory = self.root / "blobs" / identifier(tenant)
-        # Creating the directory syncs its parent; an existing one has nothing new to sync.
-        private_dir(directory, create=True)
-        path = locate(directory, digest)
-        if not path.exists():
-            if not path.parent.exists():
-                private_dir(path.parent, create=True)
-                sync_dir(directory)
-            atomic(path, content)
-        elif sha256_file(path) != digest:
-            raise LocalError("blob_corrupt")
+        digest = self.blobs.put(identifier(tenant), content)
         self.fault("after_blob")
         return digest
 
@@ -791,11 +778,7 @@ class StoreCore:
             for row in rows:
                 last = row["position"]
                 if self._visible(who, row, decision.evaluated_ms):
-                    path = blob_path(self.root, who["tenant"], row["blob"])
-                    private_file(path)
-                    raw = path.read_bytes()
-                    if hashlib.sha256(raw).hexdigest() != row["blob"]:
-                        raise LocalError("blob_corrupt")
+                    raw = self.blobs.get(who["tenant"], row["blob"])
                     items.append(
                         {
                             "id": row["id"],
@@ -1059,7 +1042,8 @@ class StoreCore:
                     ).fetchone()
                     is None
                 ):
-                    removed += remove_blob(self.root, tenant, digest)
+                    removed += self.blobs.delete(tenant, digest)
+            self.blobs.sync()
         return removed
 
     def collect_purged(self) -> int:
@@ -1472,7 +1456,7 @@ class StoreCore:
         if not self._layout_done:
             # Flat blob files move into their shard directories a little at a time.
             with self.lock:
-                self._layout_done = blobfiles.migrate(self.root)
+                self._layout_done = self.blobs.maintain()
         if self.backup_policy is not None:
             self.backup_policy.maybe_run(self, now)
         if self.summary_idle_ms and now - self._last_summary_scan >= 60_000:
@@ -1585,11 +1569,7 @@ class StoreCore:
                 # A different observation's purge forces a fresh lease with current metadata.
                 raise LocalError("stale_source")
             if outcome == "complete":
-                path = blob_path(self.root, who["tenant"], obs["blob"])
-                private_file(path)
-                raw = path.read_bytes()
-                if hashlib.sha256(raw).hexdigest() != obs["blob"]:
-                    raise LocalError("blob_corrupt")
+                raw = self.blobs.get(who["tenant"], obs["blob"])
                 self.db.execute(
                     upsert("projection_items"),
                     (
@@ -1850,12 +1830,8 @@ class StoreCore:
                     if self.clock.monotonic_ms() - decision.monotonic_ms > DRAIN_BUDGET_MS:
                         limit = completed  # the rest waits for the next pass
                         break
-                    path = blob_path(self.root, tenant, row["blob"])
                     try:
-                        private_file(path)
-                        raw = path.read_bytes()
-                        if hashlib.sha256(raw).hexdigest() != row["blob"]:
-                            raise LocalError("blob_corrupt")
+                        raw = self.blobs.get(tenant, row["blob"])
                     except (LocalError, OSError):
                         # One unreadable blob costs only its own job an attempt (with the
                         # worker backoff, dead at MAX_ATTEMPTS); the pass continues.
@@ -1955,7 +1931,7 @@ class StoreCore:
                 lexical_index.step(
                     self.db,
                     name,
-                    lambda row, n=name: lexical_index.blob_text(self.root, row, n),
+                    lambda row, n=name: lexical_index.blob_text(self.blobs, row, n),
                     budget_ms=step_ms,
                     reset=lambda low, high, n=name: self._reset_jobs(n, low, high),
                     stats=counted,
@@ -1978,7 +1954,7 @@ class StoreCore:
         while not lexical_index.step(
             self.db,
             tenant,
-            lambda row: lexical_index.blob_text(self.root, row, tenant),
+            lambda row: lexical_index.blob_text(self.blobs, row, tenant),
             budget_ms=10**9,
         ):
             pass

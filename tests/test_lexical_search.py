@@ -227,7 +227,7 @@ class LexicalCases:
             "SELECT o.id,o.blob FROM observations o WHERE o.tenant=? AND o.deleted=0", (tenant,)
         ).fetchall()
         for row in rows:
-            raw = lexical_index.blob_text(self.store.root, row, tenant)
+            raw = lexical_index.blob_text(self.store.blobs, row, tenant)
             self.store.db.execute(
                 "UPDATE lexical SET text=? WHERE tenant=? AND id=?", (raw, tenant, row[0])
             )

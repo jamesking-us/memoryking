@@ -9,8 +9,6 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
-from memoryking.adapters.blobs import blob_path
-from memoryking.adapters.local_files import private_file
 from memoryking.adapters.local_store import RETRY_MS, uid
 from memoryking.adapters.repository_git import GitSnapshot, canonical_remote
 from memoryking.application.storage import upsert
@@ -359,10 +357,7 @@ class Repository:
         ).fetchone()
         if row is None or not self.s._visible(who, row, at):
             raise LocalError("evidence_unavailable")
-        path = blob_path(self.s.root, who["tenant"], row["blob"])
-        private_file(path)
-        with path.open("rb") as stream:
-            raw = stream.read(65537)
+        raw = self.s.blobs.head(who["tenant"], row["blob"], 65537)
         if len(raw) > 65536:
             raise LocalError("evidence_unavailable")
         Knowledge(self.s)._support(
