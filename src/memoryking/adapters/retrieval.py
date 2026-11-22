@@ -1219,7 +1219,7 @@ class Retrieval:
         ranked: list[tuple[int, str, list[dict[str, Any]]]] = []
         # Equal scores order by authority (accepted knowledge before unreviewed
         # observations), then newest recorded first, then the reference for determinism.
-        tie: dict[str, tuple[int, int, str]] = {}
+        tie: dict[str, tuple[Any, ...]] = {}
         visited: set[str] = set()
         claim_dense: dict[str, int] = {}
         if "dense" in args and by_id:
@@ -1278,7 +1278,7 @@ class Retrieval:
             observed[observation] = row["observed_at_ms"]
             positions[observation] = row["position"]
             families[observation] = family(row["principal"], row["source"], row["source_event"])
-            tie[observation] = (1, -row["position"], observation)
+            tie[observation] = (1, 0, -row["position"], observation)
             raw = self._blob(row)
             # A whole atomic excerpt has attribution and bounds; never a paraphrase.
             full = raw.decode()
@@ -1294,10 +1294,17 @@ class Retrieval:
                     score = rescued(score, passage_scores)
             anchor_hits = 0
             if anchors:
-                # Exact overlap of the query's anchors with the record's, in millionths,
-                # on the same scale as term overlap; the larger of the two is the score.
+                # Exact overlap of the query's anchors with the record's, in millionths. It is
+                # one more kind of evidence beside the words, so the two combine (one minus the
+                # chance that neither is right) instead of the larger replacing the other: a
+                # question that names a file still finds every record naming it, and the words
+                # of the question order them, where taking the larger gave every such record the
+                # same score. Records that still tie (every anchor matched) go by their word
+                # score, then recency.
                 anchor_hits = sum(1 for a in anchors if a in anchor_sets.get(observation, ()))
-                score = max(score, anchor_hits * 1000000 // len(anchors))
+                exact = anchor_hits * 1000000 // len(anchors)
+                tie[observation] = (1, -score, -row["position"], observation)
+                score = exact + score * (1000000 - exact) // 1000000
                 if anchor_hits and parts:
                     # An anchor hit steers the quote to the passage that names it.
                     folded = [full[p.start : p.end].casefold() for p in parts]

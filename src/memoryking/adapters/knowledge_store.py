@@ -193,6 +193,10 @@ class Knowledge:
             )
             self.s.fault("after_validation")
         self.s._expose()
+        if action == "retire_decide":
+            # An approved retirement is a purge: its file goes now, as an administrator's purge
+            # does, and not at the next start. Nothing is queued when the request was dismissed.
+            self.s.collect_purged()
         return Released(canonical_bytes(result), decision, self.s.clock)
 
     def _revision(self, tenant: str, revision: str, project: str | None = None) -> sqlite3.Row:

@@ -1760,7 +1760,11 @@ def main() -> int:
         type=int,
         help="Briefing token budget; default 6000 at session start, 1200 for the prompt hook",
     )
-    hk.add_argument("--limit", type=int, help="prompt hook: items at most (default 5, at most 32)")
+    hk.add_argument(
+        "--limit",
+        type=int,
+        help="prompt hook: closest records considered (default and most 32); the budget decides how many show",
+    )
     hk.add_argument(
         "--floor",
         type=int,
@@ -1776,6 +1780,13 @@ def main() -> int:
         choices=("mcp", "cli"),
         help="How the agent reaches memory; the session-start note then names the tools to "
         "save with (hooks installed by `memoryking setup` pass mcp)",
+    )
+    hk.add_argument(
+        "--third-party",
+        action="store_true",
+        default=None,
+        help="prompt hook: also show text a third party wrote (tool results and errors, "
+        "fetched pages), fenced and labelled; default off (or MEMORYKING_HOOK_THIRD_PARTY=1)",
     )
     add_binding(hk)
     hk.add_argument(
@@ -2055,11 +2066,19 @@ def main() -> int:
                             ("limit", args.limit),
                             ("floor", args.floor),
                             ("deadline", args.deadline),
+                            ("third_party", args.third_party),
                         )
                         if value is not None
                     }
                     sys.stdout.write(
-                        host_hooks.prompt(payload, binding=args.binding, **chosen, **where)
+                        host_hooks.prompt(
+                            payload,
+                            binding=args.binding,
+                            host=args.host,
+                            tools=args.tools,
+                            **chosen,
+                            **where,
+                        )
                     )
                 elif args.kind == "session-start":
                     sys.stdout.write(

@@ -140,6 +140,43 @@ class LexicalCases:
         packet = self.brief("deploy config zukatori", top_k=8)
         self.assertEqual(rare, self.refs(packet)[0])
 
+    def test_a_path_named_in_the_query_does_not_tie_every_record_that_holds_it(self):
+        """A prompt that names a file ("in src/export.py ... the delimiter we settled") matched
+        every record that mentioned the file with the same score, and recency alone ordered
+        them; the words of the question now order the records that tie on the path."""
+        said = self.capture("said", "Opening src/export.py. We settled on a semicolon delimiter.")
+        idle = (
+            "Opened src/export.py and read through the encoding helpers before lunch.",
+            "Reviewed src/export.py for the footer total and left review comments.",
+            "Profiled src/export.py: the sort dominated runtime on large inputs.",
+            "Pinned the dependency used by src/export.py because the newest release broke CI.",
+            "Added a regression test next to src/export.py for blank trailing lines.",
+            "Renamed a variable in src/export.py after the naming discussion on Monday.",
+        )
+        for number, text in enumerate(idle):
+            self.capture(f"idle{number}", text)
+        packet = self.brief("In src/export.py use the delimiter we settled", top_k=8)
+        self.assertEqual(said, self.refs(packet)[0])  # newest first would have put it last
+        # a query that is only the path still finds every record naming it, all alike
+        only = self.brief("src/export.py", top_k=8)
+        self.assertEqual(7, len(only["guidance"]))
+        self.assertEqual(1, len({g["lexical_score_ppm"] for g in only["guidance"]}))
+
+    def test_words_nothing_in_the_project_holds_do_not_lower_a_matching_records_score(self):
+        target = self.capture("t", "We settled on a semicolon as the column delimiter.")
+        for number in range(8):
+            self.capture(f"n{number}", f"Unrelated note {number} about the release schedule.")
+        plain = self.brief("settled semicolon column delimiter")
+        padded = self.brief(
+            "settled semicolon column delimiter. Work only inside the current directory: "
+            "never touch anything outside it, whatever zorblax or quuxlet say"
+        )
+        self.assertEqual(target, self.refs(plain)[0])
+        self.assertEqual(target, self.refs(padded)[0])
+        self.assertEqual(
+            plain["guidance"][0]["lexical_score_ppm"], padded["guidance"][0]["lexical_score_ppm"]
+        )
+
     def test_the_only_note_with_every_term_is_found_in_a_crowded_project(self):
         target = self.capture(
             "all", "Decision: the ledger reconciliation webhook must be idempotent."
@@ -428,7 +465,7 @@ class LexicalCases:
             "PAY-142": [("ticket", 1000000)],
             "retry charge customer": [("prose", 457665), ("ticket", 318054), ("main", 251303)],
             "src app": [("path", 505942), ("main", 401929)],
-            "timeouts api example": [("error", 237069)],
+            "timeouts api example": [("error", 440140)],
             "HTTP 503": [("error", 1000000)],
             "double charges": [("prose", 485506), ("ticket", 413120)],
         }

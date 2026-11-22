@@ -150,6 +150,10 @@ def read_events(text: str) -> list[dict]:
     return events
 
 
+# Hook events whose output enters the model's context as memory (the other hooks write).
+MEMORY_HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse")
+
+
 def analyze(task: Task | None, stream: str, memory_paths: list[str] | None = None) -> dict:
     """What the event stream shows: canaries, memory content in the context, memory use,
     tokens and cost. `memory_paths` are the file keys the arm put in the working directory."""
@@ -161,6 +165,7 @@ def analyze(task: Task | None, stream: str, memory_paths: list[str] | None = Non
     result: dict = {}
     assistant_text: list[str] = []
     hook_events: list[str] = []
+    hook_chars: dict[str, int] = {}
     for ev in events:
         kind = ev.get("type")
         if kind == "result":
@@ -211,13 +216,16 @@ def analyze(task: Task | None, stream: str, memory_paths: list[str] | None = Non
             if ev.get("hook_event") and ev["hook_event"] not in hook_events:
                 hook_events.append(ev["hook_event"])
             out = ev.get("stdout") or ev.get("output") or ""
-            if (
-                out
-                and ev.get("hook_event") in (None, "SessionStart")
-                and ev.get("subtype", "").endswith("response")
-            ):
-                memory_chars += len(str(out))
-                reads += 1
+            if out and ev.get("subtype", "").endswith("response"):
+                event_name = ev.get("hook_event") or "SessionStart"
+                hook_chars[event_name] = hook_chars.get(event_name, 0) + len(str(out))
+                # A hook that hands the model memory does it at the start of the session, with
+                # the user's prompt, or before a tool call (a product's file context). The
+                # session-end, stop and compaction hooks write; their output is not memory
+                # content in the context.
+                if event_name in MEMORY_HOOK_EVENTS and str(out).strip() not in ("{}", "[]"):
+                    memory_chars += len(str(out))
+                    reads += 1
     for use in tool_by_id.values():
         name, shown = str(use.get("name", "")), json.dumps(use.get("input", {}))
         if name in ("Write", "Edit") and any(p.split("/")[0] in shown for p in memory_paths):
@@ -237,6 +245,7 @@ def analyze(task: Task | None, stream: str, memory_paths: list[str] | None = Non
         "cost_usd": result.get("total_cost_usd"),
         "agent_seconds": (result["duration_ms"] / 1000) if "duration_ms" in result else None,
         "hook_events": hook_events,
+        "hook_chars": hook_chars,
         "has_result": bool(result),
         "is_error": bool(result.get("is_error")),
     }
