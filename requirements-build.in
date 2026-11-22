@@ -1,3 +1,7 @@
 build==1.6.1
 setuptools==84.2.1
 wheel==0.48.0
+# Windows-only dependencies of the pins above. A lock compiled on macOS or Linux
+# drops requirements whose marker is false there, so compile the locks on Windows
+# (CONTRIBUTING.md); tests/test_locks.py fails if a lock lost them.
+colorama==0.4.6 ; os_name == "nt"
