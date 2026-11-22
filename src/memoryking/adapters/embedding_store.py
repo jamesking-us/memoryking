@@ -16,8 +16,14 @@ from memoryking.application.retention import index_receipt
 from memoryking.application.store_core import StoreCore
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.embeddings import EmbeddingBatch, fingerprint, pack
-from memoryking.domain.passages import split
 from memoryking.domain.local import LocalError, Released
+from memoryking.domain.passages import split
+
+# Embed each observation passage by passage (`domain.passages`) rather than from its opening.
+# Off: on the pooled LongMemEval oracle set passage vectors lowered four of the five headline
+# metrics against the opening 512 tokens (docs/reference.md), so the default embeds the
+# opening. The passage path is complete and tested; this is the one switch.
+EMBED_PASSAGES = False
 
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("embedding.schema.json").read_text())
@@ -474,6 +480,10 @@ class Embeddings:
         ):
             raise LocalError("stale_source")
         full = self.r._blob(observation)[:16384].decode("utf-8", errors="ignore")
+        if not EMBED_PASSAGES:
+            if number:
+                raise LocalError("stale_source")
+            return full, 0, len(full.encode()), False
         passages = split(full)
         if number >= len(passages):
             raise LocalError("stale_source")

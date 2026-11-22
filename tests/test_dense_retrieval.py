@@ -310,6 +310,35 @@ class DenseCases:
         self.assertEqual(first["guidance"][0]["reference"], self.obs["observation"])
 
     def test_a_long_capture_is_embedded_passage_by_passage_and_found_by_a_late_one(self):
+        with patch("memoryking.adapters.embedding_store.EMBED_PASSAGES", True):
+            self.passage_by_passage()
+
+    def test_by_default_an_observation_is_embedded_once_from_its_opening(self):
+        text = "\n\n".join(f"Paragraph {n} says " + ("word " * 140) for n in range(3))
+        long = self.store.capture(
+            self.owner,
+            self.ns,
+            "long",
+            {
+                "version": 1,
+                "project": "p",
+                "source": "fixture",
+                "source_event": "long",
+                "text": text,
+                "readers": None,
+                "classification": "internal",
+                "observed_at_ms": 1,
+            },
+        )
+        config = self.configure()
+        self.drain(config)
+        with self.store.transaction():
+            parts = self.store.db.execute(
+                "SELECT count(*) FROM embedding_vectors WHERE subject=?", (long["observation"],)
+            ).fetchone()[0]
+        self.assertEqual(parts, 1)
+
+    def passage_by_passage(self):
         paragraphs = [f"Paragraph {n} says " + ("word " * 140) for n in range(3)]
         long = self.store.capture(
             self.owner,

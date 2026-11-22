@@ -16,9 +16,9 @@ from typing import Any
 
 from memoryking import __version__, daemon, profiles, session_bindings
 from memoryking.adapters.dashboard import Dashboard
+from memoryking.adapters.local_embeddings import MODEL
 from memoryking.adapters.local_files import atomic, private_dir, private_file
 from memoryking.adapters.local_ipc import Server, request
-from memoryking.adapters.local_embeddings import MODEL
 from memoryking.adapters.local_store import CAPABILITIES, SCHEMA_VERSION, LocalStore
 from memoryking.application.lexical_index import RATE_PER_SECOND
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict

@@ -61,7 +61,7 @@ GATE = ROOT / "fixtures/evaluation/evidence-recall-gate.json"
 TEXT_LIMIT = 60000
 KS = (5, 10)
 BUDGET = 65536
-PASSAGES = True  # --no-passages embeds each observation's opening only (the earlier index)
+PASSAGES = False  # --passages embeds passage by passage; the default is the opening, as shipped
 # Fusion presets for --fusion: the shipped default, weighted rank fusion and a convex
 # combination of normalised scores (the lexical score over the best lexical score, the
 # similarity min-max scaled over the dense candidates).
@@ -838,9 +838,9 @@ def main() -> int:
     parser.add_argument("--embedding-cache", type=Path, help="Directory for the vector cache")
     parser.add_argument("--embedding-threads", type=int, default=1)
     parser.add_argument(
-        "--no-passages",
+        "--passages",
         action="store_true",
-        help="With --embedding: one vector per observation from its opening, not per passage",
+        help="With --embedding: one vector per passage, not per observation from its opening",
     )
     parser.add_argument(
         "--fusion",
@@ -850,8 +850,8 @@ def main() -> int:
         "convex50 is the shipped default",
     )
     args = parser.parse_args()
-    if args.no_passages:
-        PASSAGES = False
+    if args.passages:
+        PASSAGES = True
     if args.text:
         REQUEST_EXTRAS.update(format="text", tokenizer="chars-estimate-v1")
     if args.tokenizer:
