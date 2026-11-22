@@ -25,6 +25,7 @@ from typing import Any, Self, cast
 from memoryking.adapters.local_contract import validate_capture
 from memoryking.application import lexical_index
 from memoryking.application.blob_store import BlobStore
+from memoryking.application.control_log import ControlLog
 from memoryking.application.retention import (
     CHECKPOINT_BYTES_LIMIT,
     CHECKPOINT_LIMIT,
@@ -190,7 +191,7 @@ class StoreCore:
 
     db: Any
     dialect: Dialect
-    control: Any
+    control: ControlLog  # the signed journal, its anchor and the operations log
     control_path: Path
     lease: str  # the holder this process claims the instance lease as
     root: Path
@@ -303,7 +304,7 @@ class StoreCore:
             raise LocalError("invalid_token")
         if body.get("incarnation") != self.incarnation:
             raise LocalError("history_changed")
-        return cast(dict[str, Any], body)
+        return body
 
     def _auth(self, token: str, capability: str, project: str, at: int) -> dict[str, Any]:
         identity = self._decode(token, "credential")
@@ -1101,7 +1102,7 @@ class StoreCore:
             else:
                 record = self.control.append(self.anchor, action)
             self.fault("after_journal")
-            return cast(dict[str, Any], record)
+            return record
         except LocalError as exc:
             if exc.code != "journal_record_limit":
                 # Nothing was written for a refused oversized record; the store stays usable.

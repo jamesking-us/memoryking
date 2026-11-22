@@ -28,6 +28,7 @@ from memoryking.adapters.local_store import (
 from memoryking.adapters.postgres_sql import PostgresSQL, take_gate
 from memoryking.adapters.shared_control import SharedControl
 from memoryking.application.blob_store import BlobStore
+from memoryking.application.control_log import LockedControlLog
 from memoryking.application.storage import PostgresDialect
 from memoryking.application.store_core import StoreCore, lease_holder
 from memoryking.domain.local import Clock, Decision, LocalError, SystemClock
@@ -54,7 +55,7 @@ ANCHOR_WRITTEN: dict[str, float] = {}
 
 
 class PostgresStore(StoreCore):
-    control: SharedControl
+    control: LockedControlLog
     tenant: str  # always bound; the local store leaves StoreCore.tenant None
 
     def native_index(self) -> str | None:
