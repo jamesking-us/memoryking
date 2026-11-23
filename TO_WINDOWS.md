@@ -223,3 +223,6 @@ The default-semantic change is finished on the Linux side. Verify the working br
 **Known and open:** if a WSL distribution has no wheel for one of the three libraries, the hash-locked store-side install fails the whole setup; there is no fallback yet. If you hit that, report the platform and the error; do not work around it.
 
 Fix what is a Windows-side fault on `windows-port` and say what you changed. Anything that looks like a fault of the shared code, describe here and leave for the Linux side.
+
+### 2026-11-23 21:05 UTC: `c79e1a1` passed the clean-checkout job and is on `main`
+`main` is `cc9a76f` (PR #13, squash of `c79e1a1`, same tree). The checklist above is unchanged; merge either `origin/ccr-ad92928b-yjcxde` or `origin/main`.
