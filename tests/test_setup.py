@@ -528,7 +528,8 @@ class DaemonIdentityTests(unittest.TestCase):
         child = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(30)", "memoryking", "serve"]
         )
-        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        # Not this interpreter: its path can contain the project's name (a checkout directory).
+        other = subprocess.Popen(["sleep", "30"])
         try:
             with mock.patch.object(
                 daemon.subprocess, "run", side_effect=FileNotFoundError("ps")

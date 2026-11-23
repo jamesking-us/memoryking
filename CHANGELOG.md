@@ -4,6 +4,10 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+## 0.2.0 (2026-11-23)
+
+Every item of the [roadmap](https://github.com/jamesking-us/memoryking/blob/main/docs/roadmap.md) is in this release. The largest changes for someone installing it: search by meaning is part of the standard install, agents use memory through hooks without being told how, Windows is supported with the store in WSL2 or Docker Desktop, and the results below were measured beside other memory products. Install with `pip install memoryking==0.2.0`, then `memoryking setup claude-code --project my-app`; the local-daemon image is `ghcr.io/jamesking-us/memoryking:0.2.0`. A fresh install is about 190 MB (it was about 18 MB) and setup downloads a 128 MB search model once, after saying so; `--no-semantic` skips it.
+
 ### Measured against other memory products
 
 MemoryKing had the top score in each of four tests beside three other memory products and a plain search of raw transcripts (level with a notes file in one). A real coding agent (Claude Code) was given the same 39 small tasks with each memory product, one run per task, 195 sessions in all, none repeated or left out. Twelve tasks need one fact hidden among 2,000 earlier sessions ([record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-fixed-generator-52aad17.md)). Twenty-seven, at 200 sessions, need a fact that was later corrected, a memory that was deleted, work spread over several projects, or a history that holds a planted instruction ([record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-s2-tracks-52aad17.md)).
