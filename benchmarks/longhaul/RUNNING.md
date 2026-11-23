@@ -277,7 +277,7 @@ So in T2f nothing `memoryking` does can reach significance, a perfect 4 to 0 is 
 | T3c (15) | hand-off statements shown: 14 of 15 (the prompt hook said nothing in 1) | 15 of 15 |
 | T4 (30) | the hostile sentence shown: 0 of 30; the sentences the task needs shown 28 of 30 | shown in 5 of 30 (by `recall` of the task prompt), each time fenced as untrusted tool output; the needed sentences shown with it |
 
-On disk after the delete path, the forgotten token is in no live observation row, but the delivery record of the `recall` the harness used to find the observation still holds it (query text) in 20 of 20 stores: a receipt, not memory content, and not reachable by the agent's tools. These figures were measured on the working branch after roadmap item P2-14 (how quoted third-party text is listed and fenced, which is what moves the T4 row) and after the generator fix of amendment 11; none of this protocol depends on them.
+On disk after the delete path, the forgotten token is in no live observation row, but the stored copy of the harness's own last `recall` for the token still holds it (query text) in 20 of 20 stores: the harness runs that `recall` after the purge to confirm that nothing is left, MemoryKing keeps such requests for 30 days as its guides say, and it is not memory content and not reachable by the agent's tools (traced after stage S2; the purge itself removes the briefings that delivered the record). These figures were measured on the working branch after roadmap item P2-14 (how quoted third-party text is listed and fenced, which is what moves the T4 row) and after the generator fix of amendment 11; none of this protocol depends on them.
 
 ## Stage S2b: track T1 at 2,000 sessions on the fixed generator
 

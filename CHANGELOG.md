@@ -91,6 +91,7 @@ A real coding agent (Claude Code) was given the same 39 small tasks with each me
 - The scan is one exact matrix product (numpy) over the reader's eligible vectors, stored as 16-bit integers. Past 200,000 eligible vectors the newest are scanned and the trace says `scan_truncated`; the channel no longer returns nothing above 10,000. SQLite schema 21, shared schema 16, shared archive schema 13; vectors written by earlier releases still answer and convert in the indexing loop.
 - On PostgreSQL, `enable-vector` also builds an HNSW index; it shortlists, eligibility is applied to the shortlist, survivors are rescored exactly, and a shortfall falls back to the exact scan.
 - Reranking was measured again with the semantic channel in place (16, 32 and 64 candidates; four cross-encoders): the pinned model still adds about 0.03 MRR for about a second of latency, nothing newer was both better and fast enough, so the window stays 16 and reranking stays opt-in. `serve --rerank-window 16|32|64` sets the window, and the reranker reads its token limit and pad token from its manifest.
+- `memoryking setup <host> --dry-run` now says the local model is already installed and verified (and that nothing would be downloaded) instead of "would install" when it is.
 
 
 ### A long-history benchmark against other memory systems

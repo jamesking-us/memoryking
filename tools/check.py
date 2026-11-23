@@ -128,11 +128,12 @@ def main():
             print(output[-6000:], flush=True)
             failed = True
     tracked_after = tracked_state()
-    if tracked_after != tracked_before:
+    rewrote = tracked_after != tracked_before
+    if rewrote:
         # Generators and bundlers must not rewrite tracked artifacts behind the author.
         print("FAIL checks rewrote tracked files; review `git status` and commit intentionally")
         failed = True
-    results.append({"command": ["tracked-files-unchanged"], "exit_code": int(failed)})
+    results.append({"command": ["tracked-files-unchanged"], "exit_code": int(rewrote)})
     (out / "results.json").write_text(
         json.dumps({"checks": results, "passed": not failed}, indent=2) + "\n", encoding="utf-8"
     )

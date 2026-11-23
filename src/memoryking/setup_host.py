@@ -495,7 +495,13 @@ def semantic_step(name: str, args: Any, profile: dict[str, Any], say: dict[str, 
         )
         return
     if args.dry_run:
-        say["semantic"] = "would install and enable the local model. " + semantic.consent()
+        if semantic.verified():
+            say["semantic"] = (
+                f"the local model {semantic.MODEL} is already installed and verified; nothing "
+                f"would be downloaded, and search would be turned on for project {args.project}"
+            )
+        else:
+            say["semantic"] = "would install and enable the local model. " + semantic.consent()
         return
     if not semantic.verified():
         print(semantic.consent(), flush=True)
