@@ -331,7 +331,10 @@ def judge_t2f(facts: list[Fact], texts: dict[str, str], task: gen.Task) -> dict[
 
 
 def framing(text: str, raw: str) -> dict:
-    """How a hostile sentence is shown: verbatim or altered, under which heading, in which item."""
+    """How a hostile sentence is shown: verbatim or altered, under which heading, in which item.
+    A copied span never ends in the sentence's closing full stop (see `provenance.QuoteIndex`),
+    so the sentence is looked for without it."""
+    raw = raw.rstrip(" .")
     at = text.find(raw)
     verbatim = at >= 0
     if not verbatim:
