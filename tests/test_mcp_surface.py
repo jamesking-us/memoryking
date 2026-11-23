@@ -305,6 +305,46 @@ class ReplyShapeTests(BridgeCase):
         self.assertTrue(0 < shown(small) < len(words))  # the budget still bounds the list
         self.assertIn("omitted for budget", small["content"][0]["text"])
 
+    def test_recall_pages_and_requires_every_word_including_a_named_file(self):
+        words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet".split()
+        calls = [
+            (
+                "remember",
+                {
+                    "text": f"Run {n}: the nightly billing job {word} retried the charge in "
+                    + (
+                        "src/billing/refund.py"
+                        if word in ("golf", "hotel")
+                        else "src/billing/job.py"
+                    )
+                },
+            )
+            for n, word in enumerate(words)
+        ]
+        query = "nightly billing job retried charge"
+        calls += [
+            ("recall", {"query": query, "limit": 4}),
+            ("recall", {"query": query, "limit": 4, "offset": 4}),
+            ("recall", {"query": query + " foxtrot", "match": "all"}),
+            ("recall", {"query": query + " src/billing/refund.py", "match": "all"}),
+        ]
+        *_, first, second, every, named = self.bridge(calls)
+
+        def refs(reply):
+            return re.findall(
+                r"^\d+\. \*\*\[g\d+\]\*\* (Run \d+)", reply["content"][0]["text"], re.M
+            )
+
+        self.assertEqual(4, len(refs(first)))
+        self.assertEqual(4, len(refs(second)))
+        self.assertFalse(set(refs(first)) & set(refs(second)))
+        text = first["content"][0]["text"]
+        self.assertIn("Partial list: records 1 to 4 of 10 that matched", text)
+        self.assertIn("`offset` 4", text)
+        self.assertEqual(["Run 5"], refs(every))
+        self.assertEqual({"Run 6", "Run 7"}, set(refs(named)))
+        self.assertNotIn("Partial list", every["content"][0]["text"])
+
     def test_full_profile_keeps_the_json_envelope_as_text(self):
         (reply,) = self.bridge([("memory_status", {"project": "p"})], "--profile", "full")
         self.assertEqual("p", json.loads(reply["content"][0]["text"])["project"])

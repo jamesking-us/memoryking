@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -28,6 +29,7 @@ from memoryking.application import lexical_index
 from memoryking.application.retention import index_receipt
 from memoryking.application.store_core import StoreCore, Visibility
 from memoryking.contracts.canonical import canonical_bytes, canonical_hash
+from memoryking.domain.anchors import KINDS as ANCHOR_KINDS
 from memoryking.domain.anchors import anchors_in
 from memoryking.domain.briefing import (
     COMPILER,
@@ -41,11 +43,14 @@ from memoryking.domain.briefing import (
     terms,
 )
 from memoryking.domain.briefing_text import render_brief, textualize
-from memoryking.domain.duplicates import contained, duplicates, family, shape
+from memoryking.domain.duplicates import duplicate_clusters, family, holders, shape
 from memoryking.domain.lexicon import (
     QUERY_TERM_LIMIT,
+    STOP,
     Corpus,
     Term,
+    analyze,
+    index_text,
     query_terms,
     rescued,
 )
@@ -70,9 +75,18 @@ DEFAULT_FUSION: dict[str, Any] = {
 }
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
 FILL_LIMIT = 32  # items a text briefing may hold when the caller names no count (the maximum)
-HEAD_WINDOW = 64  # ranked items compared and reordered for repeats and diversity
+FOLD_WINDOW = 64  # ranked items compared for repeats (a comparison is quadratic)
+HEAD_WINDOW = 64  # ranked items compared for near-identical statements
 SIMILAR_AT = 0.6  # word overlap (Jaccard) from which two items count as the same statement
 SIMILAR_CAP = 2  # near-identical statements that keep their rank before the rest follow
+SPREAD_BAND = 0.7  # share of the best remaining score from which items count as near-equal
+SPREAD_SHARE = 0.5  # share of an item's own words that is new from which it adds all it can
+SPREAD_CROWD = 16  # near-equal items from which they count as a crowd to be spread
+SPREAD_COMMON = 0.3  # words in more than this share of a large pool tell its items apart not at all
+SPREAD_POOL = 24  # items from which a word counts as common to the pool
+LABEL_PAGE = 4  # records on a page from which each says what it names
+LABEL_NAMES = 3  # names a record's label holds at most
+LABEL_CHARS = 48  # characters of one name in a label
 RERANK_TEXT_BYTES = 16384  # the reranker's per-text limit
 SALIENCE_WEIGHT = (
     45_000  # a tenth of a typical full match (about 1/(K1+1) of the scale), in millionths
@@ -707,6 +721,8 @@ class Retrieval:
         groups: list[list[dict[str, Any]]] = []
         behind: dict[str, list[str]] = {}
         drafted: list[list[dict[str, Any]]] = []
+        contiguous = False
+        paging: dict[str, Any] | None = None
         if mandatory["status"] != "complete":
             base.update(status="blocked", reason=mandatory["reason"])
             if mandatory.get("unbound_fields"):
@@ -766,6 +782,19 @@ class Retrieval:
             for stage in trace:
                 if stage.get("stage") == "rerank_v1" and "model" in stage:
                     diag["model_fingerprints"].append(stage["model"])
+                if stage.get("stage") == "paging":
+                    # More records matched than this page holds (or this is a later page): the
+                    # packet says how many matched and where this page starts. A text page is
+                    # packed from the top without gaps, so what the budget cuts is where the
+                    # next page begins. When the window of newest candidates was full, more
+                    # matched than were compared: the count is a floor and says so.
+                    paging = stage
+                    more = stage["matched"] > stage["offset"] + len(groups)
+                    contiguous = more and args.get("format") == "text"
+                    if more or stage["offset"]:
+                        base["page"] = {"matched": stage["matched"], "offset": stage["offset"]}
+                        if any(t.get("candidate_limit_reached") for t in trace):
+                            base["page"]["at_least"] = True
             diag.update(
                 trace=[
                     {
@@ -806,8 +835,22 @@ class Retrieval:
             if any(t.get("candidate_limit_reached", False) for t in trace):
                 base["warnings"].append("optional_candidate_limit")
         raw, used, selected, omitted = pack(
-            base, groups, count, args["max_output_tokens"], self.renderer(args)
+            base, groups, count, args["max_output_tokens"], self.renderer(args), contiguous
         )
+        if (
+            paging is not None
+            and not contiguous
+            and args.get("format") == "text"
+            and "optional_group_budget" in omitted
+        ):
+            # The budget cut a page that was the whole list: pack again from the top without
+            # gaps, so the text can say where the records it left out begin.
+            base["page"] = {"matched": paging["matched"], "offset": paging["offset"]}
+            if any(t.get("candidate_limit_reached") for t in trace):
+                base["page"]["at_least"] = True
+            raw, used, selected, omitted = pack(
+                base, groups, count, args["max_output_tokens"], self.renderer(args), True
+            )
         output = json.loads(raw)
         rendered_items = output["constraints"] + selected
         deps = self._dependencies(rendered_items)
@@ -979,9 +1022,11 @@ class Retrieval:
         with, or is crowded out by, records they cannot read."""
         tenant, project = who["tenant"], args["project"]
         when, bounds = self._when(args)
+        when, bounds = self._named(args, tenant, when, bounds)
         scope = (tenant, project, recorded, who["principal"], *bounds)
         chosen: dict[str, int] = {}
-        if anchors:
+        every = args.get("match") == "all"
+        if anchors and not every:
             hits: dict[str, int] = {}
             position: dict[str, int] = {}
             for anchor in anchors:
@@ -1002,6 +1047,9 @@ class Retrieval:
         )
         searches = [ordered[:n] for n in self.tier_sizes(len(ordered))]
         searches += [[term] for term in ordered[1:7]]
+        if every:
+            # Every word or no record: the one search that holds all the terms, and no looser one.
+            searches = searches[:1]
         ran = 0
         for group in searches:
             if len(chosen) > 256:
@@ -1021,6 +1069,20 @@ class Retrieval:
         ids = ids[:256] + (ids[256:257] if len(ids) > 256 else [])
         return ids, {"searches": ran, "terms": len(qterms)}
 
+    @staticmethod
+    def _named(
+        args: dict[str, Any], tenant: str, when: str, bounds: tuple[int, ...]
+    ) -> tuple[str, tuple[Any, ...]]:
+        """`when` and its parameters with the caller's `file` added: only observations that name
+        that file, symbol or ticket exactly (the anchors found when the record was captured)."""
+        name = args.get("file")
+        if not name:
+            return when, bounds
+        return (
+            when + "o.id IN(SELECT id FROM anchors WHERE tenant=? AND anchor=?) AND ",
+            (*bounds, tenant, name),
+        )
+
     def _legacy_select(
         self,
         who: dict[str, Any],
@@ -1032,6 +1094,7 @@ class Retrieval:
         """The pre-lexical-v2 selection, kept for a store whose index is not rebuilt yet."""
         tenant = who["tenant"]
         when, bounds = self._when(args)
+        when, bounds = self._named(args, tenant, when, bounds)
         scope = (tenant, args["project"], recorded, who["principal"], *bounds)
         coverage: dict[str, int] = {}
         position: dict[str, int] = {}
@@ -1109,6 +1172,23 @@ class Retrieval:
 
         def scorer(text: str) -> int:
             return bm25(qterms, text, corpus) if lexical_current else relevance(query, text)
+
+        every = args.get("match") == "all"
+        named = args.get("file")
+
+        def holds_all(text: str) -> bool:
+            """Whether the text holds every word of the query (as the search reads words)."""
+            if qterms:
+                have = set(index_text(text).split())
+                return all(any(a in have for a in t.alternatives()) for t in qterms)
+            have = set(re.findall(r"[^\W_]+", text.casefold()))
+            return all(q in have for q in query)
+
+        def asked(text: str) -> bool:
+            """Whether a claim's text meets what the caller required (`match`, `file`)."""
+            return (not every or holds_all(text)) and (
+                not named or named.casefold() in text.casefold()
+            )
 
         # The principal's own scope, when it acts for a user: matching observations from it
         # join the project's, labelled, and the cached selection depends on which scope it is.
@@ -1227,6 +1307,8 @@ class Retrieval:
                 self.s, who, args, list(by_id), len(args["dense"]["vector"])
             )
         for key_id, item in by_id.items():
+            if not asked(item["body"]["text"]):
+                continue
             score = scorer(item["body"]["text"])
             if (not score and key_id not in claim_dense) or key_id in visited:
                 continue
@@ -1262,10 +1344,13 @@ class Retrieval:
         observed: dict[str, int] = {}
         # Corrections: a record with a visible replacement, or one this reader asked to have
         # retired, is left out; one someone else asked to retire is marked (see corrections.py).
+        # A caller that asked for every word or a named file gets records the search itself
+        # found for that; a semantic neighbour that nothing required is not one of them.
+        pool = ids[:256] if every or named else [*ids[:256], *dense_scores]
         corrected, retiring = Corrections(self.s).screen(
-            who, list(dict.fromkeys([*ids[:256], *dense_scores])), recorded, at
+            who, list(dict.fromkeys(pool)), recorded, at
         )
-        considered = [o for o in dict.fromkeys([*ids[:256], *dense_scores]) if o not in corrected]
+        considered = [o for o in dict.fromkeys(pool) if o not in corrected]
         rows = self.s.observation_rows(who["tenant"], considered)
         for observation in considered:
             row = rows.get(observation)
@@ -1282,6 +1367,8 @@ class Retrieval:
             raw = self._blob(row)
             # A whole atomic excerpt has attribution and bounds; never a paraphrase.
             full = raw.decode()
+            if every and not holds_all(full):
+                continue
             score = scorer(full)
             # Only a long observation is read as passages: to quote the one that answers,
             # and (lexical-v2 rescue) to score a long capture by its best passage when that
@@ -1530,8 +1617,9 @@ class Retrieval:
         # it may hold as many distinct items as fit (at most the contract's 32); structured
         # output keeps its small default, because its size is not what the budget limits.
         limit = args.get("top_k", FILL_LIMIT if args.get("format") == "text" else 8)
-        presented, collapsed, behind = self._present(
-            who, ranked, limit, positions, families, args.get("min_score_ppm", 0)
+        offset = args.get("offset", 0)
+        presented, collapsed, behind, matched = self._present(
+            who, ranked, limit, positions, families, args.get("min_score_ppm", 0), offset
         )
         trace = [
             {"stage": "authorized_eligibility", "visible_claims": len(candidates)},
@@ -1554,6 +1642,7 @@ class Retrieval:
                     }
                 ),
             },
+            {"stage": "paging", "matched": matched, "offset": offset, "limit": limit},
             {
                 "stage": "rank",
                 "metric": "bm25_word_forms_v1" if lexical_current else "literal_term_overlap_v1",
@@ -1615,8 +1704,10 @@ class Retrieval:
         positions: dict[str, int],
         families: dict[str, tuple[str, str, str]],
         floor: int = 0,
-    ) -> tuple[list[list[dict[str, Any]]], dict[str, int], dict[str, list[str]]]:
-        """One answer per fact, after ranking and before packing.
+        offset: int = 0,
+    ) -> tuple[list[list[dict[str, Any]]], dict[str, int], dict[str, list[str]], int]:
+        """One answer per fact, after ranking and before packing; the fourth value is how many
+        distinct answers matched in all (the page returned starts at `offset` of them).
 
         Only the item list changes, never what is authorized: every record that was
         collapsed stays a dependency of the receipt (the kept item names it), so purging
@@ -1686,11 +1777,11 @@ class Retrieval:
                     result.append(entry)
             return result
 
-        # Only the head of the ranking can reach the briefing once repeats are folded, so
-        # only it is compared (a comparison is quadratic); the rest keeps its order.
-        window = min(3 * limit + 8, HEAD_WINDOW)
-        entries: list[Entry] = list(ranked[:window])
-        rest: list[Entry] = list(ranked[window:])
+        # The best of the candidate window are compared for repeats (a comparison is quadratic)
+        # and the whole window is then spread, so the page shown is chosen from all of it.
+        need = offset + limit
+        entries: list[Entry] = list(ranked[:FOLD_WINDOW])
+        rest: list[Entry] = list(ranked[FOLD_WINDOW:])
         # 1. versions of one file
         by_family: dict[tuple[str, str, str], list[int]] = {}
         for index, entry in enumerate(entries):
@@ -1703,23 +1794,18 @@ class Retrieval:
                 link(entries[keep][2][0], "supersedes", [entries[i][1] for i in older])
                 count["versions_collapsed"] += len(older)
         entries = fold(entries, list(by_family.values()))
-        # 2. duplicates
+        # 2. duplicates (a question that names a date keeps a copy in that range apart)
         shapes: dict[str, Any] = {}
-        clusters: list[list[int]] = []
-        for index, entry in enumerate(entries):
-            if not single(entry):
-                continue
-            shapes[entry[1]] = shape(entry[2][0]["text"])
-            for cluster in clusters:
-                # a question that names a date keeps a copy in that range apart from the rest
-                same_time = entries[cluster[0]][2][0].get("in_time_range") == entry[2][0].get(
-                    "in_time_range"
-                )
-                if same_time and duplicates(shapes[entries[cluster[0]][1]], shapes[entry[1]]):
-                    cluster.append(index)
-                    break
-            else:
-                clusters.append([index])
+        ones = [index for index, entry in enumerate(entries) if single(entry)]
+        for index in ones:
+            shapes[entries[index][1]] = shape(entries[index][2][0]["text"])
+        clusters = [
+            [ones[i] for i in cluster]
+            for cluster in duplicate_clusters(
+                [shapes[entries[i][1]] for i in ones],
+                [entries[i][2][0].get("in_time_range") for i in ones],
+            )
+        ]
 
         def repeat(entries: list[Entry], cluster: list[int], keep: int) -> int:
             """`keep` stands for the rest of the cluster, which it names newest first."""
@@ -1740,25 +1826,15 @@ class Retrieval:
         entries = fold(entries, clusters)
         # 2b. an excerpt inside another: the user's own turns, captured by themselves and
         # again within the session capture, are shown once, as the longer text
-        holder_of: dict[int, int] = {}  # index -> the shortest excerpt that holds it
-        for entry in entries:
-            if single(entry) and entry[1] not in shapes:
-                shapes[entry[1]] = shape(entry[2][0]["text"])
-        for index, entry in enumerate(entries):
-            if not single(entry):
-                continue
-            small = shapes[entry[1]]
-            holder: tuple[int, int] | None = None
-            for other, candidate in enumerate(entries):
-                if other == index or not single(candidate):
-                    continue
-                if candidate[2][0].get("in_time_range") != entry[2][0].get("in_time_range"):
-                    continue
-                big = shapes[candidate[1]]
-                if contained(small, big) and (holder is None or len(big.text) < holder[1]):
-                    holder = (other, len(big.text))
-            if holder is not None:
-                holder_of[index] = holder[0]
+        ones = [index for index, entry in enumerate(entries) if single(entry)]
+        for index in ones:
+            if entries[index][1] not in shapes:
+                shapes[entries[index][1]] = shape(entries[index][2][0]["text"])
+        found = holders(
+            [shapes[entries[i][1]] for i in ones],
+            [entries[i][2][0].get("in_time_range") for i in ones],
+        )
+        holder_of: dict[int, int] = {ones[i]: ones[j] for i, j in found.items()}
         if holder_of:
             held: dict[int, list[int]] = {}
             for index in holder_of:
@@ -1775,7 +1851,7 @@ class Retrieval:
         # 3. observations an accepted claim already answers
         while True:
             covering: dict[str, list[tuple[dict[str, Any], list[tuple[int, int]]]]] = {}
-            for _, _, group in entries[:limit]:
+            for _, _, group in entries[:need]:
                 for item in group:
                     if item["authority"] == "observed_episode":
                         continue
@@ -1784,7 +1860,7 @@ class Retrieval:
                             (item, [(span["start_byte"], span["end_byte"])])
                         )
             redundant: dict[str, dict[str, Any]] = {}
-            for entry in entries[:limit]:
+            for entry in entries[:need]:
                 if not single(entry) or entry[1] not in covering:
                     continue
                 item = entry[2][0]
@@ -1804,11 +1880,14 @@ class Retrieval:
                 link(claim, "evidence_not_repeated", [reference])
             entries = [e for e in entries if e[1] not in redundant]
             count["evidence_not_repeated"] += len(redundant)
-        # 4. diversity: statements that nearly repeat one already placed (the same wording about
-        # another value, from another near-identical session) move behind other matches, so
-        # a list cut at the budget covers different statements; none is dropped
+        # 4. spread: an item that says little the items placed before it do not (the same
+        # wording about another value, from another near-identical session) moves behind
+        # items that add something, so a list cut at the budget covers different statements;
+        # none is dropped, and the order is the same for every page of one query
+        matched = len(entries)
         entries = self._diversify(entries, count)
-        chosen = entries[:limit]
+        entries = self._spread(entries, need, count)
+        chosen = entries[offset:need]
         shown = [positions[e[1]] for e in chosen if single(e) and e[1] in positions]
         recorded: dict[int, int] = {}
         if shown:
@@ -1827,7 +1906,37 @@ class Retrieval:
             for entry in chosen
             if id(entry[2][0]) in every
         }
-        return [group for _, _, group in chosen], count, collapsed
+        self._label(who["tenant"], chosen)
+        return [group for _, _, group in chosen], count, collapsed, matched
+
+    def _label(self, tenant: str, chosen: list[tuple[int, str, list[dict[str, Any]]]]) -> None:
+        """Say what each record of a long page is about, from what the store already holds: the
+        files, symbols and tickets it names (found when it was captured). A name that more than
+        half of the page shares tells its records apart not at all and is left out, so the label
+        is what is particular to the record; a page of fewer than `LABEL_PAGE` records has none."""
+        singles = [
+            e[2][0] for e in chosen if len(e[2]) == 1 and e[2][0]["authority"] == "observed_episode"
+        ]
+        if len(singles) < LABEL_PAGE:
+            return
+        found: dict[str, set[tuple[str, str]]] = {}
+        refs = [item["reference"] for item in singles]
+        for start in range(0, len(refs), 100):
+            chunk = refs[start : start + 100]
+            for row in self.db.execute(
+                "SELECT id,anchor,kind FROM anchors WHERE tenant=? AND id IN ("
+                + ",".join("?" for _ in chunk)
+                + ")",
+                (tenant, *chunk),
+            ).fetchall():
+                found.setdefault(row["id"], set()).add((row["kind"], row["anchor"]))
+        shared = Counter(a for pairs in found.values() for a in {a for _, a in pairs})
+        order = {kind: n for n, kind in enumerate(ANCHOR_KINDS)}
+        for item in singles:
+            pairs = sorted(found.get(item["reference"], ()), key=lambda p: (order[p[0]], p[1]))
+            keep = [a[:LABEL_CHARS] for _, a in pairs if shared[a] * 2 <= len(singles)]
+            if keep:
+                item["about"] = keep[:LABEL_NAMES]
 
     @staticmethod
     def _diversify(
@@ -1862,6 +1971,73 @@ class Retrieval:
             (later if near >= SIMILAR_CAP else first).append(index)
         count["diversified"] = len(later)
         return [head[i] for i in [*first, *later]] + tail
+
+    @staticmethod
+    def _spread(
+        entries: list[tuple[int, str, list[dict[str, Any]]]],
+        need: int,
+        count: dict[str, int],
+    ) -> list[tuple[int, str, list[dict[str, Any]]]]:
+        """Order the first `need` places of the list so that they cover different statements.
+
+        Greedy, from the best match down: each place goes to the item that adds most among
+        those that match nearly as well as the best one left (a score within `SPREAD_BAND` of
+        it), and what an item adds is the share of its own words that no item placed before it
+        has. A clearly better match always comes first; among near-equal ones, which is what a
+        hundred sentences about one component are, the ones that say something new come before
+        the ones that repeat it. In a pool of `SPREAD_POOL` items or more, words that more than
+        `SPREAD_COMMON` of the items hold (the component's name, a request that every session
+        opens with) are not counted: they tell the items apart not at all. Of equals the better
+        ranked wins, so a list with no crowd is unchanged. An accepted claim or any other group
+        counts as adding everything. Nothing is dropped: places after `need` keep their order."""
+        if need <= 1 or len(entries) <= 1:
+            return entries
+        words: list[frozenset[str] | None] = []
+        for entry in entries:
+            if len(entry[2]) == 1 and entry[2][0]["authority"] == "observed_episode":
+                words.append(
+                    frozenset(
+                        token
+                        for token, _ in analyze(entry[2][0]["text"])
+                        if len(token) >= 3 and token not in STOP
+                    )
+                )
+            else:
+                words.append(None)
+        counted_words = [w for w in words if w is not None]
+        if len(counted_words) >= SPREAD_POOL:
+            frequency = Counter(word for w in counted_words for word in w)
+            crowded = {w for w, n in frequency.items() if n > SPREAD_COMMON * len(counted_words)}
+            words = [None if w is None else w - crowded for w in words]
+        scores = [entry[0] for entry in entries]
+        covered: set[str] = set()
+        remaining = list(range(len(entries)))
+        order: list[int] = []
+        moved = 0
+        while remaining and len(order) < need:
+            reach = SPREAD_BAND * max(scores[i] for i in remaining)
+            near = [index for index in remaining if scores[index] >= reach]
+            pick, most = remaining[0], -1.0
+            for index in near if len(near) > SPREAD_CROWD else ():
+                mine = words[index]
+                adds = (
+                    1.0
+                    if mine is None
+                    else min(1.0, len(mine - covered) / len(mine) / SPREAD_SHARE)
+                    if mine
+                    else 0.0
+                )
+                if adds > most + 1e-12:
+                    pick, most = index, adds
+            if pick != remaining[0]:
+                moved += 1
+            remaining.remove(pick)
+            order.append(pick)
+            placed = words[pick]
+            if placed:
+                covered |= placed
+        count["diversified"] += moved
+        return [entries[i] for i in order] + [entries[i] for i in remaining]
 
     def _salience(
         self, who: dict[str, Any], project: str, positions: dict[str, int], at: int

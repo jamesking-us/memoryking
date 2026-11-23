@@ -12,6 +12,9 @@ class Brief(TypedDict):
     tokenizer: str
     top_k: NotRequired[int]
     min_score_ppm: NotRequired[int]
+    offset: NotRequired[int]
+    match: NotRequired[Literal["any", "all"]]
+    file: NotRequired[str]
     task: NotRequired[str]
     run: NotRequired[str]
     valid_ms: NotRequired[int]

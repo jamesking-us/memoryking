@@ -105,6 +105,25 @@
                 "maximum": 1000000,
                 "description": "Leave out guidance whose lexical score (millionths, see each item's lexical_score_ppm) is below this. Default 0: nothing is left out for a low score."
               },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1024,
+                "description": "Skip this many of the ranked items, to read the next page of the same list (the order is the same for every offset of one query). Default 0."
+              },
+              "match": {
+                "enum": [
+                  "any",
+                  "all"
+                ],
+                "description": "all: only records that hold every word of the query (and none if no record does). Default any: ranked by how many of the words, and how well, a record holds."
+              },
+              "file": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Only observations that name this file, symbol or ticket exactly (an anchor found when the record was captured)."
+              },
               "task": {
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
@@ -665,6 +684,25 @@
                 "minimum": 0,
                 "maximum": 1000000,
                 "description": "Leave out guidance whose lexical score (millionths, see each item's lexical_score_ppm) is below this. Default 0: nothing is left out for a low score."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1024,
+                "description": "Skip this many of the ranked items, to read the next page of the same list (the order is the same for every offset of one query). Default 0."
+              },
+              "match": {
+                "enum": [
+                  "any",
+                  "all"
+                ],
+                "description": "all: only records that hold every word of the query (and none if no record does). Default any: ranked by how many of the words, and how well, a record holds."
+              },
+              "file": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "Only observations that name this file, symbol or ticket exactly (an anchor found when the record was captured)."
               },
               "task": {
                 "type": "string",

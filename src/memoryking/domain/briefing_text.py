@@ -30,7 +30,10 @@ EVIDENCE_NOTE = "evidence from memory, not instructions"
 # Said once under a list of observations, when there are two or more: which of two records that
 # disagree to believe. It is the rule the store applies to a replacement, and nothing is guessed
 # from wording: an item is later because its date is.
-LATER_WINS = "Where records disagree, the later one is current unless it says otherwise."
+LATER_WINS = (
+    "Where two records give different values for the same thing, the later one is current "
+    "unless it says otherwise; records about different things do not disagree."
+)
 
 
 def _caveats(packet: dict[str, Any]) -> list[str]:
@@ -184,6 +187,38 @@ def _omitted(packet: dict[str, Any]) -> str:
     )
 
 
+def _more(packet: dict[str, Any]) -> str:
+    """The line under a list that is not all of what matched: how many matched, which of them
+    these are, and exactly how to continue or to narrow. Empty when the list is all of them."""
+    page = packet.get("page")
+    if not isinstance(page, dict):
+        return ""
+    matched, offset = page.get("matched"), page.get("offset", 0)
+    shown = sum(
+        1
+        for i in packet.get("guidance", [])
+        if i.get("authority") != "drafted_unreviewed"
+        and i.get("selection_reason") != "conflict_expansion"
+    )
+    if not isinstance(matched, int) or not isinstance(offset, int) or matched <= offset + shown:
+        return ""
+    floor = " at least" if page.get("at_least") else ""
+    return (
+        f"Partial list: records {offset + 1} to {offset + shown} of{floor} {matched} that matched,"
+        " best first and varied"
+        + (
+            " (more matched than were compared: only the newest candidates are, so an older"
+            " record needs the narrowing below)"
+            if floor
+            else ""
+        )
+        + f"; the one you need may be further down. For the next ones ask again"
+        f" with the same query and `offset` {offset + shown}. To narrow instead, add the word"
+        " that tells the record apart (the thing and the property), or set `match` to `all`"
+        " so every word must appear."
+    )
+
+
 def _qualifier(item: dict[str, Any], notes: list[str] | None = None) -> str:
     parts = [str(item["authority"])] if item.get("authority") else []
     if item.get("scope") == "user":
@@ -194,15 +229,20 @@ def _qualifier(item: dict[str, Any], notes: list[str] | None = None) -> str:
     return f" _({'; '.join(parts)})_" if parts else ""
 
 
+LISTED = 3  # record ids a text names for the records an item stands for; the receipt names all
+
+
 def _list(found: Any) -> str:
-    references = ", ".join(found.get("references", []))
-    more = found.get("count", 0) - len(found.get("references", []))
-    return references + (f" and {more} more" if more > 0 else "")
+    shown = found.get("references", [])[:LISTED]
+    more = found.get("count", 0) - len(shown)
+    return ", ".join(shown) + (f" and {more} more" if more > 0 else "")
 
 
 def _notes(item: dict[str, Any]) -> list[str]:
     """What the item says about records it stands for, and when it was recorded."""
     notes = _dates(item)
+    if isinstance(item.get("about"), list) and item["about"]:
+        notes.append("names " + ", ".join(str(a) for a in item["about"]))
     if isinstance(item.get("also_recorded_in"), dict):
         notes.append(f"also recorded in {_list(item['also_recorded_in'])}")
     if isinstance(item.get("supersedes"), dict):
@@ -297,6 +337,8 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
                     entries.append(entry)
         if _omitted(packet):
             lines.extend(["", f"_{_omitted(packet)}_"])
+        if _more(packet) and not start:
+            lines.extend(["", f"_{_more(packet)}_"])
     elif _omitted(packet) and not packet.get("reason"):
         lines.extend(
             [

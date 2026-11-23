@@ -68,14 +68,17 @@ def pack(
     count: Callable[[str], int],
     budget: int,
     render: Callable[[dict[str, Any]], str] | None = None,
+    contiguous: bool = False,
 ) -> tuple[bytes, int, list[dict[str, Any]], list[str]]:
     """Essential fields are indivisible. Conflicting optional families are atomic groups.
 
     With `render`, the budget governs the text that function makes of the packet (what a
-    model reads for `format: "text"`), not the JSON envelope; see `pack_rendered`.
+    model reads for `format: "text"`), not the JSON envelope; see `pack_rendered`. With
+    `contiguous` the groups taken are a prefix of the list: the first one that does not fit
+    ends the packing, so a later page can start exactly where this one stopped.
     """
     if render is not None:
-        return pack_rendered(base, groups, count, budget, render)
+        return pack_rendered(base, groups, count, budget, render, contiguous)
     value = copy.deepcopy(base)
     value["guidance"] = []
     try:
@@ -124,6 +127,7 @@ def pack_rendered(
     count: Callable[[str], int],
     budget: int,
     render: Callable[[dict[str, Any]], str],
+    contiguous: bool = False,
 ) -> tuple[bytes, int, list[dict[str, Any]], list[str]]:
     """Pack against the rendered text: `usage.output_tokens` is `count(render(packet))`.
 
@@ -197,6 +201,8 @@ def pack_rendered(
             best = (trial_raw, trial_used)
         else:
             omitted.append("optional_group_budget")
+            if contiguous:
+                break
     if best is None:
         # Nothing fits beside the note: say that matches existed, in the fullest form that fits.
         empty = noted([])

@@ -13,7 +13,14 @@ import test_postgres_parity as pg
 from test_lexical_search import LexicalCases
 
 from memoryking.adapters.retrieval import Retrieval
-from memoryking.domain.duplicates import contained, duplicates, family, shape
+from memoryking.domain.duplicates import (
+    contained,
+    duplicate_clusters,
+    duplicates,
+    family,
+    holders,
+    shape,
+)
 from memoryking.domain.passages import EXCERPT_BYTES, MAXIMUM, TAIL, excerpt, split
 
 
@@ -193,6 +200,56 @@ class PassageRuleTests(unittest.TestCase):
         )
         self.assertEqual(family("a", "s", "name"), family("a", "s", "name__v2"))
         self.assertNotEqual(family("a", "s", "name"), family("b", "s", "name"))
+
+
+class RepeatSearchTests(unittest.TestCase):
+    """`duplicate_clusters` and `holders` give what comparing every pair gives, faster."""
+
+    def sessions(self, count=60):
+        import random
+
+        rng = random.Random(7)
+        words = "orders export delimiter semicolon header casing encoding retry gateway".split()
+        out = []
+        for n in range(count):
+            turns = [f"User: {' '.join(rng.sample(words, 8))} request number {n % 7}"]
+            turns += [f"Assistant: {' '.join(rng.choices(words, k=9))} run {rng.randint(1, 4)}"]
+            body = "\n\n".join(turns)
+            out.append(body)
+            if n % 3 == 0:  # the user's own turns on their own: inside the whole capture
+                out.append(turns[0])
+            if n % 5 == 0:  # the same text with another number
+                out.append(body.replace("run 1", "run 2"))
+        return out
+
+    def test_clusters_are_those_of_comparing_every_excerpt_with_every_first_member(self):
+        shapes = [shape(t) for t in self.sessions()]
+        keys = [n // 10 % 2 for n in range(len(shapes))]  # two "time ranges" kept apart
+        expected: list[list[int]] = []
+        for index, mine in enumerate(shapes):
+            for cluster in expected:
+                if keys[cluster[0]] == keys[index] and duplicates(shapes[cluster[0]], mine):
+                    cluster.append(index)
+                    break
+            else:
+                expected.append([index])
+        self.assertEqual(expected, duplicate_clusters(shapes, keys))
+        self.assertTrue(any(len(c) > 1 for c in expected))
+
+    def test_holders_are_the_shortest_excerpt_that_holds_each_other_one(self):
+        shapes = [shape(t) for t in self.sessions()]
+        keys = [n // 10 % 2 for n in range(len(shapes))]
+        expected: dict[int, int] = {}
+        for index, small in enumerate(shapes):
+            best = None
+            for other, big in enumerate(shapes):
+                if other != index and keys[other] == keys[index] and contained(small, big):
+                    if best is None or len(big.text) < best[0]:
+                        best = (len(big.text), other)
+            if best is not None:
+                expected[index] = best[1]
+        self.assertEqual(expected, holders(shapes, keys))
+        self.assertGreater(len(expected), 3)
 
 
 class PassageCases(LexicalCases):
@@ -480,6 +537,32 @@ class PassageCases(LexicalCases):
         self.assertEqual([], self.refs(self.brief("billing exporter", min_score_ppm=1_000_000)))
 
     def test_a_crowd_of_near_identical_statements_does_not_push_out_different_ones(self):
+        values = [f"qa{chr(97 + n)}x" for n in range(20)]
+        crowd = [
+            self.capture(
+                f"c{n}", f"The orders export, column delimiter: {word} (settled in the team call)."
+            )
+            for n, word in enumerate(values)
+        ]
+        different = [
+            self.capture(
+                "d1", "The integration notes say the orders export column delimiter is in UTF-16."
+            ),
+            self.capture(
+                "d2", "Assistant: I checked the column delimiter and header of the orders export."
+            ),
+        ]
+        packet = self.brief("orders export column delimiter", top_k=6)
+        refs = self.refs(packet)
+        self.assertEqual(6, len(refs))
+        self.assertTrue(set(different) <= set(refs), refs)
+        self.assertLessEqual(len(set(crowd) & set(refs)), 4)
+        trace = next(
+            t for t in self.receipt(packet)["trace"] if t["stage"] == "one_answer_per_fact"
+        )
+        self.assertGreater(trace["diversified"], 0)
+
+    def test_the_first_two_near_identical_statements_keep_their_place_in_a_short_list(self):
         crowd = [
             self.capture(
                 f"c{n}",
@@ -491,15 +574,151 @@ class PassageCases(LexicalCases):
             self.capture("d1", "The integration notes say the orders export is UTF-16 encoded."),
             self.capture("d2", "Assistant: I checked the export header of the orders file today."),
         ]
-        packet = self.brief("orders export column delimiter", top_k=5)
-        refs = self.refs(packet)
+        refs = self.refs(self.brief("orders export column delimiter", top_k=5))
         self.assertEqual(5, len(refs))
         self.assertTrue(set(different) <= set(refs), refs)
         self.assertLessEqual(len(set(crowd) & set(refs)), 3)
+
+    def test_a_short_list_with_no_crowd_keeps_the_order_of_the_scores(self):
+        self.capture("a", "Orders export: the column delimiter is a pipe, settled in the call.")
+        self.capture("b", "The orders export column delimiter was discussed in the weekly sync.")
+        self.capture("c", "Our orders export writes a header line first, then one line per row.")
+        self.capture("d", "Unrelated: the delimiter on the report pages is a tab.")
+        packet = self.brief("orders export column delimiter settled", top_k=4)
+        scores = [g["lexical_score_ppm"] for g in packet["guidance"]]
+        self.assertEqual(sorted(scores, reverse=True), scores)
         trace = next(
             t for t in self.receipt(packet)["trace"] if t["stage"] == "one_answer_per_fact"
         )
-        self.assertGreater(trace["diversified"], 0)
+        self.assertEqual(0, trace["diversified"])
+
+    def test_a_clearly_better_match_still_comes_before_a_crowd_of_weaker_ones(self):
+        best = self.capture("best", "Orders export: the column delimiter is a pipe, final.")
+        for n, word in enumerate(["caret", "tilde", "tab", "colon", "semicolon", "comma"]):
+            self.capture(
+                f"w{n}", f"Notes on the orders export from the {word} meeting, nothing more."
+            )
+        packet = self.brief("orders export column delimiter pipe", top_k=3)
+        self.assertEqual(best, self.refs(packet)[0])
+
+    def crowded(self, count=30):
+        """`count` records about one component that differ only in the attribute they state."""
+        names = [f"q{chr(97 + n // 5)}{chr(97 + n % 5)}x" for n in range(count)]
+        return [
+            self.capture(f"r{n:02d}", f"Settled for the orders export: the {name} is {name[::-1]}.")
+            for n, name in enumerate(names)
+        ]
+
+    def test_pages_of_one_query_follow_each_other_without_a_repeat_or_a_gap(self):
+        self.crowded(30)
+        whole = self.refs(self.brief("orders export settled", top_k=24, max_output_tokens=60000))
+        first = self.refs(self.brief("orders export settled", top_k=8, max_output_tokens=60000))
+        second = self.refs(
+            self.brief("orders export settled", top_k=8, offset=8, max_output_tokens=60000)
+        )
+        third = self.refs(
+            self.brief("orders export settled", top_k=8, offset=16, max_output_tokens=60000)
+        )
+        self.assertEqual(24, len(whole))
+        self.assertEqual(whole, first + second + third)
+        self.assertEqual(24, len(set(first + second + third)))
+        trace = next(
+            t
+            for t in self.receipt(
+                self.brief("orders export settled", offset=8, top_k=8, max_output_tokens=60000)
+            )["trace"]
+            if t["stage"] == "paging"
+        )
+        self.assertEqual((30, 8, 8), (trace["matched"], trace["offset"], trace["limit"]))
+        beyond = self.brief("orders export settled", top_k=8, offset=40, max_output_tokens=60000)
+        self.assertEqual([], self.refs(beyond))
+
+    def test_every_word_keeps_only_records_that_hold_all_of_them(self):
+        both = self.capture("both", "The orders export column delimiter is a pipe.")
+        self.capture("one", "The orders export file encoding is utf-8.")
+        self.capture("two", "The report pages column delimiter is a tab.")
+        anything = self.refs(self.brief("orders export column delimiter"))
+        self.assertEqual(3, len(anything))
+        self.assertEqual(
+            [both], self.refs(self.brief("orders export column delimiter", match="all"))
+        )
+        self.assertEqual([], self.refs(self.brief("orders export zebra delimiter", match="all")))
+        self.assertEqual(
+            [both], self.refs(self.brief("orders export column delimiter", match="any"))[:1]
+        )
+
+    def test_a_named_file_keeps_only_records_that_name_it(self):
+        main = self.capture("main", "Edited src/app/main.py to retry the charge twice.")
+        util = self.capture("util", "Edited src/app/util.py to retry the charge twice.")
+        packet = self.brief("edited retry charge twice", file="src/app/main.py")
+        self.assertEqual([main], self.refs(packet))
+        self.assertEqual({main, util}, set(self.refs(self.brief("edited retry charge twice"))))
+        self.assertEqual([], self.refs(self.brief("edited retry charge", file="src/app/none.py")))
+
+    def test_a_long_page_says_what_each_record_names_except_what_all_of_them_name(self):
+        refs = [
+            self.capture(f"n{n}", f"Changed src/shared.py and src/part{n}.py for the retry policy.")
+            for n in range(6)
+        ]
+        packet = self.brief("changed retry policy", top_k=6)
+        by_ref = {g["reference"]: g for g in packet["guidance"]}
+        for n, ref in enumerate(refs):
+            self.assertEqual([f"src/part{n}.py"], by_ref[ref]["about"])
+        text = self.brief("changed retry policy", top_k=6, format="text")["text"]
+        self.assertIn("names src/part3.py", text)
+        self.assertNotIn("names src/shared.py", text)
+        short = self.brief("changed retry policy", top_k=3)
+        self.assertTrue(all("about" not in g for g in short["guidance"]))
+
+    def test_a_partial_list_says_where_the_next_records_start_and_how_to_narrow(self):
+        self.crowded(30)
+        text = self.brief(
+            "orders export settled", top_k=10, format="text", max_output_tokens=60000
+        )["text"]
+        self.assertIn("Partial list: records 1 to 10 of 30 that matched", text)
+        self.assertIn("`offset` 10", text)
+        self.assertIn("`match` to `all`", text)
+        later = self.brief(
+            "orders export settled", top_k=10, offset=20, format="text", max_output_tokens=60000
+        )["text"]
+        self.assertNotIn("Partial list", later)  # the last page: nothing further down
+        self.assertEqual(10, later.count("**[g"))
+        whole = self.brief(
+            "orders export settled", top_k=30, format="text", max_output_tokens=60000
+        )["text"]
+        self.assertNotIn("Partial list", whole)
+
+    def test_when_more_matched_than_were_compared_the_count_is_a_floor_and_says_so(self):
+        for n in range(270):
+            name = f"q{chr(97 + n // 26)}{chr(97 + n % 26)}x"
+            self.capture(f"m{n:03d}", f"Settled for the orders export: the {name} is {name[::-1]}.")
+        text = self.brief("orders export settled", top_k=10, format="text", max_output_tokens=60000)
+        self.assertRegex(text["text"], r"records 1 to 10 of at least \d+ that matched")
+        self.assertIn("only the newest candidates are", text["text"])
+        trace = next(t for t in self.receipt(text)["trace"] if t["stage"] == "lexical")
+        self.assertTrue(trace["candidate_limit_reached"])
+
+    def test_a_page_cut_by_the_budget_ends_where_the_next_page_begins(self):
+        self.crowded(30)
+        first = self.brief("orders export settled", format="text", max_output_tokens=2500)
+        shown = [source["id"] for source in first["sources"]]
+        self.assertTrue(0 < len(shown) < 30)
+        self.assertIn(f"`offset` {len(shown)}", first["text"])
+        rest = self.brief(
+            "orders export settled",
+            format="text",
+            offset=len(shown),
+            top_k=32,
+            max_output_tokens=60000,
+        )
+        whole = [
+            source["id"]
+            for source in self.brief(
+                "orders export settled", format="text", top_k=32, max_output_tokens=60000
+            )["sources"]
+        ]
+        later = [source["id"] for source in rest["sources"]]
+        self.assertEqual(whole, shown + later[: len(whole) - len(shown)])
 
     def test_text_rendering_separates_sections_and_shows_the_recorded_minute(self):
         first = self.capture("a", "Deploys need a second reviewer.")

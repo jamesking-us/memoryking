@@ -337,7 +337,8 @@ class HookReplayTests(unittest.TestCase):
 
     def test_a_crowded_history_shows_more_than_five_records_and_says_it_is_partial(self):
         asked = self.crowded_history()
-        shown = self.submit(asked, host="claude", tools="mcp")
+        # a small budget, so that the crowd is more than what fits
+        shown = self.submit(asked, host="claude", tools="mcp", budget=900)
         self.assertIn("semicolon as the column delimiter", shown)
         self.assertGreater(len(re.findall(r"\*\*\[g\d+\]\*\*", shown)), 5)
         self.assertLessEqual(
