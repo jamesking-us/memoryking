@@ -296,7 +296,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `embedding_query_mismatch` | The query vector's dimension or fingerprint does not match the partition. |
 | `embedding_release_invalid` | The embedding release is malformed. |
 | `embedding_runtime_mismatch` | The installed runtime differs from the pinned version. |
-| `embedding_runtime_unavailable` | Install the embeddings extra (requirements-embeddings.lock) to run the local model. |
+| `embedding_runtime_unavailable` | Install the embedding libraries (requirements-core.lock) to run the local model. |
 | `embedding_source_unavailable` | The observation to embed is missing or purged. |
 | `embedding_vector_invalid` | Vectors must have the model's dimension and finite values. |
 

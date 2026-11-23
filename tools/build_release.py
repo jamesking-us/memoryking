@@ -134,6 +134,11 @@ def main() -> None:
                 output,
             )
             run([*pip, "check"], ROOT)
+            # Semantic search is part of the core install; the model itself is not in it.
+            run(
+                [str(python), "-I", "-c", "import onnxruntime, numpy, tokenizers"],
+                Path(directory),
+            )
             installed["version"] = run(
                 [str(python), "-I", "-m", "memoryking", "--version"], Path(directory)
             ).strip()

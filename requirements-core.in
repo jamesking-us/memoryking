@@ -1,1 +1,11 @@
 jsonschema==4.26.0
+# Semantic search is part of the install. 1.23.2 is pinned for a published CPython 3.12
+# Intel macOS wheel. Imports stay lazy, so a platform without a wheel still serves keywords.
+onnxruntime==1.23.2
+numpy==2.5.4
+tokenizers==0.23.3
+# Windows-only dependencies of the pins above. A lock compiled on macOS or Linux
+# drops requirements whose marker is false there, so compile the locks on Windows
+# (CONTRIBUTING.md); tests/test_locks.py fails if a lock lost them.
+pyreadline3==3.5.6 ; sys_platform == "win32"
+colorama==0.4.6 ; sys_platform == "win32"

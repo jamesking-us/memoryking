@@ -256,5 +256,32 @@ class RelayProfileTests(unittest.TestCase):
         self.assertEqual(json.loads(first)["error"], "transport_unavailable")
 
 
+class WindowsSideStaysLightTests(unittest.TestCase):
+    def test_the_agent_side_runs_with_the_semantic_libraries_unimportable(self) -> None:
+        # The Windows side may be installed without onnxruntime, numpy and tokenizers (the
+        # store side has them): nothing it runs may import them, and its setup and status
+        # code load without them.
+        code = (
+            "import sys\n"
+            "class Block:\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name.split('.')[0] in ('onnxruntime', 'numpy', 'tokenizers'):\n"
+            "            raise ModuleNotFoundError(name, name=name)\n"
+            "sys.meta_path.insert(0, Block())\n"
+            "import memoryking.relay_client, memoryking.relay, memoryking.hook_cli\n"
+            "import memoryking.setup_windows, memoryking.setup_host, memoryking.semantic\n"
+            "import memoryking.__main__ as m\n"
+            "assert 'numpy' not in sys.modules and 'onnxruntime' not in sys.modules\n"
+            "assert memoryking.semantic.runtime_problem() is not None\n"
+            "print(m.semantic_line({'loaded': False, 'partitions': [], 'problem': 'x'}))\n"
+        )
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        done = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=60
+        )
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("off, keyword search only: x", done.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

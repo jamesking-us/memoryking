@@ -91,6 +91,9 @@ def lexical_line(lexical: dict[str, Any]) -> str:
 def semantic_line(semantic: dict[str, Any]) -> str:
     """One line for the semantic index: the model, and how far each project has got."""
     if not semantic.get("loaded"):
+        problem = semantic.get("problem")
+        if problem:
+            return f"off, keyword search only: {problem}"
         return (
             "off (no model loaded; `memoryking semantic enable` installs one and turns it on)"
             if not semantic.get("partitions")
@@ -808,15 +811,16 @@ def doctor(
             "tokenizer",
             "exact tokenizer missing; a characters-per-token estimate is used and disclosed",
         )
-    from importlib.util import find_spec
+    from memoryking import semantic as semantic_module
 
-    if find_spec("onnxruntime") is not None:
-        record("ok", "embeddings runtime", "onnxruntime installed")
+    runtime_problem = semantic_module.runtime_problem()
+    if runtime_problem is None:
+        record("ok", "embeddings runtime", "onnxruntime, numpy and tokenizers installed")
     else:
         record(
             "warn",
             "embeddings runtime",
-            "not installed; `pip install --require-hashes -r requirements-embeddings.lock` enables local semantic search",
+            f"search uses keywords only: {runtime_problem}; then `memoryking semantic enable`",
         )
     if embedding_model is not None:
         try:
@@ -845,8 +849,8 @@ def doctor(
             record(
                 "warn",
                 "embedding model",
-                "no model installed; `memoryking semantic enable` installs and turns it on, "
-                "and until then briefings are lexical",
+                "no model installed; `memoryking setup` or `memoryking semantic enable` "
+                "installs and turns it on, and until then search uses keywords",
             )
     if reranker_model is not None:
         try:
@@ -1054,14 +1058,22 @@ def semantic_command(args: Any) -> int:
     problem = semantic.runtime_problem()
     if problem is not None:
         say(f"Semantic search is not enabled: {problem}.")
-        say("Install the extra, then run `memoryking semantic enable` again.")
-        say("Search stays lexical until then.")
+        say("Install them, then run `memoryking semantic enable` again.")
+        say("Search stays on keywords until then.")
         return 1
     if semantic.verified():
         say(f"Model {semantic.MODEL} is already installed and verified.")
     else:
         say(semantic.consent())
-        outcome = model_install.install(semantic.model_dir(), semantic.MODEL)
+        try:
+            outcome = model_install.install(semantic.model_dir(), semantic.MODEL)
+        except semantic.DOWNLOAD_ERRORS as exc:
+            say(
+                f"Semantic search is not enabled: the model was not installed ({semantic.explain(exc)})."
+            )
+            say("Nothing partial was kept. Run `memoryking semantic enable` again to retry.")
+            say("Search stays on keywords until then.")
+            return 1
         say(f"Model {outcome['status'].replace('_', ' ')} in {semantic.model_dir()}.")
     status = request(args.socket, token, "status", {"project": "main"})
     if status.get("semantic", {}).get("model") != semantic.MODEL:
@@ -2478,6 +2490,8 @@ def main() -> int:
                         # An installed, verified model is used without a flag; none installed
                         # (or no runtime) leaves briefings lexical, which they say.
                         store.embedder = semantic.load_installed()
+                        if store.embedder is None:
+                            store.embedder_problem = semantic.unavailable()
                         if store.embedder is not None:
                             event("serve", "semantic_loaded", model=store.embedder.name)
                     if args.reranker_model is not None:
