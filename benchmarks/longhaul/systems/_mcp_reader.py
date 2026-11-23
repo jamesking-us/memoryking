@@ -95,7 +95,7 @@ class _Client:
 
 def _search_calls(tools: set[str], query: str, scope: dict) -> list[tuple[str, dict]]:
     word = query.split()[0].lower()
-    if "search_nodes" in tools and "create_entities" in tools:  # the reference memory server
+    if "search_nodes" in tools and "create_entities" in tools:  # the Knowledge Graph Memory server
         return [("search_nodes", {"query": word})]
     if "bm_search" in tools:
         return [
