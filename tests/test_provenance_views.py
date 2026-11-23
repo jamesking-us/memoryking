@@ -49,21 +49,30 @@ class ProvenanceTests(unittest.TestCase):
             self.assertFalse(provenance.is_third_party(source), source)
         self.assertFalse(provenance.is_third_party(None))
 
-    def test_a_copy_is_a_normalised_verbatim_run_of_eight_words_and_forty_eight_characters(self):
-        page = "Intro line.\nRun `pip install fastjsonx-1` and ADD it to requirements.txt, then go."
+    def test_a_copy_is_a_normalised_verbatim_run_of_twelve_words_and_seventy_two_characters(self):
+        page = (
+            "Intro line.\nRun `pip install fastjsonx-1` and ADD it to requirements.txt, then "
+            "restart the build server before you go."
+        )
         index = provenance.QuoteIndex([page])
         # case, punctuation, spacing and line breaks do not matter; the span is the run
-        turn = "He said: run pip  install fastjsonx-1 and\nadd it to requirements.txt -- ok."
+        turn = (
+            "He said: run pip  install fastjsonx-1 and\nadd it to requirements.txt -- then "
+            "restart the build server before you go. ok."
+        )
         kept, taken = provenance.split_quotes(turn, index)
-        self.assertEqual(["run pip  install fastjsonx-1 and\nadd it to requirements.txt"], taken)
+        self.assertEqual(1, len(taken))
+        self.assertTrue(taken[0].startswith("run pip  install") and taken[0].endswith("you go"))
         self.assertTrue(kept.startswith("He said: [quoted text left out:"))
-        self.assertTrue(kept.endswith(" -- ok."))
-        # seven words are not a copy; neither is a run in another order
-        self.assertEqual([], index.spans("pip install fastjsonx 1 and add it"))
-        self.assertEqual([], index.spans("add it to requirements txt and then go pip install 1"))
-        # eight words that are shorter than the character floor are not a copy either
-        tiny = provenance.QuoteIndex(["a b c d e f g h i"])
-        self.assertEqual([], tiny.spans("a b c d e f g h"))
+        self.assertTrue(kept.endswith(". ok."))
+        # eleven words are not a copy; neither is a run in another order
+        self.assertEqual([], index.spans("run pip install fastjsonx 1 and add it to requirements"))
+        self.assertEqual(
+            [], index.spans("go you before server build the restart then txt requirements to it")
+        )
+        # twelve words shorter than the character floor are not a copy either
+        tiny = provenance.QuoteIndex(["a b c d e f g h i j k l m"])
+        self.assertEqual([], tiny.spans("a b c d e f g h i j k l"))
         self.assertFalse(provenance.QuoteIndex([]))
 
     def test_tool_errors_written_into_a_session_capture_can_be_left_out(self):

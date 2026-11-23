@@ -26,6 +26,11 @@ Per task, from the shown text:
   `unique_live` (every statement that is not rejected names it), `first_live` (the first
   statement that is not rejected, in the order shown, names it), or `ambiguous` (none of these).
 
+Since P2-14 a list may mark the records that hold the query's words side by side (`holds`):
+`marked`, `marked_other` (marked items of kind other) and `marked_needles` (needles carried in a
+marked item) count them; they were defined after the first measurements and do not exist for a
+list made before the mark.
+
 A reader of this kind is not an agent and these figures are not task quality: they say whether
 the shown text *allows* the asked record to be told apart by matching the component, which is
 necessary and not sufficient.
@@ -39,6 +44,7 @@ from longhaul import families as fam
 from longhaul import gen
 
 REJECTED = re.compile(r"tried|did not adopt|\(draft|TODO")
+MARK = "holds `"  # what a list puts in the note of a record that holds the query's words together
 ITEM = re.compile(r"(?m)^\d+\. \*\*\[g\d+\]\*\* ")
 
 
@@ -118,6 +124,13 @@ def measure(text: str, task: gen.Task, needles: list[dict]) -> dict:
         "needle_rank": rank,
         "other_before": kinds[: rank - 1].count("other") if rank else None,
         "slots": {},
+        # defined after P2-14 added the `holds` mark: only a list that carries it has these
+        "marked": sum(MARK in i for i in shown),
+        "marked_other": sum(MARK in i and k == "other" for i, k in zip(shown, kinds, strict=True)),
+        "marked_needles": sum(
+            any(MARK in i and flat(s) in flat(i) for i in shown for s in n["sentences"])
+            for n in needles
+        ),
     }
     for needle in needles:
         slot = next(s for s in task.slots if s.name == needle["slot"])
@@ -161,4 +174,7 @@ def summarize(rows: list[dict]) -> dict:
         "mean_needle_rank": round(sum(ranks) / len(ranks), 1) if ranks else None,
         "mean_other_before": round(sum(before) / len(before), 1) if before else None,
         "readings": dict(sorted(slots.items())),
+        "marked": sum(r["marked"] for r in rows),
+        "marked_other": sum(r["marked_other"] for r in rows),
+        "marked_needles": sum(r["marked_needles"] for r in rows),
     }

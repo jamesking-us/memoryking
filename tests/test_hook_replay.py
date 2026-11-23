@@ -743,10 +743,10 @@ class HookReplayTests(unittest.TestCase):
         self.assertNotIn("fastjsonx", outside)
 
     def test_only_a_long_verbatim_copy_of_a_tool_result_counts_as_quoted(self):
-        # seven words, not eight: the assistant's own sentence stays whole
+        # eleven words, not twelve: the assistant's own sentence stays whole
         short = "We settled on a semicolon as the export delimiter for the partner feed."
         self.quote_session(
-            page="Notes. we settled on a semicolon as the export. Nothing else here.",
+            page="Notes. we settled on a semicolon as the export delimiter for the partner. Done.",
             reply=short,
         )
         said = self.texts()["claude-session"]
@@ -756,7 +756,7 @@ class HookReplayTests(unittest.TestCase):
     def test_what_the_memory_tools_returned_is_not_third_party_text(self):
         records = (
             "The export delimiter for the partner feed is a semicolon, settled last Tuesday "
-            "by the team."
+            "by the whole team in the review call."
         )
         self.quote_session(
             page=records, tool="mcp__memoryking__recall", reply="From memory: " + records

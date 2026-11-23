@@ -68,27 +68,35 @@ def phrases(query: str, pairs: list[tuple[str, str]], limit: int = 3) -> list[st
     return unique[:limit]
 
 
-def name_first(
-    items: list[dict[str, Any]], query: str
-) -> tuple[list[dict[str, Any]], int, list[str]]:
-    """(`items` with the records that hold most of the query's pairs first, how many those
-    are, the phrases they share). Each group keeps the order it had. A list shorter than
-    MIN_LIST, one where no pair tells records apart, or one where every record is in the first
-    group comes back as it was, with a count of 0."""
+def split(items: list[dict[str, Any]], query: str) -> tuple[list[int], list[str]]:
+    """(the places in `items` of the records that hold most of the query's pairs, the phrases
+    of the query they hold). Empty when the list is shorter than MIN_LIST, when no pair tells
+    the records apart, or when every record is among them."""
     if len(items) < MIN_LIST:
-        return items, 0, []
+        return [], []
     scores, pairs = weigh(query, [str(i.get("text", "")) for i in items])
     best = max(scores, default=0.0)
     if best <= 0:
-        return items, 0, []
+        return [], []
     first = [n for n, s in enumerate(scores) if s >= SHARE * best]
     if len(first) == len(items):
-        return items, 0, []
-    chosen = set(first)
-    ordered = [items[n] for n in first] + [i for n, i in enumerate(items) if n not in chosen]
+        return [], []
     top = {
         p
         for p in pairs
         if any(p in set(_pairs(_tokens(str(items[n].get("text", ""))))) for n in first)
     }
-    return ordered, len(first), phrases(query, [p for p in pairs if p in top])
+    return first, phrases(query, [p for p in pairs if p in top])
+
+
+def held(text: str, shared: list[str]) -> list[str]:
+    """The phrases of `shared` that `text` holds, word for word."""
+    words = " ".join(_tokens(text))
+    return [p for p in shared if f" {p} " in f" {words} "]
+
+
+def name_first(items: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """`items` with the records `split` finds first, each group in the order it had."""
+    first, _ = split(items, query)
+    chosen = set(first)
+    return [items[n] for n in first] + [i for n, i in enumerate(items) if n not in chosen]

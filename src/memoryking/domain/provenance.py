@@ -62,8 +62,8 @@ def without_tool_errors(text: str) -> str:
 # consecutively in one tool result, and is at least QUOTE_CHARS characters long. Nothing is read
 # from how the text is worded.
 
-QUOTE_WORDS = 8
-QUOTE_CHARS = 48
+QUOTE_WORDS = 12
+QUOTE_CHARS = 72
 QUOTED_PREFIX = "Quoted by "  # opens each paragraph of a third-party record made of copied text
 _WORD = re.compile(r"[^\W_]+")
 

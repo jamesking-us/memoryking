@@ -734,7 +734,7 @@ def prompt_view(
 
     own = chosen(mine, PROMPT_USER_SHARED)[:PROMPT_USER] if mine and not mine.get("reason") else []
     # Records that hold the prompt's words side by side are the first to be shown (see `names`).
-    items = _one_per_session([*own, *name_first(chosen(packet, PROMPT_SHARED), query)[0]])
+    items = _one_per_session([*own, *name_first(chosen(packet, PROMPT_SHARED), query)])
     if not items:
         return ""
     base = {k: v for k, v in packet.items() if k not in {"omitted_for_budget", "page"}}

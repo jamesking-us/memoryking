@@ -12,7 +12,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from memoryking.domain.names import name_first
+from memoryking.domain.names import held, split
 from memoryking.domain.provenance import QUOTED_PREFIX, is_third_party
 
 WARNING_NOTES = {
@@ -326,9 +326,12 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
                 key=_when,
                 reverse=True,
             )
-            # Records that hold the query's words side by side come first (each group newest
-            # first): the others match on single words, often about another thing.
-            unreviewed, named, shared = name_first(unreviewed, str(packet.get("objective") or ""))
+            # Records that hold the query's words side by side say so. The list stays newest
+            # first, so that a later record about a thing is never listed before an earlier one.
+            named, shared = split(unreviewed, str(packet.get("objective") or ""))
+            marks = {
+                id(unreviewed[n]): held(str(unreviewed[n].get("text", "")), shared) for n in named
+            }
             number = 0
             for heading, items in (
                 ("Accepted knowledge", accepted),
@@ -342,10 +345,10 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
                     lines.extend(
                         [
                             "",
-                            f"_The first {named} hold the words you asked for side by side"
-                            f" ({side}); the other {len(items) - named} hold fewer of them, often"
-                            f" only single words and about something else. Each group is newest"
-                            f" first. {LATER_WINS}_",
+                            f"_Newest first. {len(named)} are marked `holds`: they hold the words"
+                            f" you asked for side by side ({side}); the other"
+                            f" {len(items) - len(named)} hold fewer of them, often only single"
+                            f" words and about something else. {LATER_WINS}_",
                         ]
                     )
                 elif items is unreviewed and len(items) > 1:
@@ -353,7 +356,10 @@ def render_brief(packet: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
                 for item in items:
                     number += 1
                     tag = f"g{number}"
-                    lines.extend(_entry(number, tag, item, _notes(item)))
+                    notes = _notes(item)
+                    if marks.get(id(item)):
+                        notes.append("holds " + ", ".join(f"`{p}`" for p in marks[id(item)]))
+                    lines.extend(_entry(number, tag, item, notes))
                     line, entry = _item_source(tag, item)
                     sources.append(line)
                     entries.append(entry)

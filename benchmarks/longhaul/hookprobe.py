@@ -192,9 +192,8 @@ def probe_group(
     prompt_args: str = "",
 ) -> list[dict]:
     """One row per task of the group, measured on a copy of the seeded store."""
-    from memoryking import hooks as mk_hooks
-
     from longhaul.systems import load as load_system
+    from memoryking import hooks as mk_hooks
 
     root = work / f"{suite.seed}-{suite.size}-g{group.index}"
     if root.exists():
@@ -294,7 +293,9 @@ def summarize(rows: list[dict]) -> dict:
                 max_seconds=max((r["seconds"][key] for r in rows), default=0),
             )
     if rows and "distinct" in rows[0]:
-        out["distinct"] = {k: distinct.summarize([r["distinct"][k] for r in rows]) for k in DISTINCT}
+        out["distinct"] = {
+            k: distinct.summarize([r["distinct"][k] for r in rows]) for k in DISTINCT
+        }
     return out
 
 
@@ -314,6 +315,8 @@ def render(summary: dict) -> str:
         lines.append(
             f"distinct {key}: items {d['items']}, other-component {d['other_share']:.0%}, "
             f"asked-component {d['asked_share']:.0%}, needle rank {d['mean_needle_rank']}, "
-            f"other before needle {d['mean_other_before']}, readings {d['readings']}"
+            f"other before needle {d['mean_other_before']}, readings {d['readings']}, "
+            f"marked {d['marked']} (of them other-component {d['marked_other']}, "
+            f"needles in a marked item {d['marked_needles']})"
         )
     return "\n".join(lines)
