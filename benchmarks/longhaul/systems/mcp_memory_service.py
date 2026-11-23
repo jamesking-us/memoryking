@@ -184,29 +184,39 @@ class McpMemoryService:
             llm_calls=0,
             llm_tokens=0,
             notes="memory_store_session per session (tags project:/user:, agent_id, session id; start time in "
-            "metadata); creation times set to the session starts; local ONNX embeddings; no chat model",
+            "metadata); creation times shifted so the history ends an hour ago, spacing kept; local ONNX embeddings; no chat model",
         )
 
-    def stamp_sessions(self, starts: dict[str, str]) -> None:
+    def stamp_sessions(self, starts: dict[str, str], now: float | None = None) -> None:
         """The product gives a memory the time it was stored and offers no way to say otherwise,
         so a history seeded in one sitting would show every session as stored just now, and
         corrections made months apart could not be told apart by their dates (a search result
-        shows only this creation time). A real history carries the dates its sessions had:
-        set `created_at` and `updated_at` (and their ISO forms) of each session's memory to
-        that session's start, as the other arms' records carry theirs."""
+        shows only this creation time). Set `created_at` and `updated_at` (and their ISO forms)
+        of each session's memory so that the sessions keep the spacing they had and the last of
+        them is an hour old: the history reads as lived up to now, which is also what the
+        product's start hook (it looks for memories of "last week") is built for. The other
+        arms print the generator's own dates, a year earlier; the order and the spacing are
+        the same everywhere."""
         assert self.root is not None
         db = self.root / "memory.db"
-        if not db.is_file():
+        if not db.is_file() or not starts:
             return
+        whens = {
+            sid: datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+            for sid, stamp in starts.items()
+        }
+        shift = (time.time() if now is None else now) - 3600 - max(whens.values())
         con = sqlite3.connect(db, timeout=60)
         try:
-            for sid, stamp in starts.items():
-                when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-                iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+            for sid, when in whens.items():
+                moved = when + shift
+                iso = datetime.fromtimestamp(moved, timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.000000Z"
+                )
                 con.execute(
                     "UPDATE memories SET created_at=?, updated_at=?, created_at_iso=?, "
                     "updated_at_iso=? WHERE ','||tags||',' LIKE ?",
-                    (when.timestamp(), when.timestamp(), iso, iso, f"%,session:{sid},%"),
+                    (moved, moved, iso, iso, f"%,session:{sid},%"),
                 )
             con.commit()
         finally:

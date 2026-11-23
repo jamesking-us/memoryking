@@ -229,7 +229,7 @@ class MemoryKingUserScopeTests(unittest.TestCase):
 
 
 class McpMemoryServiceTimeTests(unittest.TestCase):
-    def test_creation_times_are_set_to_the_session_starts(self):
+    def test_creation_times_keep_the_spacing_and_end_an_hour_ago(self):
         from longhaul.systems import mcp_memory_service as mms
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,13 +245,18 @@ class McpMemoryServiceTimeTests(unittest.TestCase):
             con.close()
             system = mms.McpMemoryService.__new__(mms.McpMemoryService)
             system.root = Path(tmp)
-            system.stamp_sessions({"h1": "2025-03-14T16:11:38Z"})
+            now = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc).timestamp()
+            system.stamp_sessions({"h1": "2025-03-14T16:11:38Z", "h2": "2025-03-12T16:11:38Z"}, now=now)
             rows = sqlite3.connect(db).execute(
                 "select id, created_at, created_at_iso, updated_at_iso from memories order by id"
             ).fetchall()
-            when = datetime(2025, 3, 14, 16, 11, 38, tzinfo=timezone.utc)
-            self.assertEqual(rows[0], (1, when.timestamp(), "2025-03-14T16:11:38.000000Z", "2025-03-14T16:11:38.000000Z"))
-            self.assertEqual(rows[1], (2, 1.0, "x", "x"))  # h10 is not h1
+            iso = "2026-11-23T11:00:00.000000Z"
+            self.assertEqual(rows[0], (1, now - 3600, iso, iso))  # the latest session is an hour old
+            self.assertEqual(rows[1], (2, 1.0, "x", "x"))  # h10 is not h1 or h2
+            system.root = Path(tmp)
+            system.stamp_sessions({"h1": "2025-03-14T16:11:38Z", "h10": "2025-03-12T16:11:38Z"}, now=now)
+            rows = sqlite3.connect(db).execute("select created_at from memories order by id").fetchall()
+            self.assertEqual(rows[0][0] - rows[1][0], 2 * 86400)  # the spacing of the sessions is kept
 
 
 class StubReaderTests(unittest.TestCase):
