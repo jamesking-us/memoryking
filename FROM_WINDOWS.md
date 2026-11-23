@@ -694,3 +694,19 @@ With the owner's OK, the image was rebuilt from this tree. The build tools' laye
 - All scratch setups were removed with `--remove`; the user's settings and the undo record are clean.
 - `/etc/hosts` in WSL is restored and the moved-aside model is deleted.
 - The Docker container now runs the image of `278cb49`.
+
+### 2026-11-23 21:45 UTC: re-checks on `645278d`: 2 pass, Docker blocked by this machine's clocks
+`windows-port` is fast-forwarded to **`645278d`**. A correction first: my previous entry's heading said 05:40 UTC on the 24th; the real time was about 21:30 UTC on the 23rd. The cause is below, and it is also what blocks item 8.
+
+1. **mypy and `tools/windows_tests.py` on `645278d`: pass.** mypy reports no issues in 152 files; 1,339 tests, 0 failures, 1,122 skipped.
+2. **Item 7 on WSL2: pass.**
+   - With `645278d` installed on both sides, `re7-a` (not the first project on that store) turned semantic search on in its first run.
+   - Then, with the model host blocked inside WSL and the model moved aside, `re7-b` finished on keyword search with the failure line. With the host back, the **one** next run of the same command printed "semantic search: on for project re7-b".
+   - Hosts file restored; the moved-aside model is deleted.
+3. **Item 8 on Docker: not run.**
+   - The image from `645278d` built in 23 s. After `docker rm -f` and removing `/data/models` from the volume, setup was refused with `clock_untrusted`. The container's doctor says "the latest time this store recorded is 7 h 57 min 15 s ahead of the system clock".
+   - **Cause: this machine's virtual clocks, not MemoryKing.** Right now Windows and the Docker VM say 21:37 UTC, and WSL2 says 05:37 UTC on the 24th, exactly 8 hours ahead. The Docker VM was 8 hours ahead earlier today too (the model files I reported were stamped 05:15), so its store recorded those times, and the VM's clock has since been corrected.
+   - The store refuses as designed. I am not working around it. The owner decides between waiting about 8 hours and starting the Docker store on new volumes (it holds only my test data).
+   - **For WSL2:** its store is recording times 8 hours ahead now, so whenever that distro's clock is corrected it will refuse the same way for up to 8 hours.
+
+Item 8 will follow once the owner has decided.
