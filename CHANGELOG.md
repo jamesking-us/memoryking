@@ -6,21 +6,26 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ### Measured against other memory products
 
-A real coding agent (Claude Code) was given 12 small tasks that need a fact from an earlier session, with 200 and with 2,000 earlier sessions of history: 24 runs per product, 120 sessions in all, none repeated or left out ([record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-products-84071da.md)).
+A real coding agent (Claude Code) was given the same 39 small tasks with each memory product, one run per task, 195 sessions in all, none repeated or left out. Twelve tasks need one fact hidden among 2,000 earlier sessions ([record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-fixed-generator-52aad17.md)). Twenty-seven, at 200 sessions, need a fact that was later corrected, a memory that was deleted, work spread over several projects, or a history that holds a planted instruction ([record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-s2-tracks-52aad17.md)).
 
-| Memory product | Tasks passed | Text read per task |
-| --- | ---: | ---: |
-| **MemoryKing**, as `memoryking setup` installs it | **18 of 24** | **142,000 tokens** |
-| Basic Memory 1.0.0 | 17 of 24 | 218,000 tokens |
-| Knowledge Graph Memory server 2.2.1 (`@modelcontextprotocol/server-memory`) | 13 of 24 | 243,000 tokens |
-| MCP Memory Service 13.0.0 | 6 of 24 | 120,000 tokens |
+| Memory product | Passed, 2,000 sessions | Passed, 200 sessions | Text read per task |
+| --- | ---: | ---: | ---: |
+| **MemoryKing**, as `memoryking setup` installs it | **12 of 12** | **23 of 27** | **123,000 tokens** |
+| Knowledge Graph Memory server 2.2.1 (`@modelcontextprotocol/server-memory`) | 6 of 12 | 21 of 27 | 218,000 tokens |
+| Basic Memory 1.0.0 | 4 of 12 | 19 of 27 | 219,000 tokens |
+| MCP Memory Service 13.0.0 | 1 of 12 | 11 of 27 | 150,000 tokens |
+| No memory product: every raw transcript in a folder to search | 9 of 12 | 20 of 27 | 168,000 tokens |
 
-- MemoryKing passed all 12 tasks at 200 sessions.
-- The agent read about a third less text with MemoryKing than with Basic Memory and about 40% less than with the Knowledge Graph Memory server (paired by task and size, corrected for four comparisons: p 0.0002 and 0.0004).
-- MemoryKing passed three times as many tasks as MCP Memory Service (9 tasks to 0 when paired, corrected p 0.016).
-- MemoryKing had only what its hooks capture in a normal session; the other three had every earlier session written into them in full.
-- In a separate run at 2,000 sessions MemoryKing passed 8 of 12 tasks and a notes file 1 (corrected p 0.031; [record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-7aceafe.md)).
-- Not separated by this run: the pass counts of MemoryKing, Basic Memory and the Knowledge Graph Memory server. An agent handed every raw transcript to search passed 21 of 24. Synthetic tasks, one model, one run per task: a guide, not a guarantee.
+- At 2,000 sessions MemoryKing passed all 12 tasks. Paired by task and corrected for four comparisons, it is ahead of Basic Memory (8 tasks to 0, p 0.023) and MCP Memory Service (11 to 0, p 0.004); against the Knowledge Graph Memory server it is 6 to 0 (p 0.0625) and against raw transcripts 3 to 0, which this many tasks cannot confirm.
+- At 200 sessions MemoryKing passed 23 of 27 and is ahead of MCP Memory Service (13 tasks to 1, corrected p 0.007). The other pass counts there are not separated.
+- The agent read less text with MemoryKing than with the Knowledge Graph Memory server, Basic Memory or raw transcripts in both runs (corrected p at most 0.005), and less than with MCP Memory Service at 200 sessions. It also finished sooner than with each of the others in both runs (corrected p at most 0.007).
+- When a fact changed over time, the agent with MemoryKing used the current value in 8 of 8 tasks.
+- A fact private to one project reached none of MemoryKing's 3 sessions in a sibling project. The other three products keep one store for every project by design, and it reached 7 of their 9 sessions.
+- A stored web page with a hidden instruction reached none of MemoryKing's 6 sessions. No agent acted on it with any product.
+- After each product's delete path was used, the deleted text reached none of the 20 sessions.
+- MemoryKing had only what its hooks capture in a normal session; the other three had every earlier session written into them in full. In three of the 27 tasks MemoryKing was also given one saved preference that an agent would normally save itself; without those three the counts are 20, 18, 16, 9 and 18 of 24, and the lead over MCP Memory Service stands (12 to 1, corrected p 0.014).
+- Earlier runs: on a different draw, before a fault in the benchmark was fixed and before a change to MemoryKing, the same four products at 200 and 2,000 sessions gave MemoryKing 18 of 24 (6 of 12 at 2,000), Basic Memory 17, the Knowledge Graph Memory server 13 and MCP Memory Service 6 ([record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-products-84071da.md)); and at 2,000 sessions MemoryKing passed 8 of 12 tasks and a notes file 1 (corrected p 0.031; [record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-7aceafe.md)).
+- Synthetic tasks, one model, one run per task, and results move between draws: a guide, not a guarantee.
 
 ### Quoted text and near-identical records
 
