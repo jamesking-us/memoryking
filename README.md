@@ -8,6 +8,41 @@ Think of it as a **shared project notebook with a save point**. When a conversat
 
 It is a service that you connect to your agents. It does not automatically read your chats or run agents for you.
 
+## How it measures up
+
+We tested MemoryKing head to head against three other memory products, and against simply handing the agent every raw transcript to search. Each got the same tasks with a real coding agent (Claude Code). **MemoryKing had the top score in all four tests**, level with a plain notes file in one.
+
+| Test | MemoryKing | Next best |
+| --- | ---: | --- |
+| Find one fact hidden among 2,000 earlier sessions (12 tasks) | **12** | 9, raw transcripts; 6, the best other product |
+| Handle corrected facts, deleted memories, several projects and planted instructions (27 tasks) | **23** | 21, Knowledge Graph Memory server |
+| Answer questions about long chat histories (60 questions from the public LongMemEval set) | **51** | 49, Basic Memory |
+| Save its own memory across four real sessions (4 tasks) | **4** | 4, a notes file; the other three products passed none |
+| Text the agent has to read per task | **123,000 tokens** | 150,000, MCP Memory Service |
+
+What that means in practice:
+
+- **Nothing missed in a long history.** MemoryKing passed all 12 tasks at 2,000 sessions. The tests confirm its lead over Basic Memory there, and over MCP Memory Service at both sizes.
+- **Most questions answered.** MemoryKing answered 51 of 60 questions correctly, more than any other product, and the test confirms its lead over a plain text search. Search by meaning is part of the standard install.
+- **Less to read, and quicker.** The agent read over 40% less text with MemoryKing than with Basic Memory or the Knowledge Graph Memory server, and finished sooner than with any of the others. The tests confirm both.
+- **Corrections followed.** When a fact changed over time, the agent with MemoryKing used the current value in 8 of 8 tasks.
+- **Projects kept apart.** A fact private to one project never reached a session in another project with MemoryKing. The other three products keep one store for every project, and it reached 7 of their 9 sessions.
+- **Planted instructions kept out.** A web page with a hidden instruction sat in the history. With MemoryKing it never reached the agent in any of 6 sessions.
+- **It saves by itself.** When each product had to save its own memory over four real sessions, MemoryKing passed 4 of 4 tasks. With the other three products the corrected fact never reached the last session, and they passed none of the 8 runs that counted.
+- **From ordinary use.** In the first two tests MemoryKing had only what its hooks capture in a normal session. The other three were given a head start: every earlier session was written into them in full.
+
+Every product, every test:
+
+| Memory product | Passed, 2,000 sessions | Passed, 200 sessions | Questions answered | Text read per task |
+| --- | ---: | ---: | ---: | ---: |
+| **MemoryKing**, as `memoryking setup` installs it | **12 of 12** | **23 of 27** | **51 of 60** | **123,000 tokens** |
+| Knowledge Graph Memory server 2.2.1 (`@modelcontextprotocol/server-memory`) | 6 of 12 | 21 of 27 | 9 of 60 | 218,000 tokens |
+| Basic Memory 1.0.0 | 4 of 12 | 19 of 27 | 49 of 60 | 219,000 tokens |
+| MCP Memory Service 13.0.0 | 1 of 12 | 11 of 27 | 47 of 60 | 150,000 tokens |
+| No memory product: every raw transcript in a folder to search | 9 of 12 | 20 of 27 | 38 of 60 | 168,000 tokens |
+
+These are synthetic tasks and a public question set, with one model and one run per task, so read them as a guide, not a guarantee. The leads named as confirmed above passed a statistical test; the other gaps, including those to Basic Memory and MCP Memory Service on the questions, are too small for this many tasks to confirm. Results also move between draws: an earlier draw at 2,000 sessions, run before a fault in the benchmark was fixed and before a change to MemoryKing, gave MemoryKing 6 of 12, and with keyword search alone it answered 43 of the 60 questions. In three of the 27 tasks MemoryKing was given one saved preference that an agent would normally save itself; without those three the counts are 20, 18, 16, 9 and 18 of 24. The Knowledge Graph Memory server's 9 of 60 reflects its literal word search as our test drives it, not an agent trying several searches. In a separate run at 2,000 sessions MemoryKing passed 8 of 12 tasks and a notes file passed 1. The records of the [2,000-session run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-fixed-generator-52aad17.md), the [200-session run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-s2-tracks-52aad17.md), the [four-session test](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-s4-lived-99b1410.md), the question-answering runs ([keyword search](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t5-99b1410.md), [with search by meaning](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t5b-semantic-c79e1a1.md)) and the [notes-file run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-7aceafe.md) give the method and every result, and the [results folder](https://github.com/jamesking-us/memoryking/tree/main/benchmarks/longhaul/results) holds the earlier runs.
+
 ## Why it is useful
 
 Imagine an agent investigating a checkout bug. It discovers that a retry can charge a customer twice, tries a fix that fails, and runs out of context before finishing.
@@ -30,28 +65,6 @@ flowchart LR
     D --> E[Agent continues or hands off]
     E --> B
 ```
-
-## How it measures up
-
-We test MemoryKing by giving a real coding agent small tasks that can only be done correctly with something from earlier sessions, and counting the tasks it gets right. In the latest runs every memory product got the same 39 tasks. Twelve need one fact hidden among 2,000 earlier sessions. Twenty-seven, at 200 sessions, need a fact that was later corrected, a memory that was deleted, work spread over several projects, or a history that holds a planted instruction.
-
-| Memory product | Passed, 2,000 sessions | Passed, 200 sessions | Text read per task |
-| --- | ---: | ---: | ---: |
-| **MemoryKing**, as `memoryking setup` installs it | **12 of 12** | **23 of 27** | **123,000 tokens** |
-| Knowledge Graph Memory server 2.2.1 (`@modelcontextprotocol/server-memory`) | 6 of 12 | 21 of 27 | 218,000 tokens |
-| Basic Memory 1.0.0 | 4 of 12 | 19 of 27 | 219,000 tokens |
-| MCP Memory Service 13.0.0 | 1 of 12 | 11 of 27 | 150,000 tokens |
-| No memory product: every raw transcript in a folder to search | 9 of 12 | 20 of 27 | 168,000 tokens |
-
-- **Nothing missed in a long history.** MemoryKing passed all 12 tasks at 2,000 sessions. The tests confirm its lead over Basic Memory there, and over MCP Memory Service at both sizes.
-- **Less to read, and quicker.** The agent read over 40% less text with MemoryKing than with Basic Memory or the Knowledge Graph Memory server, and finished sooner than with any of the others. The tests confirm both.
-- **Corrections followed.** When a fact changed over time, the agent with MemoryKing used the current value in 8 of 8 tasks.
-- **Projects kept apart.** A fact private to one project never reached a session in another project with MemoryKing. The other three products keep one store for every project, and it reached 7 of their 9 sessions.
-- **Planted instructions kept out.** A web page with a hidden instruction sat in the history. With MemoryKing it never reached the agent in any of 6 sessions.
-- **From ordinary use.** MemoryKing had only what its hooks capture in a normal session. The other three were given a head start: every earlier session was written into them in full.
-- **It saves by itself.** In a small test where each product had to save its own memory over four real sessions, MemoryKing passed 4 of 4 tasks, as a plain notes file did. With the other three products the corrected fact never reached the last session, and they passed none of the 8 runs that counted.
-
-These are synthetic tasks with one model and one run per task, so read them as a guide, not a guarantee. The other differences in pass counts are too small for this many tasks to confirm, and results move between draws: an earlier draw at 2,000 sessions, run before a fault in the benchmark was fixed and before a change to MemoryKing, gave MemoryKing 6 of 12. In three of the 27 tasks MemoryKing was given one saved preference that an agent would normally save itself; without those three the counts are 20, 18, 16, 9 and 18 of 24. On 60 questions from the public LongMemEval set, answered from what each product's search returns, MemoryKing got 43 right, against 49 for Basic Memory, 47 for MCP Memory Service and 38 for a plain text search; those gaps are also too small to confirm. In a separate run at 2,000 sessions MemoryKing passed 8 of 12 tasks and a notes file passed 1. The records of the [2,000-session run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-fixed-generator-52aad17.md), the [200-session run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-s2-tracks-52aad17.md), the [four-session test](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-s4-lived-99b1410.md), the [question-answering run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t5-99b1410.md) and the [notes-file run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-7aceafe.md) give the method and every result, and the [results folder](https://github.com/jamesking-us/memoryking/tree/main/benchmarks/longhaul/results) holds the earlier runs.
 
 ## What is new
 
@@ -144,7 +157,7 @@ See [deployment and configuration](https://github.com/jamesking-us/memoryking/bl
 
 ## Current status
 
-**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Evidence of real-task benefit comes from small synthetic benchmarks with a real agent, summarised under [How it measures up](#how-it-measures-up): with long histories MemoryKing passes more tasks than a notes file and than two other memory products, and the agent reads less text, while on short single-project tasks a notes file does as well. A memory store on Windows itself, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
+**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Evidence of real-task benefit comes from small synthetic benchmarks with a real agent, summarised under [How it measures up](#how-it-measures-up): with long histories MemoryKing passes more tasks than a notes file and than two other memory products, the agent reads less text, and on a public question set it answers the most, while on short single-project tasks a notes file does as well. A memory store on Windows itself, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
 
 MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](https://github.com/jamesking-us/memoryking/blob/main/SECURITY.md) and [current limits](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#current-limits).
 
