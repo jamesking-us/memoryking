@@ -411,6 +411,60 @@ class SetupTests(unittest.TestCase):
         self.assertIn("already exists", done.stdout)
         self.assertIn("mcp --store-profile default-agent", done.stdout)
 
+    def test_without_the_embedding_libraries_setup_and_the_service_run_on_keywords_and_say_so(self):
+        # An install made with --no-deps, or a platform with no wheel for one of them: the
+        # three modules cannot be imported in this process or in the daemon it starts.
+        blocker = self.home / "blocker"
+        blocker.mkdir()
+        (blocker / "sitecustomize.py").write_text(
+            "import sys\n"
+            "class Block:\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name.split('.')[0] in ('onnxruntime', 'numpy', 'tokenizers'):\n"
+            "            raise ModuleNotFoundError(name, name=name)\n"
+            "sys.meta_path.insert(0, Block())\n"
+        )
+        env = {k: v for k, v in self.env.items() if k != "MEMORYKING_SEMANTIC"}
+        env["PYTHONPATH"] = str(blocker)
+        env["MEMORYKING_MODELS"] = str(self.home / "models")  # nothing would be downloaded
+        probe = subprocess.run(
+            [sys.executable, "-c", "import numpy"], env=env, capture_output=True, text=True
+        )
+        self.assertNotEqual(0, probe.returncode)
+        done = self.mk("setup", "generic", "--project", "demo", env=env)
+        self.assertIn("semantic search: off, search uses keywords", done.stdout)
+        self.assertIn("memoryking semantic enable", done.stdout)
+        self.assertFalse((self.home / "models").exists())
+        status = self.mk("--profile", "default", "status", env=env).stdout
+        self.assertIn("Semantic   off, keyword search only", status)
+        self.assertIn("do not load", status)
+        doctor = self.mk("--profile", "default", "doctor", env=env, check=False).stdout
+        self.assertIn("search uses keywords only", doctor)
+
+    def test_a_daemon_this_process_started_can_be_stopped_by_the_same_process(self):
+        # First-run setup starts the daemon, downloads the model, then restarts the daemon to
+        # load it: the stop must not wait on a zombie child until it gives up.
+        self.mk("setup", "generic", "--project", "demo")
+        self.mk("--profile", "default", "stop")
+        code = (
+            "import time\n"
+            "from memoryking import daemon, profiles\n"
+            "daemon.ensure('default')\n"
+            "started = time.monotonic()\n"
+            "print(daemon.stop(profiles.resolve('default')))\n"
+            "print(time.monotonic() - started < 10)\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            timeout=60,
+        )
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertIn("'stopped': True", done.stdout)
+        self.assertTrue(done.stdout.strip().endswith("True"))
+
     def test_the_daemon_starts_on_demand_and_two_starters_do_not_race(self):
         self.mk("setup", "generic", "--project", "demo")
         status = json.loads(self.mk("--profile", "default", "status", "--json").stdout)

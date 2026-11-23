@@ -349,7 +349,7 @@ HINTS: dict[str, str] = {
     "embedding_query_mismatch": "The query vector's dimension or fingerprint does not match the partition.",
     "embedding_release_invalid": "The embedding release is malformed.",
     "embedding_runtime_mismatch": "The installed runtime differs from the pinned version.",
-    "embedding_runtime_unavailable": "Install the embeddings extra (requirements-embeddings.lock) to run the local model.",
+    "embedding_runtime_unavailable": "Install the embedding libraries (requirements-core.lock) to run the local model.",
     "reranker_failure": "The reranker runtime failed on this request; the briefing fell back to the fused order.",
     "reranker_input_limit": "The reranker scores at most 64 texts of at most 16 KiB each per call.",
     "reranker_model_checksum_mismatch": "The reranker files do not match the manifest checksums.",
