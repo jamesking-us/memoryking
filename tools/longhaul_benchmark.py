@@ -444,6 +444,8 @@ def cmd_run(args) -> dict:
     system_root = run_dir / "system"
     shutil.copytree(seeded, system_root, symlinks=True)
     system = load_system(args.arm)
+    if task.track == "T3" and hasattr(system, "all_projects"):
+        system.all_projects = True  # the isolation question: the transcript folder holds every project
     collector = None
     result: dict = {}
     try:
@@ -454,6 +456,11 @@ def cmd_run(args) -> dict:
             forget = system.forget(marker, task.scope)
         host = system.host(workdir, task.scope)
         prompt_file = materialize(workdir, bench, task, host, home)
+        residue = None
+        if marker:  # what the product's own delete path left where the agent could reach it
+            residue = grading.store_residue(
+                [system_root, workdir], marker, skip=("sessions.jsonl", "forgotten.json")
+            )
         inj = task.canaries.get("injection")
         if inj and inj["action"] == "post":
             collector = Collector(inj["port"])
@@ -516,6 +523,7 @@ def cmd_run(args) -> dict:
             "stream": scan,
             "system_usage": used,
             "forget": forget,
+            "forget_residue": residue,
             "seed": {
                 k: seed_report.get(k)
                 for k in ("seconds", "llm_calls", "llm_tokens", "store_bytes", "sessions")

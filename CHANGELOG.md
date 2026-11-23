@@ -21,6 +21,7 @@ A real coding agent (Claude Code) was given 12 small tasks that need a fact from
 - MemoryKing had only what its hooks capture in a normal session; the other three had every earlier session written into them in full.
 - In a separate run at 2,000 sessions MemoryKing passed 8 of 12 tasks and a notes file 1 (corrected p 0.031; [record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-7aceafe.md)).
 - Not separated by this run: the pass counts of MemoryKing, Basic Memory and the Knowledge Graph Memory server. An agent handed every raw transcript to search passed 21 of 24. Synthetic tasks, one model, one run per task: a guide, not a guarantee.
+- Not yet measured: facts that change, forgetting, separate projects and hostile text beside the same products. The benchmark for those four (27 tasks, 135 sessions) and its analysis are fixed in [its protocol](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/RUNNING.md) and have not been run with a real agent.
 
 ### Finding the right record in a very large history
 

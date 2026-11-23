@@ -17,6 +17,10 @@ NOTE = (
     "Transcripts of earlier sessions of this project are in ./history/, one file per "
     "session; you can search them."
 )
+NOTE_ALL = (
+    "Transcripts of earlier sessions of all your projects are in ./history/, one folder per "
+    "project and one file per session; you can search them."
+)
 
 
 class Log(FileSystemBase):
@@ -27,8 +31,9 @@ class Log(FileSystemBase):
         for s in self.sessions_for(scope):
             stamp = re.sub(r"[^0-9]", "", s.started)[:12]
             safe = re.sub(r"[^A-Za-z0-9_-]", "-", s.id)
-            files[f"history/{stamp}-{safe}.md"] = render_transcript(s)
-        return HostConfig({}, {}, files, [], {}, NOTE)
+            folder = re.sub(r"[^A-Za-z0-9_-]", "-", s.scope.project) + "/" if self.all_projects else ""
+            files[f"history/{folder}{stamp}-{safe}.md"] = render_transcript(s)
+        return HostConfig({}, {}, files, [], {}, NOTE_ALL if self.all_projects else NOTE)
 
     def context_for(self, query: str, scope: Scope, budget_chars: int) -> str:
         """What grep with a ranking gives: the turns that share the most (rarer) words with the

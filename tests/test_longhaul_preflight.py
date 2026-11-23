@@ -244,7 +244,7 @@ class DiskTests(unittest.TestCase):
 
 class RefusalTests(unittest.TestCase):
     def test_reserved_seeds_unknown_tracks_and_small_sizes_are_refused(self):
-        for seed in (11, 12):
+        for seed in (11, 12, 16, 17):
             with self.assertRaises(ValueError):
                 pf.preflight("T2", 20, seed)
         with self.assertRaises(ValueError):
@@ -282,7 +282,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(plain["views"]["any"]["label"], "preference_absent")
         saved = pf.preflight("T3", 20, 1, mode="user-scope", only={"t3b-date-style"})[0]
         self.assertEqual(saved["views"]["start"]["label"], "preference_shown")
-        self.assertIn("observation", saved["user_scope_capture"])
+        self.assertTrue(saved["user_scope_capture"]["saved"])
 
     def test_hostile_text_is_shown_only_as_labelled_evidence(self):
         # Said by the assistant (a page it quoted): its own words, shown as labelled evidence.

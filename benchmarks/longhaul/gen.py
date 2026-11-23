@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -143,6 +144,13 @@ CONFIRMED = {
         "Final change on the {s}: we settled on {p} as the {a}, replacing {o}.",
     ],
 }
+#: Wording that marks a preference stated for every project (the `preference_global` statements
+#: and nothing else in a generated history; a test holds that). Used by the MemoryKing arm to
+#: tell which statements an agent following the start briefing saves to the user scope.
+CROSS_PROJECT = re.compile(
+    r"\b(everywhere I work|every project|all my projects|all your projects|whatever the project)\b",
+    re.IGNORECASE,
+)
 CLOSINGS = ["Thanks.", "Good, thanks.", "OK, thanks.", "Fine for now, thanks."]
 CLOSING_ACKS = [
     "Yes, that is settled. Thanks.",
