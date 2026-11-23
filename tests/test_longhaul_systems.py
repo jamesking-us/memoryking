@@ -70,7 +70,8 @@ class AdapterSmoke(unittest.TestCase):
         mod = importlib.import_module(f"benchmarks.longhaul.systems.{module}")
         if not mod.installed():
             self.skipTest(
-                f"{ADAPTERS[module]} is not installed; run benchmarks/longhaul/tools/install_systems.py "
+                f"{ADAPTERS[module]} is not installed, or not readable by this user; run "
+                f"benchmarks/longhaul/tools/install_systems.py "
                 f"{ADAPTERS[module]}"
             )
         system = getattr(mod, factory)()

@@ -14,6 +14,7 @@ start).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -49,7 +50,13 @@ class McpMemoryService:
 
     @staticmethod
     def installed() -> bool:
-        return (c.install_dir(NAME) / "venv/bin/memory").is_file()
+        """Installed and usable by this user. The embedding model is cached under the install
+        directory's own home; a user who cannot read it gets the product's hash pseudo-vectors
+        instead of its real embeddings (and a refusal once a store holds memories), which is not
+        the product as installed, so the arm counts as not installed for that user."""
+        home = c.install_dir(NAME)
+        cache = home / "home/.cache/mcp_memory"
+        return (home / "venv/bin/memory").is_file() and os.access(cache, os.R_OK | os.X_OK)
 
     @staticmethod
     def hooks_source() -> Path:
