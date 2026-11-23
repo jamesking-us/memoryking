@@ -27,7 +27,7 @@ Use `codex` instead of `claude-code` for Codex, or `generic` for any other host 
 2. issues one agent credential, `agent`, with the capabilities the memory tools use and no expiry: `capture` (remember, correct, propose, forget, feedback), `read` (recall, resume, fetch, recent), `checkpoint` (save_progress) and `handoff` (hand_off). It has no `review` or `admin`, so the agent cannot approve its own proposals or change policy;
 3. registers the small ("lean") MCP tool set with the host. For Codex that is a marked block in `~/.codex/config.toml`. For Claude Code the command to register it (`claude mcp add-json memoryking '{...}'`) is printed for you to run, because MemoryKing does not edit Claude Code's MCP file (add `--register` and, when the `claude` command is on your PATH, setup runs that command for you); it sets `alwaysLoad` so Claude Code keeps the memory tools in every prompt instead of listing them by name only and loading one when the model searches for it (a model that never searches would never save anything); for `generic` it prints the command and the `mcpServers` JSON;
 4. installs the session hooks (Claude Code and Codex) so a session starts briefed and saves before compaction and at its end without the model having to decide anything. The start briefing opens with a short note that names the memory tools and says to save an instruction, a decision, a fact it was told or a failed approach as soon as it has one, followed by what memory holds: the user's own recent words, how the last session ended, pins and constraints. The hooks run as the same agent as the tools, in your home directory's host settings rather than in the project's shared file. Because that file is per user, the hooks apply to every project you open on that host and save into `--project`; add `--scope project` to put them in this directory's host file instead, or `--no-hooks` to skip them;
-5. prints a five-line summary, including the command that undoes it.
+5. downloads and turns on the semantic-search model (see [step 6](#6-semantic-search-already-on); `--no-semantic` skips it) and prints a short summary, including the command that undoes it.
 
 Run it again and nothing changes. `--dry-run` prints every change, including the exact file contents, without making any. `memoryking setup claude-code --project my-app --remove` puts every file it edited back byte for byte (and deletes the ones it created); it keeps the store and the credential, and `memoryking --profile default stop` stops the service. Setup refuses, before creating anything, a location whose socket path would exceed the 100-byte limit (`--data-dir` chooses another).
 
@@ -49,7 +49,7 @@ uv venv --seed --python 3.12 .venv
 .venv\Scripts\memoryking setup claude-code --project my-app
 ```
 
-Setup says what it found and which one it uses. If you have both WSL2 and Docker Desktop, it asks you to choose by running it again with `--backend wsl:Ubuntu` (your distro's name) or `--backend docker --image memoryking:local` ([the image](deployment.md#windows)). It installs the same MemoryKing version on that side, creates the store there, writes the Claude Code hooks and prints the MCP command to run, then checks the whole path and ends with one line:
+Setup says what it found and which one it uses. If you have both WSL2 and Docker Desktop, it asks you to choose by running it again with `--backend wsl:Ubuntu` (your distro's name) or `--backend docker --image memoryking:local` ([the image](deployment.md#windows)). It installs the same MemoryKing version on that side (with its search libraries), creates the store there, downloads the search model there after saying what it fetches (`--no-semantic` skips it), writes the Claude Code hooks and prints the MCP command to run, then checks the whole path and ends with one line:
 
 ```text
 MemoryKing works: wsl:Ubuntu, project my-app, version 0.1.0 on both sides
@@ -106,18 +106,18 @@ To explore a populated synthetic dashboard, install the [contributor environment
 
 The demo prints its loopback URL and a path to its private bootstrap file. Enter that file's one-use code and select project `demo`. Ctrl-C stops the demo and removes its temporary data. Its sample results are illustrative, not real agent work.
 
-## 6. Semantic search
+## 6. Semantic search (already on)
 
-Lexical search works out of the box and makes no network request. Meaning-based recall is a two-step install, because the core install is deliberately free of models:
+There is nothing to install or switch on: semantic search comes with the install, and `memoryking setup` turns it on. Search then finds notes by meaning, not only by shared words ("how do we ship?" finds "the release train leaves on Thursdays").
 
-```sh
-# step 1: the optional runtime (onnxruntime, numpy, tokenizers), hash-pinned
-.venv/bin/python -I -m pip install --require-hashes -r requirements-embeddings.lock
-# step 2: setup (or this command alone) installs the model and turns search on
-.venv/bin/python -m memoryking --profile default semantic enable
-```
+Setup says what it is about to download before it does: the model's name, size (about 130 MB), licence, host and pinned revision. It fetches the model once into `~/.memoryking/models`, checks every file against a pinned SHA-256 (a file that does not match is discarded, so a damaged model can never be loaded), restarts the service so it loads the model, and switches the project on. Indexing runs in the background and `memoryking status` shows its progress on the `Semantic` line. That one download is the only network request MemoryKing makes; nothing is fetched afterwards, and nothing about your memory is sent anywhere. The model runs on your CPU.
 
-`semantic enable` states what it is about to download (the model's name, size, licence, host and pinned revision), fetches it into `~/.memoryking/models`, verifies every file against its SHA-256, restarts the daemon so it loads the model, and switches the project on (`--project P`, or every project that has memory). Indexing then runs in the background and `memoryking status` shows its progress on the `Semantic` line. `memoryking setup <host> --project P` does the same when the runtime is installed (skip it with `--no-semantic`); without the runtime it downloads nothing and tells you how to get there. From then on a daemon that finds the installed model loads it without any flag, a briefing uses the semantic channel whenever the project is ready, and falls back to lexical search, saying why in the receipt's trace, when it is not. `memoryking semantic disable --project P` turns a project off. The model runs on your CPU and nothing leaves the machine.
+- **Skip it:** `memoryking setup <host> --project P --no-semantic` downloads nothing and leaves search by keywords (`MEMORYKING_SEMANTIC=off` does the same). `--dry-run` says what would be downloaded and downloads nothing.
+- **If the download fails** (no network, the host refuses, a checksum does not match), setup still finishes. It says that semantic search is off and why, and that `memoryking semantic enable` retries. Search works by keywords in the meantime.
+- **If the libraries are missing** (an install made with `pip install --no-deps`, or a platform with no wheel for one of onnxruntime, numpy or tokenizers), the service still starts and serves keyword search, and `memoryking status` and `memoryking doctor` say so.
+- **Later:** `memoryking semantic enable [--project P]` installs and turns it on; `memoryking semantic disable --project P` turns a project off. A briefing uses the semantic channel whenever the project is ready, and falls back to keywords, saying why in the receipt's trace, when it is not.
+
+The `memoryking[embeddings]` extra from earlier previews still installs; it is now empty and kept only for compatibility.
 
 ## Reference: doing it by hand
 
