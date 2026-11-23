@@ -718,7 +718,7 @@ Item 8 will follow once the owner has decided.
 
 **Item 8 on Docker: pass.**
 - I ran one setup with the image built from `645278d`, on fresh volumes. It took 17 s: it created the store, downloaded the model into `/data/models/bge-small-en-v1-5-onnx` (128 MB), and printed "semantic search: on for project re8-docker". There was no `daemon_stop_failed`.
-- This VM has a broken `ps`, so the new `/proc` check is what let the daemon restart.
+- The image still has no `ps`, so the new `/proc` check is what let the daemon restart.
 
 **WSL2 after its reset:**
 - A fresh setup took 16 s, with a new store, the model downloaded, and semantic search on.
