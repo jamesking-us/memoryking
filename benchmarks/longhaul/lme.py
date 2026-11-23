@@ -153,11 +153,17 @@ def judge_prompt(item: dict, answer: str) -> str:
     )
 
 
-def ask(command: str, prompt: str, timeout: int = 600) -> str:
+def ask(command: str, prompt: str, timeout: int = 600, cwd=None, env=None) -> str:
     """Run a model command with the prompt on its standard input; its standard output is the
     reply. The command is split like a shell would and run without a shell."""
     proc = subprocess.run(
-        shlex.split(command), input=prompt, capture_output=True, text=True, timeout=timeout
+        shlex.split(command),
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=cwd,
+        env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"command failed ({proc.returncode}): {proc.stderr.strip()[:300]}")

@@ -23,9 +23,11 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import json
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -306,7 +308,53 @@ def run_process(argv, *, cwd, env, timeout, stdout, stderr) -> dict:
             timed_out = True
             os.killpg(proc.pid, signal.SIGKILL)  # the group this call created
             code = proc.wait()
-    return {"exit_code": code, "timed_out": timed_out, "seconds": time.monotonic() - started}
+    return {
+        "exit_code": code,
+        "timed_out": timed_out,
+        "seconds": time.monotonic() - started,
+        "pid": proc.pid,
+    }
+
+
+def ledger_note(path: str | None, **event) -> None:
+    """One line of a durable ledger, written and synced before the thing it announces happens (a
+    session start) or after it ends: the driver reads it to know that no session was started twice."""
+    if not path:
+        return
+    event["t"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, (json.dumps(event) + "\n").encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def wait_session_quiet(leader: int, timeout: float) -> dict:
+    """After the agent's process ended, wait for what it left behind in its session (a host's
+    session-end hook runs after the result line and may outlive the CLI) to finish, for at most
+    `timeout` seconds. The agent is started as a session leader, so its session id is its pid;
+    processes are found in /proc, never by name. Returns the seconds waited and any still running."""
+    started = time.monotonic()
+
+    def alive() -> list[int]:
+        found = []
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) == os.getpid():
+                continue
+            try:
+                stat = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            except OSError:
+                continue
+            if stat[0] != "Z" and int(stat[3]) == leader:  # state, ppid, pgrp, session
+                found.append(int(entry.name))
+        return found
+
+    left = alive()
+    while left and time.monotonic() - started < timeout:
+        time.sleep(0.2)
+        left = alive()
+    return {"settle_seconds": round(time.monotonic() - started, 2), "left_running": left}
 
 
 def materialize(workdir: Path, bench: Path, task: gen.Task, host, home: Path) -> Path:
@@ -1080,23 +1128,54 @@ def cmd_t5_select(args) -> dict:
 
 
 def cmd_t5_run(args) -> dict:
+    """One arm over the subset: for each question an empty instance, the haystack fed to it, the
+    context it returns under the one budget, one reader call and one judge call. Restartable: a
+    question's result is a file of its own, the reader's answer is kept the moment it arrives, and
+    every call is announced in the ledger first, so no call is ever made twice (a call that was
+    announced and has no answer is recorded as lost and never asked again)."""
     data, digest = lme.load(Path(args.data))
     chosen = lme.select(data, args.size, args.seed)
     root = Path(args.work) / f"t5-{args.arm}"
-    if root.exists():
-        raise BenchmarkError(f"{root} exists")
+    out = Path(args.results) / "t5"
+    qdir = out / args.arm
+    qdir.mkdir(parents=True, exist_ok=True)
+    spent = {}
+    if args.ledger and Path(args.ledger).exists():
+        for line in Path(args.ledger).read_text().splitlines():
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("arm") == args.arm and e.get("ev") in ("reader_start", "judge_start"):
+                spent[(e["qid"], e["ev"])] = True
+    neutral = Path(tempfile.mkdtemp(prefix="mk-lht5-", dir="/tmp"))
     rows = []
     seed_seconds = 0.0
     version = ""
     for item in chosen:
-        qid = "".join(c if c.isalnum() else "-" for c in item["question_id"])[:40]
+        qid = "".join(c if c.isalnum() else "-" for c in item["question_id"])[:30]
+        qid += (
+            "-" + hashlib.sha1(item["question_id"].encode()).hexdigest()[:8]
+        )  # two ids never share a file
+        done = qdir / f"{qid}.json"
+        if done.exists():
+            rows.append(json.loads(done.read_text()))
+            continue
+        partial = qdir / f"{qid}.answer.json"
         system = load_system(args.arm)
         version = system.version
         if hasattr(system, "ingest"):
             system.ingest = "turns"
+        for knob, value in (("obs_cap", None), ("exact_times", True)):
+            if hasattr(system, knob):  # the haystack is fed whole, with its own dates
+                setattr(system, knob, value)
+        if root.exists():
+            shutil.rmtree(root, ignore_errors=True)
         try:
             system.prepare(root / qid)
+            ingest_start = time.perf_counter()
             report = system.seed(lme.sessions_of(item))
+            ingest_seconds = time.perf_counter() - ingest_start
             seed_seconds += report.seconds
             started = time.perf_counter()
             context = system.context_for(item["question"], lme.SCOPE, args.budget_chars)
@@ -1104,22 +1183,51 @@ def cmd_t5_run(args) -> dict:
             retrieval_seconds = time.perf_counter() - started
         finally:
             system.close()
-        answer = lme.ask(args.reader_command, lme.reader_prompt(item, context))
-        reply = lme.ask(args.judge_command, lme.judge_prompt(item, answer))
-        verdict = lme.parse_verdict(reply)
-        rows.append(
-            {
-                "id": item["question_id"],
-                "type": item["question_type"],
-                "context_chars": len(context),
-                "answer": answer[:500],
-                "verdict": verdict,
-                "correct": verdict is True,
-                "evidence": lme.evidence(item, context),
-                "retrieval_seconds": retrieval_seconds,
-            }
-        )
+        env = agent_env(neutral, {})
+        if partial.exists():
+            answer = json.loads(partial.read_text())["answer"]
+        elif spent.get((qid, "reader_start")):
+            answer = None  # announced, never answered: lost, and not asked again
+        else:
+            ledger_note(args.ledger, ev="reader_start", arm=args.arm, qid=qid)
+            answer = lme.ask(
+                args.reader_command, lme.reader_prompt(item, context), cwd=neutral, env=env
+            )
+            partial.write_text(json.dumps({"answer": answer}))
+            ledger_note(args.ledger, ev="reader_end", arm=args.arm, qid=qid)
+        verdict, lost = None, answer is None
+        jpartial = qdir / f"{qid}.judge.json"
+        if answer is not None:
+            if jpartial.exists():
+                reply = json.loads(jpartial.read_text())["reply"]
+            elif spent.get((qid, "judge_start")):
+                reply = None  # announced, never answered: lost, and not asked again
+                lost = True
+            else:
+                ledger_note(args.ledger, ev="judge_start", arm=args.arm, qid=qid)
+                reply = lme.ask(
+                    args.judge_command, lme.judge_prompt(item, answer), cwd=neutral, env=env
+                )
+                jpartial.write_text(json.dumps({"reply": reply}))
+                ledger_note(args.ledger, ev="judge_end", arm=args.arm, qid=qid)
+            if reply is not None:
+                verdict = lme.parse_verdict(reply)
+        row = {
+            "id": item["question_id"],
+            "type": item["question_type"],
+            "context_chars": len(context),
+            "answer": (answer or "")[:500],
+            "verdict": verdict,
+            "correct": verdict is True,
+            "lost_call": lost,
+            "evidence": lme.evidence(item, context),
+            "ingest_seconds": ingest_seconds,
+            "retrieval_seconds": retrieval_seconds,
+        }
+        done.write_text(json.dumps(row))
+        rows.append(row)
         shutil.rmtree(root / qid, ignore_errors=True)
+    shutil.rmtree(neutral, ignore_errors=True)
     result = {
         "arm": args.arm,
         "system_version": version,
@@ -1133,8 +1241,6 @@ def cmd_t5_run(args) -> dict:
         "rows": rows,
         "finished_at": time.time(),
     }
-    out = Path(args.results) / "t5"
-    out.mkdir(parents=True, exist_ok=True)
     file = out / f"{args.arm}-{args.size}.json"
     file.write_text(json.dumps(result, indent=1))
     shutil.rmtree(root, ignore_errors=True)
@@ -1184,6 +1290,25 @@ def reset_code(workdir: Path, task: gen.Task) -> None:
         (workdir / rel).write_text(text)
 
 
+LIMIT_TEXT = re.compile(
+    r"usage limit|rate limit|limit reached|overloaded|too many requests|hit your limit|resets? at",
+    re.I,
+)
+
+
+def refused_for_limit(stdout: str) -> bool:
+    """The session ended on the host's usage limit before it did anything: the one case in which a
+    session is given back and started again (as the driver of the other stages does)."""
+    for line in reversed(stdout.splitlines()):
+        if line.startswith("{") and '"type":"result"' in line:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                return False
+            return bool(d.get("is_error")) and bool(LIMIT_TEXT.search(str(d.get("result", ""))))
+    return False
+
+
 def cmd_lived(args) -> dict:
     items = {i["task"].id: i for i in lived_tasks(args.seed)}
     if args.task not in items:
@@ -1213,6 +1338,7 @@ def cmd_lived(args) -> dict:
                 + (("\n\n" + host.prompt_note) if host.prompt_note else "")
             )
             prompt_file.write_text(body + "\n")
+            (bench / "session.json").write_text(json.dumps({"n": n}))  # for the offline stub only
             sess_home = (
                 home
                 if getattr(system, "persistent_home", False)
@@ -1237,25 +1363,56 @@ def cmd_lived(args) -> dict:
                     "bench": str(bench),
                 },
             )
-            ran = run_process(
-                argv,
-                cwd=workdir,
-                env=agent_env(sess_home, host.env),
-                timeout=args.timeout,
-                stdout=bench / f"agent{n}.stdout",
-                stderr=bench / f"agent{n}.stderr",
-            )
+            waited_for_limit = 0.0
+            while True:
+                ledger_note(args.ledger, ev="session_start", run=name, n=n)
+                ran = run_process(
+                    argv,
+                    cwd=workdir,
+                    env=agent_env(sess_home, host.env),
+                    timeout=args.timeout,
+                    stdout=bench / f"agent{n}.stdout",
+                    stderr=bench / f"agent{n}.stderr",
+                )
+                stream = (bench / f"agent{n}.stdout").read_text(errors="replace")
+                if (
+                    args.limit_wait
+                    and refused_for_limit(stream)
+                    and waited_for_limit < args.limit_wait
+                ):
+                    ledger_note(
+                        args.ledger, ev="session_returned", run=name, n=n, why="usage limit"
+                    )
+                    time.sleep(min(900, args.limit_wait))
+                    waited_for_limit += min(900, args.limit_wait)
+                    continue
+                break
+            # the host's session-end hook runs after the result line and may outlive the CLI:
+            # give it time to finish before the next session reads what it wrote
+            settled = wait_session_quiet(ran["pid"], args.settle)
             if sess_home != home:
                 shutil.rmtree(sess_home, ignore_errors=True)
-            scan = grading.analyze(
-                None,
-                (bench / f"agent{n}.stdout").read_text(errors="replace"),
-                [k for k in host.files if not k.startswith("~/")],
+            scan = grading.analyze(None, stream, [k for k in host.files if not k.startswith("~/")])
+            try:
+                after = system.usage()
+            except Exception as exc:  # a usage probe must not lose the run
+                after = {"error": str(exc)[:200]}
+            ledger_note(
+                args.ledger,
+                ev="session_end",
+                run=name,
+                n=n,
+                exit_code=ran["exit_code"],
+                timed_out=ran["timed_out"],
+                **settled,
             )
             sessions.append(
                 {
                     "n": n,
                     **ran,
+                    **settled,
+                    "hook_events": scan.get("hook_events"),
+                    "memory_after": after,
                     **{
                         k: scan.get(k)
                         for k in (
@@ -1264,6 +1421,8 @@ def cmd_lived(args) -> dict:
                             "memory_chars",
                             "memory_reads",
                             "memory_writes",
+                            "has_result",
+                            "is_error",
                         )
                     },
                 }
@@ -1295,14 +1454,23 @@ def cmd_lived(args) -> dict:
                 "memory_chars": sum(s["memory_chars"] or 0 for s in sessions),
                 "memory_reads": sum(s["memory_reads"] or 0 for s in sessions),
                 "memory_writes": sum(s["memory_writes"] or 0 for s in sessions),
+                "hook_events": sorted({h for s in sessions for h in (s["hook_events"] or [])}),
             },
             "system_usage": system.usage(),
             "forget": None,
             "seed": {},
             "sessions": sessions,
-            "notes_left": [],
+            "notes_left": snapshot_notes(workdir, {}),
             "finished_at": time.time(),
         }
+        raw = Path(args.results) / "raw" / f"T2b-0-{name}"
+        raw.mkdir(parents=True, exist_ok=True)
+        for n in range(1, len(prompts) + 1):
+            for suffix in ("stdout", "stderr"):
+                f = bench / f"agent{n}.{suffix}"
+                if f.exists():
+                    shutil.copy(f, raw / f.name)
+        keep_raw(raw, bench, workdir)
     finally:
         system.close()
     out = Path(args.results) / "runs"
@@ -1439,6 +1607,10 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--budget-chars", type=int, default=12000)
     tr.add_argument("--reader-command", required=True)
     tr.add_argument("--judge-command", required=True)
+    tr.add_argument(
+        "--ledger",
+        help="a durable ledger file: every reader and judge call is announced in it first",
+    )
     tr.add_argument("--results", default=str(DEFAULT_RESULTS))
     tr.add_argument("--work", default=str(DEFAULT_WORK))
     lv = sub.add_parser("lived", help="T2b: four real sessions, the system writing memory itself")
@@ -1451,6 +1623,21 @@ def build_parser() -> argparse.ArgumentParser:
     lv.add_argument("--work", default=str(DEFAULT_WORK))
     lv.add_argument("--timeout", type=int, default=1800)
     lv.add_argument("--keep", action="store_true")
+    lv.add_argument(
+        "--ledger", help="a durable ledger file: every session start and end is appended"
+    )
+    lv.add_argument(
+        "--settle",
+        type=float,
+        default=60.0,
+        help="seconds to let a session's leftovers (its end hook) finish",
+    )
+    lv.add_argument(
+        "--limit-wait",
+        type=int,
+        default=0,
+        help="seconds to wait out a usage-limit refusal and start the session again",
+    )
     return p
 
 
