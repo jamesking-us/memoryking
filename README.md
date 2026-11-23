@@ -31,6 +31,20 @@ flowchart LR
     E --> B
 ```
 
+## How it measures up
+
+We test MemoryKing by giving a real coding agent small tasks that can only be done correctly with a fact from an earlier session, after loading 2,000 earlier sessions of history. The latest run (12 tasks, one run each):
+
+| What the agent had | Tasks passed | Text read per task |
+| --- | ---: | ---: |
+| MemoryKing, as `memoryking setup` installs it | 8 of 12 | 142,000 tokens |
+| The full raw log of every session, to search | 10 of 12 | 193,000 tokens |
+| A notes file | 1 of 12 | 119,000 tokens |
+
+A notes file cannot hold that much history, and MemoryKing did better than it by a margin the test confirms. Searching the raw log passed two more tasks than MemoryKing, a gap too small for 12 tasks to confirm, and read about a third more text. With 200 sessions of history, measured on an earlier build, all three passed 11 or 12 of 12.
+
+These are synthetic tasks with one model, so read them as a guide, not a guarantee. The [benchmark records](https://github.com/jamesking-us/memoryking/tree/main/benchmarks/longhaul/results) hold every run, including the ones where MemoryKing did worse and a comparison with other memory products.
+
 ## What is new
 
 One command, `memoryking setup`, connects Claude Code, Codex or any other host that starts MCP servers: it creates a store, starts the service, issues the agent its own limited credential, registers the tools and installs session hooks. The default tool set is now small and answers in readable Markdown, and an agent can also keep preferences that follow you across every project. Token budgets count what the model really receives, questions that contain dates ("what did we decide last week") are understood, and a model you allow can draft claims for you to review. Credentials can be rotated, and a delegated token now acts as the person who issued it (a breaking change that the changelog explains). The [changelog](https://github.com/jamesking-us/memoryking/blob/main/CHANGELOG.md) lists everything, newest first, and the [release page](https://github.com/jamesking-us/memoryking/releases) carries the notes of each published version.
@@ -122,7 +136,7 @@ See [deployment and configuration](https://github.com/jamesking-us/memoryking/bl
 
 ## Current status
 
-**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Improved real-task success or reduced token cost has not yet been demonstrated: on ten synthetic tasks with a real agent, memory as installed did better than no memory but no better than a notes file, and used more tokens. A memory store on Windows itself, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
+**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Evidence of real-task benefit is limited to small synthetic benchmarks with a real agent: on ten short tasks, memory as installed did better than no memory but no better than a notes file, and used more tokens; with 2,000 sessions of history it did better than a notes file and no better than searching the raw log. A memory store on Windows itself, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
 
 MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](https://github.com/jamesking-us/memoryking/blob/main/SECURITY.md) and [current limits](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#current-limits).
 
