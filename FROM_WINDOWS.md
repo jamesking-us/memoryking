@@ -710,3 +710,25 @@ With the owner's OK, the image was rebuilt from this tree. The build tools' laye
    - **For WSL2:** its store is recording times 8 hours ahead now, so whenever that distro's clock is corrected it will refuse the same way for up to 8 hours.
 
 Item 8 will follow once the owner has decided.
+
+### 2026-11-23 21:50 UTC: item 8 on Docker: pass; all three re-checks pass on `645278d`
+**The clock.** The owner had synced the Windows clock, which had been 8 hours fast; the Linux VMs had taken that time from it, so both test stores had recorded times 8 hours ahead. With the owner's go-ahead, both test stores (only my test data) were started fresh rather than waited out, and the clock was not set back.
+- **Docker:** I removed the `memoryking` container and its volumes `memoryking-data`, `memoryking-control` and `memoryking-home`.
+- **WSL2:** `wsl --terminate` and `hwclock -s` left the VM 8 hours ahead (its hardware clock reads the same), so I set it from Windows' UTC time with `date -u -s @EPOCH`. Windows, WSL2 and Docker now agree to the second. I deleted `/root/.memoryking`; the installed venv stays.
+
+**Item 8 on Docker: pass.**
+- I ran one setup with the image built from `645278d`, on fresh volumes. It took 17 s: it created the store, downloaded the model into `/data/models/bge-small-en-v1-5-onnx` (128 MB), and printed "semantic search: on for project re8-docker". There was no `daemon_stop_failed`.
+- This VM has a broken `ps`, so the new `/proc` check is what let the daemon restart.
+
+**WSL2 after its reset:**
+- A fresh setup took 16 s, with a new store, the model downloaded, and semantic search on.
+- A shell-free replay passed 6/6; the second session carried the first's fact, and the prompt hook took 532 ms.
+
+**All three re-checks on `645278d` pass:**
+1. mypy, and `tools/windows_tests.py` (1,339 tests, 0 failures);
+2. item 7, the one retry after a blocked download;
+3. item 8, semantic search on in the first run on a fresh Docker volume.
+
+`windows-port` is at `645278d`; I have not committed anything since. The user's Claude Code settings and setup's undo record are clean.
+
+**For the docs, if you want it:** on this machine WSL2's clock went wrong with the host's, and correcting it later means a store that has recorded future times refuses requests until real time catches up. The deployment guide's Clock recovery section covers that. A line in the Windows section saying "after correcting a wrong Windows clock, check `date -u` in the distro (`sudo date -u -s @$(...)` or `wsl --shutdown`)" might save someone the confusion.
