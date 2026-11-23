@@ -514,3 +514,29 @@ class SetupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(Path("/proc/self/cmdline").exists(), "needs /proc")
+class DaemonIdentityTests(unittest.TestCase):
+    def test_a_daemon_is_recognised_where_there_is_no_ps(self):
+        # A slim container image has no `ps`; the daemon could then never be stopped, so the
+        # restart that loads a newly installed model failed with daemon_stop_failed.
+        from unittest import mock
+
+        from memoryking import daemon
+
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)", "memoryking", "serve"]
+        )
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            with mock.patch.object(
+                daemon.subprocess, "run", side_effect=FileNotFoundError("ps")
+            ) as ps:
+                self.assertTrue(daemon._ours(child.pid))
+                self.assertFalse(daemon._ours(other.pid))
+            ps.assert_not_called()
+        finally:
+            for process in (child, other):
+                process.kill()
+                process.wait()

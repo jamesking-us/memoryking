@@ -57,13 +57,24 @@ def _ours(pid: int) -> bool:
     """The process is alive and is a memoryking process (guards against a reused pid)."""
     if not process_alive(pid):
         return False
+    return "memoryking" in _command_line(pid)
+
+
+def _command_line(pid: int) -> str:
+    """The command line of a process: from /proc where there is one (a slim container image
+    has no `ps`), otherwise from `ps`. Empty when neither can say."""
     try:
-        command = subprocess.run(
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        raw = b""
+    if raw:
+        return raw.replace(b"\0", b" ").decode("utf-8", "replace")
+    try:
+        return subprocess.run(
             ["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True, timeout=5
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return False
-    return "memoryking" in command
+        return ""
 
 
 def state(profile: dict[str, Any]) -> dict[str, Any]:

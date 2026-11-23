@@ -1030,7 +1030,9 @@ def semantic_configure(args: Any, token: str, project: str, state: str) -> dict[
     result: dict[str, Any] = call(
         "configure",
         {"model": semantic.MODEL, "state": state, "expected_generation": generation},
-        key=f"{state}-{generation}",
+        # The key names the project and the model: one owner credential configures every
+        # project of a store, and each project's first change is at generation 0.
+        key=f"{state}-{generation}-{hashlib.sha256(f'{project}|{fp}'.encode()).hexdigest()[:16]}",
     )
     return result
 
