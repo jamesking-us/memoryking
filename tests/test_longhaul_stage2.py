@@ -339,6 +339,54 @@ class StubReaderTests(unittest.TestCase):
         self.assertEqual(_mcp_reader.plain('{"entities": []}'), '{"entities": []}')
 
 
+class NoRightValueAsWrongTests(unittest.TestCase):
+    """A distractor about a task's own component and attribute never gives the slot's current value
+    as tried, reverted, suggested, not adopted, a draft or a TODO (RUNNING.md, amendment 11); a
+    value that was current earlier (T2) may be."""
+
+    def marked_lines(self, family, slot, value):
+        """The wordings of a near miss that would state `value` for this slot."""
+        s = slot
+        forms = [value, gen.prose(s, value)]
+        out = []
+        for v in forms:
+            out += [
+                f"I tried {v} for the {s.attr} of the {family.subject}",
+                f"suggested {v} as the {s.attr} for the {family.subject}",
+                f"# {s.attr}: {v} (draft, not confirmed)",
+                f"TODO {s.attr} of the {family.subject} ({v}?)",
+            ]
+        return out
+
+    def check(self, track, size, seed):
+        suite = gen.build(track, size, seed)
+        for group in suite.groups:
+            bad = {}
+            for t in group.tasks:
+                family = fam.F[t.family]
+                for ss in t.slots:
+                    slot = gen.slot_of(family, ss.name)
+                    bad[(t.family, ss.name)] = self.marked_lines(family, slot, ss.current)
+            for session in group.sessions:
+                text = "\n".join(turn.text for turn in session.turns)
+                for key, forms in bad.items():
+                    for form in forms:
+                        self.assertNotIn(form, text, (track, size, seed, session.id, key))
+
+    def test_the_current_value_is_never_a_wrong_one_in_any_track_size_or_seed(self):
+        for seed in (1, 2, 3):
+            for track in gen.TRACKS:
+                for size in (20, 200):
+                    self.check(track, size, seed)
+        for track in gen.TRACKS:
+            self.check(track, 2000, 1)
+
+    def test_an_earlier_value_may_still_be_called_reverted_and_generation_is_deterministic(self):
+        a = gen.build("T2", 200, 2).digest()
+        self.assertEqual(a, gen.build("T2", 200, 2).digest())
+        self.assertNotEqual(a, gen.build("T2", 200, 3).digest())
+
+
 class StageProtocolTests(unittest.TestCase):
     """RUNNING.md fixes stage S2 before it runs; these keep its numbers true."""
 
@@ -369,6 +417,18 @@ class StageProtocolTests(unittest.TestCase):
             "written in full", "forget_residue", "stream.injection_calls",
         ):  # fmt: skip
             self.assertIn(phrase, s, phrase)
+
+    def test_stage_s2b_is_t1_at_2000_on_seed_18_with_sixty_sessions_and_the_old_analysis(self):
+        s = self.section
+        self.assertIn("## Stage S2b: track T1 at 2,000 sessions on the fixed generator", s)
+        for phrase in (
+            "12 T1 tasks x 5 arms x 1 repetition = 60 real sessions", "fresh seed 18",
+            "up to 135 + 60 = 195 real sessions", "One size only: 2,000 sessions",
+            "exactly that of [the seed-16 record]", "Wilcoxon", "Holm over four",
+        ):  # fmt: skip
+            self.assertIn(phrase, s, phrase)
+        self.assertEqual(sum(len(g.tasks) for g in gen.build("T1", 2000, 1).groups), 12)
+        self.assertEqual(len(gen.build("T1", 2000, 1).groups), 1)
 
     def test_the_wins_needed_are_what_the_exact_sign_test_gives(self):
         def needed(n, losses, factor):
