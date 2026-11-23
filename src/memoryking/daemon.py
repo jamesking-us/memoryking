@@ -142,7 +142,9 @@ def start(name: str, profile: dict[str, Any], config: Path | None = None) -> dic
             os.close(out)
         deadline = time.monotonic() + START_SECONDS
         while time.monotonic() < deadline:
-            if alive(path):
+            # The pid file is written just after the socket starts answering: wait for both,
+            # so a stop that follows at once finds the pid.
+            if alive(path) and read_pid(store) == process.pid:
                 return {"started": True, "socket": str(path), "log": str(log)}
             if process.poll() is not None:
                 break
