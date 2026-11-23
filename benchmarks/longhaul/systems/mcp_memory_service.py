@@ -176,8 +176,11 @@ class McpMemoryService:
                 raise RuntimeError(f"memory_store_session failed for {s.id}: {text[:200]}")
             self.writes += 1
             n += 1
+        plugin_side = bool(self.http_port)
         self.close()  # nothing may hold the database while the creation times are set
         self.stamp_sessions(starts)
+        if plugin_side:  # the hooks' HTTP server was stopped with the rest: bring it back
+            self._start_plugin_side()
         return SeedReport(
             sessions=n,
             seconds=time.monotonic() - started,

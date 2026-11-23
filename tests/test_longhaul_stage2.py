@@ -28,9 +28,9 @@ SPEC.loader.exec_module(lb)
 from longhaul import families as fam  # noqa: E402
 from longhaul import gen, grading  # noqa: E402
 from longhaul import stub_agent as stub  # noqa: E402
+from longhaul.systems import _mcp_reader  # noqa: E402
 from longhaul.systems import load as load_system  # noqa: E402
 from longhaul.systems import memoryking as mk_arm  # noqa: E402
-from longhaul.systems import _mcp_reader  # noqa: E402
 from longhaul.systems.base import Scope, Session, Turn  # noqa: E402
 
 if sys.platform == "win32":
@@ -68,9 +68,7 @@ class LogArmScopeTests(unittest.TestCase):
             system.all_projects = True
             wide = system.host(Path(tmp), scope)
             self.assertEqual(len(wide.files), 2)
-            self.assertEqual(
-                sorted(k.split("/")[1] for k in wide.files), ["alpha", "alpha-fork"]
-            )
+            self.assertEqual(sorted(k.split("/")[1] for k in wide.files), ["alpha", "alpha-fork"])
             self.assertIn("FORK-CANARY", "".join(wide.files.values()))
             self.assertIn("all your projects", wide.prompt_note)
 
@@ -99,7 +97,9 @@ class LogArmScopeTests(unittest.TestCase):
             capture_output=True, text=True, env=env, timeout=300,
         )  # fmt: skip
         self.assertEqual(run.returncode, 0, run.stderr)
-        listing = (base / "results/raw/T3-20-t3a-export-delimiter-log-r1/final/listing.txt").read_text()
+        listing = (
+            base / "results/raw/T3-20-t3a-export-delimiter-log-r1/final/listing.txt"
+        ).read_text()
         folders = listing.split()
         self.assertIn("ledger-sync", folders)
         self.assertIn("ledger-sync-fork", folders)
@@ -146,7 +146,10 @@ class ResidueTests(unittest.TestCase):
 class InjectionCallTests(unittest.TestCase):
     def test_every_tool_call_that_carries_the_token_is_listed_with_or_without_effect(self):
         task = next(
-            t for g in gen.build("T4", 20, 1).groups for t in g.tasks if t.id == "t4-export-delimiter"
+            t
+            for g in gen.build("T4", 20, 1).groups
+            for t in g.tasks
+            if t.id == "t4-export-delimiter"
         )
         token = task.canaries["injection"]["token"]
 
@@ -189,7 +192,9 @@ class UserScopeRuleTests(unittest.TestCase):
                     self.assertTrue(session.scope.project.endswith("-fork"))
 
     def test_the_saved_sentence_is_the_statement_in_either_voice(self):
-        tasks = [t for g in gen.build("T3", 20, 1).groups for t in g.tasks if t.variant == "preference"]
+        tasks = [
+            t for g in gen.build("T3", 20, 1).groups for t in g.tasks if t.variant == "preference"
+        ]
         self.assertEqual({t.stated_by for t in tasks}, {"user", "assistant"})
         for g in gen.build("T3", 20, 1).groups:
             for s in g.sessions:
@@ -246,17 +251,33 @@ class McpMemoryServiceTimeTests(unittest.TestCase):
             system = mms.McpMemoryService.__new__(mms.McpMemoryService)
             system.root = Path(tmp)
             now = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc).timestamp()
-            system.stamp_sessions({"h1": "2025-03-14T16:11:38Z", "h2": "2025-03-12T16:11:38Z"}, now=now)
-            rows = sqlite3.connect(db).execute(
-                "select id, created_at, created_at_iso, updated_at_iso from memories order by id"
-            ).fetchall()
+            system.stamp_sessions(
+                {"h1": "2025-03-14T16:11:38Z", "h2": "2025-03-12T16:11:38Z"}, now=now
+            )
+            rows = (
+                sqlite3.connect(db)
+                .execute(
+                    "select id, created_at, created_at_iso, updated_at_iso from memories order by id"
+                )
+                .fetchall()
+            )
             iso = "2026-11-23T11:00:00.000000Z"
-            self.assertEqual(rows[0], (1, now - 3600, iso, iso))  # the latest session is an hour old
+            self.assertEqual(
+                rows[0], (1, now - 3600, iso, iso)
+            )  # the latest session is an hour old
             self.assertEqual(rows[1], (2, 1.0, "x", "x"))  # h10 is not h1 or h2
             system.root = Path(tmp)
-            system.stamp_sessions({"h1": "2025-03-14T16:11:38Z", "h10": "2025-03-12T16:11:38Z"}, now=now)
-            rows = sqlite3.connect(db).execute("select created_at from memories order by id").fetchall()
-            self.assertEqual(rows[0][0] - rows[1][0], 2 * 86400)  # the spacing of the sessions is kept
+            system.stamp_sessions(
+                {"h1": "2025-03-14T16:11:38Z", "h10": "2025-03-12T16:11:38Z"}, now=now
+            )
+            rows = (
+                sqlite3.connect(db)
+                .execute("select created_at from memories order by id")
+                .fetchall()
+            )
+            self.assertEqual(
+                rows[0][0] - rows[1][0], 2 * 86400
+            )  # the spacing of the sessions is kept
 
 
 class StubReaderTests(unittest.TestCase):
@@ -273,7 +294,9 @@ class StubReaderTests(unittest.TestCase):
         # newest first in the text, each with its date printed after it (MemoryKing, MCP Memory Service)
         after = f"{said(new)} Created: 2025-09-01T00:00:00Z\n{said(old)} Created: 2025-01-01T00:00:00Z\n"
         self.assertEqual(stub.solve_from_text(task, after, "after")[slot.name], new)
-        self.assertEqual(stub.solve_from_text(task, after, "order")[slot.name], old)  # no dates: last wins
+        self.assertEqual(
+            stub.solve_from_text(task, after, "order")[slot.name], old
+        )  # no dates: last wins
         before = f"started 2025-09-01T00:00:00Z\n{said(new)}\nstarted 2025-01-01T00:00:00Z\n{said(old)}\n"
         self.assertEqual(stub.solve_from_text(task, before, "before")[slot.name], new)
         self.assertEqual(stub.date_style("mcp__memoryking__recall"), "after")
@@ -290,7 +313,9 @@ class StubReaderTests(unittest.TestCase):
         self.assertEqual(stub.fact_query(task, slot), spec.attr)
         other = next(s for s in task.slots if s is not slot)
         self.assertIn(fam.F[task.family].subject, stub.fact_query(task, other))
-        sentence = gen.say("preference_global", fam.F[task.family], spec, slot.current, gen.rng_for(1))
+        sentence = gen.say(
+            "preference_global", fam.F[task.family], spec, slot.current, gen.rng_for(1)
+        )
         self.assertEqual(stub.candidates_in(sentence, task, slot)[0][1], slot.current)
 
     def test_a_forget_task_also_asks_for_the_forgotten_fact_but_never_by_its_marker(self):
@@ -302,7 +327,11 @@ class StubReaderTests(unittest.TestCase):
 
     def test_basic_memorys_json_answer_is_read_as_lines(self):
         answer = json.dumps(
-            {"results": [{"file_path": "p/a.md", "content": "# S\nstarted 2025-01-01\n- [user] hi"}]}
+            {
+                "results": [
+                    {"file_path": "p/a.md", "content": "# S\nstarted 2025-01-01\n- [user] hi"}
+                ]
+            }
         )
         text = _mcp_reader.plain(answer)
         self.assertIn("started 2025-01-01\n- [user] hi", text)
@@ -323,7 +352,10 @@ class StageProtocolTests(unittest.TestCase):
         s = self.section
         self.assertIn("27 tasks x 5 arms x 1 repetition = 135", s)
         self.assertIn("(T2 40, T2f 20, T3 45, T4 30)", s)
-        counts = {t: sum(len(g.tasks) for g in gen.build(t, 200, 1).groups) for t in ("T2", "T2f", "T3", "T4")}
+        counts = {
+            t: sum(len(g.tasks) for g in gen.build(t, 200, 1).groups)
+            for t in ("T2", "T2f", "T3", "T4")
+        }
         self.assertEqual(counts, {"T2": 8, "T2f": 4, "T3": 9, "T4": 6})
         self.assertEqual(sum(counts.values()) * 5, 135)
         groups = {t: len(gen.build(t, 200, 1).groups) for t in counts}
@@ -340,7 +372,9 @@ class StageProtocolTests(unittest.TestCase):
 
     def test_the_wins_needed_are_what_the_exact_sign_test_gives(self):
         def needed(n, losses, factor):
-            wins = [w for w in range(n - losses + 1) if lb.exact_sign_test(w, losses) * factor < 0.05]
+            wins = [
+                w for w in range(n - losses + 1) if lb.exact_sign_test(w, losses) * factor < 0.05
+            ]
             return min(wins) if wins else None
 
         table = {  # tasks: ((uncorrected, Holm) at 0 losses, at 1, at 2), None for never
@@ -352,7 +386,9 @@ class StageProtocolTests(unittest.TestCase):
         }
         for n, per_loss in table.items():
             for losses, (raw, holm) in enumerate(per_loss):
-                self.assertEqual((needed(n, losses, 1), needed(n, losses, 4)), (raw, holm), (n, losses))
+                self.assertEqual(
+                    (needed(n, losses, 1), needed(n, losses, 4)), (raw, holm), (n, losses)
+                )
         for row in (
             "| 4 (T2f) | never (smallest p 0.125) | never | never |",
             "| 6 (T4) | 6 wins / never | never | never |",

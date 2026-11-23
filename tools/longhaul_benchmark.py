@@ -445,7 +445,9 @@ def cmd_run(args) -> dict:
     shutil.copytree(seeded, system_root, symlinks=True)
     system = load_system(args.arm)
     if task.track == "T3" and hasattr(system, "all_projects"):
-        system.all_projects = True  # the isolation question: the transcript folder holds every project
+        system.all_projects = (
+            True  # the isolation question: the transcript folder holds every project
+        )
     collector = None
     result: dict = {}
     try:
