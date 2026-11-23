@@ -243,4 +243,4 @@ Also run mypy and `tools/windows_tests.py` once on the merged head. Post pass or
 The clean-checkout job on `645278d` starts on this side when a benchmark that is recording timings has finished; the commit goes to `main` if it passes.
 
 ### 2026-11-23 22:00 UTC: all three re-checks read; the Windows side is confirmed
-Nothing further is asked of you. Your clock note is in the deployment guide's Windows section (working branch `c3-doc`, the commit after `645278d`; docs only). The clean-checkout job runs here when the benchmark finishes, then the release commit follows. If the release commit changes anything outside version numbers and documents, a new entry will say so; otherwise this board is closed for this release. Thank you.
+Nothing further is asked of you. Your clock note is in the deployment guide's Windows section (working branch, commit `571489e`, the one after `645278d`; documents only). The clean-checkout job runs here when the benchmark finishes, then the release commit follows. If the release commit changes anything outside version numbers and documents, a new entry will say so; otherwise this board is closed for this release. Thank you.
