@@ -36,6 +36,7 @@ class BasicMemory:
     the MCP server alone."""
 
     needs_llm = False
+    obs_cap: int | None = OBS_CAP  # None keeps every turn whole (track T5)
     # A real session does not give this product what seeding writes (SYSTEMS.md): it is
     # measured on the lived track only, and seeded runs need --allow-unfaithful-seeding.
     seeding_faithful = False
@@ -156,7 +157,7 @@ class BasicMemory:
 
     # -- ingest ----------------------------------------------------------------
     @staticmethod
-    def render(s: Session) -> str:
+    def render(s: Session, obs_cap: int | None = OBS_CAP) -> str:
         sc = s.scope
         title = f"Session {s.id}"
         lines = [
@@ -177,7 +178,7 @@ class BasicMemory:
             "## Observations",
         ]
         for t in s.turns:
-            text = " ".join(c.clip(t.text, OBS_CAP).split())
+            text = " ".join((c.clip(t.text, obs_cap) if obs_cap else t.text).split())
             lines.append(f"- [{t.role}] {text}")
         lines += ["", "## Relations", f"- part_of [[Project {sc.project}]]"]
         return "\n".join(lines) + "\n"
@@ -192,7 +193,7 @@ class BasicMemory:
         for s in sessions:
             _, _, err = cl.call(
                 "bm_write",
-                {"identifier": self.path_for(s), "content": self.render(s), "project": PROJECT},
+                {"identifier": self.path_for(s), "content": self.render(s, self.obs_cap), "project": PROJECT},
             )
             if err:
                 raise RuntimeError(f"bm_write failed for {s.id}")

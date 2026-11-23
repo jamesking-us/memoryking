@@ -52,6 +52,9 @@ README_PROMPT = """Follow these steps for each interaction:
 class McpMemory:
     name = NAME
     needs_llm = False
+    # characters kept per turn observation; None keeps every turn whole (track T5 feeds the
+    # haystack that way, since a question can depend on the end of a long answer)
+    obs_cap: int | None = OBS_CAP
 
     def __init__(self) -> None:
         self.home = c.install_dir(NAME)
@@ -135,7 +138,7 @@ class McpMemory:
                     ents.append(entity(nm, kind, []))
             sname = f"session:{s.id}"
             obs = [f"started {s.started}; user {sc.user}; project {sc.project}; agent {sc.agent}"]
-            obs += [f"{t.role}: {c.clip(t.text, OBS_CAP)}" for t in s.turns]
+            obs += [f"{t.role}: {c.clip(t.text, self.obs_cap) if self.obs_cap else t.text}" for t in s.turns]
             ents.append(entity(sname, "session", obs))
             for to, rel in (
                 (f"project:{sc.project}", "part_of"),

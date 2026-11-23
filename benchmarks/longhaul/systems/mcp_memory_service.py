@@ -34,6 +34,10 @@ class McpMemoryService:
     # A real session does not give this product what seeding writes (SYSTEMS.md): it is
     # measured on the lived track only, and seeded runs need --allow-unfaithful-seeding.
     seeding_faithful = False
+    # Track T5 asks questions that depend on the dates of a haystack (a year or more old, with a
+    # question date of its own), so there the creation times are the sessions' own dates and are
+    # not shifted towards today.
+    exact_times = False
 
     def __init__(self, plugin: bool = True) -> None:
         self.plugin = plugin
@@ -47,6 +51,7 @@ class McpMemoryService:
         self.client: c.McpStdio | None = None
         self.reads = 0
         self.writes = 0
+        self.duplicates = 0
 
     @staticmethod
     def installed() -> bool:
@@ -87,6 +92,7 @@ class McpMemoryService:
         (self.home / "home").mkdir(parents=True, exist_ok=True)
         self.procs = c.Procs(self.root)
         self.reads = self.writes = 0
+        self.duplicates = 0
         if self.plugin and self.plugin_available():
             self._start_plugin_side()
 
@@ -179,7 +185,12 @@ class McpMemoryService:
                     "agent_id": sc.agent,
                 },
             )
-            if err or "stored successfully" not in text:
+            if "Duplicate content detected" in text:
+                # The product refuses text it already holds (its own duplicate check, a feature): a
+                # haystack that repeats a passage (LongMemEval does) stores what is new and the
+                # session is counted as stored; what was refused is counted in the report's notes.
+                self.duplicates += 1
+            elif err or "stored successfully" not in text:
                 raise RuntimeError(f"memory_store_session failed for {s.id}: {text[:200]}")
             self.writes += 1
             n += 1
@@ -193,7 +204,7 @@ class McpMemoryService:
             seconds=time.monotonic() - started,
             llm_calls=0,
             llm_tokens=0,
-            notes="memory_store_session per session (tags project:/user:, agent_id, session id; start time in "
+            notes=f"{self.duplicates} session(s) refused in part as duplicates by the product; memory_store_session per session (tags project:/user:, agent_id, session id; start time in "
             "metadata); creation times shifted so the history ends an hour ago, spacing kept; local ONNX embeddings; no chat model",
         )
 
@@ -215,7 +226,7 @@ class McpMemoryService:
             sid: datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
             for sid, stamp in starts.items()
         }
-        shift = (time.time() if now is None else now) - 3600 - max(whens.values())
+        shift = 0.0 if self.exact_times else (time.time() if now is None else now) - 3600 - max(whens.values())
         con = sqlite3.connect(db, timeout=60)
         try:
             for sid, when in whens.items():

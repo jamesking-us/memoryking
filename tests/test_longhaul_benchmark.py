@@ -1297,7 +1297,7 @@ class QuestionAnsweringTests(unittest.TestCase):
                 qid = f"{t[:3]}{i}"
                 data.append(
                     {
-                        "question_id": qid,
+                        "question_id": f"{t}-{i}",
                         "question_type": t,
                         "question": f"What is the code number for {qid}?",
                         "answer": f"{100 + i}",

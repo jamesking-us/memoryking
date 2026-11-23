@@ -137,6 +137,9 @@ def dated(found: list[tuple[int, str]], text: str, style: str) -> list[tuple[tup
     `order` ignores dates and trusts the text order (notes files, oldest first)."""
     if style == "order":
         return [((" ", pos), value) for pos, value in found]
+    if style == "chain":  # records of one day (a lived run): a correction's own wording outranks what it corrects
+        fixes = re.compile(r"Correction|Update|Scratch|Changed|Final change|no longer|instead of|replacing|not .{1,40} as I said")
+        return [((str(bool(fixes.search(text[pos:].split("\n", 1)[0][:300]))), pos), value) for pos, value in found]
     stamps = [(m.start(), m.group(0).replace(" ", "T")) for m in DATE.finditer(text)]
     out = []
     for pos, value in found:
@@ -283,12 +286,112 @@ def order_oldest_first(briefings: list[str]) -> str:
     return "\n".join(sorted(items.values(), key=stamp))
 
 
+# ------------------------------------------------------------------- a lived run (T2b)
+
+
+def statements_in(task: gen.Task, text: str) -> list[str]:
+    """The sentences of a prompt that state a value of one of the task's slots."""
+    out = []
+    for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", text):
+        if any(candidates_in(sentence, task, slot) for slot in task.slots):
+            out.append(sentence.strip())
+    return out
+
+
+def lived_write(task: gen.Task, workdir: Path, args, sentences: list[str], n: int) -> None:
+    """What an agent that keeps its own memory does with what it was told, through each product's own
+    write tool (the offline stand-in for the model's decision to save)."""
+    from longhaul.systems import _mcp_reader
+
+    servers = json.loads(Path(args.mcp_config).read_text()).get("mcpServers", {}) if args.mcp_config else {}
+    text = " ".join(sentences)
+    for server, entry in servers.items():
+        if server == "memoryking":
+            continue  # its session-end hook captures the transcript; nothing to call
+        client = _mcp_reader._Client(entry)
+        try:
+            tools = client.tools()
+            if "create_entities" in tools:
+                client.call("create_entities", {"entities": [{"name": f"note:{task.id}:{n}", "entityType": "note", "observations": sentences}]})
+            elif "bm_write" in tools:
+                client.call("bm_write", {"identifier": f"notes/{task.id}-{n}.md", "content": "# Note\n\n" + "\n".join(f"- [user] {x}" for x in sentences) + "\n", "project": "main"})
+            elif "memory_store" in tools:
+                client.call("memory_store", {"content": text, "metadata": {"tags": f"project:{task.project}"}})
+        finally:
+            client.close()
+    notes = workdir / "NOTES.md"
+    if notes.is_file():
+        notes.write_text(notes.read_text() + "\n" + "\n".join(f"- {x}" for x in sentences) + "\n")
+
+
+def fire_end_hook(args, workdir: Path, prompt: str, said: str, n: int) -> None:
+    """Run the host's session-end hook the way the host does: the hook's JSON on its standard input,
+    the transcript the host wrote, and without waiting for it, so it can outlive this process."""
+    import os
+    import subprocess
+
+    settings = json.loads(Path(args.settings).read_text()) if args.settings else {}
+    groups = settings.get("hooks", {}).get("SessionEnd", [])
+    if not groups:
+        return
+    home = Path(os.environ["HOME"])
+    transcript = home / ".claude" / "projects" / "stub" / f"t{n}.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"type": "user", "message": {"role": "user", "content": prompt}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": said}]}},
+    ]
+    transcript.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    event = {"hook_event_name": "SessionEnd", "session_id": f"stub-{n}", "transcript_path": str(transcript), "cwd": str(workdir), "reason": "other"}
+    for group in groups:
+        for hook in group["hooks"]:
+            proc = subprocess.Popen(hook["command"], shell=True, stdin=subprocess.PIPE, cwd=workdir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            proc.stdin.write(json.dumps(event).encode())
+            proc.stdin.close()
+
+
+def lived(args, task: gen.Task, workdir: Path, bench: Path) -> None:
+    n = json.loads((bench / "session.json").read_text())["n"]
+    prompt = Path(args.prompt_file).read_text()
+    state_file = bench / "stub_state.json"
+    state = json.loads(state_file.read_text()) if state_file.exists() else {}
+    first = task.slots[0].name
+    said = f"Working on session {n}."
+    if n == 1:
+        sentences = statements_in(task, prompt)
+        values = solve_from_text(task, " ".join(sentences))
+        state["values"] = values
+        write_solution(task, workdir, values)
+        lived_write(task, workdir, args, sentences, n)
+        said = "I implemented it as you decided. " + " ".join(sentences)
+    elif n == 2:
+        (workdir / "tests").mkdir(exist_ok=True)
+        (workdir / "tests" / "test_extra.py").write_text("def test_exists():\n    assert True\n")
+    elif n == 3:
+        sentences = statements_in(task, prompt)
+        values = dict(state["values"])
+        values[first] = solve_from_text(task, " ".join(sentences))[first]
+        state["values"] = values
+        write_solution(task, workdir, values)
+        lived_write(task, workdir, args, sentences, n)
+        said = "Updated the implementation. " + " ".join(sentences)
+    else:
+        tool, tool_input, text = memory_text(workdir, task, args)
+        text = order_oldest_first(text) if tool == "mcp__memoryking__recall" else text
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "m1", "name": tool, "input": tool_input}]}})
+        emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "m1", "content": text[:60000]}]}})
+        write_solution(task, workdir, solve_from_text(task, text, "chain"))
+    state_file.write_text(json.dumps(state))
+    emit({"type": "assistant", "message": {"content": [{"type": "text", "text": said}]}})
+    fire_end_hook(args, workdir, prompt, said, n)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("workdir")
     parser.add_argument("prompt_file")
     parser.add_argument(
-        "--mode", required=True, choices=("null", "oracle", "stale", "gullible", "leaker", "reader")
+        "--mode", required=True, choices=("null", "oracle", "stale", "gullible", "leaker", "reader", "lived")
     )
     parser.add_argument("--queries", choices=("per-fact", "broad"), default="per-fact")
     parser.add_argument("--usage-file")
@@ -307,6 +410,9 @@ def main() -> int:
             "message": {"content": [{"type": "text", "text": f"Working on: {task.title}"}]},
         }
     )
+    if args.mode == "lived":
+        lived(args, task, workdir, bench)
+        return finish(args)
     values = current_values(task)
     if args.mode == "stale":
         for s in task.slots:
@@ -369,6 +475,10 @@ def main() -> int:
                 },
             }
         )
+    return finish(args)
+
+
+def finish(args) -> int:
     usage = {
         "input_tokens": 1000,
         "cache_read_input_tokens": 0,
