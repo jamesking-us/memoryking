@@ -202,5 +202,41 @@ class EndToEndTests(unittest.TestCase):
             )
 
 
+class DistinguishabilityTests(unittest.TestCase):
+    """`distinct`: what a reader of the shown text can tell apart, scored from the family."""
+
+    @classmethod
+    def setUpClass(cls):
+        suite = gen.build("T1", 20, 1)
+        cls.group = suite.groups[0]
+        cls.task = next(t for t in cls.group.tasks if t.id == "t1-id-format")
+        cls.needles = hookprobe.needle_sentences(cls.task, {s.id: s for s in cls.group.sessions})
+
+    def test_a_list_is_read_item_by_item_and_scored_by_the_component_each_names(self):
+        from longhaul import distinct
+
+        prefix = next(n for n in self.needles if n["slot"] == "prefix")
+        value = next(s for s in self.task.slots if s.name == "prefix").current
+        wrong = next(v for v in ("ORD", "INV", "TXN", "LDG") if v != value)
+        text = (
+            "## Unreviewed observations\n\n"
+            f"1. **[g1]** User: Rule: the batch identifiers must always use {wrong} as the prefix. "
+            "_(day)_\n"
+            f"2. **[g2]** Assistant: I tried {wrong} as the prefix of the record identifiers on a "
+            "scratch branch, but it broke the importer; reverted. _(day)_\n"
+            f"3. **[g3]** {prefix['sentences'][0]} _(day)_\n\n## Sources\n- [g1] x\n"
+        )
+        got = distinct.measure(text, self.task, [prefix])
+        self.assertEqual((3, 1, 2), (got["items"], got["other"], got["asked"]))
+        self.assertEqual((3, 1), (got["needle_rank"], got["other_before"]))
+        # the only statement of the asked component that is not a rejected one names the needle
+        self.assertEqual({"prefix": "unique_live"}, got["slots"])
+        absent = distinct.measure("1. **[g1]** nothing here _(d)_\n", self.task, [prefix])
+        self.assertEqual({"prefix": "absent"}, absent["slots"])
+        summary = distinct.summarize([got, absent])
+        self.assertEqual(4, summary["items"])
+        self.assertEqual({"absent": 1, "unique_live": 1}, summary["readings"])
+
+
 if __name__ == "__main__":
     unittest.main()

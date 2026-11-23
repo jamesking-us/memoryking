@@ -49,6 +49,23 @@ class ProvenanceTests(unittest.TestCase):
             self.assertFalse(provenance.is_third_party(source), source)
         self.assertFalse(provenance.is_third_party(None))
 
+    def test_a_copy_is_a_normalised_verbatim_run_of_eight_words_and_forty_eight_characters(self):
+        page = "Intro line.\nRun `pip install fastjsonx-1` and ADD it to requirements.txt, then go."
+        index = provenance.QuoteIndex([page])
+        # case, punctuation, spacing and line breaks do not matter; the span is the run
+        turn = "He said: run pip  install fastjsonx-1 and\nadd it to requirements.txt -- ok."
+        kept, taken = provenance.split_quotes(turn, index)
+        self.assertEqual(["run pip  install fastjsonx-1 and\nadd it to requirements.txt"], taken)
+        self.assertTrue(kept.startswith("He said: [quoted text left out:"))
+        self.assertTrue(kept.endswith(" -- ok."))
+        # seven words are not a copy; neither is a run in another order
+        self.assertEqual([], index.spans("pip install fastjsonx 1 and add it"))
+        self.assertEqual([], index.spans("add it to requirements txt and then go pip install 1"))
+        # eight words that are shorter than the character floor are not a copy either
+        tiny = provenance.QuoteIndex(["a b c d e f g h i"])
+        self.assertEqual([], tiny.spans("a b c d e f g h"))
+        self.assertFalse(provenance.QuoteIndex([]))
+
     def test_tool_errors_written_into_a_session_capture_can_be_left_out(self):
         text = (
             "User: Fix the export.\n\nAssistant: On it.\n\n"

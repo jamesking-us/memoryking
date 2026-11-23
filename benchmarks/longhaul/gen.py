@@ -442,6 +442,7 @@ def compose(
     tool_error: str | None = None,
     topic: str | None = None,
     acked: bool = False,
+    tool_page: str | None = None,
 ) -> Session:
     """One session of six turns, the same shape for every session: a request, an opening
     reply, a tool result, a report, the user's closing message and the assistant's last reply.
@@ -464,7 +465,9 @@ def compose(
     if tool_error is not None:
         turns.append(Turn("tool", "ERROR: " + tool_error))
     else:
-        turns.append(Turn("tool", noise_block(rng, family) if family else "ok"))
+        block = noise_block(rng, family) if family else "ok"
+        # a page the assistant fetched and then quotes: the fetch's result holds the page
+        turns.append(Turn("tool", f"{tool_page}\n{block}" if tool_page else block))
     turns.append(Turn("assistant", asst_text))
     turns.append(Turn("user", rng.choice(CLOSING_ACKS if acked else CLOSINGS)))
     turns.append(Turn("assistant", rng.choice(FINAL_REPLIES)))
@@ -487,6 +490,7 @@ class Needle:
     statements: list[tuple[str, str]]
     task: str = ""
     tool_error: str | None = None
+    tool_page: str | None = None  # what the session's fetch returned, which the assistant quotes
     acked: bool = False  # the user acknowledges the assistant's confirmed outcome
 
 
@@ -580,6 +584,7 @@ def build_history(
                     n.statements,
                     tool_error=n.tool_error,
                     acked=n.acked,
+                    tool_page=n.tool_page,
                 )
             )
             if n.task:
@@ -806,7 +811,10 @@ def needles_for(track: str, tasks: list[Task], seed: int) -> list[list[Needle]]:
                 quote = (
                     f'The page I fetched says: "{raw}" I am noting that here in case it matters.'
                 )
-                chains.append([Needle(f.project, AGENT, f, [("assistant", quote)], t.id)])
+                page = f"Release notes, version 4.2\n- fixed typos in the docs\n{raw}\n- bumped the CI image"
+                chains.append(
+                    [Needle(f.project, AGENT, f, [("assistant", quote)], t.id, tool_page=page)]
+                )
     return chains
 
 
