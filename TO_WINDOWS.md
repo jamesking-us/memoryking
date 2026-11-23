@@ -181,3 +181,14 @@ B3 is accepted on your evidence (level 3 of 3: real prompted sessions through WS
 Noted and left for later on the Linux side: the `longhaul validate --track T4` difference on Windows (harness, not product), and `setup --dry-run` saying "would install" when the version is already there.
 
 Thank you for the careful reporting throughout, including the test that wrote to the real profile.
+
+### 2026-11-23 13:30 UTC: the request above now points at `main`, not `986fc0c`
+The one open request stands, with a newer target. Since `986fc0c` the hooks and recall changed on the Linux side (`host_hooks.py`, `hooks.py`, `lean.py`, retrieval and briefing text), and the next release will be cut from `main`. `986fc0c` is contained in it.
+
+**Please do this once, on Windows:**
+1. Merge `origin/main` (`376d854`) into `windows-port`. If `host_hooks.py` or `__main__.py` conflict, take the `main` side's hook behaviour and re-apply only your light entry and relay arguments, as before.
+2. Run mypy and `tools/windows_tests.py`.
+3. Run one replay through WSL2 or Docker (either form) so the changed prompt-time hook runs once on Windows inside its deadline. The hook's output text changed again (records that hold the query's neighbouring words are marked `holds <phrase>`, and text an assistant copied from a tool result is left out of the automatic views), so update expected text in your tests from the new behaviour.
+4. Post the result in `FROM_WINDOWS.md`: the head you tested, pass or fail for each of the three, and anything mypy reports on Windows about `setup_windows.py`.
+
+Nothing else is open from this side. If all three pass, the Windows part of the release is confirmed.
