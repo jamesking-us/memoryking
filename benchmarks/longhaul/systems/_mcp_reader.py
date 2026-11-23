@@ -93,6 +93,22 @@ class _Client:
         self.proc.wait()
 
 
+def plain(text: str) -> str:
+    """Basic Memory answers `bm_search` with one JSON object whose notes hold escaped newlines;
+    a model reads those as lines, so the stub does too: one block per note, its text unescaped."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        return text
+    return "\n\n".join(
+        f"{r.get('file_path') or r.get('title')}\n{r.get('content') or r.get('matched_chunk') or ''}"
+        for r in results
+    )
+
+
 def _search_calls(tools: set[str], query: str, scope: dict) -> list[tuple[str, dict]]:
     word = query.split()[0].lower()
     if "search_nodes" in tools and "create_entities" in tools:  # the Knowledge Graph Memory server
@@ -135,7 +151,7 @@ def read(mcp_config: Path, queries: list[str], scope: dict) -> tuple[str, str]:
                 for tool, args in _search_calls(tools, q, scope):
                     used = used or f"mcp__{server}__{tool}"
                     text = client.call(tool, args)
-                    blocks.append(text)
+                    blocks.append(plain(text))
                     if tool == "search" and "get_observations" in tools:
                         ids = [int(i) for i in re.findall(r"#(\d+)\b", text)][:8]
                         if ids:

@@ -35,14 +35,15 @@ import subprocess
 import time
 from pathlib import Path
 
+from longhaul import distinct, gen
 from longhaul import families as fam
-from longhaul import gen
 
 SCOPE_LINE = (
     "Work only inside the current directory: do not read, list or modify anything outside it."
 )
 SOURCES = ("hook", "start", "recall_prompt", "recall_careful", "recall_two_step", "recall_next")
 # Carry after each step of the two-step reader (what the agent has been shown so far).
+DISTINCT = ("hook", "recall_careful", "recall_two_step")  # sources read for distinguishability
 STEPS = ("step_one", "step_two", "step_three")
 PAGE = 32  # the records one `recall` returns at most: the next page starts here
 HOOK_SECONDS = 20  # the probe's own limit on a hook command (the host allows 5 seconds)
@@ -191,9 +192,8 @@ def probe_group(
     prompt_args: str = "",
 ) -> list[dict]:
     """One row per task of the group, measured on a copy of the seeded store."""
-    from memoryking import hooks as mk_hooks
-
     from longhaul.systems import load as load_system
+    from memoryking import hooks as mk_hooks
 
     root = work / f"{suite.seed}-{suite.size}-g{group.index}"
     if root.exists():
@@ -267,6 +267,7 @@ def probe_group(
                     "seconds": {k: round(seconds[k], 3) for k in SOURCES},
                     "query": careful_query(task.prompt),
                     "query_two_step": step_two,
+                    "distinct": {k: distinct.measure(texts[k], task, needles) for k in DISTINCT},
                     **({"text": texts} if keep_text else {}),
                 }
             )
@@ -291,6 +292,10 @@ def summarize(rows: list[dict]) -> dict:
                 seconds=round(sum(r["seconds"][key] for r in rows) / max(1, len(rows)), 3),
                 max_seconds=max((r["seconds"][key] for r in rows), default=0),
             )
+    if rows and "distinct" in rows[0]:
+        out["distinct"] = {
+            k: distinct.summarize([r["distinct"][k] for r in rows]) for k in DISTINCT
+        }
     return out
 
 
@@ -306,4 +311,12 @@ def render(summary: dict) -> str:
         if key in SOURCES:
             head += f" {s['chars']:>8}  {s['seconds']:>6.2f}/{s['max_seconds']:.2f}"
         lines.append(head)
+    for key, d in summary.get("distinct", {}).items():
+        lines.append(
+            f"distinct {key}: items {d['items']}, other-component {d['other_share']:.0%}, "
+            f"asked-component {d['asked_share']:.0%}, needle rank {d['mean_needle_rank']}, "
+            f"other before needle {d['mean_other_before']}, readings {d['readings']}, "
+            f"marked {d['marked']} (of them other-component {d['marked_other']}, "
+            f"needles in a marked item {d['marked_needles']})"
+        )
     return "\n".join(lines)

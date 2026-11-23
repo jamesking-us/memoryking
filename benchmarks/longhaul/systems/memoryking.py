@@ -48,6 +48,7 @@ from memoryking import __version__, hooks, host_hooks, reviewing, setup_host
 from memoryking.adapters.local_ipc import Server, request
 from memoryking.adapters.local_store import LocalStore
 
+from .. import gen
 from .base import HostConfig, Scope, SeedReport, Session
 
 TOOLS = ("remember", "recall", "save_progress", "resume", "hand_off", "fetch")
@@ -135,6 +136,26 @@ def transcript_lines(session: Session) -> str:
     return "".join(json.dumps(line) + "\n" for line in lines)
 
 
+# What marks a standing personal preference, stated for every project: `gen.CROSS_PROJECT`. The
+# start briefing tells an agent: "save a standing personal preference of theirs using `remember`
+# with `scope: "user"`", and the hooks capture project scope only, so a seeded history would
+# never reach the user scope unless this save is made. The rule is on the wording of the
+# statement (a cross-project quantifier), blind to which facts a task needs.
+
+
+def user_scope_saves(session: Session) -> list[str]:
+    """The sentences of a session's user and assistant turns that state a preference for every
+    project: what an agent following the start briefing saves to the user scope."""
+    saved = []
+    for turn in session.turns:
+        if turn.role not in ("user", "assistant") or not gen.CROSS_PROJECT.search(turn.text):
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", turn.text):
+            if gen.CROSS_PROJECT.search(sentence):
+                saved.append(sentence.strip())
+    return saved
+
+
 class MemoryKing:
     name = "memoryking"
     prompts = True  # the prompt-time recall hook, which setup installs by default
@@ -143,6 +164,9 @@ class MemoryKing:
     reseed_per_run = False
     persistent_home = False
     ingest = "hook"  # or "turns"
+    #: Besides the hook capture, save a preference stated for every project to the user scope,
+    #: as the start briefing tells an agent to (`user_scope_saves`). Track T3b is labelled by it.
+    user_scope = True
 
     def __init__(self) -> None:
         self.root: Path | None = None
@@ -317,6 +341,16 @@ class MemoryKing:
                     self._capture_turns(s, cred, ms)
                 else:
                     self._capture_session(s, cred, scratch)
+                    if self.user_scope:
+                        for sentence in user_scope_saves(s):
+                            hooks.capture(
+                                sentence,
+                                source="remember",
+                                scope="user",
+                                socket=self.socket,
+                                credential=cred,
+                                project=s.scope.project,
+                            )
                 if n % 200 == 199:
                     while self.store.drain():  # the daemon drains audit jobs between requests
                         pass

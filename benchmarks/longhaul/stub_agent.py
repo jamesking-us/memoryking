@@ -74,6 +74,20 @@ def act_on_injection(task: gen.Task, workdir: Path) -> None:
 # ----------------------------------------------------------------- the reader
 
 
+def is_preference(task: gen.Task, slot: gen.SlotState) -> bool:
+    """T3b's user-level preference: the one slot whose statement is made in another project and
+    names no subject."""
+    return task.variant == "preference" and slot.name == gen.T3B_SLOT[task.family]
+
+
+def fact_query(task: gen.Task, slot: gen.SlotState) -> str:
+    """What a careful agent asks for one fact: the subject and the attribute, or the attribute
+    alone for a preference that holds for every project."""
+    family = fam.F[task.family]
+    attr = gen.slot_of(family, slot.name).attr
+    return attr if is_preference(task, slot) else f"{family.subject} {attr}"
+
+
 def candidates_in(text: str, task: gen.Task, slot: gen.SlotState) -> list[tuple[int, str]]:
     """(position, value) of every statement in `text` that gives this slot a value. A
     statement names the component (the task's subject) and the attribute; the value is the
@@ -93,7 +107,12 @@ def candidates_in(text: str, task: gen.Task, slot: gen.SlotState) -> list[tuple[
         for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z(])", line.group(0)):
             at = line.start() + line.group(0).find(sentence, cursor)
             cursor = max(cursor, at - line.start() + len(sentence))
-            if family.subject not in sentence or spec.attr not in sentence:
+            if spec.attr not in sentence:
+                continue
+            if is_preference(task, slot):  # stated for every project, so it names no subject
+                if not gen.CROSS_PROJECT.search(sentence):
+                    continue
+            elif family.subject not in sentence:
                 continue
             if "tried" in sentence or "did not adopt" in sentence or "TODO" in sentence:
                 continue
@@ -108,9 +127,34 @@ def candidates_in(text: str, task: gen.Task, slot: gen.SlotState) -> list[tuple[
     return found
 
 
-def solve_from_text(task: gen.Task, text: str) -> dict[str, str]:
+DATE = re.compile(r"20\d\d-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d)?)?")
+
+
+def dated(found: list[tuple[int, str]], text: str, style: str) -> list[tuple[tuple[str, int], str]]:
+    """Order statements by the date their record carries, the way a careful agent reads a
+    correction chain. `style` says where a product prints a record's date: `before` its text (a
+    session's start line, frontmatter, a file header), `after` it (`observed ...`, `Created: ...`);
+    `order` ignores dates and trusts the text order (notes files, oldest first)."""
+    if style == "order":
+        return [((" ", pos), value) for pos, value in found]
+    stamps = [(m.start(), m.group(0).replace(" ", "T")) for m in DATE.finditer(text)]
+    out = []
+    for pos, value in found:
+        if style == "before":
+            near = [s for s in stamps if s[0] < pos]
+            stamp = near[-1][1] if near else ""
+        else:
+            near = [s for s in stamps if s[0] > pos]
+            stamp = near[0][1] if near else ""
+        out.append(((stamp, pos), value))
+    return out
+
+
+def solve_from_text(task: gen.Task, text: str, style: str = "order") -> dict[str, str]:
     """What the agent would write: the value it found for each slot, else a guess (the first
-    pool value that is not the current one, as an agent with no memory would pick some value)."""
+    pool value that is not the current one, as an agent with no memory would pick some value).
+    The latest statement wins: the latest by date where the product prints dates (`style`),
+    else the last in the text (which is oldest first)."""
     family = fam.F[task.family]
     values = {
         s.name: next(v for v in family.pool_values(s.name) if v != s.current) for s in task.slots
@@ -120,8 +164,17 @@ def solve_from_text(task: gen.Task, text: str) -> dict[str, str]:
             continue
         found = candidates_in(text, task, s)
         if found:
-            values[s.name] = sorted(found)[-1][1]  # the last statement wins (text is oldest first)
+            values[s.name] = sorted(dated(found, text, style))[-1][1]
     return values
+
+
+def date_style(tool: str) -> str:
+    """Where each arm's search output prints a record's date (see `dated`)."""
+    if tool == "mcp__memoryking__recall" or tool.endswith("__memory_search"):
+        return "after"
+    if tool in ("Read", "none"):
+        return "order"
+    return "before"
 
 
 def memory_text(workdir: Path, task: gen.Task, args) -> tuple[str, dict, str | list[str]]:
@@ -138,17 +191,15 @@ def memory_text(workdir: Path, task: gen.Task, args) -> tuple[str, dict, str | l
 
         family = fam.F[task.family]
         queries = [
-            f"{family.subject} {gen.slot_of(family, s.name).attr}"
-            for s in task.slots
-            if not s.forgotten
-        ]
+            fact_query(task, s) for s in task.slots if not s.forgotten
+        ] + extra_queries(task)
         name, text = _mcp_reader.read(
             Path(args.mcp_config),
             queries,
             {"user": task.scope.user, "project": task.scope.project},
         )
         if name != "none":
-            return name, {"queries": queries}, text
+            return name, {"queries": queries[: len(queries) - len(extra_queries(task))]}, text
     for name in ("NOTES.md", "CLAUDE.md"):
         if (workdir / name).is_file():
             return "Read", {"file_path": name}, (workdir / name).read_text()
@@ -157,7 +208,7 @@ def memory_text(workdir: Path, task: gen.Task, args) -> tuple[str, dict, str | l
         family = fam.F[task.family]
         words = [family.subject.split()[0]]
         chunks = []
-        for p in sorted(history.glob("*.md")):
+        for p in sorted(history.rglob("*.md")):
             body = p.read_text()
             if any(w in body for w in words):
                 chunks.append(body)
@@ -173,6 +224,20 @@ def memory_text(workdir: Path, task: gen.Task, args) -> tuple[str, dict, str | l
     return "none", {}, ""
 
 
+def extra_queries(task: gen.Task) -> list[str]:
+    """T2f: what a curious agent would also ask after the product's delete path ran, so the
+    stream shows whether the forgotten text can still be reached: the forgotten fact by its
+    subject and attribute. (Never by the deleted text itself: a product that echoes the query,
+    as MCP Memory Service does, would put the canary in the stream through the agent's own
+    question.)"""
+    marker = (task.canaries.get("forgotten") or [None])[0]
+    if marker is None:
+        return []
+    family = fam.F[task.family]
+    slot = gen.slot_of(family, task.canaries["forget_slot"])
+    return [f"{family.subject} {slot.attr}"]
+
+
 def memoryking_recall(mcp: Path, task: gen.Task, queries: str = "per-fact") -> list[str]:
     sys.path.insert(0, str(ROOT / "src"))
     from memoryking import hooks
@@ -181,7 +246,8 @@ def memoryking_recall(mcp: Path, task: gen.Task, queries: str = "per-fact") -> l
     opt = {args[i]: args[i + 1] for i in range(len(args) - 1) if args[i].startswith("--")}
     family = fam.F[task.family]
     out = []
-    asked = [f"{family.subject} {gen.slot_of(family, s.name).attr}" for s in task.slots]
+    asked = [fact_query(task, s) for s in task.slots]
+    asked += extra_queries(task)
     if (
         queries == "broad"
     ):  # one query for the subject and every attribute of its family, needle or not
@@ -211,7 +277,7 @@ def order_oldest_first(briefings: list[str]) -> str:
                 items[re.sub(r"^\d+\. \*\*\[g\d+\]\*\* ", "", block)] = block
 
     def stamp(block: str) -> str:
-        m = re.search(r"recorded (\d{4}-\d\d-\d\d \d\d:\d\d)", block)
+        m = re.search(r"(?:recorded|observed) (\d{4}-\d\d-\d\d(?: \d\d:\d\d)?)", block)
         return m.group(1) if m else ""
 
     return "\n".join(sorted(items.values(), key=stamp))
@@ -267,7 +333,7 @@ def main() -> int:
                 },
             }
         )
-        values = solve_from_text(task, text)
+        values = solve_from_text(task, text, date_style(tool))
     if args.mode != "null":
         write_solution(task, workdir, values)
     if args.mode == "gullible" and task.canaries.get("injection"):

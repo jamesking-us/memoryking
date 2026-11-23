@@ -14,9 +14,12 @@ start).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -47,7 +50,13 @@ class McpMemoryService:
 
     @staticmethod
     def installed() -> bool:
-        return (c.install_dir(NAME) / "venv/bin/memory").is_file()
+        """Installed and usable by this user. The embedding model is cached under the install
+        directory's own home; a user who cannot read it gets the product's hash pseudo-vectors
+        instead of its real embeddings (and a refusal once a store holds memories), which is not
+        the product as installed, so the arm counts as not installed for that user."""
+        home = c.install_dir(NAME)
+        cache = home / "home/.cache/mcp_memory"
+        return (home / "venv/bin/memory").is_file() and os.access(cache, os.R_OK | os.X_OK)
 
     @staticmethod
     def hooks_source() -> Path:
@@ -153,7 +162,9 @@ class McpMemoryService:
         cl = self._client()
         started = time.monotonic()
         n = 0
+        starts: dict[str, str] = {}
         for s in sessions:
+            starts[s.id] = s.started
             sc = s.scope
             text, _, err = cl.call(
                 "memory_store_session",
@@ -172,14 +183,54 @@ class McpMemoryService:
                 raise RuntimeError(f"memory_store_session failed for {s.id}: {text[:200]}")
             self.writes += 1
             n += 1
+        plugin_side = bool(self.http_port)
+        self.close()  # nothing may hold the database while the creation times are set
+        self.stamp_sessions(starts)
+        if plugin_side:  # the hooks' HTTP server was stopped with the rest: bring it back
+            self._start_plugin_side()
         return SeedReport(
             sessions=n,
             seconds=time.monotonic() - started,
             llm_calls=0,
             llm_tokens=0,
             notes="memory_store_session per session (tags project:/user:, agent_id, session id; start time in "
-            "metadata only); local ONNX embeddings; no chat model",
+            "metadata); creation times shifted so the history ends an hour ago, spacing kept; local ONNX embeddings; no chat model",
         )
+
+    def stamp_sessions(self, starts: dict[str, str], now: float | None = None) -> None:
+        """The product gives a memory the time it was stored and offers no way to say otherwise,
+        so a history seeded in one sitting would show every session as stored just now, and
+        corrections made months apart could not be told apart by their dates (a search result
+        shows only this creation time). Set `created_at` and `updated_at` (and their ISO forms)
+        of each session's memory so that the sessions keep the spacing they had and the last of
+        them is an hour old: the history reads as lived up to now, which is also what the
+        product's start hook (it looks for memories of "last week") is built for. The other
+        arms print the generator's own dates, a year earlier; the order and the spacing are
+        the same everywhere."""
+        assert self.root is not None
+        db = self.root / "memory.db"
+        if not db.is_file() or not starts:
+            return
+        whens = {
+            sid: datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+            for sid, stamp in starts.items()
+        }
+        shift = (time.time() if now is None else now) - 3600 - max(whens.values())
+        con = sqlite3.connect(db, timeout=60)
+        try:
+            for sid, when in whens.items():
+                moved = when + shift
+                iso = datetime.fromtimestamp(moved, timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.000000Z"
+                )
+                con.execute(
+                    "UPDATE memories SET created_at=?, updated_at=?, created_at_iso=?, "
+                    "updated_at_iso=? WHERE ','||tags||',' LIKE ?",
+                    (moved, moved, iso, iso, f"%,session:{sid},%"),
+                )
+            con.commit()
+        finally:
+            con.close()
 
     # -- host ------------------------------------------------------------------
     def _hooks_settings(self) -> dict:

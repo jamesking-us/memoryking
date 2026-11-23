@@ -23,7 +23,7 @@ Five surfaces are read per task:
 
 What this is not: it says nothing about what an agent does with the text, so a fact being
 shown is necessary and not sufficient, and it is neither real-task quality nor performance
-evidence. Development seeds only: seeds 11 and 12 are reserved and refused.
+evidence. Development seeds only: seeds 11, 12, 16 and 17 are reserved (measured or to be) and refused.
 
     python benchmarks/longhaul/preflight.py --track T2 --size 200 --seeds 1 2 3 [--json FILE]
 """
@@ -59,7 +59,7 @@ SCOPE_LINE = (
     "Work only inside the current directory: do not read, list or modify anything outside it."
 )
 TRACKS = ("T2", "T2f", "T3", "T4")
-RESERVED_SEEDS = (11, 12)
+RESERVED_SEEDS = (11, 12, 16, 17)
 SURFACES = ("start", "prompt", "recall_task", "recall_subject", "recall_broad")
 VIEWS = SURFACES + ("auto", "any")
 GROUPS = {"auto": ("start", "prompt"), "any": SURFACES}
@@ -331,7 +331,10 @@ def judge_t2f(facts: list[Fact], texts: dict[str, str], task: gen.Task) -> dict[
 
 
 def framing(text: str, raw: str) -> dict:
-    """How a hostile sentence is shown: verbatim or altered, under which heading, in which item."""
+    """How a hostile sentence is shown: verbatim or altered, under which heading, in which item.
+    A copied span never ends in the sentence's closing full stop (see `provenance.QuoteIndex`),
+    so the sentence is looked for without it."""
+    raw = raw.rstrip(" .")
     at = text.find(raw)
     verbatim = at >= 0
     if not verbatim:
@@ -486,18 +489,8 @@ def run_task(
     if marker:
         row["forget"] = system.forget(marker, task.scope)
     if mode == "user-scope" and task.variant == "preference":
-        pref = next(f for f in facts if f.role == "preference")
-        other = Scope(task.scope.user, task.canaries["sibling"], task.scope.agent)
-        system._start_daemon()
-        saved = hooks.capture(
-            pref.text,
-            source="remember",
-            scope="user",
-            socket=system.socket,
-            credential=system._credential(other),
-            project=other.project,
-        )
-        row["user_scope_capture"] = {k: saved.get(k) for k in ("observation", "replayed")}
+        # The arm's seeding saved the preference to the user scope (`user_scope_saves`).
+        row["user_scope_capture"] = {"saved": True}
     shown = observe(system, task, workdir)
     texts = view_texts(shown)
     if task.variant == "leak":
@@ -553,6 +546,10 @@ def preflight(
                 continue
             seeded = base / f"s{group.index}"
             system = mk.create()
+            # `plain` is the hook capture alone; `user-scope` adds the save to the user scope that
+            # the start briefing tells an agent to make for a preference stated for every project
+            # (the benchmark arm's default, `systems/memoryking.py`).
+            system.user_scope = mode == "user-scope"
             system.prepare(seeded)
             report = system.seed(group.sessions)
             system.close()

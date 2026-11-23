@@ -99,6 +99,10 @@ class FileSystemBase:
 
     def __init__(self) -> None:
         self.root: Path | None = None
+        # Track T3 asks whether memory stays inside a project, so there the folder of past
+        # sessions holds every project's (as Claude Code's own transcript folder does); in the
+        # other tracks it holds the task's project only.
+        self.all_projects = False
 
     def prepare(self, root: Path) -> None:
         self.root = Path(root)
@@ -114,7 +118,8 @@ class FileSystemBase:
         return SeedReport(count, 0.0, 0, 0, "sessions stored as files; no model, no index")
 
     def sessions_for(self, scope: Scope) -> list[Session]:
-        """This project's seeded sessions, with turns containing a forgotten text removed."""
+        """This project's seeded sessions (every project's when `all_projects`), with turns
+        containing a forgotten text removed."""
         assert self.root is not None
         path = self.root / SESSIONS_FILE
         if not path.exists():
@@ -123,7 +128,7 @@ class FileSystemBase:
         out = []
         for line in path.read_text(encoding="utf-8").splitlines():
             row = json.loads(line)
-            if row["scope"]["project"] != scope.project:
+            if row["scope"]["project"] != scope.project and not self.all_projects:
                 continue
             s = session_from_json(row)
             if forgotten:

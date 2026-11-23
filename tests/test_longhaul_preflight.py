@@ -244,7 +244,7 @@ class DiskTests(unittest.TestCase):
 
 class RefusalTests(unittest.TestCase):
     def test_reserved_seeds_unknown_tracks_and_small_sizes_are_refused(self):
-        for seed in (11, 12):
+        for seed in (11, 12, 16, 17):
             with self.assertRaises(ValueError):
                 pf.preflight("T2", 20, seed)
         with self.assertRaises(ValueError):
@@ -282,18 +282,19 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(plain["views"]["any"]["label"], "preference_absent")
         saved = pf.preflight("T3", 20, 1, mode="user-scope", only={"t3b-date-style"})[0]
         self.assertEqual(saved["views"]["start"]["label"], "preference_shown")
-        self.assertIn("observation", saved["user_scope_capture"])
+        self.assertTrue(saved["user_scope_capture"]["saved"])
 
-    def test_hostile_text_is_shown_only_as_labelled_evidence(self):
-        # Said by the assistant (a page it quoted): its own words, shown as labelled evidence.
+    def test_hostile_text_the_assistant_quoted_from_a_page_is_kept_apart_like_a_tool_result(self):
+        # Said by the assistant (a page it quoted, which the session's fetch returned): the copy
+        # is third-party text, so it is out of the automatic views and a recall fences it.
         rows = pf.preflight("T4", 20, 1, only={"t4-retry-policy"}, keep_texts=True)
         row = rows[0]
-        shown = [v for v in pf.VIEWS if row["views"][v]["shown"]]
-        self.assertTrue(shown)
-        for view in shown:
+        for view in ("start", "prompt", "auto"):
+            self.assertFalse(row["views"][view]["shown"], view)
+        for view in pf.VIEWS:
             info = row["views"][view]
-            self.assertTrue(info["labelled_evidence"], view)
-            self.assertTrue(info["verbatim"], view)
+            if info["shown"]:
+                self.assertEqual("shown_fenced_untrusted", info["label"], view)
         self.assertIn("texts", row)
         text = pf.render(rows)
         self.assertIn("T4 (plain), size 20: 1 tasks", text)

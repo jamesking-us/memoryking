@@ -52,10 +52,14 @@ from memoryking.domain.briefing_text import render_brief
 from memoryking.domain.checkpoint import complete
 from memoryking.domain.lexicon import STOP, analyze
 from memoryking.domain.local import LocalError
+from memoryking.domain.names import name_first
 from memoryking.domain.provenance import (
     HOST_CAPTURE,
+    QUOTED_PREFIX,
     TOOL_ERROR_PREFIX,
+    QuoteIndex,
     is_third_party,
+    split_quotes,
     without_tool_errors,
 )
 from memoryking.hook_cli import light
@@ -243,6 +247,53 @@ def _texts(value: Any, out: list[str], role: str | None = None) -> None:
             _texts(item, out, role)
 
 
+# Tools whose results are not third-party text: MemoryKing's own, and the editors, whose result
+# echoes what the assistant itself wrote.
+OWN_TOOLS = re.compile(r"^(mcp__memoryking__|Edit$|Write$|MultiEdit$|NotebookEdit$|TodoWrite$)")
+
+
+def _results(value: Any, out: list[str], names: dict[str, str]) -> None:
+    """Collect what tools returned (results and errors alike) from any transcript line shape,
+    only to compare a turn with it: it is never stored."""
+    if isinstance(value, dict):
+        kind = value.get("type")
+        call = value.get("id") or value.get("call_id")
+        if kind in TOOL_CALLS:
+            if isinstance(call, str) and isinstance(value.get("name"), str):
+                names[call] = value["name"]
+            return
+        if kind in TOOL_RESULTS:
+            used = value.get("tool_use_id") or value.get("call_id")
+            if not OWN_TOOLS.match(names.get(used, "")) if isinstance(used, str) else True:
+                text = _flat(value.get("content", value.get("output")))
+                if text.strip():
+                    out.append(text)
+            return
+        if kind in SKIPPED or value.get("isMeta") is True:
+            return
+        for key, item in value.items():
+            if key not in ("input", "arguments", "parameters"):
+                _results(item, out, names)
+    elif isinstance(value, list):
+        for item in value:
+            _results(item, out, names)
+
+
+def third_party_index(path: str | Path | None) -> QuoteIndex:
+    """The words of every tool result in the transcript tail (see `provenance.QuoteIndex`)."""
+    raw = _read(path)
+    texts: list[str] = []
+    names: dict[str, str] = {}
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                _results(json.loads(line), texts, names)
+            except ValueError:
+                continue
+    return QuoteIndex([scrub(t)[0] for t in texts])
+
+
 def _read(path: str | Path | None) -> str | None:
     """The last TAIL_BYTES of a transcript file, or None when there is none to read."""
     if not path:
@@ -276,12 +327,19 @@ def _pieces(raw: str) -> tuple[list[str], bool]:
     return pieces, parsed
 
 
-def _tail(path: str | Path | None, limit: int = TAIL_CHARS, part: str = "all") -> tuple[str, int]:
+def _tail(
+    path: str | Path | None,
+    limit: int = TAIL_CHARS,
+    part: str = "all",
+    quotes: tuple[QuoteIndex, list[str]] | None = None,
+) -> tuple[str, int]:
     """(scrubbed tail, number of secret-shaped values replaced); see `transcript_tail`.
 
     `part` is `conversation` (what the user and the assistant said), `tools` (what tools
     reported as errors: third-party text) or `all`. A transcript that is not JSON lines cannot
-    be told apart and is all conversation."""
+    be told apart and is all conversation. With `quotes` (an index of the session's tool
+    results and a list), each span of a turn that copies a tool result is replaced by a marker
+    and appended to the list, as a paragraph of the third-party record."""
     raw = _read(path)
     if raw is None:
         return "", 0
@@ -290,17 +348,38 @@ def _tail(path: str | Path | None, limit: int = TAIL_CHARS, part: str = "all") -
         pieces = [p for p in pieces if p.startswith(TOOL_ERROR_PREFIX) == (part == "tools")]
     elif part == "tools":
         return "", 0
+    if quotes and quotes[0] and parsed and part == "conversation":
+        index, moved = quotes
+        count = 0
+        kept: list[str] = []
+        used = 0
+        for piece in reversed(pieces):  # only the turns the tail keeps
+            if used > limit:
+                break
+            clean, n = scrub(piece)
+            count += n
+            used += len(clean) + 2
+            who = "assistant" if clean.startswith("Assistant: ") else "user"
+            clean, taken = split_quotes(clean, index)
+            moved[:0] = [f"{QUOTED_PREFIX}the {who}: {t}" for t in taken]
+            kept.append(clean)
+        return "\n\n".join(reversed(kept))[-limit:].strip(), count
     # Scrub before slicing so a cut cannot leave half a secret at the start.
     text, count = scrub("\n\n".join(pieces) if parsed else raw)
     return text[-limit:].strip(), count
 
 
-def user_turns(path: str | Path | None, limit: int = USER_TURN_CHARS) -> tuple[str, int]:
+def user_turns(
+    path: str | Path | None,
+    limit: int = USER_TURN_CHARS,
+    quotes: tuple[QuoteIndex, list[str]] | None = None,
+) -> tuple[str, int]:
     """(the user's own turns from the transcript tail, oldest first; replacements made).
 
     Each turn is kept as written (secret-shaped values replaced, a very long turn cut to
     `USER_TURN_EACH` characters); the newest turns are kept when they exceed `limit`. System
-    reminders the host marks as its own are not user turns."""
+    reminders the host marks as its own are not user turns. With `quotes`, a span of a turn
+    that copies a tool result is replaced by a marker and appended to the list (see `_tail`)."""
     raw = _read(path)
     if raw is None:
         return "", 0
@@ -312,6 +391,9 @@ def user_turns(path: str | Path | None, limit: int = USER_TURN_CHARS) -> tuple[s
     used = replaced = 0
     for turn in reversed(turns):
         text, count = scrub(turn[:USER_TURN_EACH])
+        if quotes and quotes[0]:
+            text, taken = split_quotes(text, quotes[0])
+            quotes[1][:0] = [f"{QUOTED_PREFIX}the user: {t}" for t in taken]
         if used + len(text) > limit and kept:
             break
         kept.append(text)
@@ -651,7 +733,8 @@ def prompt_view(
         ]
 
     own = chosen(mine, PROMPT_USER_SHARED)[:PROMPT_USER] if mine and not mine.get("reason") else []
-    items = _one_per_session([*own, *chosen(packet, PROMPT_SHARED)])
+    # Records that hold the prompt's words side by side are the first to be shown (see `names`).
+    items = _one_per_session([*own, *name_first(chosen(packet, PROMPT_SHARED), query)])
     if not items:
         return ""
     base = {k: v for k, v in packet.items() if k not in {"omitted_for_budget", "page"}}
@@ -969,10 +1052,15 @@ def save(
     name = host or event.get("host") or "host"
     redacted = 0
     tool_text = ""
+    # What a turn copied from a tool's result is third-party text too: it goes to the
+    # `<host>-tool` record and a marker stays in the turn.
+    quotes: tuple[QuoteIndex, list[str]] = (third_party_index(event.get("transcript")), [])
     if kind == "session-end" and event.get("last_message"):
         text, redacted = scrub(str(event["last_message"]))
+        text, taken = split_quotes(text, quotes[0])
+        quotes[1].extend(f"{QUOTED_PREFIX}the assistant: {t}" for t in taken)
     else:
-        text, redacted = _tail(event.get("transcript"), part="conversation")
+        text, redacted = _tail(event.get("transcript"), part="conversation", quotes=quotes)
         tool_text = _tail(event.get("transcript"), part="tools")[0]
         if kind == "pre-compact" and event.get("instructions"):
             note, more = scrub(str(event["instructions"]))
@@ -1002,7 +1090,7 @@ def save(
     }
     # The user's own words as their own observation, so the next session's start briefing can
     # show an instruction or a decision whole instead of cutting it out of a long transcript.
-    turns, _ = user_turns(event.get("transcript"))
+    turns, _ = user_turns(event.get("transcript"), quotes=quotes)
     if turns:
         said = hooks.capture(
             turns,
@@ -1015,8 +1103,9 @@ def save(
             config=where.get("config"),
         )
         summary["user_observation"] = said.get("observation")
+    tool_text = "\n\n".join(p for p in [tool_text, *dict.fromkeys(quotes[1])] if p)
     if tool_text:
-        # What tools reported is third-party text: its own observation with its own source, so
+        # What tools reported, and what a turn copied from them, is third-party text: its own observation with its own source, so
         # the automatic briefings can leave it out and an operator can hold the source.
         tool_source = f"{name}-tool"
         reported = hooks.capture(

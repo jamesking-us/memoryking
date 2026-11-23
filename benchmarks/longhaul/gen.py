@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -143,6 +144,13 @@ CONFIRMED = {
         "Final change on the {s}: we settled on {p} as the {a}, replacing {o}.",
     ],
 }
+#: Wording that marks a preference stated for every project (the `preference_global` statements
+#: and nothing else in a generated history; a test holds that). Used by the MemoryKing arm to
+#: tell which statements an agent following the start briefing saves to the user scope.
+CROSS_PROJECT = re.compile(
+    r"\b(everywhere I work|every project|all my projects|all your projects|whatever the project)\b",
+    re.IGNORECASE,
+)
 CLOSINGS = ["Thanks.", "Good, thanks.", "OK, thanks.", "Fine for now, thanks."]
 CLOSING_ACKS = [
     "Yes, that is settled. Thanks.",
@@ -409,7 +417,9 @@ def make_task(
 # -------------------------------------------------------------------- sessions
 
 
-def noise_block(rng: random.Random, family: Family) -> str:
+def noise_block(
+    rng: random.Random, family: Family, avoid: dict[tuple[str, str], set[str]] | None = None
+) -> str:
     kind = rng.choice(["pytest", "diff", "grep"])
     mod = family.module
     if kind == "pytest":
@@ -420,7 +430,8 @@ def noise_block(rng: random.Random, family: Family) -> str:
             f"============ {n} passed in {rng.uniform(0.1, 2.5):.2f}s ============"
         )
     s = rng.choice(family.slots)
-    wrong = rng.choice([v for v, _ in s.pool])
+    taken = (avoid or {}).get((family.id, s.name), set())
+    wrong = rng.choice([v for v, _ in s.pool if v not in taken] or [v for v, _ in s.pool])
     if kind == "diff":
         return (
             f"--- a/{family.package}/{mod}.py\n+++ b/{family.package}/{mod}.py\n@@ -{rng.randint(5, 80)},4 "
@@ -442,6 +453,8 @@ def compose(
     tool_error: str | None = None,
     topic: str | None = None,
     acked: bool = False,
+    tool_page: str | None = None,
+    avoid: dict[tuple[str, str], set[str]] | None = None,
 ) -> Session:
     """One session of six turns, the same shape for every session: a request, an opening
     reply, a tool result, a report, the user's closing message and the assistant's last reply.
@@ -464,7 +477,9 @@ def compose(
     if tool_error is not None:
         turns.append(Turn("tool", "ERROR: " + tool_error))
     else:
-        turns.append(Turn("tool", noise_block(rng, family) if family else "ok"))
+        block = noise_block(rng, family, avoid) if family else "ok"
+        # a page the assistant fetched and then quotes: the fetch's result holds the page
+        turns.append(Turn("tool", f"{tool_page}\n{block}" if tool_page else block))
     turns.append(Turn("assistant", asst_text))
     turns.append(Turn("user", rng.choice(CLOSING_ACKS if acked else CLOSINGS)))
     turns.append(Turn("assistant", rng.choice(FINAL_REPLIES)))
@@ -487,11 +502,15 @@ class Needle:
     statements: list[tuple[str, str]]
     task: str = ""
     tool_error: str | None = None
+    tool_page: str | None = None  # what the session's fetch returned, which the assistant quotes
     acked: bool = False  # the user acknowledges the assistant's confirmed outcome
 
 
 def distractor_statement(
-    rng: random.Random, project: str, fams: list[Family]
+    rng: random.Random,
+    project: str,
+    fams: list[Family],
+    avoid: dict[tuple[str, str], set[str]] | None = None,
 ) -> tuple[Family, list[tuple[str, str]], bool]:
     """A near-miss: the project's own vocabulary with a different component, a different
     attribute, or a value that was tried and reverted; or plain work with no fact. The third
@@ -522,8 +541,11 @@ def distractor_statement(
         value = rng.choice(GENERIC.get(attr, ["the default", "unchanged", "to be decided"]))
         text = rng.choice(STATEMENTS["near_attr"]).format(s=f.subject, a=attr, p=value)
         return f, [("user", text)], False
-    # the same words with a value that was tried and reverted (never adopted)
-    wrong = rng.choice(values)
+    # the same words with a value that was tried and reverted (never adopted): never the slot's
+    # current value, which a task of the group needs (a history that says both "it is X" and "X
+    # was reverted" about one component and attribute carries no wrong value; amendment 11)
+    taken = (avoid or {}).get((f.id, s.name), set())
+    wrong = rng.choice([v for v in values if v not in taken] or values)
     text = say("tried", f, s, wrong, rng)
     return f, [("assistant", text)], False
 
@@ -537,6 +559,7 @@ def build_history(
     task_projects: list[str],
     extra_projects: list[str],
     fams_by_project: dict[str, list[Family]],
+    avoid: dict[tuple[str, str], set[str]] | None = None,
 ) -> tuple[list[Session], dict[str, list[str]]]:
     """All sessions of one group: the needle chains at random places in the first part of the
     time line, every other place a hard distractor. Returns (sessions, task -> needle ids)."""
@@ -580,6 +603,8 @@ def build_history(
                     n.statements,
                     tool_error=n.tool_error,
                     acked=n.acked,
+                    tool_page=n.tool_page,
+                    avoid=avoid,
                 )
             )
             if n.task:
@@ -587,11 +612,20 @@ def build_history(
             continue
         project = rng.choices(names, weights)[0]
         fams = fams_by_project.get(project) or list(fam.F.values())
-        family, statements, acked = distractor_statement(rng, project, fams)
+        family, statements, acked = distractor_statement(rng, project, fams, avoid)
         if project in MISC_PROJECTS:
             family = rng.choice(list(fam.F.values())) if rng.random() < 0.5 else None
         sessions.append(
-            compose(rng, sid, Scope(USER, project, AGENT), when[i], family, statements, acked=acked)
+            compose(
+                rng,
+                sid,
+                Scope(USER, project, AGENT),
+                when[i],
+                family,
+                statements,
+                acked=acked,
+                avoid=avoid,
+            )
         )
     return sessions, needle_ids
 
@@ -806,7 +840,10 @@ def needles_for(track: str, tasks: list[Task], seed: int) -> list[list[Needle]]:
                 quote = (
                     f'The page I fetched says: "{raw}" I am noting that here in case it matters.'
                 )
-                chains.append([Needle(f.project, AGENT, f, [("assistant", quote)], t.id)])
+                page = f"Release notes, version 4.2\n- fixed typos in the docs\n{raw}\n- bumped the CI image"
+                chains.append(
+                    [Needle(f.project, AGENT, f, [("assistant", quote)], t.id, tool_page=page)]
+                )
     return chains
 
 
@@ -841,6 +878,7 @@ def build(track: str, size: int, seed: int = 1) -> Suite:
             task_projects,
             extra,
             by_project,
+            {(t.family, sl.name): {sl.current} for t in chunk for sl in t.slots},
         )
         for t in chunk:
             t.needle_sessions = ids.get(t.id, [])

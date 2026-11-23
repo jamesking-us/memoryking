@@ -51,3 +51,79 @@ def without_tool_errors(text: str) -> str:
         if not dropping:
             kept.append(paragraph)
     return "\n\n".join(kept)
+
+
+# --- Third-party text a conversation turn quoted -----------------------------------------
+#
+# A turn of the assistant (or the user) may copy what a tool returned or a page said into its
+# own words. The copy is still third-party text. A capture finds it by comparing the turn with
+# the tool results of the same session, and only that: a run of QUOTE_WORDS or more consecutive
+# words (letters and digits, no case, no punctuation, no spacing) of the turn that stands
+# consecutively in one tool result, and is at least QUOTE_CHARS characters long. Nothing is read
+# from how the text is worded.
+
+QUOTE_WORDS = 12
+QUOTE_CHARS = 72
+QUOTED_PREFIX = "Quoted by "  # opens each paragraph of a third-party record made of copied text
+_WORD = re.compile(r"[^\W_]+")
+
+
+class QuoteIndex:
+    """The runs of QUOTE_WORDS consecutive words of some third-party texts."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self._runs: set[tuple[str, ...]] = set()
+        for text in texts:
+            words = [m.group().casefold() for m in _WORD.finditer(text)]
+            for i in range(len(words) - QUOTE_WORDS + 1):
+                self._runs.add(tuple(words[i : i + QUOTE_WORDS]))
+
+    def __bool__(self) -> bool:
+        return bool(self._runs)
+
+    def spans(self, text: str) -> list[tuple[int, int]]:
+        """The character ranges of `text` that are copies (see the rule above), in order."""
+        if not self._runs:
+            return []
+        found = list(_WORD.finditer(text))
+        low = [m.group().casefold() for m in found]
+        covered = [False] * len(found)
+        for i in range(len(found) - QUOTE_WORDS + 1):
+            if tuple(low[i : i + QUOTE_WORDS]) in self._runs:
+                for j in range(i, i + QUOTE_WORDS):
+                    covered[j] = True
+        spans: list[tuple[int, int]] = []
+        i = 0
+        while i < len(found):
+            if not covered[i]:
+                i += 1
+                continue
+            j = i
+            while j + 1 < len(found) and covered[j + 1]:
+                j += 1
+            start, end = found[i].start(), found[j].end()
+            if end - start >= QUOTE_CHARS:
+                spans.append((start, end))
+            i = j + 1
+        return spans
+
+
+def quote_marker(size: int) -> str:
+    return f"[quoted text left out: {size} characters, kept in the tool-output record]"
+
+
+def split_quotes(text: str, index: QuoteIndex) -> tuple[str, list[str]]:
+    """(`text` with each copied span replaced by a marker, the spans in order)."""
+    spans = index.spans(text)
+    if not spans:
+        return text, []
+    out: list[str] = []
+    taken: list[str] = []
+    at = 0
+    for start, end in spans:
+        out.append(text[at:start])
+        out.append(quote_marker(end - start))
+        taken.append(text[start:end])
+        at = end
+    out.append(text[at:])
+    return "".join(out), taken
