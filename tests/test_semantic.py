@@ -147,6 +147,11 @@ class SemanticTests(DaemonCase):
         with patch.object(semantic, "runtime_problem", return_value=None):
             self.assertIn("would install", step(dry_run=True))
             self.assertIn("pinned SHA-256", step(dry_run=True))
+            with patch.object(semantic, "verified", return_value=True):
+                text = step(dry_run=True)
+            self.assertIn("already installed and verified", text)
+            self.assertIn("nothing would be downloaded", text)
+            self.assertNotIn("would install", text)
             self.assertIn("skipped", step(no_semantic=True))
 
     def test_an_unsupported_model_name_is_refused(self):
