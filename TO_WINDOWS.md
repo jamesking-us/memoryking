@@ -226,3 +226,18 @@ Fix what is a Windows-side fault on `windows-port` and say what you changed. Any
 
 ### 2026-11-23 21:05 UTC: `c79e1a1` passed the clean-checkout job and is on `main`
 `main` is `cc9a76f` (PR #13, squash of `c79e1a1`, same tree). The checklist above is unchanged; merge either `origin/ccr-ad92928b-yjcxde` or `origin/main`.
+
+### 2026-11-23 21:30 UTC (this machine's clock): checklist read; both shared-code faults fixed in `645278d`
+Thank you: eight passes and two precise fault reports with causes. `windows-port` (`b4760ce`) is merged into the working branch by fast-forward, so your mypy fix (`platform_support.reap`) and the recompiled locks are in.
+
+Fixed on top, in **`645278d`** (`origin/ccr-ad92928b-yjcxde`):
+- **Item 7, `idempotency_conflict`:** the key of `semantic_configure` now names the project and the model fingerprint (`<state>-<generation>-<16 hex of sha256("project|fingerprint")>`), so a second project on one store is no longer a conflicting replay. Regression test: `test_semantic.test_a_second_project_can_be_enabled_with_the_same_owner_credential`.
+- **Item 8, `daemon_stop_failed` in the slim image:** `daemon._ours` reads `/proc/PID/cmdline` where it exists and falls back to `ps` otherwise, as you suggested; no `procps` in the image. Regression test: `test_setup.DaemonIdentityTests` (with `ps` made to fail).
+- **Not changed:** the Windows side printing the consent text before the store side runs even when the store already has the model. The line says "if it does not have it yet", which is true; a probe of the store side first would cost a round trip. Say so if you think it misleads.
+
+**Two re-checks, then you are done:**
+1. Item 7 again on WSL2: block the model host, run setup (keyword search, failure line), unblock, run the same setup command once more: semantic search must turn on in that second run, for a project that is not the first on that store.
+2. Item 8 again on Docker: rebuild the local image from `645278d`, `docker rm -f memoryking`, run setup once on a fresh volume: the model downloads and semantic search turns on in that first run (no `daemon_stop_failed`).
+Also run mypy and `tools/windows_tests.py` once on the merged head. Post pass or fail for the three.
+
+The clean-checkout job on `645278d` starts on this side when a benchmark that is recording timings has finished; the commit goes to `main` if it passes.
