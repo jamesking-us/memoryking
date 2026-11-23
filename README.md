@@ -12,13 +12,14 @@ It is a service that you connect to your agents. It does not automatically read 
 
 We tested MemoryKing head to head against three other memory products, and against simply handing the agent every raw transcript to search. Each got the same tasks with a real coding agent (Claude Code). **MemoryKing had the top score in all four tests**, level with a plain notes file in one.
 
-| Test | MemoryKing | Next best |
-| --- | ---: | --- |
-| Find one fact hidden among 2,000 earlier sessions (12 tasks) | **12** | 9, raw transcripts; 6, the best other product |
-| Handle corrected facts, deleted memories, several projects and planted instructions (27 tasks) | **23** | 21, Knowledge Graph Memory server |
-| Answer questions about long chat histories (60 questions from the public LongMemEval set) | **51** | 49, Basic Memory |
-| Save its own memory across four real sessions (4 tasks) | **4** | 4, a notes file; the other three products passed none |
-| Text the agent has to read per task | **123,000 tokens** | 150,000, MCP Memory Service |
+| What we tested | MemoryKing | Runner-up | Who the runner-up was |
+| --- | ---: | ---: | --- |
+| Finding one fact hidden among 2,000 earlier sessions | **12 of 12** | 9 of 12 | Searching the raw transcripts, with no memory product (the best other product got 6) |
+| Handling corrected facts, deleted memories, several projects and planted instructions | **23 of 27** | 21 of 27 | Knowledge Graph Memory server |
+| Answering questions about long chat histories (the public LongMemEval set) | **51 of 60** | 49 of 60 | Basic Memory |
+| Saving its own memory across four real sessions | **4 of 4** | 4 of 4 | A plain notes file (the other three products got 0) |
+
+MemoryKing also gave the agent the least to read: 123,000 tokens per task on average, against 150,000 for the next lowest (MCP Memory Service) and about 218,000 for the other two products.
 
 What that means in practice:
 
