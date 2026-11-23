@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from memoryking import __version__, host_hooks, setup_host
+from memoryking import __version__, host_hooks, semantic, setup_host
 from memoryking.adapters import platform_support
 from memoryking.domain.local import LocalError
 from memoryking.relay_client import NAME, WSL_PYTHON
@@ -63,7 +63,8 @@ case "$HOME" in /mnt/*) echo '{"error":"store_filesystem_unsupported"}'; exit 3;
 same() { [ -x "$py" ] && "$py" -c 'import sys, memoryking; sys.exit(memoryking.__version__ != sys.argv[1])' "$want" 2>/dev/null; }
 # A local wheel is one build of the version: the same version from another build differs.
 build() { [ -z "$built" ] || [ "$(cat "$dir/wheel.sha256" 2>/dev/null)" = "$built" ]; }
-if same && build && { [ "$tok" = 0 ] || "$py" -c 'import tiktoken' 2>/dev/null; }; then
+if same && build && "$py" -c 'import onnxruntime, numpy, tokenizers' 2>/dev/null \\
+   && { [ "$tok" = 0 ] || "$py" -c 'import tiktoken' 2>/dev/null; }; then
   echo '{"installed":"already"}'; exit 0
 fi
 base=""
@@ -194,7 +195,9 @@ def wheel_version(path: Path) -> str:
 
 def install(kind: str, name: str, args: Any, say: dict[str, str]) -> None:
     """The same MemoryKing version on the store side, with the tokenizers extra when this
-    side has it (otherwise briefings would ask for exact counts the store cannot make)."""
+    side has it (otherwise briefings would ask for exact counts the store cannot make). The
+    store side's core lock carries the semantic-search libraries; the Windows side does not
+    need them, so it may be installed without them (docs/deployment.md, Windows)."""
     tokenizers = importlib.util.find_spec("tiktoken") is not None
     if kind == "wsl":
         source, built = "index", ""  # built: the local wheel's SHA-256, a build's identity
@@ -307,8 +310,21 @@ def store(kind: str, name: str, args: Any, say: dict[str, str]) -> str:
             "daemon and issue the agent credential"
         )
         say["credential"] = "issued on the store side; it never leaves it except through the relay"
+        say["semantic"] = (
+            "skipped (--no-semantic): the store side keeps keyword search"
+            if args.no_semantic
+            else "the store side would download, verify and enable the local model if it has "
+            "none. " + semantic.consent()
+        )
         return (args.profile or "default") + "-agent"
-    result = last_json(quiet(on_store_side(kind, name, *command)))
+    if not args.no_semantic:
+        # The store side prints this too, but its output is captured here: say it first.
+        print(
+            "The store side installs the semantic-search model if it does not have it yet. "
+            + semantic.consent(),
+            flush=True,
+        )
+    result = last_json(quiet(on_store_side(kind, name, *command), timeout=1800))
     if "error" in result:
         raise LocalError(str(result["error"]), detail={"backend": f"{kind}:{name}"})
     said = result.get("say", {})
@@ -316,6 +332,10 @@ def store(kind: str, name: str, args: Any, say: dict[str, str]) -> str:
     say["credential"] = said.get("credential", "issued on the store side")
     say["semantic"] = said.get(
         "semantic", "not changed (turn it on there with `memoryking semantic enable`)"
+    )
+    # Setup is idempotent, so running it again is the one retry that works on both back ends.
+    say["semantic"] = say["semantic"].replace(
+        "`memoryking semantic enable` retries", "running this same setup command again retries"
     )
     return str(result["agent_profile"])
 

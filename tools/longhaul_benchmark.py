@@ -1175,12 +1175,18 @@ def cmd_t5_run(args) -> dict:
             system.prepare(root / qid)
             ingest_start = time.perf_counter()
             report = system.seed(lme.sessions_of(item))
+            # what an arm needs done before it can answer (the semantic index being complete) is part
+            # of ingesting the haystack, and its seconds are counted there
+            settled = (
+                system.before_retrieval(lme.SCOPE) if hasattr(system, "before_retrieval") else {}
+            )
             ingest_seconds = time.perf_counter() - ingest_start
             seed_seconds += report.seconds
             started = time.perf_counter()
             context = system.context_for(item["question"], lme.SCOPE, args.budget_chars)
             context = context[: args.budget_chars]
             retrieval_seconds = time.perf_counter() - started
+            retrieval_note = dict(getattr(system, "retrieval_note", {}) or {})
         finally:
             system.close()
         env = agent_env(neutral, {})
@@ -1222,6 +1228,8 @@ def cmd_t5_run(args) -> dict:
             "lost_call": lost,
             "evidence": lme.evidence(item, context),
             "ingest_seconds": ingest_seconds,
+            "index": settled,
+            "retrieval_note": retrieval_note,
             "retrieval_seconds": retrieval_seconds,
         }
         done.write_text(json.dumps(row))

@@ -1,4 +1,7 @@
-# MemoryKing local daemon: the release wheel on a digest-pinned Python image, core lock only.
+# MemoryKing local daemon: the release wheel on a digest-pinned Python image, core lock (which
+# includes the semantic-search libraries). No model is baked in: `memoryking setup` or
+# `memoryking semantic enable` downloads and verifies it into the /data volume, so it survives
+# a new container.
 # Build from the repository root:  docker build -f deploy/local/Dockerfile -t memoryking:local .
 FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS wheel
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_PROGRESS_BAR=off
@@ -17,6 +20,7 @@ COPY --from=wheel /build/dist/*.whl /wheels/
 RUN python -m pip install --no-deps /wheels/*.whl \
  && groupadd -g 1000 memoryking && useradd -u 1000 -g 1000 -m -s /usr/sbin/nologin memoryking \
  && mkdir -p /data /control && chown memoryking:memoryking /data /control && chmod 700 /data /control
+ENV MEMORYKING_MODELS=/data/models
 USER memoryking
 VOLUME ["/data", "/control"]
 # The store and control trees are created inside the volumes (a volume's mount point

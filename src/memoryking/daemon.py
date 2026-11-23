@@ -142,7 +142,9 @@ def start(name: str, profile: dict[str, Any], config: Path | None = None) -> dic
             os.close(out)
         deadline = time.monotonic() + START_SECONDS
         while time.monotonic() < deadline:
-            if alive(path):
+            # The pid file is written just after the socket starts answering: wait for both,
+            # so a stop that follows at once finds the pid.
+            if alive(path) and read_pid(store) == process.pid:
                 return {"started": True, "socket": str(path), "log": str(log)}
             if process.poll() is not None:
                 break
@@ -164,6 +166,10 @@ def stop(profile: dict[str, Any]) -> dict[str, Any]:
     os.kill(pid, signal.SIGTERM)
     deadline = time.monotonic() + STOP_SECONDS
     while time.monotonic() < deadline:
+        try:  # a daemon this process started is its child: reap it, or it lingers as a zombie
+            os.waitpid(pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            pass
         if not process_alive(pid):
             return {"running": False, "stopped": True}
         time.sleep(0.05)

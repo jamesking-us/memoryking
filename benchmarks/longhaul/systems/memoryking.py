@@ -167,6 +167,13 @@ class MemoryKing:
     #: Besides the hook capture, save a preference stated for every project to the user scope,
     #: as the start briefing tells an agent to (`user_scope_saves`). Track T3b is labelled by it.
     user_scope = True
+    #: Retrieve through the daemon instead of the in-process store the seeding used (the in-process
+    #: store keeps the seeding clock; the daemon runs on the real one, as an installed MemoryKing does).
+    via_daemon = False
+    #: What `memoryking setup` leaves once the embeddings libraries and the model are present: the
+    #: daemon loads the installed, verified model by itself and enables each project that has memory;
+    #: the arm waits for the index, and fails loudly if a briefing did not use the semantic channel.
+    semantic = False
 
     def __init__(self) -> None:
         self.root: Path | None = None
@@ -177,6 +184,7 @@ class MemoryKing:
         self.baseline: dict | None = None
         self._scope: Scope | None = None
         self._granted: set[tuple[str, str]] = set()
+        self.retrieval_note: dict = {}
 
     # ------------------------------------------------------------------ paths
 
@@ -198,9 +206,13 @@ class MemoryKing:
     def owner(self) -> Path:
         return self.control / "owner.credential"
 
-    @staticmethod
-    def _env() -> dict[str, str]:
-        return {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+    def _env(self) -> dict[str, str]:
+        env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
+        if self.semantic:
+            # where `memoryking semantic enable` installed the model: the daemon finds an installed,
+            # verified model there without a flag
+            env["MEMORYKING_MODELS"] = os.environ.get("LONGHAUL_MEMORYKING_MODELS", "/tmp/mk-models")
+        return env
 
     # -------------------------------------------------------------- lifecycle
 
@@ -400,7 +412,7 @@ class MemoryKing:
             hooks.capture(
                 text,
                 source="longmemeval",
-                event=f"{safe}-{i}",
+                event=f"{safe}-{ms}-{i}",  # a haystack can repeat a session id with another date
                 observed_ms=ms + i,
                 socket=self.socket,
                 credential=cred,
@@ -455,6 +467,46 @@ class MemoryKing:
 
     # ------------------------------------------------------------ T5 retrieval
 
+    def before_retrieval(self, scope: Scope) -> dict:
+        """With `via_daemon` or `semantic`: the seeding store is closed and the daemon takes over (on the
+        real clock). With `semantic` the daemon loads the installed model and enables the project by
+        itself; this waits until the project's index is complete and says how long it took."""
+        if not (self.via_daemon or self.semantic):
+            return {}
+        self._stop_inprocess()
+        self._start_daemon()
+        if not self.semantic:
+            return {}
+        return self._wait_indexed(scope.project)
+
+    def _wait_indexed(self, project: str, timeout: float = 3600.0) -> dict:
+        started = time.monotonic()
+        _, token, _ = hooks.connection(socket=self.socket, credential=self.owner, project=project)
+        last: dict = {}
+        while time.monotonic() - started < timeout:
+            status = request(self.socket, token, "status", {"project": project}).get("semantic", {})
+            if not status.get("loaded"):
+                raise RuntimeError(
+                    "the semantic channel is not available: the daemon loaded no model "
+                    "(is the embeddings runtime installed and the model verified under "
+                    "MEMORYKING_MODELS?)"
+                )
+            mine = [
+                p
+                for p in status.get("partitions", [])
+                if p["project"] == project and p["current_model"] and p["state"] == "experimental"
+            ]
+            if mine:
+                last = mine[0]
+                if last["percent_indexed"] >= 100 and last["vectors"] > 0:
+                    return {
+                        "index_seconds": round(time.monotonic() - started, 2),
+                        "vectors": last["vectors"],
+                        "model": status.get("model"),
+                    }
+            time.sleep(1.0)
+        raise RuntimeError(f"the semantic index of {project} was not complete after {timeout:.0f}s: {last}")
+
     def context_for(self, query: str, scope: Scope, budget_chars: int) -> str:
         if self.server is None:
             self._start_daemon()
@@ -467,7 +519,60 @@ class MemoryKing:
             credential=cred,
             project=scope.project,
         )
+        self.retrieval_note = (
+            self._dense_note(self._receipt_diagnostics(packet, scope, cred))
+            if (self.semantic or self.via_daemon)
+            else {}
+        )
+        if self.semantic and not self.retrieval_note.get("semantic_contributed"):
+            raise RuntimeError(
+                "the semantic channel was not used for this briefing: "
+                + json.dumps(self.retrieval_note)
+            )
         return str(packet.get("text", ""))[:budget_chars]
+
+    def _receipt_diagnostics(self, packet: dict, scope: Scope, cred: Path) -> dict:
+        """The briefing's own receipt (its diagnostics hold the retrieval trace), read back through the
+        socket by the credential that asked."""
+        _, token, project = hooks.connection(socket=self.socket, credential=cred, project=scope.project)
+        context = request(self.socket, token, "context", {"project": project})
+        answer = request(
+            self.socket,
+            token,
+            "retrieval",
+            {
+                "command": {
+                    "version": 1,
+                    "incarnation": context["incarnation"],
+                    "action": "receipt",
+                    "args": {"project": project, "receipt": packet["receipt"]},
+                }
+            },
+        )
+        return answer.get("diagnostics", {})
+
+    @staticmethod
+    def _dense_note(diagnostics: dict) -> dict:
+        """Whether the receipt's trace shows the semantic channel and what it contributed: the stage
+        `dense` with its availability (and the fusion of the two channels), or the reason it was left
+        out (`no_model_loaded`, `project_not_enabled`, `query_embedding_failed`)."""
+        fusion = next(
+            (t["fusion"] for t in diagnostics.get("trace") or [] if t.get("stage") == "rank" and "fusion" in t),
+            None,
+        )
+        for stage in diagnostics.get("trace") or []:
+            if stage.get("stage") == "dense":
+                if stage.get("availability") == "unavailable":
+                    return {"semantic_contributed": False, "reason": stage.get("reason")}
+                return {
+                    "semantic_contributed": int(stage.get("visible_candidates") or 0) > 0
+                    and bool(diagnostics.get("model_fingerprints")),
+                    "availability": stage.get("availability"),
+                    "visible_candidates": stage.get("visible_candidates"),
+                    "eligible_vectors": stage.get("eligible_vectors"),
+                    "fusion": fusion,
+                }
+        return {"semantic_contributed": False, "reason": "no_dense_stage_in_trace"}
 
     # ---------------------------------------------------------------- forget
 
@@ -582,4 +687,14 @@ def create_nohook() -> MemoryKing:
     system = MemoryKing()
     system.name = "memoryking-nohook"
     system.prompts = False
+    return system
+
+
+def create_semantic() -> MemoryKing:
+    """The arm `memoryking_semantic`: as `memoryking`, retrieving through the daemon with the
+    semantic channel on, as `memoryking setup` leaves a store once the model is installed."""
+    system = MemoryKing()
+    system.name = "memoryking_semantic"
+    system.via_daemon = True
+    system.semantic = True
     return system

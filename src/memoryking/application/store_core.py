@@ -210,6 +210,8 @@ class StoreCore:
     # Daemon-side policies default off; the serving backend sets them from its flags.
     backup_policy: Any | None = None
     embedder: Any | None = None
+    # Why no model is loaded, when the server knows (libraries missing, no model installed).
+    embedder_problem: str | None = None
     reranker: Any | None = None
     summary_idle_ms = 0
     _last_housekeeping = 0
@@ -1765,7 +1767,14 @@ class StoreCore:
                     else int(100 * row["frontier"] / max(1, position)),
                 }
             )
-        return {"model": model, "loaded": self.embedder is not None, "partitions": partitions}
+        result: dict[str, Any] = {
+            "model": model,
+            "loaded": self.embedder is not None,
+            "partitions": partitions,
+        }
+        if self.embedder is None and self.embedder_problem:
+            result["problem"] = self.embedder_problem
+        return result
 
     def _capacity(self, tenant: str) -> dict[str, dict[str, Any]]:
         """Utilisation of every bounded per-tenant resource; warning at 80 percent."""

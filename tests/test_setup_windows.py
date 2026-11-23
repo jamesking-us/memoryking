@@ -8,6 +8,8 @@ it drives (`setup --store-only`) on POSIX through a real process.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -148,6 +150,90 @@ class HookStringTests(unittest.TestCase):
             "p",
         ]
         self.assertFalse(any(word.startswith("/") for word in argv))
+
+
+class SemanticOnTheStoreSideTests(unittest.TestCase):
+    """The model is installed where the store is: the Windows side only states and relays."""
+
+    def run_store(self, *, no_semantic: bool, dry_run: bool, reply: bytes = b"{}"):
+        from types import SimpleNamespace
+
+        seen: list[list[str]] = []
+
+        def quiet(argv: list[str], timeout: float = 600) -> subprocess.CompletedProcess[bytes]:
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, reply, b"")
+
+        args = SimpleNamespace(
+            profile=None,
+            project="p",
+            principal="agent",
+            data_dir=None,
+            expires=None,
+            no_semantic=no_semantic,
+            dry_run=dry_run,
+        )
+        say: dict[str, str] = {}
+        out = io.StringIO()
+        with (
+            mock.patch.object(setup_windows, "quiet", side_effect=quiet),
+            contextlib.redirect_stdout(out),
+        ):
+            setup_windows.store("wsl", "Ubuntu", args, say)
+        return say, seen, out.getvalue()
+
+    def reply(self, semantic: str) -> bytes:
+        return json.dumps(
+            {"agent_profile": "default-agent", "say": {"semantic": semantic}}
+        ).encode()
+
+    def test_the_default_states_the_download_first_and_asks_the_store_side_for_it(self) -> None:
+        say, seen, printed = self.run_store(
+            no_semantic=False, dry_run=False, reply=self.reply("on")
+        )
+        self.assertIn("pinned SHA-256", printed)
+        self.assertIn("huggingface.co", printed)
+        self.assertNotIn("--no-semantic", seen[0])
+        self.assertEqual(say["semantic"], "on")
+
+    def test_no_semantic_is_passed_on_and_nothing_is_stated_as_a_download(self) -> None:
+        say, seen, printed = self.run_store(
+            no_semantic=True, dry_run=False, reply=self.reply("skipped (--no-semantic)")
+        )
+        self.assertIn("--no-semantic", seen[0])
+        self.assertNotIn("Downloading", printed)
+
+    def test_a_dry_run_says_what_would_be_downloaded_and_runs_nothing(self) -> None:
+        say, seen, printed = self.run_store(no_semantic=False, dry_run=True)
+        self.assertEqual(seen, [])
+        self.assertIn("would download", say["semantic"])
+        self.assertIn("pinned SHA-256", say["semantic"])
+        skipped, _, _ = self.run_store(no_semantic=True, dry_run=True)
+        self.assertIn("skipped (--no-semantic)", skipped["semantic"])
+
+    def test_a_failed_download_on_the_store_side_names_the_retry_that_works_from_windows(
+        self,
+    ) -> None:
+        say, _, _ = self.run_store(
+            no_semantic=False,
+            dry_run=False,
+            reply=self.reply(
+                "off, search uses keywords: the model was not installed (the model host could "
+                "not be reached). Setup is otherwise complete; `memoryking semantic enable` "
+                "retries when that is fixed"
+            ),
+        )
+        self.assertIn("search uses keywords", say["semantic"])
+        self.assertIn("running this same setup command again retries", say["semantic"])
+        self.assertNotIn("memoryking semantic enable", say["semantic"])
+
+    def test_the_wsl_install_reinstalls_a_venv_that_lacks_the_semantic_libraries(self) -> None:
+        self.assertIn("import onnxruntime, numpy, tokenizers", setup_windows.WSL_INSTALL)
+
+    def test_the_locks_the_wsl_install_uses_carry_the_libraries_with_hashes(self) -> None:
+        lock = (Path(setup_windows.__file__).with_name("locks") / "core.lock").read_text()
+        for name in ("onnxruntime==1.23.2", "numpy==2.5.4", "tokenizers==0.23.3"):
+            self.assertIn(name, lock)
 
 
 class UpgradeTests(unittest.TestCase):
@@ -351,6 +437,21 @@ class StoreOnlyTests(unittest.TestCase):
         self.assertFalse((self.home / ".claude").exists())
         again = json.loads(self.mk("setup", "claude-code", "--project", "p", "--store-only").stdout)
         self.assertIn("already valid", again["say"]["credential"])
+
+    def test_store_only_decides_about_semantic_search_and_says_it_in_its_reply(self) -> None:
+        done = self.mk("setup", "claude-code", "--project", "p", "--store-only")
+        said = json.loads(done.stdout.strip().splitlines()[-1])["say"]["semantic"]
+        self.assertIn("skipped (--no-semantic)", said)  # MEMORYKING_SEMANTIC=off here
+        env = {k: v for k, v in self.env.items() if k != "MEMORYKING_SEMANTIC"}
+        env["MEMORYKING_MODELS"] = str(self.home / "m")
+        with mock.patch.dict(os.environ, env, clear=True):
+            from memoryking import setup_host
+
+            args = mock.Mock(no_semantic=False, dry_run=True, project="p")
+            say: dict[str, str] = {}
+            setup_host.semantic_step("default", args, {}, say)
+        self.assertRegex(say["semantic"], r"would download|keywords")  # nothing was fetched
+        self.assertFalse((self.home / "m").exists())
 
     def test_a_store_on_a_foreign_file_system_is_refused_before_anything_is_made(self) -> None:
         from memoryking import setup_host

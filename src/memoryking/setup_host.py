@@ -367,6 +367,7 @@ def run(args: Any) -> int:
     if store_only:
         # The store side of a Windows setup: the host is configured on the Windows side,
         # which reaches this store through `memoryking relay --profile AGENT_PROFILE`.
+        guarded_semantic(name, args, profile, say)
         print(json.dumps({"agent_profile": agent_profile, "store": profile["store"], "say": say}))
         return 0
     command = bridge_command(agent_profile, args.project, args.binding)
@@ -384,13 +385,7 @@ def run(args: Any) -> int:
             else "; the prompt-time recall hook recalls for each prompt (turn it off with "
             "--no-prompt-hook, or MEMORYKING_PROMPT_HOOK=off in the host's environment)"
         )
-    if args.dry_run or args.no_semantic:
-        semantic_step(name, args, profile, say)
-    else:
-        try:
-            semantic_step(name, args, profile, say)
-        except LocalError as exc:  # the rest of setup stands; semantic search can be retried
-            say["semantic"] = f"not enabled ({exc.code}); retry with `memoryking semantic enable`"
+    guarded_semantic(name, args, profile, say)
     files.save()
     summary(args, say, printed, files)
     return 0
@@ -475,24 +470,38 @@ def remove(args: Any, files: Files, home: Path, cwd: Path) -> int:
     return 0
 
 
-def semantic_step(name: str, args: Any, profile: dict[str, Any], say: dict[str, str]) -> None:
-    """Turn semantic search on when the optional runtime is installed; say what it did.
+def guarded_semantic(name: str, args: Any, profile: dict[str, Any], say: dict[str, str]) -> None:
+    """The semantic step, which never stops the rest of setup."""
+    try:
+        semantic_step(name, args, profile, say)
+    except (LocalError, OSError) as exc:  # the rest of setup stands; semantic search can be retried
+        code = exc.code if isinstance(exc, LocalError) else type(exc).__name__
+        say["semantic"] = (
+            f"off, search uses keywords: it could not be turned on ({code}); "
+            "`memoryking semantic enable` retries"
+        )
 
-    This is the one place `setup` may fetch anything: the pinned model, with what is fetched
-    and from where printed first. Without the runtime nothing is downloaded and the summary
-    says how to get there. `--no-semantic` (or MEMORYKING_SEMANTIC=off) skips all of it."""
+
+def semantic_step(name: str, args: Any, profile: dict[str, Any], say: dict[str, str]) -> None:
+    """Turn semantic search on; say what it did, and what to run if it could not.
+
+    This is the one place `setup` fetches anything: the pinned model, with what is fetched
+    and from where printed first. `--no-semantic` (or MEMORYKING_SEMANTIC=off) skips all of
+    it. When the libraries are missing or the download fails, setup still finishes: search
+    stays on keywords, the summary says why, and `memoryking semantic enable` retries."""
     from memoryking import model_install, semantic
     from memoryking.__main__ import semantic_configure
 
+    retry = "`memoryking semantic enable` retries"
     if args.no_semantic or os.environ.get("MEMORYKING_SEMANTIC") == "off":
-        say["semantic"] = "skipped (--no-semantic)"
+        say["semantic"] = (
+            "skipped (--no-semantic): search uses keywords; `memoryking semantic enable` "
+            "turns semantic search on later"
+        )
         return
     problem = semantic.runtime_problem()
     if problem is not None:
-        say["semantic"] = (
-            f"off, search stays lexical: {problem}. "
-            "Install it, then run `memoryking semantic enable`"
-        )
+        say["semantic"] = f"off, search uses keywords: {problem}. After installing them, {retry}"
         return
     if args.dry_run:
         if semantic.verified():
@@ -501,11 +510,20 @@ def semantic_step(name: str, args: Any, profile: dict[str, Any], say: dict[str, 
                 f"would be downloaded, and search would be turned on for project {args.project}"
             )
         else:
-            say["semantic"] = "would install and enable the local model. " + semantic.consent()
+            say["semantic"] = (
+                "would download, verify and enable the local model. " + semantic.consent()
+            )
         return
     if not semantic.verified():
         print(semantic.consent(), flush=True)
-        model_install.install(semantic.model_dir(), semantic.MODEL)
+        try:
+            model_install.install(semantic.model_dir(), semantic.MODEL)
+        except semantic.DOWNLOAD_ERRORS as exc:
+            say["semantic"] = (
+                f"off, search uses keywords: the model was not installed ({semantic.explain(exc)}). "
+                f"Setup is otherwise complete; {retry} when that is fixed"
+            )
+            return
     socket = Path(profile["socket"])
     token = (Path(profile["control"]) / "owner.credential").read_text(encoding="utf-8").strip()
     if (

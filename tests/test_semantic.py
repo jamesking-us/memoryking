@@ -90,8 +90,8 @@ class SemanticTests(DaemonCase):
         ):
             self.assertEqual(cli.semantic_command(args), 1)
         install.assert_not_called()
-        self.assertIn("optional embeddings extra is not installed", output.getvalue())
-        self.assertIn("Search stays lexical", output.getvalue())
+        self.assertIn("embedding libraries (onnxruntime, numpy, tokenizers)", output.getvalue())
+        self.assertIn("Search stays on keywords", output.getvalue())
 
     def test_enable_states_what_it_downloads_then_loads_and_switches_the_project_on(self):
         output = io.StringIO()
@@ -118,7 +118,7 @@ class SemanticTests(DaemonCase):
         self.assertIn("Downloading " + semantic.MODEL, text)
         self.assertIn("huggingface.co", text)
         self.assertIn("pinned SHA-256", text)
-        self.assertIn("never downloads a model on its own", text)
+        self.assertIn("it happens once and nothing is fetched after it", text)
         self.assertIn("Semantic search is on for project p", text)
         self.assertEqual(self.partitions(), {"p": "experimental"})
 
@@ -142,17 +142,101 @@ class SemanticTests(DaemonCase):
 
         with patch.object(semantic, "runtime_problem", return_value="the extra is not installed"):
             text = step()
-        self.assertIn("search stays lexical", text)
+        self.assertIn("search uses keywords", text)
         self.assertIn("memoryking semantic enable", text)
         with patch.object(semantic, "runtime_problem", return_value=None):
-            self.assertIn("would install", step(dry_run=True))
+            self.assertIn("would download", step(dry_run=True))
             self.assertIn("pinned SHA-256", step(dry_run=True))
             with patch.object(semantic, "verified", return_value=True):
                 text = step(dry_run=True)
             self.assertIn("already installed and verified", text)
             self.assertIn("nothing would be downloaded", text)
-            self.assertNotIn("would install", text)
-            self.assertIn("skipped", step(no_semantic=True))
+            self.assertNotIn("would download", text)
+            skipped = step(no_semantic=True)
+            self.assertIn("skipped (--no-semantic)", skipped)
+            self.assertIn("keywords", skipped)
+
+    def test_a_failed_download_leaves_setup_finished_on_keywords_with_the_one_retry_command(self):
+        import urllib.error
+
+        from memoryking import setup_host
+
+        failures = {
+            "unreachable": (urllib.error.URLError("no route"), "could not be reached"),
+            "refused": (urllib.error.HTTPError("https://x", 403, "no", None, None), "HTTP 403"),
+            "offline": (TimeoutError("slow"), "did not answer in time"),
+            "checksum": (
+                LocalError("model_download_checksum_mismatch"),
+                "did not match its pinned SHA-256",
+            ),
+        }
+        for label, (error, words) in failures.items():
+            with self.subTest(label):
+                say = {}
+                args = argparse.Namespace(no_semantic=False, dry_run=False, project="p")
+                with (
+                    patch.object(semantic, "runtime_problem", return_value=None),
+                    patch.object(semantic, "verified", return_value=False),
+                    patch("memoryking.model_install.install", side_effect=error),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    setup_host.guarded_semantic("x", args, {}, say)
+                self.assertIn("search uses keywords", say["semantic"])
+                self.assertIn(words, say["semantic"])
+                self.assertIn("`memoryking semantic enable` retries", say["semantic"])
+
+    def test_enable_after_a_failed_download_says_why_and_keeps_nothing(self):
+        output = io.StringIO()
+        args = argparse.Namespace(
+            semantic_command="enable",
+            socket=self.server.path,
+            credential=self.owner_file,
+            project="p",
+            profile=None,
+            config=None,
+        )
+        with (
+            patch.object(semantic, "runtime_problem", return_value=None),
+            patch.object(semantic, "verified", return_value=False),
+            patch("memoryking.model_install.install", side_effect=OSError("offline")),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(cli.semantic_command(args), 1)
+        self.assertIn("not enabled", output.getvalue())
+        self.assertIn("semantic enable", output.getvalue())
+        self.assertEqual(self.partitions(), {})
+
+    def test_a_checksum_mismatch_never_leaves_a_loadable_model(self):
+        import os
+        import tempfile
+        from pathlib import Path
+
+        from memoryking import model_install
+
+        class Wrong:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class Opener:
+            def open(self, url, timeout=0):
+                reply = Wrong()
+                chunks = iter([b"not the pinned file", b""])
+                reply.read = lambda size=-1: next(chunks)
+                return reply
+
+        with tempfile.TemporaryDirectory(dir="/tmp", prefix="mk-mod-") as home:
+            with patch.dict(os.environ, {"MEMORYKING_MODELS": home}):
+                with patch("urllib.request.build_opener", return_value=Opener()):
+                    with self.assertRaises(LocalError) as caught:
+                        model_install.install(semantic.model_dir(), semantic.MODEL)
+                self.assertEqual(caught.exception.code, "model_download_checksum_mismatch")
+                self.assertFalse(semantic.model_dir().exists())
+                self.assertFalse(semantic.verified())
+                self.assertEqual([], [p for p in Path(home).iterdir()])
+                self.assertIn("no model is installed", semantic.unavailable())
 
     def test_an_unsupported_model_name_is_refused(self):
         with self.assertRaises(LocalError):

@@ -1,3 +1,6 @@
+# MemoryKing shared server: the release wheel on a digest-pinned Python image, shared lock (which
+# includes the semantic-search libraries). No model is baked in: an indexing worker installs the
+# pinned model with `python -m memoryking.model_install --destination DIR` where it runs.
 FROM python:3.12.14-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS wheel
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_PROGRESS_BAR=off
 WORKDIR /build
