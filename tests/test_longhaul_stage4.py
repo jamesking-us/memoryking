@@ -177,6 +177,31 @@ class LivedRunTests(unittest.TestCase):
                 )
 
 
+class LivedResetTests(unittest.TestCase):
+    def test_the_reset_removes_compiled_bytecode_so_no_value_survives_in_it(self):
+        task = lb.lived_tasks(1)[0]["task"]
+        with tempfile.TemporaryDirectory(dir="/tmp", prefix="mk-lhs4-") as tmp:
+            work = Path(tmp) / "ws"
+            for rel, text in task.repo.items():
+                (work / rel).parent.mkdir(parents=True, exist_ok=True)
+                (work / rel).write_text(text)
+            module = next(
+                rel
+                for rel in task.repo
+                if rel.endswith(".py") and "tests" not in rel and not rel.endswith("__init__.py")
+            )
+            cache = (work / module).parent / "__pycache__"
+            cache.mkdir()
+            (cache / "x.cpython-313.pyc").write_bytes(b"\x00 LIMIT 18")
+            (work / "stray.pyc").write_bytes(b"x")
+            (work / "NOTES.md").write_text("kept")
+            lb.reset_code(work, task)
+            self.assertFalse(cache.exists())
+            self.assertFalse((work / "stray.pyc").exists())
+            self.assertEqual((work / "NOTES.md").read_text(), "kept")
+            self.assertEqual((work / module).read_text(), task.repo[module])
+
+
 class LivedStubTests(unittest.TestCase):
     def test_the_correction_outranks_the_value_it_corrects_on_one_day(self):
         task = lb.lived_tasks(1)[0]["task"]

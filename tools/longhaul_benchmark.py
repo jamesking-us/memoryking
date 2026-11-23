@@ -1280,8 +1280,15 @@ def lived_tasks(seed: int) -> list[dict]:
 
 def reset_code(workdir: Path, task: gen.Task) -> None:
     """The between-step of a lived run: the repository's files go back to their pristine text
-    and Python files the agent added are removed, so no value survives in the code or its
-    tests. Notes, memory files and anything else that is not Python stay."""
+    and Python files the agent added are removed, and so is the compiled bytecode the earlier
+    sessions left (`__pycache__`, `.pyc`), so no value survives in the code, its tests or their
+    compiled form. Notes, memory files and anything else that is not Python stay."""
+    for cache in list(
+        workdir.rglob("__pycache__")
+    ):  # compiled bytecode of the earlier sessions holds their values
+        shutil.rmtree(cache, ignore_errors=True)
+    for p in list(workdir.rglob("*.pyc")):
+        p.unlink(missing_ok=True)
     for p in list(workdir.rglob("*.py")):
         rel = p.relative_to(workdir).as_posix()
         if "__pycache__" not in p.parts and rel not in task.repo and not rel.startswith("history/"):
