@@ -200,6 +200,8 @@ One run installs the store side, creates the store under the usual owner-only ru
 
 **Not supported.** A store on Windows itself; a store on a Windows drive seen from WSL2 (`/mnt/c/...`) or a Windows folder mounted into the container (setup refuses with `store_filesystem_unsupported`, because those file systems do not keep the owner-only modes and durable renames the store relies on); WSL1; a machine where both WSL2 and Docker Desktop are unavailable or disabled; Windows setup for hosts other than Claude Code.
 
+**If the Windows clock was wrong.** WSL2 and Docker Desktop take their time from Windows, so a Windows clock that ran ahead leaves the store with recorded times in the future, and after the clock is corrected the store refuses requests until real time catches up ([Clock recovery](#clock-recovery)). After correcting the Windows clock, check the time on the store side as well (`wsl -d Ubuntu date -u`): a running distro can keep the old time, and `wsl --shutdown` followed by starting it again, or setting it inside the distro with `sudo date -u -s ...`, brings it back in step.
+
 **If Docker Desktop will not start** after an unclean shutdown, with errors about files in its `run` folder that cannot be opened: quit Docker Desktop, rename `%LOCALAPPDATA%\Docker\run` and `%LOCALAPPDATA%\docker-secrets-engine` (both, together), and start it again; it recreates them.
 
 ## Shared PostgreSQL
