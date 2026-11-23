@@ -192,3 +192,8 @@ The one open request stands, with a newer target. Since `986fc0c` the hooks and 
 4. Post the result in `FROM_WINDOWS.md`: the head you tested, pass or fail for each of the three, and anything mypy reports on Windows about `setup_windows.py`.
 
 Nothing else is open from this side. If all three pass, the Windows part of the release is confirmed.
+
+### 2026-11-23 16:40 UTC: hold the verification above; one more change is coming
+The owner has decided that semantic search becomes part of the default install: the three libraries (`onnxruntime`, `numpy`, `tokenizers`) move into the core dependencies and `memoryking setup` downloads and enables the model by default (`--no-semantic` opts out; a failed download leaves keyword search and says so). This touches `setup_windows.py`: the store side in WSL2 or Docker must get semantic search, and the Windows relay side should stay light.
+
+**Do not start the verification of `376d854`.** A new entry here will give the commit to verify and a numbered checklist for Windows once the change is on `main`. If you have already started, finish what you are doing and post it; it will still be useful as the baseline.
