@@ -11,7 +11,12 @@ requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "James King" }]
-dependencies = ["jsonschema==4.26.0"]
+dependencies = [
+  "jsonschema==4.26.0",
+  "onnxruntime==1.23.2",
+  "numpy==2.5.4",
+  "tokenizers==0.23.3",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -38,7 +43,9 @@ memoryking-embedding-worker = "memoryking.embedding_worker:main"
 
 [project.optional-dependencies]
 tokenizers = ["tiktoken==0.12.0"]
-embeddings = ["onnxruntime==1.23.2", "numpy==2.5.4", "tokenizers==0.23.3"]
+# Semantic search is part of the core install now; the extra stays so that
+# `pip install memoryking[embeddings]` keeps resolving. It adds nothing.
+embeddings = []
 shared = ["psycopg[binary]==3.3.6", "psycopg-pool==3.3.3", "mcp==2.3.0"]
 
 [tool.setuptools.packages.find]

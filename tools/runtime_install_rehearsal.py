@@ -39,7 +39,7 @@ def main():
         "lock_sha256": hashlib.sha256((ROOT / "requirements-core.lock").read_bytes()).hexdigest(),
         "steps": [],
         "passed": False,
-        "scope": "Fresh isolated core-only wheel install on this host; no shared/model extras",
+        "scope": "Fresh isolated core wheel install on this host (with the semantic-search libraries; no model is downloaded); no shared extra",
     }
 
     def run(name, command, cwd):
@@ -95,7 +95,7 @@ def main():
                     str(python),
                     "-I",
                     "-c",
-                    "import memoryking, importlib.util; from pathlib import Path; p=Path(memoryking.__file__); assert 'site-packages' in p.parts; assert all(importlib.util.find_spec(n) is None for n in ['psycopg','onnxruntime','tiktoken','reportlab','mypy','ruff']); print(p)",
+                    "import memoryking, importlib.util; from pathlib import Path; p=Path(memoryking.__file__); assert 'site-packages' in p.parts; assert all(importlib.util.find_spec(n) is None for n in ['psycopg','tiktoken','reportlab','mypy','ruff']); assert all(importlib.util.find_spec(n) is not None for n in ['onnxruntime','numpy','tokenizers']); print(p)",
                 ],
                 directory,
             )

@@ -28,6 +28,13 @@ with zipfile.ZipFile(wheel) as archive:
     assert len(metadata) == 1
     assert "License-Expression: Apache-2.0" in archive.read(metadata[0]).decode()
     assert "Private :: Do Not Upload" not in archive.read(metadata[0]).decode()
+    # Semantic search is part of the core install: the libraries are plain dependencies, and the
+    # `embeddings` extra stays (empty) so that `memoryking[embeddings]` keeps resolving.
+    text = archive.read(metadata[0]).decode()
+    for requirement in ("onnxruntime==1.23.2", "numpy==2.5.4", "tokenizers==0.23.3"):
+        assert f"Requires-Dist: {requirement}\n" in text, requirement
+    assert "Provides-Extra: embeddings" in text
+    assert "extra == 'embeddings'" not in text
     entrypoints = [
         name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
     ]
