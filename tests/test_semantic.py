@@ -69,6 +69,19 @@ class SemanticTests(DaemonCase):
         self.assertIn("Semantic   " + semantic.MODEL, text)
         self.assertIn("p 0 vectors, 0% indexed", text)
 
+    def test_a_second_project_can_be_enabled_with_the_same_owner_credential(self):
+        # Each project's first change is at generation 0; the idempotency key must not be the
+        # same for two projects, or the second is refused as a conflicting replay.
+        self.store.embedder = FakeModel()
+        args = argparse.Namespace(socket=self.server.path)
+        cli.semantic_configure(args, self.owner, "p", "experimental")
+        cli.semantic_configure(args, self.owner, "q", "experimental")
+        self.assertEqual(self.partitions(), {"p": "experimental", "q": "experimental"})
+        # Asking again changes nothing and is not an error.
+        self.assertEqual(
+            cli.semantic_configure(args, self.owner, "q", "experimental")["already"], "experimental"
+        )
+
     def test_enable_installs_nothing_when_the_runtime_is_missing_and_says_so(self):
         output = io.StringIO()
         args = argparse.Namespace(
