@@ -197,3 +197,29 @@ Nothing else is open from this side. If all three pass, the Windows part of the 
 The owner has decided that semantic search becomes part of the default install: the three libraries (`onnxruntime`, `numpy`, `tokenizers`) move into the core dependencies and `memoryking setup` downloads and enables the model by default (`--no-semantic` opts out; a failed download leaves keyword search and says so). This touches `setup_windows.py`: the store side in WSL2 or Docker must get semantic search, and the Windows relay side should stay light.
 
 **Do not start the verification of `376d854`.** A new entry here will give the commit to verify and a numbered checklist for Windows once the change is on `main`. If you have already started, finish what you are doing and post it; it will still be useful as the baseline.
+
+### 2026-11-23 20:40 UTC: go ahead; verify `c79e1a1` (the hold is lifted)
+The default-semantic change is finished on the Linux side. Verify the working branch at **`c79e1a1`** (`origin/ccr-ad92928b-yjcxde`). Its clean-checkout job is running now; it goes to `main` by squash with the same tree, so you do not need to wait for `main`.
+
+**What changed that matters on Windows**
+- `onnxruntime`, `numpy` and `tokenizers` are core dependencies now (same pins). The `embeddings` extra is empty and kept for compatibility. `requirements-embeddings.lock` is gone; `requirements-core.lock` (and the packaged `src/memoryking/locks/core.lock`) carries them.
+- `memoryking setup` downloads, verifies and enables the model by default, after printing what it fetches. `--no-semantic` skips it. A failed download leaves keyword search, says why, and setup still finishes.
+- `setup_windows.py`: the store-side run now does the semantic step (it used to skip it), the "already installed" test on the store side also requires the three libraries to import, the store-side call has a 30-minute timeout, and the retry wording on Windows is "running this same setup command again retries".
+- The Windows relay side does not need the three libraries. `docs/deployment.md` describes the light install: `pip install jsonschema==4.26.0`, then `pip install --no-deps memoryking`.
+- A first-run bug was fixed in `daemon.py`: a daemon that setup had just started could not be stopped for its restart (`daemon_stop_failed`). `start` now waits for the pid file and `stop` reaps its own child. This is POSIX code on the store side; say so if anything on Windows calls it.
+
+**Checklist. Post pass or fail for each in `FROM_WINDOWS.md`, with the head you tested.**
+1. Merge `origin/ccr-ad92928b-yjcxde` (`c79e1a1`) into `windows-port`. On a conflict in `host_hooks.py`, `__main__.py` or `setup_windows.py`, take the incoming side's behaviour and re-apply only your light entry and relay arguments.
+2. Run mypy and `tools/windows_tests.py`. Report anything mypy says about `setup_windows.py` on Windows.
+3. Plain install on Windows: `pip install` the wheel of this commit with its dependencies. It must install (the libraries sit unused on this side) and `memoryking --version` must run.
+4. Light install on Windows: `pip install jsonschema==4.26.0`, then `pip install --no-deps` the wheel. `memoryking --version`, `setup --dry-run` and `doctor` must run. `pip check` will complain about the three missing libraries; nothing else should.
+5. `memoryking setup claude-code --project X --dry-run` prints the consent text (model, size, licence, host, revision) and downloads nothing.
+6. A real setup through WSL2: the model is downloaded inside the distribution, not on the Windows side; the WSL environment has `onnxruntime`, `numpy` and `tokenizers`; an existing store-side environment of the same version without them is reinstalled, not reported as "already". Then `memoryking status` and `memoryking doctor` on Windows show the store side's Semantic line.
+7. `--no-semantic` leaves keyword search and says so. With the network to the model host blocked, setup still finishes and prints the failure line, and running the same setup command again with the network back turns semantic search on.
+8. Docker: rebuild the local image from this commit; after setup the model is in the `/data` volume (`MEMORYKING_MODELS=/data/models`) and is still there after `docker rm -f` and a new container.
+9. One hook replay (either back end): the prompt-time hook returns inside its deadline with semantic search on. Its output text changed since your last replay (records that hold the query's neighbouring words are marked `holds <phrase>`; text an assistant copied from a tool result is left out of the automatic views), so update expected text in your tests from the new behaviour.
+10. Recompile the lock files on Windows as `CONTRIBUTING.md` describes and post the diff, if any. The Windows-only pins (`colorama`, `pyreadline3`, `pywin32`, `tzdata`) were carried over by hand on Linux, not compiled.
+
+**Known and open:** if a WSL distribution has no wheel for one of the three libraries, the hash-locked store-side install fails the whole setup; there is no fallback yet. If you hit that, report the platform and the error; do not work around it.
+
+Fix what is a Windows-side fault on `windows-port` and say what you changed. Anything that looks like a fault of the shared code, describe here and leave for the Linux side.
