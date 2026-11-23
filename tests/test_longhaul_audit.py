@@ -841,7 +841,12 @@ class NeedleWordingTests(unittest.TestCase):
                                     self.assertEqual(t.stated_by, "assistant", (t.id, turn.text))
                                 else:
                                     self.assertEqual(i, 0, (t.id, turn.text))
-        self.assertGreater(checked, 100)
+        # A floor that proves the loop looked at something, per seed: every seed yields 96 or 97
+        # needle turns across the tracks (measured on seeds 1, 2, 3 and 16), so the floor scales
+        # with SEEDS. It was a flat 100, sized for three seeds, and failed when the suite was
+        # run on one measured seed (the count is the same for every seed: a sizing artefact of
+        # the test, not a gap in the wording checks).
+        self.assertGreater(checked, 32 * len(SEEDS))
 
     def test_an_acknowledgement_repeats_no_value(self):
         values = {p for f in fam.F.values() for s in f.slots for _, p in s.pool}
@@ -909,7 +914,9 @@ class NeedleWordingTests(unittest.TestCase):
                 want = {s.name: s.current for s in t.slots}
                 self.assertEqual(got, want, (seed, t.id, t.stated_by))
                 found += 1
-        self.assertGreaterEqual(found, 36)
+        # 12 T1 tasks at size 20 per seed; the floor scales with SEEDS (it was a flat 36,
+        # sized for three seeds, and failed when run on a single measured seed)
+        self.assertGreaterEqual(found, 12 * len(SEEDS))
 
     def test_the_ports_of_the_t4_listeners_can_be_moved_and_are_free_in_this_run(self):
         import os

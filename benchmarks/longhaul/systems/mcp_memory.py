@@ -1,4 +1,4 @@
-"""Adapter: the reference MCP memory server (`@modelcontextprotocol/server-memory`).
+"""Adapter: the Knowledge Graph Memory server (`@modelcontextprotocol/server-memory`).
 
 A knowledge graph (entities, relations, observations) in one JSONL file, nine MCP tools, no
 model of its own. The product has no ingest path of its own other than its tools, because its

@@ -8,7 +8,7 @@ Adapters live in `benchmarks/longhaul/systems/<name>.py`. `tools/install_systems
 
 | Product | Version | Licence | Needs a chat model | Status |
 | --- | --- | --- | --- | --- |
-| Reference MCP memory server (`@modelcontextprotocol/server-memory`) | 2.2.1 | Apache-2.0 / MIT (the MCP project is mid-transition) | no | ready (offline-proven) |
+| Knowledge Graph Memory server (`@modelcontextprotocol/server-memory`) | 2.2.1 | Apache-2.0 / MIT (the MCP project is mid-transition) | no | ready (offline-proven) |
 | Basic Memory (`basic-memory`; variant `basic-memory-mcp` is MCP only) | 1.0.0 | AGPL-3.0-or-later | no | ready (offline-proven); **lived track only** |
 | MCP Memory Service (`mcp-memory-service`, variant `mcp-memory-service-mcp` is MCP only), added | 13.0.0 | Apache-2.0 | no | ready (offline-proven); **lived track only** |
 | claude-mem (`claude-mem`) | 16.0.3 | Apache-2.0 | yes: the host's Claude login by default | ready pending the owner's model decision (plumbing proven against the fake endpoint); seeded with the hook events a real session fires |
@@ -52,7 +52,7 @@ Reading the numbers:
 - Time: only Graphiti accepts an event time for ingestion (`reference_time`). The others stamp records with the time of ingestion; the session's `started` is kept in metadata or text where the product has a place for it, but it does not affect ordering or recency in search. Record order is preserved.
 - User, project, agent: where the product has no such concept the adapter encodes them in tags, folders or text; nothing enforces isolation unless stated.
 
-## 1. Reference MCP memory server
+## 1. Knowledge Graph Memory server
 
 - What: a knowledge graph (entities, relations, observations) in one JSONL file, nine MCP tools (`create_entities`, `add_observations`, `search_nodes`, `delete_observations`, ...). No model of its own; the agent decides what to write. Source: the MCP project's `servers` repository.
 - Install here: `npm ci --ignore-scripts` from `tools/locks/mcp-memory/` (lock file with npm integrity hashes). The package declares Node 24 or later; it is run with `/opt/node24/bin/node` (`LONGHAUL_NODE24`). Configuration per its README: `MEMORY_FILE_PATH` set to an absolute path.

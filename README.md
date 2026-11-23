@@ -33,17 +33,22 @@ flowchart LR
 
 ## How it measures up
 
-We test MemoryKing by giving a real coding agent small tasks that can only be done correctly with a fact from an earlier session, after loading 2,000 earlier sessions of history. The latest run (12 tasks, one run each):
+We test MemoryKing by giving a real coding agent small tasks that can only be done correctly with a fact from an earlier session, hidden among 200 or 2,000 earlier sessions of history. In the latest run each memory product got the same 12 tasks at both sizes, 24 runs each:
 
-| What the agent had | Tasks passed | Text read per task |
+| Memory product | Tasks passed | Text read per task |
 | --- | ---: | ---: |
-| MemoryKing, as `memoryking setup` installs it | 8 of 12 | 142,000 tokens |
-| The full raw log of every session, to search | 10 of 12 | 193,000 tokens |
-| A notes file | 1 of 12 | 119,000 tokens |
+| **MemoryKing**, as `memoryking setup` installs it | **18 of 24** | **142,000 tokens** |
+| Basic Memory 1.0.0 | 17 of 24 | 218,000 tokens |
+| Knowledge Graph Memory server 2.2.1 (`@modelcontextprotocol/server-memory`) | 13 of 24 | 243,000 tokens |
+| MCP Memory Service 13.0.0 | 6 of 24 | 120,000 tokens |
 
-A notes file cannot hold that much history, and MemoryKing did better than it by a margin the test confirms. Searching the raw log passed two more tasks than MemoryKing, a gap too small for 12 tasks to confirm, and read about a third more text. With 200 sessions of history, measured on an earlier build, all three passed 11 or 12 of 12.
+- **Nothing missed at 200 sessions.** MemoryKing passed all 12 tasks there.
+- **Less to read.** The agent read about a third less text with MemoryKing than with Basic Memory, and about 40% less than with the Knowledge Graph Memory server. The test confirms both differences.
+- **Three times the passes of MCP Memory Service,** also confirmed by the test.
+- **From ordinary use.** MemoryKing had only what its hooks capture in a normal session. The other three were given a head start: every earlier session was written into them in full.
+- **Far ahead of a notes file on long histories.** In a separate run at 2,000 sessions MemoryKing passed 8 of 12 tasks and a notes file passed 1.
 
-These are synthetic tasks with one model, so read them as a guide, not a guarantee. The [benchmark records](https://github.com/jamesking-us/memoryking/tree/main/benchmarks/longhaul/results) hold every run, including the ones where MemoryKing did worse and a comparison with other memory products.
+The pass counts of the first three products are too close for 24 runs to separate, and an agent handed every raw transcript to search passed 21 of 24. These are synthetic tasks with one model, so read them as a guide, not a guarantee. The records of the [product comparison](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-products-84071da.md) and the [notes-file run](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-23-t1-2000-7aceafe.md) give the method and every result, and the [results folder](https://github.com/jamesking-us/memoryking/tree/main/benchmarks/longhaul/results) holds the earlier runs.
 
 ## What is new
 
@@ -136,7 +141,7 @@ See [deployment and configuration](https://github.com/jamesking-us/memoryking/bl
 
 ## Current status
 
-**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Evidence of real-task benefit is limited to small synthetic benchmarks with a real agent: on ten short tasks, memory as installed did better than no memory but no better than a notes file, and used more tokens; with 2,000 sessions of history it did better than a notes file and no better than searching the raw log. A memory store on Windows itself, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
+**Early preview for local evaluation; not yet production-qualified.** Core behavior has automated coverage, but measured workload targets have not been met. Evidence of real-task benefit comes from small synthetic benchmarks with a real agent, summarised under [How it measures up](#how-it-measures-up): with long histories MemoryKing does better than a notes file and reads less text than two other memory products, while on short single-project tasks a notes file does as well. A memory store on Windows itself, complete browser/device coverage, automatic failover and production recovery targets are not qualified. Third-party agent hosts need integration testing.
 
 MemoryKing helps preserve and inspect context; it does not make an agent's conclusions automatically correct. Use reviewed evidence and appropriate human approval for consequential work. See the [security model](https://github.com/jamesking-us/memoryking/blob/main/SECURITY.md) and [current limits](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#current-limits).
 
