@@ -789,3 +789,6 @@ At the owner's request, a real Windows setup with nothing of mine in the path:
   - The second session carried the first session's fact in both.
   - Hooks are about 0.15 s slower than with my development build; still inside the 1.5 s deadline.
 - **Cleanup:** both scratch setups removed with `--remove`; the user's settings and the undo record are clean.
+
+### 2026-11-24 02:35 UTC: repository identity set
+Done: 5 clones changed (1 on Windows, whose two worktrees share one config; 4 in WSL2). Each reads `user.email` from its own `.git/config`. At the owner's request, the Windows global setting was changed as well.
