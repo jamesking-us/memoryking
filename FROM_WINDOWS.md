@@ -732,3 +732,46 @@ Item 8 will follow once the owner has decided.
 `windows-port` is at `645278d`; I have not committed anything since. The user's Claude Code settings and setup's undo record are clean.
 
 **For the docs, if you want it:** on this machine WSL2's clock went wrong with the host's, and correcting it later means a store that has recorded future times refuses requests until real time catches up. The deployment guide's Clock recovery section covers that. A line in the Windows section saying "after correcting a wrong Windows clock, check `date -u` in the distro (`sudo date -u -s @$(...)` or `wsl --shutdown`)" might save someone the confusion.
+
+### 2026-11-24 01:10 UTC: MemoryKing 0.2.0 is published; every step done
+The owner handed the release to this session in their own words, typed the PyPI token, logged Docker in, and signed the image. Every step of the 00:15 entry:
+
+| # | Step | Result |
+| --- | --- | --- |
+| 1 | Tag | **done**: `v0.2.0`, annotated, at `54f45f52993cae141df6cf1334d384bcca66e175` (on `main`), pushed |
+| 2 | Build at the tag | **done, case 2**: the Windows build failed (below); a fresh clone in WSL2 with `core.autocrlf=false`, as the ordinary user, built files **identical to yours byte for byte** |
+| 3 | Image rehearsal | **done**: `memoryking:local` = `sha256:40949ff679aa...`, `memoryking 0.2.0`, started as uid 1000 and answered `status` |
+| 4 | PyPI | **done** (the owner ran `twine upload`): https://pypi.org/project/memoryking/0.2.0/ ; the hashes at `pypi/memoryking/0.2.0/json` equal `SHA256SUMS` |
+| 5 | Image and signature | **done**: pushed `ghcr.io/jamesking-us/memoryking:0.2.0`, **digest `sha256:5b58748e31d9978c343717516bc80bf8d3093e0242ca3325273cbe0c17bdf486`**; signed keyless by the owner; the documented `cosign verify` (identity and issuer from `docs/deployment.md`) passes against that digest |
+| 6 | GitHub release | **done**: https://github.com/jamesking-us/memoryking/releases/tag/v0.2.0 . It is "Latest", not a draft or pre-release. The notes are the `## 0.2.0` section, then install, image digest and `cosign verify`; the wheel, sdist, `SHA256SUMS` and `RELEASE.json` are attached |
+| 7 | Part C | **done**, below |
+
+**SHA256SUMS** (the WSL2 build that was uploaded and attached; `RELEASE.json`: Python 3.12.14, build 1.6.1, setuptools 84.2.1, wheel 0.48.0, `dirty: false`):
+```
+2a52f9f61aef24d356e0eed409cc587b08911dfffd4fd4a9451cfd19a34deddd  memoryking-0.2.0-py3-none-any.whl
+f46b8b24a0fdd7245c3628a189e0794fbcc47fb0036eb00d949d46d547f57ca0  memoryking-0.2.0.tar.gz
+```
+
+**Part C:**
+- **Fresh install:** a fresh Windows venv: `pip install memoryking==0.2.0` from PyPI (76 s), `memoryking 0.2.0`, `pip check` clean.
+- **Dry run:** `setup claude-code --project scratch --dry-run` with a scratch `USERPROFILE`, `HOME` and `LOCALAPPDATA` named the scratch folder and wrote nothing of MemoryKing's. The only file written was Docker Desktop's own client log, from setup's `docker info` probe.
+- **Image:** an anonymous manifest fetch of the digest from ghcr.io answers HTTP 200, so the package is public. I did not use a second machine for `cosign verify`.
+- **Release page:** read in a browser. It renders, the table and code blocks included, and has 6 assets (the 4 files plus GitHub's two source archives).
+- **PyPI page:** it shows a bot challenge to an automated browser, which I did not try to pass. Its JSON API shows version 0.2.0 as the latest, `text/markdown`, the README's Windows sentence, no relative links, and the three OS classifiers.
+
+**Corrections for the skill, from its first real use:**
+1. **Part B's build fails on Windows.** `tools/build_release.py` stops in `tools/check_wheel.py` (`assert f"Requires-Dist: {requirement}\n" in text`, failing on `onnxruntime==1.23.2`), because setuptools on Windows writes `METADATA` with CRLF line endings. Say: on Windows, build inside WSL2 from a fresh clone at the tag with `git -c core.autocrlf=false clone` and `checkout`. That gave the Linux hashes exactly. (Or make `check_wheel.py` read `METADATA` with universal newlines; the files would still differ byte for byte, so the WSL2 build stays the one to upload.)
+2. **`tools/image_rehearsal.py --output tmp/image-X.Y.Z.json` fails in a fresh checkout**, because `tmp/` does not exist and the tool does not create the parent directory (`FileNotFoundError`, after the image was built and run). Either the tool makes the parent, or the skill says `mkdir tmp` first.
+3. **The changelog section broke its own rule.** The `## 0.2.0` section has two relative links, `](docs/design.md#what-a-third-storage-backend-must-implement)` and `](docs/reference.md#retrieval-quality-gate)`, which do not work on the release page. In the release notes I made them absolute, pointing at `blob/v0.2.0/docs/...`. Please make them absolute in `CHANGELOG.md` on `main`, and add a check (for example in `check_docs.py`) that the changelog has no relative links.
+4. **Part C step 1, "a scratch `HOME`":** on Windows that is `USERPROFILE` (and `LOCALAPPDATA` for setup's undo record). `HOME` is ignored, which is the trap that made `test_setup` write to the real profile. Say all three.
+5. **Signing from Claude Code's terminal:**
+   - cosign 3.1.4 detected a non-interactive terminal and used the **device flow** (a URL and a code), not a browser that opens by itself. Say both can happen.
+   - cosign first shows the Sigstore terms and the permanent-record notice and waits for `y`. That consent is the owner's to type; a session must not pass `--yes` for them. Say so in the skill.
+6. **cosign on Windows:** `winget install --id Sigstore.Cosign` installs it as **`cosign-windows-amd64`**, not `cosign`, in `%LOCALAPPDATA%\Microsoft\WinGet\Links`. The commands in the docs then need that name or an alias.
+7. **"The index digest `docker push` prints":** for this single-platform image, `docker push` printed a manifest digest, and `imagetools inspect` reports media type `application/vnd.docker.distribution.manifest.v2+json`, not an index. That digest is the right one to sign and publish; the wording should say "the digest `docker push` prints".
+8. **Logins:**
+   - **PyPI:** no PyPI token was configured on this machine; the owner ran `twine upload` and typed `__token__` and the token.
+   - **Registry:** for ghcr.io, `gh auth token | docker login ghcr.io -u <owner> --password-stdin` worked, because the GitHub CLI login had `write:packages`. The skill could offer both, and say that the owner types or pipes them, never the session.
+9. **Package visibility:** the deployment guide's note that a new registry package starts private did not apply. The package already existed and is public, as the anonymous fetch showed. Say "the first time only".
+
+Nothing is open from this side. The board can close for 0.2.0 once the changelog links are fixed.
