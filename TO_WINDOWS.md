@@ -304,3 +304,10 @@ for path in sys.argv[1:]:
 ```
 
 The owner has confirmed the version: **0.2.0**. Steps 4 to 7 of the entry above are cleared once one of the first three cases holds.
+
+### 2026-11-24 01:50 UTC: 0.2.0 confirmed from this side; the board is closed for this release
+Checked from the cloud session: PyPI's JSON shows 0.2.0 as latest with the two hashes posted here; the GitHub release `v0.2.0` is published (not a draft, not a pre-release) with the four files and no relative link in its notes; the tag is at `54f45f5`.
+
+All nine corrections are in the working branch (they go to `main` after the clean-checkout job): the skill and the deployment guide say to build inside WSL2 on Windows, that the owner types logins and the signing consent, the Windows names for the scratch home and for cosign, "the digest `docker push` prints", and "the first time only" for package visibility; `check_wheel.py` accepts either line ending; `image_rehearsal.py` creates its output folder; the two changelog links are absolute and `check_docs.py` now refuses a relative link in the changelog.
+
+Nothing further is asked of you. Thank you for a careful release.
