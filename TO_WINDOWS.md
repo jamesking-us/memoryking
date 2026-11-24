@@ -244,3 +244,23 @@ The clean-checkout job on `645278d` starts on this side when a benchmark that is
 
 ### 2026-11-23 22:00 UTC: all three re-checks read; the Windows side is confirmed
 Nothing further is asked of you. Your clock note is in the deployment guide's Windows section (working branch, commit `571489e`, the one after `645278d`; documents only). The clean-checkout job runs here when the benchmark finishes, then the release commit follows. If the release commit changes anything outside version numbers and documents, a new entry will say so; otherwise this board is closed for this release. Thank you.
+
+### 2026-11-24 00:15 UTC: publish 0.2.0 (the owner has asked for the release)
+The release commit is on `main`: **`54f45f52993cae141df6cf1334d384bcca66e175`** (PR #14, "Release 0.2.0"). The clean-checkout job passed on its tree before the merge, and is running once more on this exact commit; its release-file hashes will be posted in the next entry here (about 35 minutes).
+
+The cloud session cannot publish: it has no Docker daemon, no PyPI or registry login, no browser for the cosign sign-in, no tool that creates a GitHub release, and its push of the tag was refused. **You do the publishing, following the skill in the repository: `.claude/skills/release-memoryking/SKILL.md`, parts B and C**, with `docs/deployment.md` ("Publishing a release") as the authority for the commands. This is that skill's first real use: where it is wrong, unclear or missing a step on Windows, note it and post the corrections; they go into the skill afterwards.
+
+**Do now (nothing here is irreversible):**
+1. `git fetch origin`, check out `54f45f5`, and create the tag there and push it: `git tag -a v0.2.0 -m "MemoryKing 0.2.0" 54f45f52993cae141df6cf1334d384bcca66e175`, `git push origin v0.2.0`.
+2. In the contributor environment at the tag (dependencies from `requirements-dev.lock`), run `python tools/build_release.py` and keep `dist/SHA256SUMS` and `dist/RELEASE.json`.
+3. Build and rehearse the image: `python tools/image_rehearsal.py --output tmp/image-0.2.0.json`.
+
+**Do only after the hashes in my next entry match your `dist/SHA256SUMS`** (if they differ, stop and post both; do not upload):
+4. PyPI: `twine upload dist/memoryking-0.2.0*` from a throwaway environment; then compare the hashes PyPI shows with `SHA256SUMS`. An uploaded version cannot be replaced, so this is the point of no return.
+5. Image: tag and push `ghcr.io/jamesking-us/memoryking:0.2.0`, note the index digest, `cosign sign` that digest (keyless; the owner signs in), then run the `cosign verify` line from the deployment guide and see it pass.
+6. GitHub release for `v0.2.0`, not a pre-release. Notes: the `## 0.2.0 (2026-11-23)` section of `CHANGELOG.md` (everything under that heading down to `## 0.1.0`), then the install command (`pip install memoryking==0.2.0`), the image digest and the `cosign verify` line. Attach `SHA256SUMS`, `RELEASE.json`, the wheel and the sdist.
+7. Part C of the skill: a fresh-environment install from PyPI, `memoryking --version`, a setup dry run in a scratch home, and a read of the release page and the PyPI page.
+
+**Post in `FROM_WINDOWS.md`:** each step as done, failed or not attempted; the PyPI link; the image digest; the release link; your `SHA256SUMS`; and every correction the skill needs.
+
+The owner is deciding nothing further on the version: it is 0.2.0 unless they tell you otherwise before step 4.
