@@ -323,3 +323,59 @@ git config user.name "jamesking-us"
 Then run `git config --show-origin user.email` in each clone and confirm it reads from the repository's own config. Leave the machine's global setting alone unless the owner asks. Post "done" with the number of clones changed; nothing else.
 
 Whether the existing history is rewritten is the owner's decision and is not asked of you yet.
+
+### 2026-11-24 02:45 UTC: rewrite the history to remove the work address (the owner has decided; run it with the owner present)
+The owner wants the work address out of this repository's history. It is in the author and committer fields of early commits (40 of 65 on `main`), in the tagger field of all five release tags, and on `windows-port` and this board's branch. It is in no file and not in the published package. A dry run on a scratch copy here worked: the address is gone from every branch and tag, every tree is identical, commit dates are unchanged.
+
+**This rewrites every commit hash on every branch and tag and force-pushes them. It cannot be undone on GitHub once pushed. Read this whole entry first and copy it somewhere outside the repository, because this branch is rewritten too.** Do nothing the owner has not confirmed to you in their own words in your session. The cloud session cannot do this: its pushes to `main` and of tags are refused.
+
+**Never write either address on this board.** The owner tells you the personal address; the work address you read locally from the history.
+
+#### A. Prepare (nothing leaves the machine)
+1. Check that nothing is unpushed in any clone on the machine (Windows and WSL2). After this, every existing clone is obsolete.
+2. Make a safety copy outside any working tree and keep it until the owner says to delete it: `git clone --mirror https://github.com/jamesking-us/memoryking.git memoryking-backup.git`.
+3. Make the working copy: a second `git clone --mirror ... memoryking-rewrite.git`.
+4. Install the tool in a throwaway environment: `pip install git-filter-repo`.
+5. Write `mailmap.txt` beside the clones, one line, with the two real addresses:
+   `jamesking-us <PERSONAL ADDRESS> <WORK ADDRESS>`
+6. In `memoryking-rewrite.git`, rewrite branches and tags only. GitHub's pull-request references (`refs/pull/*`) cannot be pushed and are left alone:
+   ```
+   git filter-repo --force --mailmap ../mailmap.txt --refs $(git for-each-ref --format='%(refname)' refs/heads refs/tags)
+   ```
+   (In PowerShell, build the list of refs first and pass it; or run this step in WSL2 or Git Bash.) The tool removes the `origin` remote; that is expected.
+
+#### B. Verify before pushing (stop and post here if any check fails)
+1. No commit or tag carries the work address: `git log --branches --tags --format='%ae %ce' | grep -c <work domain>` prints 0, and `git for-each-ref refs/tags --format='%(taggeremail)'` shows only the personal address.
+2. Every branch and tag still points at the same files: for each ref under `refs/heads` and `refs/tags`, `git rev-parse <ref>^{tree}` is equal in `memoryking-rewrite.git` and `memoryking-backup.git`. Same number of refs, same number of commits (`git rev-list --count --branches --tags`).
+3. Cross-check with the dry run here. With the name `jamesking-us` and the owner's personal address in the mailmap, and `main` still at `8601fcf` before the rewrite, the results are:
+   ```
+   main      52092255516b1377c5382109c326fa81e350398b
+   v0.2.0    28035e737c966b91ecc636d140d5ac029fdbf8bd   (was 54f45f5)
+   v0.1.0    1be6b501ba6452bdc3a55fd33482be9ea6c719ae
+   v0.1.0a3  dfc77b91debf2a15739facb8c5a86f31033d32ca
+   v0.1.0a2  5ecf3b378f70c737df3e05a95666321b67973282
+   v0.1.0a1  f098eed060113d37e4e189f6922f921f12522790
+   ```
+   (commit each tag points at). If yours differ, the mailmap line differs from the one used here or a branch moved: stop and post what you got, without the addresses.
+4. Keep `filter-repo/commit-map` from inside `memoryking-rewrite.git` (old hash, new hash; it holds no address).
+
+#### C. Push (the point of no return; the owner confirms again here)
+1. If `main` refuses a forced push, the owner allows it for the moment in the repository's branch rules, and restores the rule afterwards. Do not change repository settings yourself.
+2. Push branches and tags, forced, and nothing else. Tags are updated in place, never deleted, so the five release pages stay attached:
+   ```
+   git remote add origin https://github.com/jamesking-us/memoryking.git
+   git push --force origin "refs/heads/*:refs/heads/*" "refs/tags/*:refs/tags/*"
+   ```
+3. From a fresh ordinary clone, repeat check B1 and confirm `main` and the tags are the hashes of B3.
+
+#### D. After the push
+1. **Release pages.** All five releases must still show as published, not drafts. For `v0.2.0`: rebuild at the new tag inside WSL2 as the release skill says. The wheel and sdist must have the **same hashes as before** (`2a52f9f6...` and `f46b8b24...`), because the files and the commit date are unchanged; if they do, replace only the `RELEASE.json` attached to the release with the new one (it names the new commit), and change the commit hash in the last line of the release notes from `54f45f5...` to the new one. If the hashes differ, change nothing on the release and post both. Leave the four older releases as they are.
+2. **Old clones.** Delete every other clone of the repository on the machine (Windows and WSL2) and clone again, then set the repository identity as in the 02:20 entry. Never push from an old clone or from the backup: that would put the old commits back.
+3. **GitHub Support, by the owner.** The 15 pull requests keep their original commits in references only GitHub controls, and all 15 contain the address. The owner files a request at GitHub Support under "removing sensitive data from a repository". A text to adapt:
+   > I rewrote the history of jamesking-us/memoryking with git filter-repo and force-pushed all branches and tags, to remove a private email address from commit author, committer and tagger metadata. Please remove the commits that are no longer reachable from any branch or tag, dereference or delete the pull request references refs/pull/1 through refs/pull/15, which still point at the old commits, and clear any cached views of them.
+4. **Owner's account settings (optional, prevents a repeat):** on GitHub, Settings, Emails: "Keep my email addresses private" and "Block command line pushes that expose my email".
+
+#### E. Report (on this board, from the fresh clone)
+Each of A to D as done, failed or not attempted; the new hashes of `main` and the five tags; whether the 0.2.0 files rebuilt to the same hashes; the `commit-map` file's contents (hashes only) appended or committed beside this board; and anything that surprised you. No addresses.
+
+**What this does not reach,** so the owner knows: copies anyone made before the push, and third-party mirrors of public repositories. No fork or mention of the project was found.
