@@ -792,3 +792,92 @@ At the owner's request, a real Windows setup with nothing of mine in the path:
 
 ### 2026-11-24 02:35 UTC: repository identity set
 Done: 5 clones changed (1 on Windows, whose two worktrees share one config; 4 in WSL2). Each reads `user.email` from its own `.git/config`. At the owner's request, the Windows global setting was changed as well.
+
+### 2026-11-24 03:00 UTC: the repository is recreated without the work address
+The owner chose "recreate". I did sections A and B of the 02:45 entry and R1, R3, R4, R5 and R6 of the 03:10 entry; the owner did R2 and created the new repository. No address appears in this entry or in the commit beside it.
+
+| Step | Result |
+| --- | --- |
+| A1: nothing unpushed | **done**: the Windows clone and the four WSL2 clones had no commit on no remote branch and no uncommitted change |
+| A2, A3: mirrors | **done**: backup and working mirrors, each 9 branches, 5 tags, 15 `refs/pull`, 502 commits on branches and tags; `main` was `8601fcf` |
+| A4, A5: tool, mailmap | **done**: git-filter-repo `a40bce548d2c` in a throwaway environment. The mailmap has one line, as in the entry; the work address had one spelling in the history (88 commits as author, 86 as committer, all 5 tags as tagger) |
+| A6: rewrite | **done**: branches and tags only (14 refs), 502 commits. With `--refs`, the tool kept the `origin` remote; I replaced it with a plain one before pushing, because the mirror's `remote.origin.mirror` would otherwise have pushed everything |
+| B1 | **pass**: 0 commits on branches or tags with the work domain, and all 5 taggers are the personal address. (`refs/pull` still held the old commits; they were not pushed.) |
+| B2 | **pass**: the same 14 refs, every `^{tree}` equal, 502 commits on both sides, author and commit dates identical. Commit messages differ only where they quote a commit hash: filter-repo rewrote 15 such hashes to their new values; with hashes masked, the messages are identical, and none contains the work domain |
+| B3 | **pass**: `main` and all five tags equal the dry-run hashes exactly |
+| B4 | **done**: `commit-map-2026-11-24.txt` beside this board (hashes only; 502 commits, 454 with a new hash) |
+| R1 | **done, except the app list**, below |
+| R2 | **done by the owner**: `memoryking-old`, private |
+| R3 | **done**: the owner created the empty public `memoryking`; I pushed `main` first, then `windows-port`, `coord/windows-port`, `ccr-ad92928b-yjcxde` and the five tags. At the owner's choice, the four `codex/*` branches and `claude/review-fixes` were **not** carried over. `main` is the default branch. |
+| R4 | **done**: five releases recreated oldest first, none a draft, each with its four files |
+| R5 | **done**, below |
+| R6 | **done**, below. Deleting `memoryking-old` is the owner's, later |
+
+**New hashes** (each tag's object, then the commit it points at):
+```
+main                 52092255516b1377c5382109c326fa81e350398b
+windows-port         a883a885d096 (branch)
+coord/windows-port   062c2bf9634a before this entry
+ccr-ad92928b-yjcxde  708620d650ec (branch)
+v0.1.0a1  tag ce736dfc448a4f23e31b30ed5752498247e6506a  commit f098eed060113d37e4e189f6922f921f12522790
+v0.1.0a2  tag e8073137bbc3795a6f397437deeb9141be451df7  commit 5ecf3b378f70c737df3e05a95666321b67973282
+v0.1.0a3  tag c0487ef5b40c5b833a86e2e9f13a9d172442c899  commit dfc77b91debf2a15739facb8c5a86f31033d32ca
+v0.1.0    tag ab8837c807bd1f7075d2aabb43279fc17705347d  commit 1be6b501ba6452bdc3a55fd33482be9ea6c719ae
+v0.2.0    tag 0f115af4307b1e53cd01a179143f6d252339bb36  commit 28035e737c966b91ecc636d140d5ac029fdbf8bd
+```
+
+**R1, saved outside the repository:**
+- **Releases:** all five, with title, notes, pre-release flag, original publish date and their four files (each wheel and sdist checked against its own `SHA256SUMS`).
+- **Repository settings:**
+  - description "Shared memory, recoverable task state and evidence for AI agents."; no website; no topics;
+  - issues, projects and wiki on; discussions off; all three merge methods allowed; auto-merge and delete-on-merge off.
+- **Rules:** three rulesets, saved in full:
+  - "main: changes arrive by pull request" (one bypass actor);
+  - "main: history is append-only" (deletion, non-fast-forward, linear history);
+  - "release tags are immutable" (`refs/tags/v*`: deletion, non-fast-forward, update).
+  - No classic branch protection.
+- **Nothing else attached:** no webhooks, deploy keys, Actions secrets or variables, environments, Pages or workflows.
+- **Pull requests:** 15, saved for the record.
+- **Not saved: the GitHub Apps with access.** The API refuses to list installations with the CLI's token, and the browser here is not signed in. The owner reads them from `memoryking-old`'s settings.
+
+**R4, releases:**
+- **The four older releases:** saved title, notes and pre-release flag, their original four files, and `--latest=false`. Their `RELEASE.json` still names the pre-rewrite commit, as the entry said to leave it.
+- **`v0.2.0`:** rebuilt inside WSL2, as the ordinary user, from a fresh clone of the new repository at the new tag with `core.autocrlf=false`.
+  - **The wheel and sdist have the published hashes**, `2a52f9f6...ddd` and `f46b8b24...7ca0`, and are byte-identical to the files attached before; the new `RELEASE.json` names `28035e7`.
+  - Attached with the new `SHA256SUMS` and `RELEASE.json`. The saved notes have one line changed (the commit hash), and the release is marked `--latest`.
+- **Links:**
+  - https://github.com/jamesking-us/memoryking/releases/tag/v0.1.0a1
+  - https://github.com/jamesking-us/memoryking/releases/tag/v0.1.0a2
+  - https://github.com/jamesking-us/memoryking/releases/tag/v0.1.0a3
+  - https://github.com/jamesking-us/memoryking/releases/tag/v0.1.0
+  - https://github.com/jamesking-us/memoryking/releases/tag/v0.2.0 (Latest)
+
+**R5:**
+- **Image:** an anonymous manifest fetch of `ghcr.io/jamesking-us/memoryking@sha256:5b58748e...` answers HTTP 200, and `cosign verify` with the documented identity and issuer passes. The package is public but now **linked to no repository**; the owner connects it in the package settings.
+- **Links:** all 70 unique `github.com/jamesking-us/memoryking` links in PyPI's 0.2.0 description and the five release notes resolve with HTTP 200.
+- **A fresh clone of the new repository:**
+  - 4 branches, 451 commits;
+  - 0 commits with the work domain, in headers or messages;
+  - the tag taggers are the personal address;
+  - no file on any of the four branches mentions the work domain;
+  - `git ls-remote origin "refs/pull/*"` prints nothing.
+
+**R6:**
+- **Deleted:** every old clone on the machine.
+  - Windows: `F:\source\memoryking`, its two worktrees and the release-build worktree.
+  - WSL2: `/root/mk`, `/root/mk-winport`, `/home/james/mk`, `/home/james/rel-0.2.0`.
+  - Also the working mirror, which still held the old `refs/pull` commits.
+- **Cloned fresh:** `F:\source\memoryking` and `/home/james/mk`, both from the new repository, each with the repository identity set from its own `.git/config`. None of the old commits (`645278d`, `54f45f5`, `8601fcf`) is present in the new clone.
+- **Kept, as the owner asked:** the backup mirror (bare, outside any working tree). Its push address is set to `DISABLED`, because it is in mirror mode and its `origin` now names the new repository, so a careless push could not put the old history back.
+
+**For the owner (R3.3 and R5):**
+1. Restore the description (above).
+2. Restore the three rulesets. The tag ruleset forbids updating `v*` tags, which is fine now that they are pushed.
+3. Re-grant the GitHub Apps that had access to the old repository.
+4. Connect the container package to the new repository.
+
+**Surprises:**
+- filter-repo kept `origin` when given `--refs`.
+- It rewrites hashes quoted inside commit messages.
+- The image package lost its repository link.
+- The `RELEASE.json` of the four older releases names commits that exist only in the old history now.
