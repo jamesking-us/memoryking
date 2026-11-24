@@ -632,3 +632,65 @@ With the owner's OK, the image was rebuilt from this tree. The build tools' laye
 - Cleanup: both scratch setups removed with `--remove`; the undo record and the user's settings are clean.
 
 **Please verify `6d7dab8` on Linux** (it supersedes `e63099d`; the only change after it is in `setup_windows.py`, its test and the deployment guide).
+
+### 2026-11-24 05:40 UTC: checklist for `c79e1a1`: head tested `b4760ce`; 8 pass, 2 fail on shared code
+`windows-port` is at **`b4760ce`**, pushed. It is `278cb49` (your branch head, which contains `c79e1a1` with the same tree) plus two commits of mine: `2fb4200` (mypy) and `b4760ce` (locks). The owner approved every download this needed.
+
+| # | Item | Result |
+| --- | --- | --- |
+| 1 | Merge | **pass**, fast-forward to `278cb49`, no conflicts |
+| 2 | mypy and `tools/windows_tests.py` | **pass after one fix**, see below; 1,337 tests, 0 failures, 1,120 skipped |
+| 3 | Plain install | **pass**: the wheel with its dependencies in a fresh venv (50 s), `memoryking --version` runs, `pip check` clean; onnxruntime 1.23.2, numpy 2.5.4, tokenizers 0.23.3 |
+| 4 | Light install | **pass**: `jsonschema==4.26.0`, then `--no-deps` wheel. `--version`, `setup --dry-run` and `doctor` run; `pip check` names only numpy, onnxruntime and tokenizers |
+| 5 | Dry run | **pass**: prints the consent text (`bge-small-en-v1-5-onnx`, 128 MB, MIT, huggingface.co, revision `5c38ec7c405e`, SHA-256); no request was made |
+| 6 | Real WSL2 setup | **pass** |
+| 7 | `--no-semantic`, blocked host, retry | **fail on the retry**: shared-code bug, below |
+| 8 | Docker | **model persistence passes; first-run semantic fails**: image and shared-code bug, below |
+| 9 | Hook replay, semantic on | **pass**, both back ends |
+| 10 | Locks recompiled on Windows | **one fix**, diff below |
+
+**2. mypy on Windows.** `setup_windows.py`: nothing; your `winreg` change type-checks on Windows. But `daemon.py:170: Module has no attribute "WNOHANG"`, because `os.WNOHANG` does not exist on Windows. Fixed in `2fb4200`: a new `platform_support.reap(pid)` makes the same `waitpid(pid, WNOHANG)` call on POSIX and does nothing on Windows, and `daemon.stop` calls it. Nothing on Windows reaches `stop()`, which refuses there first.
+
+**6. WSL2.** The Windows side was the light install, so the relay side has none of the three libraries. Setup took 26 s:
+- **Store side:** it reinstalled the store side from the wheel, downloaded and verified the model *inside the distribution* (`/root/.memoryking/models/bge-small-en-v1-5-onnx`), and the WSL venv has all three libraries. No `.onnx` file was written on Windows.
+- **Reinstall trigger:** to show the library check alone causes a reinstall, a second run with the same wheel said "already installed"; after `pip uninstall onnxruntime` there, a third run reinstalled.
+- **Windows status and doctor:**
+  - `memoryking status` through the relay shows the `Semantic` line.
+  - `memoryking doctor` lists "embeddings runtime: onnxruntime, numpy and tokenizers installed" and "embedding model ... installed in /root/.memoryking/models"; 15 checks, 0 failed.
+
+**7. Fail: the retry after a failed download hits `idempotency_conflict` (shared code).**
+- **What passed:** `--no-semantic` leaves keyword search and says so ("skipped (--no-semantic): search uses keywords; `memoryking semantic enable` turns semantic search on later"). With `huggingface.co` pointed at loopback inside WSL only (IPv4 and IPv6) and the model moved aside, setup finished (exit 0, 2 s) and printed "semantic search: off, search uses keywords: the model was not installed (the model host could not be reached ([Errno 111] Connection refused)). Setup is otherwise complete; running this same setup command again retries when that is fixed".
+- **What failed:** with the network back, the same command downloaded the model but printed "it could not be turned on (idempotency_conflict)". A third run turned it on.
+- **Cause, reproduced without setup:** on that store, `memoryking --profile default semantic enable --project keytest-a`, then the same for `keytest-b`, both give `idempotency_conflict`.
+  - `__main__.semantic_configure` uses the key `f"{state}-{generation}"`, so every new project's first enable is `experimental-0`, and the owner credential had already used it for another project.
+  - The third run succeeded only because the daemon's own `enable_new_projects` (key `auto-<hash of project>`) had enabled it in the meantime.
+  - So on any store where semantic search was already turned on for one project, setup and `semantic enable` fail for the next new project until the daemon's once-a-minute pass gets there.
+  - A key that names the project (and the fingerprint) would fix it. I left it to you.
+
+**8. Docker: persistence passes; first-run semantic fails (image plus shared code).**
+- **The new tag-check fix:** the rebuilt image (22 s, `MEMORYKING_MODELS=/data/models`) was refused against the old container by the image-ID check (`store_version_mismatch`), as intended.
+- **What failed:** after `docker rm -f` and setup, the model was downloaded into the `/data` volume (`/data/models/bge-small-en-v1-5-onnx`, 128 MB), but semantic search stayed off with "it could not be turned on (daemon_stop_failed)". Every retry gives the same, because the running daemon can never be stopped.
+- **Cause:** `daemon._ours(pid)` confirms the pid by running `ps -p PID -o command=`, and the `python:3.12.14-slim-bookworm` image has no `ps` ("no ps in the image"). So `stop()` always refuses there, and the semantic step cannot restart the daemon to load the model. WSL2 has `ps`, which is why it works there.
+  - Either install `procps` in `deploy/local/Dockerfile`, or have `_ours` read `/proc/PID/cmdline` where it exists. The second keeps the image small and is the better one, I think.
+- **What passed:** after a second `docker rm -f` and setup, the model was still in the volume. Its file time was unchanged, so nothing was downloaded again. The new container's daemon started with it, and setup printed "semantic search: on for project docker-sem".
+- **Minor:** the Windows side prints the download consent text before the store side runs, even when the store side already has the model and downloads nothing.
+
+**9. Replay with semantic on.** Shell-free form, both on projects with semantic search on:
+- **WSL2:** 6/6, the prompt hook at 500–515 ms.
+- **Docker:** 6/6, the prompt hook at 672–688 ms.
+- **Deadline:** 1.5 s in both.
+- **Memory:** the second session carried the first session's fact in both.
+- **Tests:** no expected text in my tests needed changing.
+
+**10. Locks.** The documented order and header commands, with pip-compile on Windows (Python 3.12.14). **No version and no hash changed.**
+- **One real difference:** `requirements-core.lock` and `requirements-shared.lock` got `colorama==0.4.6 ; os_name == "nt"` where the hand edit had `sys_platform == "win32"`. The core lock is compiled with `--constraint=requirements-dev.lock`, whose colorama pin carries `os_name == "nt"`, and pip-compile takes the constraint's marker. A compile can therefore never reproduce the hand-carried marker, and `test_locks` failed. Fixed in `b4760ce`: `requirements-core.in` now uses `os_name == "nt"` (the same as `requirements-dev.in`, and equivalent on CPython), the locks were recompiled, the packaged `src/memoryking/locks/core.lock` was copied, and `test_locks` passes.
+- **pip-compile's own layout:** "via" comments no longer name the removed `requirements-embeddings.in`; `pip`, `setuptools` and `psycopg[binary]` move to where pip-compile puts them; `tqdm` is listed as a reason for colorama in the dev lock.
+- `requirements-build.lock` and `requirements-tokenizers.lock` are unchanged.
+- An install of the recompiled core lock with `--require-hashes` in a fresh Windows venv passes `pip check`.
+
+**Not hit:** a WSL distribution without wheels for the three libraries (Ubuntu 20.04, x86-64, Python 3.12.16 installed all three from the hash locks).
+
+**Cleanup:**
+- All scratch setups were removed with `--remove`; the user's settings and the undo record are clean.
+- `/etc/hosts` in WSL is restored and the moved-aside model is deleted.
+- The Docker container now runs the image of `278cb49`.
