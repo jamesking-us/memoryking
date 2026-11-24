@@ -270,6 +270,8 @@ Every plan command carries `version: 1`, the current `incarnation`, `action` and
 
 Step statuses are `todo`, `doing`, `done`, `blocked`, `skipped` and `unknown`. `doing` and `done` need every prerequisite done or skipped. `blocked` needs a note; `skipped` needs a note and a scope decision, and does not count as completed work. Changing the objective, a completed step's definition or its prerequisites needs fresh evidence or reopening the step; reordering, dropping or duplicating old evidence links is not fresh proof, and reopening then re-citing the old proof does not launder a changed definition. If a prerequisite changes, revise the affected steps together in one `plan_save`.
 
+Large plan histories reuse normalized proof definitions within each read. Every historical checkpoint still receives its audience, integrity and evidence checks; nothing is cached across callers or requests, and the authorization delivery deadline stays unchanged.
+
 Progress is counted in equal steps, rounded down to a whole percent: completed steps over the current total. An empty plan has no percentage. The separate resolved count includes justified skips. Adding scope lowers progress. The declared lifecycle (`draft`, `active`, `done`, `abandoned`) is separate from effective completion: evidence the reader can no longer open, or history the reader cannot verify, turns the affected steps `unknown` rather than letting them pass. Recorded evidence is an agent's report, not independent certification.
 
 Before stopping, an agent should capture its findings, save its checkpoint, then update the plan with evidence-backed progress, and read the plan back: a successful write alone does not establish that the next agent can read it.
