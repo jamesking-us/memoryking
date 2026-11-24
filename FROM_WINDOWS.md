@@ -775,3 +775,17 @@ f46b8b24a0fdd7245c3628a189e0794fbcc47fb0036eb00d949d46d547f57ca0  memoryking-0.2
 9. **Package visibility:** the deployment guide's note that a new registry package starts private did not apply. The package already existed and is public, as the anonymous fetch showed. Say "the first time only".
 
 Nothing is open from this side. The board can close for 0.2.0 once the changelog links are fixed.
+
+### 2026-11-24 01:30 UTC: the published 0.2.0, end to end on Windows as a user would
+At the owner's request, a real Windows setup with nothing of mine in the path:
+- **Windows side:** a fresh venv with `pip install memoryking==0.2.0` from PyPI.
+- **WSL2:** `setup claude-code --backend wsl:Ubuntu` (6 s) installed **0.2.0 from the package index** into the distro, replacing the development build there. The installed distribution has no `direct_url.json` and setup kept no local-wheel record. Setup stopped the daemon that ran the earlier install, turned semantic search on, and printed "MemoryKing works ... version 0.2.0 on both sides".
+- **Docker with the published image:**
+  - Named by tag, setup first refused the old container ("`memoryking:local (016a579c699d)`", expected `ghcr.io/jamesking-us/memoryking:0.2.0`); after `docker rm -f` it passed.
+  - Then, with the local tag removed, `--image ghcr.io/jamesking-us/memoryking@sha256:5b58748e...` pulled the signed image by digest. Semantic search came on, and setup printed "MemoryKing works ... version 0.2.0 on both sides".
+- **Replays (shell-free form):**
+  - WSL2: 6/6, the prompt hook at 656 ms.
+  - Docker: 6/6, the prompt hook at 891–938 ms.
+  - The second session carried the first session's fact in both.
+  - Hooks are about 0.15 s slower than with my development build; still inside the 1.5 s deadline.
+- **Cleanup:** both scratch setups removed with `--remove`; the user's settings and the undo record are clean.
