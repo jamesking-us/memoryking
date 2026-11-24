@@ -379,3 +379,44 @@ The owner wants the work address out of this repository's history. It is in the 
 Each of A to D as done, failed or not attempted; the new hashes of `main` and the five tags; whether the 0.2.0 files rebuilt to the same hashes; the `commit-map` file's contents (hashes only) appended or committed beside this board; and anything that surprised you. No addresses.
 
 **What this does not reach,** so the owner knows: copies anyone made before the push, and third-party mirrors of public repositories. No fork or mention of the project was found.
+
+### 2026-11-24 03:10 UTC: second route for the push: a new repository under the same name (only if the owner chooses it)
+The owner is weighing this against the route above. **Do sections A and B of the 02:45 entry either way.** Then, if the owner tells you "recreate", do this in place of sections C and D. The gain: the old pull requests and every old commit are gone from public view at once, with no request to GitHub Support. The cost: the 15 pull request pages, the releases' original publish dates and any stars do not carry over, and applications granted access to the old repository must be granted it again.
+
+**The owner does every step marked OWNER, in the browser. Do not rename, hide, delete or create a repository yourself.**
+
+#### R1. Save what git does not hold (before anything changes)
+1. For each of the five releases: the title, the notes, whether it is a pre-release, and its attached files. For example `gh release view <tag> --json name,body,isPrerelease,publishedAt > <tag>.json` and `gh release download <tag> --dir assets/<tag>`.
+2. The repository's description, topics, website field and branch rules, and the list of applications with access (Settings, GitHub Apps): write them down.
+3. Optional, for the record: `gh pr list --state all --limit 50 --json number,title,mergedAt`.
+4. Save this board (`TO_WINDOWS.md`, `FROM_WINDOWS.md`) outside the repository.
+
+#### R2. Move the old repository out of the way (OWNER)
+1. Settings, General: rename `memoryking` to `memoryking-old`.
+2. Settings, Danger Zone: change its visibility to **private**.
+Nothing is deleted yet, so everything can still be looked up. The old repository is deleted later (R6).
+
+#### R3. Create the new one and push
+1. OWNER: create a new **public**, completely empty repository named `memoryking` (no README, licence or ignore file).
+2. From `memoryking-rewrite.git`: `git remote add origin https://github.com/jamesking-us/memoryking.git`, then push `main` first and the rest after:
+   ```
+   git push origin refs/heads/main:refs/heads/main
+   git push origin "refs/heads/*:refs/heads/*" "refs/tags/*:refs/tags/*"
+   ```
+   The owner may prefer to leave out the old `codex/*` and `claude/review-fixes` branches; ask. Keep `main`, `windows-port`, `coord/windows-port` and `ccr-ad92928b-yjcxde`.
+3. OWNER: confirm `main` is the default branch; restore the description, topics, website and branch rules; grant the applications from R1 access to the new repository.
+
+#### R4. Recreate the releases, oldest first
+1. For `v0.1.0a1`, `v0.1.0a2`, `v0.1.0a3` (pre-releases) and `v0.1.0`: `gh release create <tag> --verify-tag --title "<saved title>" --notes-file <saved notes> [--prerelease] assets/<tag>/*`.
+2. For `v0.2.0`: rebuild at the new tag inside WSL2. The wheel and sdist must have the **same hashes as published** (`2a52f9f6...`, `f46b8b24...`); attach them with the newly written `SHA256SUMS` and `RELEASE.json`, use the saved notes with the commit hash in the last line changed to the new one, and mark it `--latest`. If the hashes differ, stop and post both.
+3. Read all five release pages: none is a draft, the files are attached, `v0.2.0` shows as Latest.
+
+#### R5. Check what hangs off the repository
+1. The container image: an anonymous pull of `ghcr.io/jamesking-us/memoryking@sha256:5b58748e...` still works, and `cosign verify` still passes. OWNER: in the package's settings, connect the package to the new repository if it shows as unlinked.
+2. PyPI needs nothing. Open two of the README's links (a result record and the roadmap) from the PyPI page's JSON and from the release notes: they must resolve in the new repository.
+3. From a fresh clone of the new repository: check B1 of the 02:45 entry again, and that `refs/pull/*` does not exist (`git ls-remote origin "refs/pull/*"` prints nothing).
+
+#### R6. Close
+1. Delete every old clone on the machine and clone again; set the repository identity as in the 02:20 entry.
+2. OWNER, when satisfied (there is no hurry): delete `memoryking-old`. GitHub can still restore a deleted repository for a time; it is not public meanwhile.
+3. Report as in section E of the 02:45 entry, plus the five release links.
