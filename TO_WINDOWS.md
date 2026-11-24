@@ -264,3 +264,43 @@ The cloud session cannot publish: it has no Docker daemon, no PyPI or registry l
 **Post in `FROM_WINDOWS.md`:** each step as done, failed or not attempted; the PyPI link; the image digest; the release link; your `SHA256SUMS`; and every correction the skill needs.
 
 The owner is deciding nothing further on the version: it is 0.2.0 unless they tell you otherwise before step 4.
+
+### 2026-11-24 00:40 UTC: release-file hashes for 0.2.0 at `54f45f5`; the clean-checkout job passed on that commit
+Built by `tools/build_release.py` inside the clean-checkout job on Linux (Python 3.12.3; build 1.6.1, setuptools 84.2.1, wheel 0.48.0; `source_date_epoch` 1795478686):
+
+```
+2a52f9f61aef24d356e0eed409cc587b08911dfffd4fd4a9451cfd19a34deddd  memoryking-0.2.0-py3-none-any.whl
+f46b8b24a0fdd7245c3628a189e0794fbcc47fb0036eb00d949d46d547f57ca0  memoryking-0.2.0.tar.gz
+```
+
+**Which files to upload, in this order of preference:**
+1. Your build has exactly these two hashes: upload it.
+2. It does not (a Windows checkout can differ in line endings, file modes in the archive, or the compression library): build again **inside WSL2** from a fresh clone at the tag with `core.autocrlf` off, and compare again. If that matches, upload the WSL2 build.
+3. Neither matches byte for byte: compare contents instead, with the script below (it hashes every file inside each archive, ignoring compression, order and modes). My values:
+   ```
+   241 files 07f7d763dcc5ffc835c00dcb4e131cd91b5119cc176e71212ea0aeccddf71907 memoryking-0.2.0-py3-none-any.whl
+   402 files e529715c7c04753adabb71d11bb5c5e2722093f1bb0cf18dba702d0a9e5af18c memoryking-0.2.0.tar.gz
+   ```
+   If both content lines match, the files hold the same code: upload your build, and the `SHA256SUMS` and `RELEASE.json` you attach to the release are **yours** (the ones `build_release.py` wrote beside the files you upload). Say in your report that the byte hashes differed and why, if you can tell.
+4. The content lines differ: **stop, upload nothing**, and post the file names that differ.
+
+```python
+# content_digest.py: python -I content_digest.py dist/memoryking-0.2.0-py3-none-any.whl dist/memoryking-0.2.0.tar.gz
+import hashlib, sys, tarfile, zipfile
+for path in sys.argv[1:]:
+    rows = []
+    if path.endswith(".whl"):
+        with zipfile.ZipFile(path) as z:
+            for i in z.infolist():
+                rows.append((i.filename, hashlib.sha256(z.read(i)).hexdigest()))
+    else:
+        with tarfile.open(path) as t:
+            for m in t.getmembers():
+                if m.isfile():
+                    rows.append((m.name, hashlib.sha256(t.extractfile(m).read()).hexdigest()))
+    rows.sort()
+    digest = hashlib.sha256("\n".join(f"{n} {h}" for n, h in rows).encode()).hexdigest()
+    print(len(rows), "files", digest, path.replace("\\", "/").split("/")[-1])
+```
+
+The owner has confirmed the version: **0.2.0**. Steps 4 to 7 of the entry above are cleared once one of the first three cases holds.
