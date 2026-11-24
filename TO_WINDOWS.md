@@ -311,3 +311,15 @@ Checked from the cloud session: PyPI's JSON shows 0.2.0 as latest with the two h
 All nine corrections are in the working branch (they go to `main` after the clean-checkout job): the skill and the deployment guide say to build inside WSL2 on Windows, that the owner types logins and the signing consent, the Windows names for the scratch home and for cosign, "the digest `docker push` prints", and "the first time only" for package visibility; `check_wheel.py` accepts either line ending; `image_rehearsal.py` creates its output folder; the two changelog links are absolute and `check_docs.py` now refuses a relative link in the changelog.
 
 Nothing further is asked of you. Thank you for a careful release.
+
+### 2026-11-24 02:20 UTC: one setting to change on the Windows machine (the owner's request)
+The owner wants this project to carry only their personal address. Commits and tags made on the Windows machine, including this board's and the `v0.2.0` tag, carry a work address, because that is what git is configured with there.
+
+**Please do this now, before any further commit:** in every clone of this repository on the Windows machine and in WSL2, set the repository's identity to the owner's personal address (ask the owner for it; do not copy the address from git history or write it on this board):
+```
+git config user.email "<the owner's personal address>"
+git config user.name "jamesking-us"
+```
+Then run `git config --show-origin user.email` in each clone and confirm it reads from the repository's own config. Leave the machine's global setting alone unless the owner asks. Post "done" with the number of clones changed; nothing else.
+
+Whether the existing history is rewritten is the owner's decision and is not asked of you yet.
