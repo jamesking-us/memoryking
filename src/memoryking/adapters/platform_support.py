@@ -37,6 +37,17 @@ def refuse() -> NoReturn:
     raise LocalError(STORE_UNSUPPORTED)
 
 
+def reap(pid: int) -> None:
+    """Collect `pid` if it is this process's exited child, so it does not linger as a
+    zombie; nothing when it is not, or still running. Windows has no zombies to reap."""
+    if sys.platform == "win32":
+        return
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, OSError):
+        pass
+
+
 def process_alive(pid: int) -> bool:
     """Whether process `pid` exists. On POSIX `kill(pid, 0)`, as before. On Windows signal
     0 is CTRL_C_EVENT, which `os.kill` would send to the whole console group (this process

@@ -20,6 +20,7 @@ from memoryking import profiles
 from memoryking.adapters.platform_support import (
     lock_nowait,
     process_alive,
+    reap,
     require_local_store,
     unix_stream_socket,
 )
@@ -166,10 +167,7 @@ def stop(profile: dict[str, Any]) -> dict[str, Any]:
     os.kill(pid, signal.SIGTERM)
     deadline = time.monotonic() + STOP_SECONDS
     while time.monotonic() < deadline:
-        try:  # a daemon this process started is its child: reap it, or it lingers as a zombie
-            os.waitpid(pid, os.WNOHANG)
-        except (ChildProcessError, OSError):
-            pass
+        reap(pid)  # a daemon this process started is its child: reap it, or it lingers as a zombie
         if not process_alive(pid):
             return {"running": False, "stopped": True}
         time.sleep(0.05)
