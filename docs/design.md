@@ -56,12 +56,12 @@ Memory tools help only if the agent calls them. A model that is busy with a task
 
 ```mermaid
 flowchart LR
-    S[Session starts] -->|session-start| B[Briefing in context]
-    P[User sends a prompt] -->|prompt| R[Short recall in context]
-    C[Transcript is compacted] -->|pre-compact| M[(Store)]
-    E[Session ends] -->|session-end| M
-    B --- M
-    R --- M
+    S[Session starts] -->|session-start hook| B[Briefing put in context]
+    P[User sends a prompt] -->|prompt hook| R[Short recall put in context]
+    M[(Store)] -->|read| B
+    M -->|read| R
+    C[Transcript is compacted] -->|pre-compact hook: capture| M
+    E[Session ends] -->|session-end hook: capture| M
 ```
 
 **The four moments.** Claude Code, Codex and Grok all run command hooks. MemoryKing ships one command for each moment (`memoryking hook session-start`, `prompt`, `pre-compact` and `session-end`, in `hook_cli.py` and `host_hooks.py`), and `memoryking setup` installs them under the same agent credential as the tool bridge.
@@ -402,7 +402,7 @@ flowchart LR
         M[MCP bridge] --> RC
         CLI[Command line] --> RC
     end
-    subgraph L[WSL2 distro or Docker container]
+    subgraph L[WSL2 or Docker]
         R[memoryking relay] --> SOCK[Unix socket] --> D[Daemon and store]
     end
     RC -->|pipe through wsl.exe or docker exec| R
