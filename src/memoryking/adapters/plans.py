@@ -8,10 +8,30 @@ from typing import TYPE_CHECKING, Any
 
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError
-from memoryking.domain.plans import definition, progress, proof_refs, validate
+from memoryking.domain.plans import progress, proof_definitions, proof_refs, validate
 
 if TYPE_CHECKING:
     from memoryking.adapters.working import Working
+
+
+def _proof_graph(plan: dict[str, Any]) -> tuple[Any, ...]:
+    # Exactly the fields used by proof_definitions() and the historical proof check.
+    # Presentation-only edits do not invalidate the per-read memo.
+    return (
+        plan["objective"],
+        tuple(
+            (
+                step["id"],
+                step["phase"],
+                step["description"],
+                step["status"],
+                step["decision"],
+                tuple(step["depends_on"]),
+                tuple((dep["kind"], dep["id"]) for dep in step["evidence"]),
+            )
+            for step in plan["steps"]
+        ),
+    )
 
 
 class Plans:
@@ -130,7 +150,14 @@ class Plans:
             (who["tenant"], args["project"], args["task"], self.s.incarnation, row["revision"]),
         ).fetchall()
         complete = len(history) <= 4096
-        prior_plans = []
+        # Memoize only adjacent equivalent proof graphs within this read.
+        # Every checkpoint still passes the same audience, integrity and evidence checks.
+        definitions = proof_definitions(
+            plan, (s["id"] for s in plan["steps"] if s["status"] == "done")
+        )
+        superseded: dict[str, set[tuple[str, str]]] = {key: set() for key in definitions}
+        previous_graph = _proof_graph(plan)
+        previous_definitions = definitions.copy()
         for item in history[:4096]:
             try:
                 previous = self.w._checkpoint(
@@ -139,29 +166,33 @@ class Plans:
                     at,
                     checked_dependencies=checked_dependencies,
                 )
-                prior_plans.append(json.loads(previous["body"])["plan"])
+                prior = json.loads(previous["body"])["plan"]
             except (LocalError, KeyError):
                 complete = False
-        # Compare sets, not ordering: dropping/reordering/duplicating old links is
-        # not fresh proof. Compute all definitions before changing effective states.
-        definitions = {
-            s["id"]: definition(plan, s["id"]) for s in plan["steps"] if s["status"] == "done"
-        }
-        old_by_plan = [(p, {s["id"]: s for s in p["steps"]}) for p in prior_plans]
+                continue
+            graph = _proof_graph(prior)
+            if graph != previous_graph:
+                previous_graph = graph
+                previous_definitions = proof_definitions(
+                    prior,
+                    (
+                        s["id"]
+                        for s in prior["steps"]
+                        if s["id"] in definitions and s["status"] == "done"
+                    ),
+                )
+            for step in prior["steps"]:
+                key = step["id"]
+                if key not in definitions or step["status"] != "done":
+                    continue
+                if previous_definitions[key] != definitions[key]:
+                    superseded[key].update(proof_refs(step))
         for step in plan["steps"]:
             step["reported_status"] = step["status"]
-            if step["status"] == "done":
-                superseded: set[tuple[str, str]] = set()
-                for prior, old_steps in old_by_plan:
-                    old = old_steps.get(step["id"])
-                    if (
-                        old
-                        and old["status"] == "done"
-                        and definition(prior, step["id"]) != definitions[step["id"]]
-                    ):
-                        superseded.update(proof_refs(old))
-                if not complete or not (proof_refs(step) - superseded):
-                    step["status"] = "unknown"
+            if step["status"] == "done" and (
+                not complete or not (proof_refs(step) - superseded[step["id"]])
+            ):
+                step["status"] = "unknown"
         # Unknown prerequisite proof cannot leave dependent work counted as done.
         changed = True
         while changed:

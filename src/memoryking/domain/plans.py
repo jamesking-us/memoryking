@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from typing import Any
 
 from memoryking.contracts.canonical import canonical_hash
@@ -99,6 +100,39 @@ def definition(plan: dict[str, Any], key: str) -> str:
             ],
         }
     )
+
+
+def proof_definitions(plan: dict[str, Any], keys: Iterable[str]) -> dict[str, tuple[Any, ...]]:
+    """Compare proof definitions using normalized values shared within one plan."""
+    edges = {step["id"]: tuple(sorted(step["depends_on"])) for step in plan["steps"]}
+    prerequisites = {
+        step["id"]: (
+            step["description"],
+            step["phase"],
+            step["status"],
+            step["decision"],
+            edges[step["id"]],
+            tuple(sorted(proof_refs(step))),
+        )
+        for step in plan["steps"]
+    }
+    definitions = {}
+    for key in keys:
+        closure: set[str] = set()
+        pending = list(edges[key])
+        while pending:
+            dep = pending.pop()
+            if dep in closure:
+                continue
+            closure.add(dep)
+            pending.extend(edges[dep])
+        definitions[key] = (
+            plan["objective"],
+            prerequisites[key][:2],
+            edges[key],
+            tuple((dep, prerequisites[dep]) for dep in sorted(closure)),
+        )
+    return definitions
 
 
 def counts(steps: list[dict[str, Any]]) -> dict[str, Any]:
