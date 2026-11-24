@@ -25,6 +25,11 @@ def main():
                 continue
             if not (path.parent / target.split("#")[0]).exists():
                 failures.append(f"{path.name}: missing {target}")
+    # The changelog's text is also the release page and the PyPI page: links must be absolute.
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    for target in re.findall(r"\]\(([^)]+)\)", changelog):
+        if not target.startswith(("https:", "http:", "mailto:")):
+            failures.append(f"CHANGELOG.md: relative link {target}")
     examples = json.loads((ROOT / "docs/developer-examples.json").read_text(encoding="utf-8"))
     not_here = []
     for example in examples:

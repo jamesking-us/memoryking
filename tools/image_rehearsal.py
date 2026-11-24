@@ -100,6 +100,7 @@ def main() -> None:
         "pushed": False,
         "sign": f"cosign sign --key cosign.key <registry>/memoryking@{image_id}",
     }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k != "status"}, indent=2))
 
