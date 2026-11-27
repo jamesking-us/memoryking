@@ -10,6 +10,7 @@ from typing import Any
 
 from memoryking.adapters.local_embeddings import LocalOnnxEmbedding
 from memoryking.contracts.canonical import canonical_hash
+from memoryking.domain.embeddings import EmbeddingBatch
 from memoryking.domain.local import LocalError
 from memoryking.sdk import LocalClient
 from memoryking.shared_sdk import SharedClient
@@ -95,6 +96,37 @@ def run_once(client: LocalClient, provider: LocalOnnxEmbedding) -> dict[str, Any
         return {"status": "reconciliation_required", "error": exc.code}
 
 
+def embed_all(provider: LocalOnnxEmbedding, texts: list[str]) -> EmbeddingBatch:
+    """The embeddings of `texts` in as many model calls as the model's input limits need (at
+    most 16 texts and 131,072 bytes a call; a call of long records is shorter than 16)."""
+    groups: list[list[str]] = [[]]
+    size = 0
+    for text in texts:
+        length = len(text.encode())
+        if groups[-1] and (len(groups[-1]) >= 16 or size + length > 131072):
+            groups.append([])
+            size = 0
+        groups[-1].append(text)
+        size += length
+    batches = []
+    for group in groups:
+        batch = provider.embed(group)
+        batch.validate(provider.fingerprint, provider.dimensions, group)
+        batches.append(batch)
+    if len(batches) == 1:
+        return batches[0]
+    counts = [c for b in batches for c in (b.input_token_counts or [])]
+    return EmbeddingBatch(
+        provider.fingerprint,
+        provider.dimensions,
+        [v for b in batches for v in b.vectors],
+        [h for b in batches for h in b.input_hashes],
+        sum(b.input_tokens or 0 for b in batches),
+        [t for b in batches for t in b.truncated],
+        counts if len(counts) == len(texts) else None,
+    )
+
+
 def run_batch(client: LocalClient, provider: LocalOnnxEmbedding, count: int = 16) -> dict[str, Any]:
     """Up to `count` jobs (at most 16) in one claim, one model pass and one completion.
 
@@ -160,8 +192,7 @@ def run_batch(client: LocalClient, provider: LocalOnnxEmbedding, count: int = 16
     if not ready:
         return {"status": "attempt_failed", "count": 0, "failed": failed}
     try:
-        batch = provider.embed([job["input"] for job in ready])
-        batch.validate(provider.fingerprint, provider.dimensions, [job["input"] for job in ready])
+        batch = embed_all(provider, [job["input"] for job in ready])
     except Exception:
         for job in ready:
             fail(job, "provider_failure", None)

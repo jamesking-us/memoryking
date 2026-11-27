@@ -7,6 +7,13 @@ claim, embed and complete path, with the model on this machine. It reports recor
 second and where the time went: tokenising, the model call, the store (claim and complete
 calls, including the socket) and everything else (loop and Python overhead).
 
+With `--sessions` the records are long (4 to 30 KiB, a session's turns as paragraphs, as the
+hooks store one) instead of chat turns. A record is indexed once its opening has a vector, and
+a long one then gets a vector for each later passage; the report gives records a second up to
+the moment every opening is done (comparable with a run of the code before passages), and,
+for the code that has passages, the seconds, vectors and vectors a second until the last
+passage is done.
+
 With `--briefings K` it then repeats the run while a second thread asks for K briefings
 one after another, and reports their latency at the median and the worst, next to the same
 K briefings on an idle daemon.
@@ -76,6 +83,23 @@ def records(count: int, seed: int) -> list[str]:
     return result
 
 
+def sessions(count: int, seed: int) -> list[str]:
+    """Long records: alternating `user:` and `assistant:` paragraphs of 30 to 200 words, until a
+    size drawn between 4 and 30 KiB is reached."""
+    rng = random.Random(seed)
+    words = vocabulary()
+    result = []
+    for n in range(count):
+        target = rng.randint(4096, 30720)
+        parts, size = [], 0
+        while size < target:
+            body = " ".join(rng.choice(words) for _ in range(rng.randint(30, 200)))
+            parts.append(f"{'user' if len(parts) % 2 == 0 else 'assistant'}: {body}.")
+            size += len(parts[-1]) + 2
+        result.append(f"session {n}\n\n" + "\n\n".join(parts))
+    return result
+
+
 class Timed:
     """Delegates to an object and adds the time of the named methods to a shared total."""
 
@@ -97,9 +121,22 @@ class Timed:
         return call
 
 
-def store_vectors(store):
+def store_vectors(store, openings=True):
+    """Vectors in the store: the openings (one for each record indexed) or all of them."""
     with store.lock:
-        return store.db.execute("SELECT count(*) FROM embedding_vectors").fetchone()[0]
+        where = " WHERE part=0" if openings else ""
+        return store.db.execute("SELECT count(*) FROM embedding_vectors" + where).fetchone()[0]
+
+
+def passages_pending(store):
+    """Long records whose later passages still lack vectors (0 for code without passages)."""
+    with store.lock:
+        try:
+            return store.db.execute(
+                "SELECT count(*) FROM embedding_vectors WHERE part=0 AND rule=''"
+            ).fetchone()[0]
+        except Exception:  # an earlier schema has no passage vectors
+            return 0
 
 
 def build_loop(store, server, credential_file, provider, batch):
@@ -122,7 +159,7 @@ def run_once(texts, args, briefings):
                 kwargs = {"threads": args.threads} if args.threads else {}
                 provider = LocalOnnxEmbedding(args.models / MODEL, MODEL, **kwargs)
                 store.embedder = provider
-                provider.embed(texts[:4])  # warm up the runtime
+                provider.embed([t[:8000] for t in texts[:4]])  # warm up the runtime
                 client = LocalClient(server.path, credential_file, PROJECT)
                 for n, text in enumerate(texts):
                     client.capture(
@@ -206,18 +243,22 @@ def run_once(texts, args, briefings):
                     while store_vectors(store) < len(texts) and time.perf_counter() - start < 3600:
                         time.sleep(0.05)
                     seconds = time.perf_counter() - start
+                    # The rest is passages, if the code makes them: wait for the last.
+                    while passages_pending(store) and time.perf_counter() - start < 3600:
+                        time.sleep(0.05)
+                    total = time.perf_counter() - start
                     loop.stop()
                 else:
                     while loop.tick():
                         pass
-                    seconds = time.perf_counter() - start
+                    seconds = total = time.perf_counter() - start
                 done.set()
                 if watcher:
                     watcher.join()
                 LocalClient.embedding = original
-                vectors = store.db.execute("SELECT count(*) FROM embedding_vectors").fetchone()[0]
-                if vectors != len(texts):
-                    raise SystemExit(f"indexed {vectors} of {len(texts)} records")
+                vectors = store_vectors(store, openings=False)
+                if store_vectors(store) != len(texts):
+                    raise SystemExit(f"indexed {store_vectors(store)} of {len(texts)} records")
                 split = {k: round(v, 2) for k, v in totals.items()}
                 # With several worker threads the parts overlap: they are summed over the
                 # threads, so they can add up to more than the elapsed time.
@@ -226,6 +267,9 @@ def run_once(texts, args, briefings):
                 return {
                     "seconds": round(seconds, 2),
                     "records_per_second": round(len(texts) / seconds, 1),
+                    "total_seconds": round(total, 2),
+                    "vectors": vectors,
+                    "vectors_per_second": round(vectors / total, 1),
                     "split_seconds": split,
                     "briefing_ms": latencies,
                 }
@@ -325,10 +369,13 @@ def main() -> None:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--threads", type=int, default=0, help="model threads (0: code default)")
     parser.add_argument("--batch", type=int, default=0, help="records per call (0: code default)")
+    parser.add_argument(
+        "--sessions", action="store_true", help="long records (4 to 30 KiB) instead of chat turns"
+    )
     parser.add_argument("--briefings", type=int, default=0, help="briefings to time (0: none)")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    texts = records(args.records, args.seed)
+    texts = (sessions if args.sessions else records)(args.records, args.seed)
     runs = [run_once(texts, args, 0) for _ in range(args.repeats)]
     rates = [r["records_per_second"] for r in runs]
     result = {
@@ -339,6 +386,7 @@ def main() -> None:
         },
         "source": str(Path(sys.modules["memoryking"].__file__).parent),
         "records": args.records,
+        "sample": "sessions" if args.sessions else "turns",
         "seed": args.seed,
         "threads": args.threads or "default",
         "batch": args.batch or "default",
@@ -347,6 +395,13 @@ def main() -> None:
             "median": round(statistics.median(rates), 1),
             "min": min(rates),
             "max": max(rates),
+        },
+        "to_the_last_passage": {
+            "seconds_median": round(statistics.median(r["total_seconds"] for r in runs), 1),
+            "vectors": runs[0]["vectors"],
+            "vectors_per_second_median": round(
+                statistics.median(r["vectors_per_second"] for r in runs), 1
+            ),
         },
     }
     if args.briefings:
