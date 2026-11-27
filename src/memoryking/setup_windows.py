@@ -564,6 +564,7 @@ def run(args: Any) -> int:
             launcher=[python, "-m", "memoryking.hook_cli", *relay],
             tools="mcp",
             prompts=not args.no_prompt_hook,
+            preferences=not getattr(args, "no_user_preferences", False),
         )
         neutral(result["config"])
         version = claude_version()

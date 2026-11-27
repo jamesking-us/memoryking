@@ -165,8 +165,10 @@ class MemoryKing:
     persistent_home = False
     ingest = "hook"  # or "turns"
     #: Besides the hook capture, save a preference stated for every project to the user scope,
-    #: as the start briefing tells an agent to (`user_scope_saves`). Track T3b is labelled by it.
-    user_scope = True
+    #: as the start briefing tells an agent to (`user_scope_saves`). Off by default since the save
+    #: hooks recognise what the user states for every project themselves (`domain/preference.py`);
+    #: stages S2 and S2b were declared with it on (see RUNNING.md). Track T3b is labelled by it.
+    user_scope = False
     #: Retrieve through the daemon instead of the in-process store the seeding used (the in-process
     #: store keeps the seeding clock; the daemon runs on the real one, as an installed MemoryKing does).
     via_daemon = False

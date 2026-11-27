@@ -207,30 +207,44 @@ class UserScopeRuleTests(unittest.TestCase):
 
 
 class MemoryKingUserScopeTests(unittest.TestCase):
-    def test_a_preference_reaches_another_project_only_through_the_user_scope_save(self):
-        statement = "I want half-up for the rounding mode everywhere I work, in every project, not only here."
+    statement = (
+        "I want half-up for the rounding mode everywhere I work, in every project, not only here."
+    )
+
+    def seen_in_another_project(self, turns, flag):
         fork = Scope("u", "billing-fork", "agent-main")
         other = Scope("u", "billing", "agent-main")
         sessions = [
-            Session("p1", fork, "2025-01-10T09:00:00Z", (Turn("user", "Hello. " + statement),
-                                                         Turn("assistant", "Noted."))),
+            Session("p1", fork, "2025-01-10T09:00:00Z", turns),
             Session("p2", other, "2025-01-11T09:00:00Z", (Turn("user", "Fix the thing."),)),
-        ]  # fmt: skip
-        seen = {}
+        ]
+        base = Path(tempfile.mkdtemp(prefix="mk-lhs2-", dir="/tmp"))
+        self.addCleanup(shutil.rmtree, base, True)
+        system = mk_arm.create()
+        system.user_scope = flag
+        system.prepare(base / "root")
+        system.seed(sessions)
+        system.close()
+        system = mk_arm.create()
+        system.prepare(base / "root")
+        self.addCleanup(system.close)
+        return system.context_for("rounding mode", other, 9000)
+
+    def test_what_the_assistant_reported_reaches_another_project_only_through_the_user_scope_save(
+        self,
+    ):
+        turns = (Turn("user", "Hello."), Turn("assistant", self.statement))
+        self.assertIn("half-up for the rounding mode", self.seen_in_another_project(turns, True))
+        self.assertNotIn(
+            "half-up for the rounding mode", self.seen_in_another_project(turns, False)
+        )
+
+    def test_what_the_user_said_reaches_another_project_by_the_hooks_alone(self):
+        turns = (Turn("user", "Hello. " + self.statement), Turn("assistant", "Noted."))
         for flag in (True, False):
-            base = Path(tempfile.mkdtemp(prefix="mk-lhs2-", dir="/tmp"))
-            self.addCleanup(shutil.rmtree, base, True)
-            system = mk_arm.create()
-            system.user_scope = flag
-            system.prepare(base / "root")
-            system.seed(sessions)
-            system.close()
-            system = mk_arm.create()
-            system.prepare(base / "root")
-            self.addCleanup(system.close)
-            seen[flag] = system.context_for("rounding mode", other, 9000)
-        self.assertIn("half-up for the rounding mode", seen[True])
-        self.assertNotIn("half-up for the rounding mode", seen[False])
+            self.assertIn(
+                "half-up for the rounding mode", self.seen_in_another_project(turns, flag)
+            )
 
 
 class McpMemoryServiceTimeTests(unittest.TestCase):

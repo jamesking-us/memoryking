@@ -302,7 +302,7 @@ class PostgresUserScopeParity(NativeFixture):
 reuse(
     PostgresUserScopeParity,
     test_user_scope.UserScopeTests,
-    "arrange user_op put claim accept constraint brief",
+    "arrange user_op put claim accept constraint brief start",
 )
 reuse(PostgresUserScopeParity, test_retrieval.RetrievalTests, "fails")
 adopt(PostgresUserScopeParity, test_user_scope.UserScopeTests)

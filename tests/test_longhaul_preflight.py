@@ -275,11 +275,13 @@ class EndToEndTests(unittest.TestCase):
         self.assertTrue(leak["control_found_in_sibling"])
         for view, info in leak["views"].items():
             self.assertEqual(info["label"], "clean", view)
-        # The hooks capture project scope only, so a preference stated in another project
-        # never arrives; saved with scope=user (what the `remember` tool can do) it does.
+        # The hooks read the user's own turns only: a preference the user stated for every project
+        # arrives by the hooks alone, one the assistant reported (and the user acknowledged) does
+        # not and needs the save an agent makes with scope=user.
         plain = pf.preflight("T3", 20, 1, only={"t3b-date-style"})[0]
         self.assertTrue(plain["control_found_in_sibling"])
-        self.assertEqual(plain["views"]["any"]["label"], "preference_absent")
+        expected = "preference_shown" if plain["stated_by"] == "user" else "preference_absent"
+        self.assertEqual(plain["views"]["any"]["label"], expected)
         saved = pf.preflight("T3", 20, 1, mode="user-scope", only={"t3b-date-style"})[0]
         self.assertEqual(saved["views"]["start"]["label"], "preference_shown")
         self.assertTrue(saved["user_scope_capture"]["saved"])

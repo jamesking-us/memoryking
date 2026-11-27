@@ -52,11 +52,11 @@ class UserScopeTests(unittest.TestCase):
         with self.actor(credential) as store:
             return UserScope(store).execute(credential, args)
 
-    def put(self, credential, project, text, event):
+    def put(self, credential, project, text, event, source="test"):
         raw = {
             "version": 1,
             "project": project,
-            "source": "test",
+            "source": source,
             "source_event": event,
             "text": text,
             "readers": None,
@@ -282,6 +282,62 @@ class UserScopeTests(unittest.TestCase):
         item = next(g for g in packet["guidance"] if g["text"] == "Reply in British English.")
         self.assertEqual((item["scope"], item["selection_reason"]), ("user", "user_memory"))
         self.assertEqual([g for g in self.run_r("start", args, self.victor_agent)["guidance"]], [])
+
+    def start(self, credential, project):
+        return self.run_r(
+            "start",
+            {
+                "project": project,
+                "bindings": [{}],
+                "max_output_tokens": 6000,
+                "tokenizer": "cl100k_base",
+            },
+            credential,
+        )
+
+    def test_a_recognised_preference_follows_the_user_and_a_project_fact_does_not(self):
+        # What the save hooks write: the preference in the user's scope, the project fact (and the
+        # project's own copy of the turn) in the project.
+        self.store.grant(self.owner, "agent-a", "q", ["capture", "read"], for_user="alice")
+        self.store.grant(self.owner, "agent-b", "q", ["capture", "read"], for_user="victor")
+        said = "Whatever the project, I like dates as ISO 8601."
+        fact = "In this repo always use tabs; the service listens on port 8080."
+        self.put(self.agent, USER, said, "r1", source="user-claude-preference")
+        self.put(self.agent, "p", said + " " + fact, "r2", source="user-claude")
+        shown = {g["text"]: g for g in self.start(self.agent, "q")["guidance"]}
+        item = shown[said]
+        self.assertEqual(
+            (item["scope"], item["selection_reason"], item["source"]),
+            ("user", "user_memory", "user-claude-preference"),
+        )
+        self.assertEqual(item["authority"], "observed_episode")  # evidence, never a decision
+        self.assertFalse([t for t in shown if "8080" in t or "tabs" in t])
+        # Another user's agent, in the same project, is shown neither.
+        self.assertEqual(self.start(self.victor_agent, "q")["guidance"], [])
+        # Listable and forgettable with the existing commands: a purge removes it from every project.
+        listed = self.user_op(self.alice, action="show")
+        self.assertEqual(listed["observations"], 1)
+        self.user_op(self.alice, action="purge")
+        self.assertEqual(
+            [g for g in self.start(self.agent, "q")["guidance"] if g["text"] == said], []
+        )
+
+    def test_a_preference_from_an_untrusted_source_is_held_in_the_user_scope(self):
+        from memoryking.adapters.inspection import Inspection
+
+        Inspection(self.store).execute(
+            self.owner,
+            {
+                "version": 1,
+                "incarnation": self.store.incarnation,
+                "action": "trust",
+                "key": "rule",
+                "args": {"project": "*", "source": "user-*", "level": "untrusted"},
+            },
+        ).emit(lambda raw: None)
+        said = "Whatever the project, I like dates as ISO 8601."
+        self.put(self.agent, USER, said, "r1", source="user-claude-preference")
+        self.assertEqual(self.start(self.agent, "p")["guidance"], [])
 
     def test_administrators_purge_without_reading_and_counts_show(self):
         self.put(self.alice, USER, "The user lives in Cardiff.", "u1")

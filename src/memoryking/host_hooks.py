@@ -53,6 +53,7 @@ from memoryking.domain.checkpoint import complete
 from memoryking.domain.lexicon import STOP, analyze
 from memoryking.domain.local import LocalError
 from memoryking.domain.names import name_first
+from memoryking.domain.preference import preferences as recognised_preferences
 from memoryking.domain.provenance import (
     HOST_CAPTURE,
     QUOTED_PREFIX,
@@ -85,7 +86,9 @@ PROMPT_USER = 3  # records of the user's own memory a prompt may add
 PROMPT_USER_SHARED = 1  # a standing preference is short and general: one shared word suffices
 PROMPT_USER_FETCH = 8  # closest records asked of the user's own memory, before the cut to three
 PROMPT_DEADLINE = 1.5  # seconds the lookup may take before the prompt goes ahead without it
+KEY_ATTEMPTS = 4  # keys tried for one recognised sentence (see `_keep_preferences`)
 PROMPT_OFF = "MEMORYKING_PROMPT_HOOK"  # set to 0, off, false or no to silence the hook
+PREFERENCES_OFF = "MEMORYKING_USER_PREFERENCES"  # set to 0, off, false or no to infer nothing
 THIRD_PARTY_ON = "MEMORYKING_HOOK_THIRD_PARTY"  # set to 1, on, true or yes to show tool output
 HOOK_SUFFIX = "--mkhook"
 REDACTED = "[REDACTED]"
@@ -680,6 +683,15 @@ def third_party_wanted(flag: bool | None = None) -> bool:
     return os.environ.get(THIRD_PARTY_ON, "").strip().lower() in {"1", "on", "true", "yes"}
 
 
+def user_preferences_wanted(flag: bool | None = None) -> bool:
+    """Whether the save hooks may add a recognised standing preference to the user's own scope:
+    the `--no-user-preferences` option, else `MEMORYKING_USER_PREFERENCES` (0, off, false or no
+    turns it off); on by default."""
+    if flag is not None:
+        return flag
+    return os.environ.get(PREFERENCES_OFF, "").strip().lower() not in {"0", "off", "false", "no"}
+
+
 def _conversation(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The items the user and the assistant wrote. A record whose source says a third party
     wrote it goes; so do the tool errors that session captures made before they were stored
@@ -1033,12 +1045,48 @@ def _save_state(
     )
 
 
+def _keep_preferences(
+    turns: str, host: str, socket: Path, credential: Any, project: str, where: dict[str, Any]
+) -> int | str:
+    """Capture each standing preference recognised in the user's turns in their own scope; the
+    number captured, or why none was (a credential that acts for no user is not an error)."""
+    found = recognised_preferences(turns)
+    kept = 0
+    source = f"user-{host}-preference"
+    for sentence in found:
+        # One key per sentence, so saying it again in any session is a replay of the same record
+        # and not a second copy in the briefing. A key whose record the user has since forgotten
+        # cannot be used again, so a sentence said once more after a forget takes the next key.
+        for attempt in range(KEY_ATTEMPTS):
+            try:
+                hooks.capture(
+                    sentence,
+                    source=source,
+                    event=hooks.event_id(source, sentence, str(attempt) if attempt else ""),
+                    scope="user",
+                    socket=socket,
+                    credential=credential,
+                    project=project,
+                    profile=where.get("profile"),
+                    config=where.get("config"),
+                )
+                kept += 1
+                break
+            except LocalError as exc:
+                if exc.code == "idempotency_conflict":  # already recorded, on another day
+                    break
+                if exc.code != "idempotency_result_expired":
+                    return exc.code
+    return kept
+
+
 def save(
     event: dict[str, Any],
     kind: str,
     *,
     host: str | None = None,
     task: str | None = None,
+    user_preferences: bool | None = None,
     **where: Any,
 ) -> dict[str, Any]:
     """Capture what the host is about to lose; with a task, also save a checkpoint.
@@ -1047,7 +1095,13 @@ def save(
     when the host passes them); `session-end` captures the host's last assistant message
     when given, else the transcript tail. The tail is what the user and the assistant said;
     the errors tools reported go in an observation of their own, source `<host>-tool`. The event id covers host, session and text, so
-    the same moment replays and a later compaction is a new observation."""
+    the same moment replays and a later compaction is a new observation.
+
+    A sentence of the user's own turns that states a standing personal preference (see
+    `domain/preference.py`) is also captured, as it was written, in the user scope the credential
+    acts for, source `user-<host>-preference`; nothing is captured there when the user's turns
+    were held in the project, when the credential acts for no user, or when
+    `user_preferences` is false (default: `MEMORYKING_USER_PREFERENCES`, on)."""
     socket, token, project = hooks.connection(**where)
     name = host or event.get("host") or "host"
     redacted = 0
@@ -1103,6 +1157,10 @@ def save(
             config=where.get("config"),
         )
         summary["user_observation"] = said.get("observation")
+        if not said.get("held") and user_preferences_wanted(user_preferences):
+            summary["user_preferences"] = _keep_preferences(
+                turns, name, socket, _credential(where), project, where
+            )
     tool_text = "\n\n".join(p for p in [tool_text, *dict.fromkeys(quotes[1])] if p)
     if tool_text:
         # What tools reported, and what a turn copied from them, is third-party text: its own observation with its own source, so
@@ -1153,6 +1211,7 @@ def hook_command(
     bindings: dict[str, str] | None = None,
     launcher: list[str] | None = None,
     tools: str | None = None,
+    preferences: bool = True,
 ) -> str:
     """The shell command a host runs; absolute paths so it works without the shell env.
 
@@ -1172,6 +1231,8 @@ def hook_command(
         parts += ["--query", json.dumps(query)]
     if tools and kind in {"session-start", "prompt"}:
         parts += ["--tools", tools]
+    if not preferences and kind in {"pre-compact", "session-end"}:
+        parts += ["--no-user-preferences"]
     for key, value in sorted((bindings or {}).items()):
         parts += ["--binding", json.dumps(f"{key}={value}")]
     return " ".join(parts)
@@ -1274,10 +1335,12 @@ def install(
     launcher: list[str] | None = None,
     tools: str | None = None,
     prompts: bool = True,
+    preferences: bool = True,
 ) -> dict[str, Any]:
     """Merge MemoryKing's hooks into the host's config file (or show the result): session
     start, pre-compact, session end and, for Claude Code and Codex, the prompt-time recall hook
-    (`prompts=False` leaves it out and removes it from a config that has it).
+    (`prompts=False` leaves it out and removes it from a config that has it). `preferences=False`
+    writes `--no-user-preferences` into the two save hooks.
 
     `binding` (`key=value` strings) is written into each command, so the hooks resolve
     constraints as the MCP bridge does; a profile's or the environment's bindings still apply.
@@ -1297,6 +1360,7 @@ def install(
             bindings=bindings,
             launcher=launcher,
             tools=tools,
+            preferences=preferences,
         )
         for kind in KINDS
     }
