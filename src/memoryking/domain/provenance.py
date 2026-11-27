@@ -23,6 +23,10 @@ THIRD_PARTY_SOURCE = re.compile(rf"^(({_KIND})([-_].*)?|.*[-_]({_KIND}))$")
 # it is compacted.
 HOST_CAPTURE = re.compile(r"^(claude|codex|grok)-(session|compact)$")
 
+# A standing personal preference the save hooks recognised in the user's own words and kept in
+# their user scope (`domain/preference.py`).
+RECOGNISED_PREFERENCE = re.compile(r"^user-(claude|codex|grok)-preference$")
+
 # The line a host hook writes before a tool's error message in a conversation capture. Captures
 # made before tool errors were stored apart hold them inside the session's own text.
 TOOL_ERROR_PREFIX = "Tool error: "

@@ -220,6 +220,8 @@ class StoreCore:
     concurrency_gauge: Callable[[], dict[str, tuple[int, int]]] | None = None
     _lexical_pending: bool | None = None
     _lexical_rate: float | None = None  # observations per second over recent rebuild batches
+    _embedding_rate: float | None = None  # records per second the semantic indexer completes
+    _embedding_mark: float | None = None  # when it last completed a record
     _last_summary_scan = 0
 
     # The operator's egress policy; None means the local recorder is the only provider.
@@ -1755,18 +1757,35 @@ class StoreCore:
                 ).fetchone()[0]
             )
             current = self.embedder is not None and row["fingerprint"] == self.embedder.fingerprint
-            partitions.append(
-                {
-                    "project": row["project"],
-                    "state": row["state"],
-                    "current_model": current,
-                    "vectors": vectors,
-                    "indexed_position": row["frontier"],
-                    "percent_indexed": 100
-                    if row["frontier"] >= position
-                    else int(100 * row["frontier"] / max(1, position)),
-                }
-            )
+            item = {
+                "project": row["project"],
+                "state": row["state"],
+                "current_model": current,
+                "vectors": vectors,
+                "indexed_position": row["frontier"],
+                "percent_indexed": 100
+                if row["frontier"] >= position
+                else int(100 * row["frontier"] / max(1, position)),
+            }
+            if row["state"] == "experimental" and row["frontier"] < position:
+                total = int(
+                    self.db.execute(
+                        "SELECT count(*) FROM observations WHERE tenant=? AND project=? AND deleted=0",
+                        (tenant, row["project"]),
+                    ).fetchone()[0]
+                )
+                done = int(
+                    self.db.execute(
+                        "SELECT count(*) FROM embedding_vectors WHERE tenant=? AND project=? AND fingerprint=? AND generation=? AND kind='observation'",
+                        (tenant, row["project"], row["fingerprint"], row["generation"]),
+                    ).fetchone()[0]
+                )
+                left = max(0, total - done)
+                item.update(records=total, records_indexed=min(done, total), records_left=left)
+                if left and self._embedding_rate:
+                    item["records_per_minute"] = int(self._embedding_rate * 60)
+                    item["estimated_seconds"] = int(left / self._embedding_rate) + 1
+            partitions.append(item)
         result: dict[str, Any] = {
             "model": model,
             "loaded": self.embedder is not None,

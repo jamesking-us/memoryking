@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from memoryking.domain.names import held, split
-from memoryking.domain.provenance import QUOTED_PREFIX, is_third_party
+from memoryking.domain.provenance import QUOTED_PREFIX, RECOGNISED_PREFERENCE, is_third_party
 
 WARNING_NOTES = {
     "token_estimate_no_exact_guarantee": "Token counts are estimates (about 3 characters per token).",
@@ -231,6 +231,8 @@ def _qualifier(item: dict[str, Any], notes: list[str] | None = None) -> str:
     parts = [str(item["authority"])] if item.get("authority") else []
     if item.get("scope") == "user":
         parts.append("from your own user memory")
+        if RECOGNISED_PREFERENCE.match(str(item.get("source", ""))):
+            parts.append("recognised from what you said, not reviewed")
     parts.extend(notes or [])
     if item.get("retirement_requested"):
         parts.append("retirement requested")

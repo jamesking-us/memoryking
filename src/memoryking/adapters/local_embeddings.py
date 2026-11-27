@@ -9,6 +9,7 @@ import json
 import math
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +22,23 @@ LEGACY_MODEL = "minilm-l6-v2-onnx"  # the earlier default; stores that enabled i
 # The embedding models that may be installed and enabled; each has a manifest under models/.
 SUPPORTED = (MODEL, LEGACY_MODEL)
 RERANKER = "ms-marco-minilm-l6-v2-onnx"
+PAD_TOKENS = 512  # padded tokens one model call may hold: one text of 512, or 8 of 64
 RERANK_PAIRS = 16  # query/text pairs the model scores in one batch
 RERANK_MAX_PAIRS = 64  # pairs one call may ask for; it runs them in batches of RERANK_PAIRS
 RERANK_TEXT_BYTES = 16384
 RERANK_TOKENS = 256  # per pair; the text is cut, never the query
 RERANK_THREADS = 4  # the reranker may use up to this many CPU threads
+
+
+def default_threads() -> int:
+    """CPU threads for the embedding model: MEMORYKING_EMBEDDING_THREADS, else one fewer than
+    the cores, from 1 to 4, so a core stays free for briefings and the rest of the machine."""
+    cores = os.cpu_count() or 1
+    try:
+        wanted = int(os.environ.get("MEMORYKING_EMBEDDING_THREADS", ""))
+    except ValueError:
+        wanted = 0
+    return max(1, min(wanted, cores)) if wanted > 0 else max(1, min(4, cores - 1))
 
 
 def model_manifest(name: str = MODEL) -> dict[str, Any]:
@@ -77,7 +90,8 @@ def _session(ort: Any, data: bytes, threads: int = 1) -> Any:
 
 
 class LocalOnnxEmbedding:
-    """One CPU thread by default, sequential inference, at most 16 texts per call.
+    """`default_threads()` CPU threads, sequential inference, at most 16 texts per call, run
+    in length-sorted groups of at most PAD_TOKENS padded tokens.
 
     The manifest names the pooling (mean over the attention mask, or the first token), the
     token limit and the prefixes a model wants on a query and on a document, so a fingerprint
@@ -85,7 +99,7 @@ class LocalOnnxEmbedding:
 
     kinds = True  # `embed` takes a `kind`: a document or a query
 
-    def __init__(self, directory: Path, name: str = MODEL, threads: int = 1):
+    def __init__(self, directory: Path, name: str = MODEL, threads: int | None = None):
         self.configuration = model_manifest(name)
         self.name = name
         self.fingerprint = fingerprint(self.configuration)
@@ -101,9 +115,13 @@ class LocalOnnxEmbedding:
         data = model_files(directory, self.configuration)
         ort, tokenizers, self.np = _runtime(self.configuration)
         self.lock = threading.Lock()
+        self.count_lock = threading.Lock()
+        self.urgent = 0  # queries waiting for the model; documents give way to them
         try:
             self.session = _session(
-                ort, data[self.configuration.get("model_file", "onnx/model.onnx")], threads
+                ort,
+                data[self.configuration.get("model_file", "onnx/model.onnx")],
+                threads or default_threads(),
             )
             self.inputs = {item.name for item in self.session.get_inputs()}
             outputs = [item.name for item in self.session.get_outputs()]
@@ -119,43 +137,74 @@ class LocalOnnxEmbedding:
         validate_inputs(texts)
         prefix = self.prefixes[kind]
         prefixed = [prefix + text for text in texts] if prefix else texts
-        with self.lock:
-            try:
+        urgent = kind == "query"
+        if urgent:
+            with self.count_lock:
+                self.urgent += 1  # a briefing waits: indexing yields between its groups
+        try:
+            with self.lock:
                 self.tokenizer.no_truncation()
                 full = self.tokenizer.encode_batch(prefixed)
                 lengths = [sum(item.attention_mask) for item in full]
                 self.tokenizer.enable_truncation(max_length=self.limit)
                 tokens = self.tokenizer.encode_batch(prefixed)
-                values = {
-                    "input_ids": [item.ids for item in tokens],
-                    "attention_mask": [item.attention_mask for item in tokens],
-                    "token_type_ids": [item.type_ids for item in tokens],
-                }
-                inputs = {
-                    name: self.np.asarray(value, dtype=self.np.int64)
-                    for name, value in values.items()
-                    if name in self.inputs
-                }
-                output = self.session.run([self.output], inputs)[0]
-                if self.pooling == "cls-v1":
-                    pooled = output[:, 0, :]
-                else:
-                    mask = inputs["attention_mask"][..., None]
-                    pooled = (output * mask).sum(axis=1) / mask.sum(axis=1).clip(min=1)
-                batch = EmbeddingBatch(
-                    self.fingerprint,
-                    self.dimensions,
-                    [quantize(vector.tolist(), self.dimensions) for vector in pooled],
-                    [canonical_hash(text) for text in texts],
-                    sum(sum(item.attention_mask) for item in tokens),
-                    [length > self.limit for length in lengths],
-                )
-                batch.validate(self.fingerprint, self.dimensions, texts)
-                return batch
-            except LocalError:
-                raise
-            except Exception as exc:
-                raise LocalError("embedding_provider_failure") from exc
+            used = [sum(item.attention_mask) for item in tokens]
+            # Shortest first, so a group pads only to its own longest text, and cut into
+            # groups of at most PAD_TOKENS padded tokens. A vector is the same whichever
+            # group its text lands in (up to float rounding, see docs/reference.md).
+            order = sorted(range(len(texts)), key=lambda n: used[n])
+            pooled: list[Any] = [None] * len(texts)
+            group: list[int] = []
+            for number in [*order, None]:
+                if group and (number is None or (len(group) + 1) * used[number] > PAD_TOKENS):
+                    for _ in range(0 if urgent else 500):  # yield, but for 1 s at most
+                        if not self.urgent:
+                            break
+                        time.sleep(0.002)
+                    with self.lock:
+                        pooled_group = self._run(tokens, group, used[group[-1]])
+                    for n, vector in zip(group, pooled_group, strict=True):
+                        pooled[n] = vector
+                    group = []
+                if number is not None:
+                    group.append(number)
+            batch = EmbeddingBatch(
+                self.fingerprint,
+                self.dimensions,
+                [quantize(vector.tolist(), self.dimensions) for vector in pooled],
+                [canonical_hash(text) for text in texts],
+                sum(used),
+                [length > self.limit for length in lengths],
+                used,
+            )
+            batch.validate(self.fingerprint, self.dimensions, texts)
+            return batch
+        except LocalError:
+            raise
+        except Exception as exc:
+            raise LocalError("embedding_provider_failure") from exc
+        finally:
+            if urgent:
+                with self.count_lock:
+                    self.urgent -= 1
+
+    def _run(self, tokens: list[Any], group: list[int], width: int) -> Any:
+        """The pooled vectors of the texts `group` names, padded to `width` tokens."""
+        values = {
+            "input_ids": [tokens[n].ids[:width] for n in group],
+            "attention_mask": [tokens[n].attention_mask[:width] for n in group],
+            "token_type_ids": [tokens[n].type_ids[:width] for n in group],
+        }
+        inputs = {
+            name: self.np.asarray(value, dtype=self.np.int64)
+            for name, value in values.items()
+            if name in self.inputs
+        }
+        output = self.session.run([self.output], inputs)[0]
+        if self.pooling == "cls-v1":
+            return output[:, 0, :]
+        mask = inputs["attention_mask"][..., None]
+        return (output * mask).sum(axis=1) / mask.sum(axis=1).clip(min=1)
 
 
 class LocalOnnxReranker:

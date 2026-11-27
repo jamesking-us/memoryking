@@ -125,6 +125,12 @@ def add_hook_arguments(hk: argparse.ArgumentParser) -> None:
         help="prompt hook: also show text a third party wrote (tool results and errors, "
         "fetched pages), fenced and labelled; default off (or MEMORYKING_HOOK_THIRD_PARTY=1)",
     )
+    hk.add_argument(
+        "--no-user-preferences",
+        action="store_true",
+        help="pre-compact and session-end: do not add a standing personal preference the user "
+        "stated to their own memory (or MEMORYKING_USER_PREFERENCES=off)",
+    )
     add_binding(hk)
     hk.add_argument(
         "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
@@ -210,7 +216,14 @@ def run(args: argparse.Namespace) -> int:
                 )
             )
         else:
-            summary = host_hooks.save(payload, args.kind, host=args.host, task=args.task, **where)
+            summary = host_hooks.save(
+                payload,
+                args.kind,
+                host=args.host,
+                task=args.task,
+                user_preferences=False if args.no_user_preferences else None,
+                **where,
+            )
             print(json.dumps(summary), file=sys.stderr)
     except (LocalError, OSError, ValueError, KeyError) as exc:
         code = exc.code if isinstance(exc, LocalError) else type(exc).__name__

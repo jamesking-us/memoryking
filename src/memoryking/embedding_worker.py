@@ -95,6 +95,109 @@ def run_once(client: LocalClient, provider: LocalOnnxEmbedding) -> dict[str, Any
         return {"status": "reconciliation_required", "error": exc.code}
 
 
+def run_batch(client: LocalClient, provider: LocalOnnxEmbedding, count: int = 16) -> dict[str, Any]:
+    """Up to `count` jobs (at most 16) in one claim, one model pass and one completion.
+
+    Each job is checked, leased and stored exactly as `run_once` would: the batch saves
+    round trips and lets the model see several texts at once, nothing else. A job that fails
+    its checks, or a model failure, is failed on its own; a lease that has gone stale (the
+    record was purged or changed meanwhile) is refused by the server and stores no vector."""
+    if type(provider) is not LocalOnnxEmbedding:
+        raise LocalError("embedding_provider_unsupported")
+
+    def command(action: str, **args: Any) -> dict[str, Any]:
+        return client.embedding(
+            {
+                "version": 1,
+                "incarnation": client.binding[-1],
+                "action": action,
+                "args": {"project": client.project, **args},
+            }
+        )
+
+    start, utc_start = monotonic(), time()
+    reply = command("claim_batch", fingerprint=provider.fingerprint, count=min(16, count))
+    jobs = reply["jobs"]
+    if not jobs:
+        return {"status": "idle", "frontier": reply["frontier"], "ready": reply["ready"]}
+    failed = 0
+
+    def fail(job: dict[str, Any], reason: str, tokens: int | None) -> None:
+        nonlocal failed
+        failed += 1
+        try:
+            command(
+                "fail",
+                lease=job["lease"],
+                reason=reason,
+                input_tokens=tokens,
+                duration_ms=min(600000, int((monotonic() - start) * 1000)),
+            )
+        except LocalError:
+            pass  # the lease expires on its own and the job is retried
+
+    elapsed, utc = monotonic() - start, time()
+    expired = (
+        elapsed < 0
+        or utc < utc_start
+        or utc * 1000 < reply["evaluated_ms"]
+        or abs((utc - utc_start) - elapsed) > 1
+        or elapsed >= 5
+        or utc * 1000 >= reply["deadline_ms"]
+    )
+    ready = []
+    for job in jobs:
+        if (
+            expired
+            or job["fingerprint"] != provider.fingerprint
+            or job["dimensions"] != provider.dimensions
+            or job["input_hash"] != canonical_hash(job["input"])
+            or job["egress"] != "local_cpu_only"
+        ):
+            fail(job, "interrupted", 0)
+        else:
+            ready.append(job)
+    if not ready:
+        return {"status": "attempt_failed", "count": 0, "failed": failed}
+    try:
+        batch = provider.embed([job["input"] for job in ready])
+        batch.validate(provider.fingerprint, provider.dimensions, [job["input"] for job in ready])
+    except Exception:
+        for job in ready:
+            fail(job, "provider_failure", None)
+        return {"status": "attempt_failed", "count": 0, "failed": failed}
+    each = min(600000, int((monotonic() - start) * 1000 / len(ready)))
+    counts: list[int | None] = [None] * len(ready)
+    if batch.input_token_counts:
+        counts = list(batch.input_token_counts)
+    try:
+        outcome = command(
+            "complete_batch",
+            items=[
+                {
+                    "lease": job["lease"],
+                    "fingerprint": batch.fingerprint,
+                    "input_hash": batch.input_hashes[n],
+                    "vector": batch.vectors[n],
+                    "input_tokens": counts[n],
+                    "truncated": batch.truncated[n],
+                    "duration_ms": each,
+                }
+                for n, job in enumerate(ready)
+            ],
+        )
+    except LocalError as exc:
+        return {"status": "reconciliation_required", "error": exc.code}
+    stored = sum(1 for item in outcome["results"] if item["status"] == "complete")
+    return {
+        "status": "complete",
+        "count": len(jobs),
+        "stored": stored,
+        "refused": len(ready) - stored,
+        "failed": failed,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -105,6 +208,12 @@ def main() -> None:
     parser.add_argument("--credential", type=Path, required=True)
     parser.add_argument("--project", required=True)
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument(
+        "--count", type=int, default=16, help="Records per model call, 1 to 16 (default 16)"
+    )
+    parser.add_argument(
+        "--until-idle", action="store_true", help="Keep going until no record is left to index"
+    )
     args = parser.parse_args()
     if args.shared_url and not args.tenant:
         parser.error("--tenant is required with --shared-url")
@@ -123,7 +232,11 @@ def main() -> None:
             if args.shared_url
             else LocalClient(args.socket, args.credential, args.project)
         )
-        print(json.dumps(run_once(client, provider), sort_keys=True))
+        while True:
+            result = run_batch(client, provider, args.count)
+            print(json.dumps(result, sort_keys=True), flush=True)
+            if not args.until_idle or result["status"] in {"idle", "reconciliation_required"}:
+                break
     except LocalError as exc:
         print(json.dumps({"error": exc.code}))
         raise SystemExit(1) from exc

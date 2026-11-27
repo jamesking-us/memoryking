@@ -81,7 +81,7 @@ HINTS: dict[str, str] = {
     "tenant_required": "Pass the shared tenant name or set `MEMORYKING_TENANT`.",
     # Capacity and timing
     "queue_full": "The tenant has 1,000 unfinished jobs; the daemon drains them between requests, so retry shortly or run a worker.",
-    "concurrency_limit": "Four job leases are already live; finish or let them expire before claiming more.",
+    "concurrency_limit": "Too many job leases are live; finish them or let them expire before claiming more.",
     "retention_capacity": "A single artifact exceeds the 128 MiB retention cap; reduce the output budget.",
     "operation_capacity": "4,096 operations are open in the tenant; resolve some to succeeded or failed.",
     "operation_scope_capacity": "32 operations are open in this task stream; resolve some before recording more.",

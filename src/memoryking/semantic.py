@@ -113,7 +113,7 @@ def verified(name: str = MODEL) -> bool:
     return True
 
 
-def load_installed(threads: int = 1) -> Any | None:
+def load_installed(threads: int | None = None) -> Any | None:
     """The embedder for the default model when it is installed and the runtime is there."""
     if runtime_problem() is not None or not verified(MODEL):
         return None

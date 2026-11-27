@@ -104,10 +104,18 @@ def semantic_line(semantic: dict[str, Any]) -> str:
         if not item["current_model"] or item["state"] != "experimental":
             continue
         done = item["percent_indexed"]
-        parts.append(
-            f"{item['project']} {item['vectors']:,} vectors"
-            + ("" if done >= 100 else f", {done}% indexed")
+        text = f"{item['project']} {item['vectors']:,} vectors" + (
+            "" if done >= 100 else f", {done}% indexed"
         )
+        if item.get("records_left"):
+            text += f" ({item['records_left']:,} of {item['records']:,} records left"
+            if "estimated_seconds" in item:
+                text += (
+                    f", about {duration(item['estimated_seconds'] * 1000)} at "
+                    f"{item['records_per_minute'] / 60:.1f} a second"
+                )
+            text += ")"
+        parts.append(text)
     return f"{semantic.get('model')}: " + ("; ".join(parts) if parts else "no project enabled yet")
 
 
@@ -1308,6 +1316,12 @@ def main() -> int:
         "hook if an earlier run installed it)",
     )
     setup.add_argument(
+        "--no-user-preferences",
+        action="store_true",
+        help='Do not let the save hooks add a standing personal preference you state ("in all '
+        'my projects I want ...") to your own memory',
+    )
+    setup.add_argument(
         "--register",
         action="store_true",
         help="claude-code only: register the bridge by running `claude mcp add-json` (when `claude` "
@@ -1809,6 +1823,12 @@ def main() -> int:
         action="store_true",
         help="Leave out the prompt-time recall hook (and remove it from the config)",
     )
+    inst.add_argument(
+        "--no-user-preferences",
+        action="store_true",
+        help="Do not let the save hooks add a standing personal preference the user states to "
+        "their own memory",
+    )
     inst.add_argument("--print", action="store_true", help="Show the merged config, write nothing")
     inst.add_argument("--remove", action="store_true", help="Remove MemoryKing's hooks")
     rpc = commands.add_parser(
@@ -2085,6 +2105,7 @@ def main() -> int:
                 remove=args.remove,
                 write=not args.print,
                 prompts=not args.no_prompt_hook,
+                preferences=not args.no_user_preferences,
             )
             if args.print:
                 print(json.dumps(result["config"], indent=2))

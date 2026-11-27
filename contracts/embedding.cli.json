@@ -122,6 +122,56 @@
             "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
           },
           "action": {
+            "const": "claim_batch"
+          },
+          "args": {
+            "$ref": "#/$defs/ClaimBatch"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
+            "const": "complete_batch"
+          },
+          "args": {
+            "$ref": "#/$defs/CompleteBatch"
+          }
+        },
+        "required": [
+          "version",
+          "incarnation",
+          "action",
+          "args"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "const": 1
+          },
+          "incarnation": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "action": {
             "const": "status"
           },
           "args": {
@@ -299,6 +349,110 @@
           "reason",
           "input_tokens",
           "duration_ms"
+        ]
+      },
+      "ClaimBatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          }
+        },
+        "required": [
+          "project",
+          "fingerprint",
+          "count"
+        ]
+      },
+      "CompleteItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "input_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "vector": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4096,
+            "items": {
+              "type": "integer",
+              "minimum": -1000000,
+              "maximum": 1000000
+            }
+          },
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 600000
+          }
+        },
+        "required": [
+          "lease",
+          "fingerprint",
+          "input_hash",
+          "vector",
+          "input_tokens",
+          "truncated",
+          "duration_ms"
+        ]
+      },
+      "CompleteBatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+          },
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/$defs/CompleteItem"
+            }
+          }
+        },
+        "required": [
+          "project",
+          "items"
         ]
       }
     }

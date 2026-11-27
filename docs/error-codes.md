@@ -125,7 +125,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 
 | Code | What to do |
 | --- | --- |
-| `concurrency_limit` | Four job leases are already live; finish or let them expire before claiming more. |
+| `concurrency_limit` | Too many job leases are live; finish them or let them expire before claiming more. |
 
 ## consolidation
 
