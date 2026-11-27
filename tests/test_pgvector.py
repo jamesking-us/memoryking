@@ -204,5 +204,8 @@ class PgvectorTests(DenseCases, NativeFixture):
         found = self.search(config, "reader")
         self.assertNotEqual(found["scan"], "hnsw_shortlist_exact_rescore_v1")
         self.assertEqual(found["eligible_vectors"], 100)
-        self.assertEqual(len(found["scores"]), 100)
+        # Every candidate the stage may return is one the reader can see: the hidden vectors
+        # take none of its places.
+        self.assertEqual(len(found["scores"]), min(100, dense_search.RESULTS))
+        self.assertEqual(found["candidate_limit_reached"], dense_search.RESULTS < 100)
         self.assertFalse(any(key < "obs_fill_1100" for key in found["scores"]))
