@@ -395,15 +395,21 @@ def run(args: Any) -> int:
 def register(args: Any, files: Files, home: Path, command: list[str]) -> tuple[str, list[str]]:
     """Register the bridge with the host; returns (summary line, lines for the user to run)."""
     if args.host == "codex":
-        path = home / ".codex" / "config.toml"
+        path = host_hooks.codex_dir(home) / "config.toml"
         text = path.read_text(encoding="utf-8") if path.exists() else ""
         try:
             outcome = files.write(path, codex_with(text, codex_block(command)))
         except LocalError as exc:
             if exc.code != "host_config_conflict":
                 raise
-            return "not written: [mcp_servers.memoryking] already exists in " + str(path), [
-                "Set its command and args to:",
+            return (
+                f"existing entry kept, not written: [mcp_servers.memoryking] already exists in {path}"
+            ), [
+                "The hooks installed now belong to project "
+                f"{args.project} and this store, but the existing MCP entry was left as it is "
+                "and may point at another project or store.",
+                "To make it match, set its command and args to the following, or delete "
+                "that [mcp_servers.memoryking] table and run this setup again:",
                 "  " + shlex.join(command),
             ]
         return f"{outcome} {path} (lean profile)", []
@@ -446,19 +452,34 @@ def register(args: Any, files: Files, home: Path, command: list[str]) -> tuple[s
 
 def remove(args: Any, files: Files, home: Path, cwd: Path) -> int:
     done: list[str] = []
+
+    def undo(path: Path, semantic: Any, what: str, *, extra: bool = False) -> None:
+        # `extra`: the place setup used before it followed CODEX_HOME; said only if it held something
+        outcome = files.restore(path, semantic)
+        if not extra or outcome != "absent":
+            done.append(f"{what} {outcome}: {path}")
+
     if args.host == "codex":
-        path = home / ".codex" / "config.toml"
-        done.append(f"MCP bridge {files.restore(path, codex_without)}: {path}")
+        for legacy in (False, True):
+            path = host_hooks.codex_dir(home, legacy=legacy) / "config.toml"
+            if legacy and path == host_hooks.codex_dir(home) / "config.toml":
+                continue
+            undo(path, codex_without, "MCP bridge", extra=legacy)
     if HOOK_HOST.get(args.host):
         host = HOOK_HOST[args.host]
-        path = host_hooks.config_path(host, args.scope, cwd, home)
+        paths = [host_hooks.config_path(host, args.scope, cwd, home)]
+        if host == "codex" and args.scope == "user":
+            old = host_hooks.codex_dir(home, legacy=True) / "hooks.json"
+            if old not in paths:
+                paths.append(old)
 
         def semantic(text: str) -> str:
             entries = host_hooks._entries(host, dict.fromkeys(host_hooks.KINDS, ""))
             merged = host_hooks.merge(json.loads(text), entries, remove=True)
             return json.dumps(merged, indent=2) + "\n"
 
-        done.append(f"hooks {files.restore(path, semantic)}: {path}")
+        for number, path in enumerate(paths):
+            undo(path, semantic, "hooks", extra=number > 0)
     if args.host == "claude-code":
         done.append("run `claude mcp remove memoryking` to unregister the bridge")
     files.save_removal()

@@ -25,6 +25,10 @@ observed time of each capture is the session's start (the hooks use the day).
 `ingest = "turns"` (track T5) records each chat turn as one observation, `role: text`, as the
 repository's `tools/evidence_recall.py` does, and `context_for` asks for a briefing.
 
+`ingest = "sessions"` records each session as one observation, its turns as `role: text`
+paragraphs in order (the way the hooks store a session: one long record, not one per turn), at
+most the hooks' text limit; `tools/context_coverage.py --unit session` uses it.
+
 The source-trust rules, held captures and the review queue are left as setup leaves them.
 """
 
@@ -163,7 +167,7 @@ class MemoryKing:
     needs_llm = False
     reseed_per_run = False
     persistent_home = False
-    ingest = "hook"  # or "turns"
+    ingest = "hook"  # or "turns", or "sessions"
     #: Besides the hook capture, save a preference stated for every project to the user scope,
     #: as the start briefing tells an agent to (`user_scope_saves`). Off by default since the save
     #: hooks recognise what the user states for every project themselves (`domain/preference.py`);
@@ -353,6 +357,8 @@ class MemoryKing:
                 cred = self._credential(s.scope)
                 if self.ingest == "turns":
                     self._capture_turns(s, cred, ms)
+                elif self.ingest == "sessions":
+                    self._capture_whole(s, cred, ms)
                 else:
                     self._capture_session(s, cred, scratch)
                     if self.user_scope:
@@ -373,7 +379,7 @@ class MemoryKing:
         finally:
             hooks.time = real_time
             shutil.rmtree(scratch, ignore_errors=True)
-        if self.ingest != "turns":
+        if self.ingest not in {"turns", "sessions"}:
             # Keep the clock honest for the agent's daemon: close the fake-clock store first.
             self._stop_inprocess()
         seconds = time.perf_counter() - started
@@ -420,6 +426,25 @@ class MemoryKing:
                 credential=cred,
                 project=s.scope.project,
             )
+
+    def _capture_whole(self, s: Session, cred: Path, ms: int) -> None:
+        """The session as one observation: `role: text` paragraphs, as long as the hooks allow."""
+        safe = re.sub(r"[^A-Za-z0-9_-]", "-", s.id)[:80]
+        text = "\n\n".join(f"{t.role}: {t.text}" for t in s.turns if t.text.strip())
+        raw = text.encode()
+        if len(raw) > hooks.TEXT_LIMIT:
+            text = raw[: hooks.TEXT_LIMIT].decode("utf-8", errors="ignore")
+        if not text.strip():
+            return
+        hooks.capture(
+            text,
+            source="longmemeval",
+            event=f"{safe}-{ms}",
+            observed_ms=ms,
+            socket=self.socket,
+            credential=cred,
+            project=s.scope.project,
+        )
 
     def size_bytes(self) -> int:
         assert self.root is not None
@@ -500,7 +525,11 @@ class MemoryKing:
             ]
             if mine:
                 last = mine[0]
-                if last["percent_indexed"] >= 100 and last["vectors"] > 0:
+                if (
+                    last["percent_indexed"] >= 100
+                    and last["vectors"] > 0
+                    and not last.get("passage_records_left")
+                ):
                     return {
                         "index_seconds": round(time.monotonic() - started, 2),
                         "vectors": last["vectors"],

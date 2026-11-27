@@ -27,6 +27,8 @@ from memoryking.domain.passages import split
 # opening. The passage path is complete and tested; this is the one switch.
 EMBED_PASSAGES = False
 
+OPENING_BYTES = 16384  # the most of a record that one input holds
+INPUT_BYTES = 131072  # the most text one model call holds (`domain.embeddings.validate_inputs`)
 LEASE_LIMIT = 4  # live job leases one tenant may hold when claiming one job at a time
 BATCH_LEASE_LIMIT = 64  # ... and when claiming in batches
 VALIDATOR = Draft202012Validator(
@@ -756,13 +758,21 @@ class Embeddings:
         if self.live_leases(who, at) >= BATCH_LEASE_LIMIT:
             raise LocalError("concurrency_limit")
         jobs: list[dict[str, Any]] = []
-        while len(jobs) < args["count"] and self.live_leases(who, at) < BATCH_LEASE_LIMIT:
+        # The model takes at most INPUT_BYTES of text in one call (and 16 texts), so a batch is
+        # closed once another record of up to OPENING_BYTES could no longer fit.
+        size = 0
+        while (
+            len(jobs) < args["count"]
+            and size + OPENING_BYTES <= INPUT_BYTES
+            and self.live_leases(who, at) < BATCH_LEASE_LIMIT
+        ):
             job = self.claim_one(who, part, args, at)
             if job["job"] is None:
                 if not jobs:
                     return {"jobs": [], **job}
                 break
             jobs.append(job)
+            size += len(job["input"].encode())
         return {"jobs": jobs, "job": jobs[0]["job"] if jobs else None}
 
     def note_rate(self, count: int) -> None:

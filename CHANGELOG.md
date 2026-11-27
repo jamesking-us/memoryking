@@ -4,6 +4,14 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Codex
+
+- `memoryking setup codex`, `--remove`, `--dry-run` and `memoryking hooks install --host codex --scope user` now follow `CODEX_HOME` (Codex's own setting) for `config.toml` and `hooks.json` when it is set and not empty, and `~/.codex` otherwise. `--remove` also looks in `~/.codex`, so files written by an earlier version are still undone. A project's `.codex/hooks.json` does not move.
+- The session-end hook asks Codex for 3 seconds, the limit Codex applies, so Codex no longer prints `clamping SessionEnd hook timeout to 3s`. Claude Code and Grok keep their limits. To stay inside 3 seconds when the daemon has to be started first (about 2 seconds with semantic search on), the Codex session-end hook records its work and returns in about 0.1 second while a background process stores the capture; a record left by a killed hook or worker is finished at the next session start. The details and what can still be lost are in the [agent guide](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md#codex).
+- A Codex session with no transcript file (`--ephemeral`) is captured as nothing, and the hooks exit 0.
+- When Codex's `config.toml` already has a `[mcp_servers.memoryking]` entry, setup still leaves it alone, and now says that it kept the entry, that the new hooks belong to this project and store while the entry may point at another, and how to fix that.
+- The agent guide states what has been checked on a real Codex (CLI 0.166.0 on Ubuntu) and what has not: the start hook after a compaction, long sessions at session end, and Codex on Windows and macOS.
+
 ### Stopping the daemon
 
 - `memoryking stop` could fail with `daemon_stop_failed` on a busy machine and then leave the daemon running. A stop signal that arrived at the moment the daemon was starting a thread for a connection (the stop command's own liveness check is such a connection) was lost, because the accept thread released the connection's worker slot twice and the resulting error replaced the interrupt. The slot is now given back exactly once. Under load, 4 and 5 of 40 runs of the setup test failed before and none of 40 after.
@@ -18,6 +26,7 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ### Semantic indexing keeps up with a real history
 
+- A batch of records being indexed holds as many as fit the model's limit of 128 KiB of text a call, in the daemon and in the shared worker, so long records such as whole sessions stored by the hooks are indexed in smaller batches; records of chat-turn length are unaffected. Embedding a long record passage by passage was measured again and not adopted (see the reference: no needed turn was gained on 45 questions, and each long record would cost about 20 vectors instead of one), so a long record is still found by meaning through its opening and by keywords through all of it.
 - Indexing an existing store for search by meaning is about 3.5 times faster: 500 chat turns of mixed length took about 71 seconds and now take about 20 on a four-CPU machine (7.0 and 24.6 records a second, medians of four runs each, measured with the new `tools/indexing_benchmark.py`). The daemon's indexing now takes up to 16 records per model pass, stores their vectors in one transaction, runs two worker threads so that claiming and storing overlap the model, and lets the model use one fewer thread than the machine has cores (one to four). The vectors are identical to the ones made one record at a time, the search model and its 512-token reading are unchanged, and the retrieval and evidence-recall gates give the same figures.
 - `MEMORYKING_EMBEDDING_THREADS` sets the model's threads (a value of 1 restores the old load). While a backlog is indexed a briefing takes about 0.35 s at the median and at most 0.73 s of 50 (0.1 s when nothing is indexing), against 0.23 s and 0.5 s before; the bound and the figures are in the [reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#indexing-speed). A briefing's own question goes to the model before the next batch of records.
 - `memoryking status` and `memoryking semantic status` show how many records of a project are indexed, how many are left, and the time left at the speed the daemon has measured.

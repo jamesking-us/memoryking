@@ -1004,11 +1004,16 @@ def _save_state(
     kind: str,
     text: str,
     observation: str | None,
+    observed_ms: int | None = None,
 ) -> dict[str, Any]:
     context = request(socket, token, "context", {"project": project})
     # Day-granular like hook captures: a hook that fires twice sends identical bytes
     # under its stable retry key and replays instead of conflicting.
-    observed = int(time.time() * 1000) // hooks.DAY_MS * hooks.DAY_MS
+    observed = (
+        (observed_ms if observed_ms is not None else int(time.time() * 1000))
+        // hooks.DAY_MS
+        * hooks.DAY_MS
+    )
     # The newest part of the tail is the live state; the key names the hook so a
     # pre-compact and a session-end over the same tail are two saves, not a conflict.
     state = text[-STATE_CHARS:].strip()
@@ -1132,6 +1137,7 @@ def save(
     host: str | None = None,
     task: str | None = None,
     user_preferences: bool | None = None,
+    observed_ms: int | None = None,
     **where: Any,
 ) -> dict[str, Any]:
     """Capture what the host is about to lose; with a task, also save a checkpoint.
@@ -1180,6 +1186,7 @@ def save(
         project=project,
         profile=where.get("profile"),
         config=where.get("config"),
+        observed_ms=observed_ms,
     )
     summary: dict[str, Any] = {
         "captured": True,
@@ -1200,6 +1207,7 @@ def save(
             project=project,
             profile=where.get("profile"),
             config=where.get("config"),
+            observed_ms=observed_ms,
         )
         summary["user_observation"] = said.get("observation")
         if not said.get("held") and user_preferences_wanted(user_preferences):
@@ -1226,6 +1234,7 @@ def save(
             project=project,
             profile=where.get("profile"),
             config=where.get("config"),
+            observed_ms=observed_ms,
         )
         summary["tool_observation"] = reported.get("observation")
     if task:
@@ -1238,6 +1247,7 @@ def save(
             kind,
             text,
             result.get("observation"),
+            observed_ms,
         )
         summary["checkpoint"] = saved.get("checkpoint")
         summary["revision"] = saved.get("revision")
@@ -1289,12 +1299,21 @@ def hook_command(
     return " ".join(parts)
 
 
+def codex_dir(home: Path, *, legacy: bool = False) -> Path:
+    """Codex's user directory: `$CODEX_HOME` when it is set and not empty, else `~/.codex`.
+    `legacy` is always `~/.codex`, where setup wrote before it followed `CODEX_HOME`."""
+    chosen = os.environ.get("CODEX_HOME", "").strip()
+    return Path(chosen).expanduser() if chosen and not legacy else home / ".codex"
+
+
 def config_path(host: str, scope: str, cwd: Path, home: Path) -> Path:
     if host not in HOSTS:
         raise LocalError("host_unsupported")
     if scope not in ("project", "user"):
         raise LocalError("invalid_request")
     base = cwd if scope == "project" else home
+    if host == "codex" and scope == "user":
+        return codex_dir(home) / "hooks.json"
     return {
         "claude": base / ".claude/settings.json",
         "codex": base / ".codex/hooks.json",
@@ -1308,6 +1327,9 @@ def _entries(
     """Hook entries per event, in the shape all three hosts read. Without `prompts` the
     prompt-time recall hook is left out, so merging removes it from a config that has it."""
     timeout = {"claude": 30, "codex": 30, "grok": 20}[host]
+    # Codex clamps a session-end hook to 3 s and warns when asked for more; the hook hands its
+    # work to a background process (see `hook_spool`) so that the limit loses nothing.
+    ending = {"claude": 10, "codex": 3}.get(host, timeout)
     status = {
         "session-start": "Loading MemoryKing briefing",
         "pre-compact": "Saving to MemoryKing",
@@ -1326,7 +1348,7 @@ def _entries(
     entries = {
         "SessionStart": [entry("session-start", "startup|resume|compact", timeout)],
         "PreCompact": [entry("pre-compact", None, timeout)],
-        "SessionEnd": [entry("session-end", None, 10 if host == "claude" else timeout)],
+        "SessionEnd": [entry("session-end", None, ending)],
     }
     if host != "grok":  # Grok ignores hook output, so a recall hook there would only cost time
         entries["UserPromptSubmit"] = [entry("prompt", None, 5)] if prompts else []

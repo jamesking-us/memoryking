@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from memoryking import profiles
+from memoryking import hook_spool, profiles
 from memoryking.adapters import platform_support
 from memoryking.domain.local import LocalError
 from memoryking.relay_client import connect
@@ -132,6 +132,7 @@ def add_hook_arguments(hk: argparse.ArgumentParser) -> None:
         "stated to their own memory (or MEMORYKING_USER_PREFERENCES=off)",
     )
     add_binding(hk)
+    hk.add_argument("--spool", help=argparse.SUPPRESS)  # internal: finish a recorded session end
     hk.add_argument(
         "--strict", action="store_true", help="Exit non-zero on error instead of only logging"
     )
@@ -171,7 +172,9 @@ def run(args: argparse.Namespace) -> int:
     from memoryking import host_hooks
 
     try:
-        raw = "" if sys.stdin.isatty() else platform_support.read_stdin_text()
+        raw = getattr(args, "stdin_text", None)
+        if raw is None:
+            raw = "" if sys.stdin.isatty() else platform_support.read_stdin_text()
         payload = host_hooks.read_event(raw)
         where = {
             "socket": args.socket,
@@ -233,9 +236,15 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    platform_support.utf8_stdio()
-    parser = argparse.ArgumentParser(prog="memoryking", description=__doc__.split("\n")[0])
+class QuietParser(argparse.ArgumentParser):
+    """A parser that raises `ValueError` on a bad command line instead of exiting."""
+
+    def error(self, message: str) -> Any:
+        raise ValueError(message)
+
+
+def build_parser(parser_class: type[argparse.ArgumentParser] = argparse.ArgumentParser) -> Any:
+    parser = parser_class(prog="memoryking", description=__doc__.split("\n")[0])
     add_global_arguments(parser)
     commands = parser.add_subparsers(dest="command", required=True)
     add_hook_arguments(
@@ -243,12 +252,22 @@ def main(argv: list[str] | None = None) -> int:
             "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
         )
     )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    platform_support.utf8_stdio()
+    parser = build_parser()
     args = parser.parse_args(argv)
     try:
         profiles.apply(args, args.profile, args.config)
         if args.relay:
             attach_relay(args)
         else:
+            if hook_spool.eligible(args) and hook_spool.hand_off(
+                args, list(sys.argv[1:] if argv is None else argv)
+            ):
+                return 0  # a worker does the capture; see `hook_spool`
             autostart(args)
     except LocalError as exc:
         # Exactly what `memoryking hook` reports when the connection cannot be resolved.
@@ -266,7 +285,14 @@ def main(argv: list[str] | None = None) -> int:
         code = "local_io_or_configuration_error"
         print(json.dumps({"error": code, "hint": hint(code)}), file=sys.stderr)
         return 2
-    return run(args)
+    if args.spool:
+        return hook_spool.finish(
+            args, Path(args.spool), list(sys.argv[1:] if argv is None else argv)
+        )
+    status = run(args)
+    if args.kind == "session-start":
+        hook_spool.replay(args)
+    return status
 
 
 if __name__ == "__main__":
