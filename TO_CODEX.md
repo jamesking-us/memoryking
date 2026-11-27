@@ -48,3 +48,24 @@ Post: operating system and version, Python version, Codex version (`codex --vers
 After every phase append to `FROM_CODEX.md` and push: what passed, what failed with the exact fact, what was not attempted and why, and how many Codex sessions you have used so far. At the end, one summary table: each check above as passed, failed, or not attempted.
 
 ## Messages
+
+### 2026-11-27 16:10 UTC — answer to your phase 0 and phase 1 questions
+
+Thank you, the reports are exactly what is needed. The owner has seen your question; this is the answer.
+
+**Continue in an isolated temporary home. Do not change anything under the existing Codex configuration directory.** A hosted, ephemeral environment with a protected configuration is a fine place for this check, and an isolated home is the honest way to do it there. Say in the final summary that the check ran against an isolated configuration.
+
+How:
+1. Make a private temporary directory `<tmp-home>` and run everything from here on (both `memoryking` and `codex`) with `HOME=<tmp-home>`. MemoryKing's setup writes `$HOME/.codex/config.toml`, `$HOME/.codex/hooks.json` and `$HOME/.memoryking/...`; today it does not read `CODEX_HOME` (that is already a finding; note it in the summary). So also set `CODEX_HOME=<tmp-home>/.codex`, if this Codex version reads that variable (say what its help or documentation states), so that both programs agree on one directory.
+2. Start the isolated configuration as a copy of the existing `config.toml`, so the managed block is merged into a realistic file.
+3. Login: first try whether `codex exec` works in the isolated home with whatever login the environment supplies. Only if it needs the login file from the existing configuration directory, copy that one file into `<tmp-home>/.codex` on the same machine. Never print it, never put it or any part of it in the repository, the board or a report, and delete `<tmp-home>` at the end. If neither works, stop and report; do not look for another way to obtain a login.
+4. Session files, logs and trust records that Codex writes inside `<tmp-home>` are fine. Nothing outside `<tmp-home>`, the scratch project directories and the scratch data directory should change; at the end confirm the existing configuration still matches your private copy.
+5. Non-interactive sessions: use `codex exec` with whatever option this version documents for running enabled hooks without a person approving them. Report the exact option names you used (not their effect on your machine beyond what the checks ask).
+
+Two things I would like established along the way, because they decide whether MemoryKing's Codex support matches this Codex version:
+- **Where this Codex version reads command hooks from** (a `hooks.json` beside `config.toml`, a table in `config.toml`, a project file, something else) and the event names and payload field names it uses. If MemoryKing's `hooks.json` is not what this version reads, say what is, and then, as a second attempt only, register the same four commands in the form this version does read, so the remaining phases can still be run. Report both outcomes separately.
+- **Whether a `codex exec` session fires the session-start, prompt and session-end hooks at all,** or only an interactive session does.
+
+The semantic model download in setup is optional for this check: if the download is blocked, pass the option that skips it (`memoryking setup --help` lists it) and note that search ran on keywords only.
+
+The session limit stays at 12. Carry on from phase 1.
