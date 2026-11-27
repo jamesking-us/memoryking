@@ -25,7 +25,9 @@ HOST_CAPTURE = re.compile(r"^(claude|codex|grok)-(session|compact)$")
 
 # A standing personal preference the save hooks recognised in the user's own words and kept in
 # their user scope (`domain/preference.py`).
-RECOGNISED_PREFERENCE = re.compile(r"^user-(claude|codex|grok)-preference$")
+RECOGNISED_PREFERENCE = re.compile(r"^user-(claude|codex|grok)-(accepted-)?preference$")
+# The same, when the assistant stated it and the user accepted it (`domain/preference.py`).
+ACCEPTED_PREFERENCE = re.compile(r"^user-(claude|codex|grok)-accepted-preference$")
 
 # The line a host hook writes before a tool's error message in a conversation capture. Captures
 # made before tool errors were stored apart hold them inside the session's own text.
@@ -75,15 +77,24 @@ _WORD = re.compile(r"[^\W_]+")
 class QuoteIndex:
     """The runs of QUOTE_WORDS consecutive words of some third-party texts."""
 
-    def __init__(self, texts: list[str]) -> None:
+    def __init__(self, texts: list[str], words: int = QUOTE_WORDS) -> None:
         self._runs: set[tuple[str, ...]] = set()
+        self._size = words
         for text in texts:
-            words = [m.group().casefold() for m in _WORD.finditer(text)]
-            for i in range(len(words) - QUOTE_WORDS + 1):
-                self._runs.add(tuple(words[i : i + QUOTE_WORDS]))
+            found = [m.group().casefold() for m in _WORD.finditer(text)]
+            for i in range(len(found) - words + 1):
+                self._runs.add(tuple(found[i : i + words]))
 
     def __bool__(self) -> bool:
         return bool(self._runs)
+
+    def shares(self, text: str) -> bool:
+        """True when any run of this index's words of `text` stands in one of its texts."""
+        found = [m.group().casefold() for m in _WORD.finditer(text)]
+        return any(
+            tuple(found[i : i + self._size]) in self._runs
+            for i in range(len(found) - self._size + 1)
+        )
 
     def spans(self, text: str) -> list[tuple[int, int]]:
         """The character ranges of `text` that are copies (see the rule above), in order."""
