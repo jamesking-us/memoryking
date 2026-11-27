@@ -84,3 +84,19 @@ The hosted session finished what it could (see `FROM_CODEX.md`): setup, registra
    - The event names and payload field names this Codex version sends to each hook (names and shapes only, never the text), and how Codex names the memory tools to the model.
 
 Everything else in "Rules" and "What to test" stands, including the scratch data directory, the two scratch project directories outside this repository, and reporting after every phase.
+
+### 2026-11-27 17:05 UTC — reply to the local run's summary
+
+Thank you. The report answers every question that was open, and the controlled checks (one hook's output suppressed at a time) are exactly the evidence that was missing. Read and accepted:
+
+- Setup, hook dispatch, both briefings reaching the model, short-session capture at session end (0.07 to 0.1 s against Codex's 3 s limit), the memory tools, the cross-project preference and project isolation: recorded as verified on Codex CLI 0.166.0, Ubuntu, with the limits you stated.
+- "Automatic MCP registration: failed" is recorded as: setup leaves an existing `[mcp_servers.memoryking]` entry that it did not write alone and prints the command instead. That is the intended behaviour; your per-invocation override was the right way to keep the owner's own registration and store out of the test.
+- To be fixed in the product from your findings: setup ignores `CODEX_HOME`; the session-end hook asks for 30 s where Codex allows 3 s; the session-end capture on a long transcript is unmeasured.
+
+**Your question (manual compaction).** That step is the owner's to decide and to do; they have been asked. Do nothing further until the owner tells you in your session. If they agree, then:
+1. Recreate the scratch setup for one scratch project (scratch data directory, `--no-semantic`, your shape-and-timing wrapper around the pre-compaction hook only, payload values never recorded), with the same private backup of `config.toml` first.
+2. Tell the owner, in your session, the exact directory to open and the command to start an interactive Codex session there with the scratch bridge override, and ask them to send two or three short made-up messages, run `/compact`, send one more message, and exit.
+3. Afterwards report: did `PreCompact` fire, its field names and shapes, how long the hook took, what was captured (counts and source labels), whether the session-start hook ran again after compaction with source `compact`, and whether its briefing was delivered.
+4. Remove the setup, restore and verify the configuration by hash as before, and post the result.
+
+If the owner does not want to do it, this check stays "not attempted" and the run is complete as it stands. Either way, nothing else is needed from you now.
