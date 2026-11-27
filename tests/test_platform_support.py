@@ -9,6 +9,7 @@ import pkgutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -44,6 +45,25 @@ class EveryPlatformTests(unittest.TestCase):
             child.wait()
         self.assertFalse(platform_support.process_alive(child.pid))
         # Reaching here at all means no Ctrl-C reached this process (Windows signal 0).
+
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc to read a process state")
+    def test_a_process_that_has_exited_but_is_not_yet_collected_is_not_alive(self) -> None:
+        # An orphaned daemon is a zombie until init collects it, and `kill(pid, 0)` still
+        # succeeds for it: a stop that waited for that would fail on a machine or container
+        # whose process 1 is slow to reap or never reaps.
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        try:
+            stat = Path(f"/proc/{child.pid}/stat")
+            for _ in range(500):
+                if stat.read_text().rpartition(")")[2].strip().startswith("Z"):
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("the child never became a zombie")
+            os.kill(child.pid, 0)  # the old check: still "alive"
+            self.assertFalse(platform_support.process_alive(child.pid))
+        finally:
+            child.wait()
 
 
 @unittest.skipIf(WINDOWS, "POSIX primitives; Windows refuses them (WindowsTests)")

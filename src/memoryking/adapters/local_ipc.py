@@ -212,6 +212,8 @@ class Server(socketserver.ThreadingMixIn, UnixStreamServer):
                 raise LocalError("invalid_concurrency")
             self.max_waiting = waiters
         self.slots = threading.BoundedSemaphore(self.max_concurrent)
+        self._held: set[int] = set()  # requests that hold a slot not yet given back
+        self._held_lock = threading.Lock()
         self.waiting = threading.BoundedSemaphore(max(1, self.max_waiting))
         if self.max_waiting == 0:
             self.waiting.acquire()  # no waiting room at all
@@ -249,11 +251,24 @@ class Server(socketserver.ThreadingMixIn, UnixStreamServer):
 
     def _serve(self, request: Any, client_address: Any) -> None:
         """Hand a connection that already holds a slot to a worker; the slot is released after."""
+        with self._held_lock:
+            self._held.add(id(request))
         try:
             super().process_request(request, client_address)
         except BaseException:
-            self.slots.release()
+            # SIGTERM raises KeyboardInterrupt here, on the accept thread, possibly just after
+            # the worker thread started and so owns the slot. The slot is given back once, by
+            # whichever side gets there first: a second release would raise ValueError, which
+            # replaced the interrupt, and the daemon went on serving and never stopped.
+            self._give_back(request)
             raise
+
+    def _give_back(self, request: Any) -> None:
+        with self._held_lock:
+            if id(request) not in self._held:
+                return
+            self._held.discard(id(request))
+        self.slots.release()
 
     def _wait_then_serve(self, request: Any, client_address: Any) -> None:
         try:
@@ -276,7 +291,7 @@ class Server(socketserver.ThreadingMixIn, UnixStreamServer):
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self.slots.release()
+            self._give_back(request)
 
     def saturation(self) -> dict[str, tuple[int, int]]:
         """(limit, in use) for the worker slots and the waiting room."""
