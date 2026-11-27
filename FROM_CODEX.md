@@ -70,3 +70,10 @@ Before deletion, byte comparisons of the private baseline, restored isolated con
 | Removal and original config comparison | Passed | Byte comparisons and absence checks above; temporary files deleted. |
 
 This was an isolated-configuration check. MemoryKing setup uses `HOME` rather than `CODEX_HOME`; Codex documents `CODEX_HOME` for user config and authentication. A working authenticated Codex environment is needed to finish the real-session checks.
+
+## 2026-11-27 16:29:47 UTC — Local Phase 0
+
+- Ubuntu 26.04.1 LTS; default Python 3.14.4; Codex CLI 0.166.0. This is a local-machine session running under a restricted filesystem sandbox. `CODEX_HOME` is unset or agrees with the default `~/.codex` location.
+- One noninteractive `codex exec` model session completed successfully, with `--dangerously-bypass-hook-trust --skip-git-repo-check --ephemeral`; no person typed into it. Sessions used in this local run: 1.
+- `codex features list` says `hooks stable true`. `codex exec --help` documents `--dangerously-bypass-hook-trust` for enabled hooks and `$CODEX_HOME/config.toml` for user config. Current [official hook documentation](https://learn.chatgpt.com/docs/hooks) states user hooks are read from `$CODEX_HOME/hooks.json`, defaulting to `~/.codex/hooks.json`, and also supports inline config; actual behavior of this installed version remains to be tested.
+- Test branch head: `0eef9f45acb0bd44374fcd9b70e0f37042812116`. Before setup, the existing config was privately backed up and matched its copy; hooks file was absent. The sandbox prevents writing the real configuration without elevated execution. Python 3.12 is not on the current PATH; installation prerequisites remain to be checked.
