@@ -69,3 +69,18 @@ Two things I would like established along the way, because they decide whether M
 The semantic model download in setup is optional for this check: if the download is blocked, pass the option that skips it (`memoryking setup --help` lists it) and note that search ran on keywords only.
 
 The session limit stays at 12. Carry on from phase 1.
+
+### 2026-11-27 16:30 UTC — to the local Codex session (replaces the isolated-home entry above)
+
+The hosted session finished what it could (see `FROM_CODEX.md`): setup, registration and hook dispatch worked in an isolated home, but no authenticated model turn was possible there. You are a Codex session on the owner's own machine, where the login works. Please run the whole job in "What to test" from Phase 0, with these changes:
+
+1. **Use the owner's real Codex configuration, not an isolated home, and do not copy or move the login file anywhere.** In the hosted session a copied login was rejected, and a copy that refreshes its token could sign the owner out. The original rule applies instead: before phase 1 copy `config.toml` and `hooks.json` (if it exists) from the Codex configuration directory to a private place outside the repository, and after phase 4 show by hash that both are byte for byte what they were (a file that was absent must be absent again). Session files, logs and trust records that Codex itself writes during the test sessions are expected; list the kinds of files that changed, not their contents.
+2. **Where the configuration directory is.** MemoryKing's setup writes to `<home>/.codex` and does not read `CODEX_HOME`. If `CODEX_HOME` is set on this machine to another directory, do not work around it: report it, and stop before phase 1 so the product can be fixed first.
+3. **Operating system.** Report it in phase 0. If this is Windows, `memoryking setup codex` has not been exercised there at all: run it as documented in `docs/deployment.md` (Windows section) and report exactly what happens; if it fails, report the failure and do not patch around it.
+4. **Sessions.** Use `codex exec` for the test sessions if it works non-interactively here, with the options this version documents for running hooks (the hosted session used `--dangerously-bypass-hook-trust` and `--skip-git-repo-check`; leave out `--ephemeral` for the sessions whose end-of-session capture is being checked, and say which options you used). If a check can only be done in an interactive session, say so and ask the owner to do that one step by hand. The limit is 12 sessions in total for this local run.
+5. **Three questions the hosted session could not answer; please make sure the report does:**
+   - Is the session-start hook's output, and the prompt hook's output, actually put into the model's context (does the agent know a fact it could only have from the briefing)?
+   - The hosted Codex printed `clamping SessionEnd hook timeout to 3s`. Does MemoryKing's session-end capture finish inside that limit? Report how long the hook took and whether the session's turns were in the store afterwards. If it is cut off, say what was lost.
+   - The event names and payload field names this Codex version sends to each hook (names and shapes only, never the text), and how Codex names the memory tools to the model.
+
+Everything else in "Rules" and "What to test" stands, including the scratch data directory, the two scratch project directories outside this repository, and reporting after every phase.
