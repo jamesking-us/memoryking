@@ -8,7 +8,8 @@ compile --generate-hashes` output). Network use: the npm and PyPI registries, pl
 `huggingface.co` when a product downloads an embedding model the first time it runs.
 
 Usage: install_systems.py [--root /tmp] [--force] [name ...]
-Names: mcp-memory, basic-memory, claude-mem, mcp-memory-service, mem0, graphiti (default: all)
+Names: mcp-memory, basic-memory, claude-mem, mcp-memory-service, mem0, graphiti, memoryking-0.2.0
+(default: all but memoryking-0.2.0, which only stage T6 uses; name it to install it)
 """
 
 from __future__ import annotations
@@ -237,6 +238,32 @@ def install_graphiti(root: Path, force: bool) -> None:
     )
 
 
+def install_memoryking_released(root: Path, force: bool) -> None:
+    """MemoryKing 0.2.0 from PyPI (wheel and dependencies by hash) in a virtualenv of its own, so
+    stage T6 can run the released product through its own daemon, not this checkout's code."""
+    t = root / "mk-lh-memoryking-0.2.0"
+    if not fresh(t, force):
+        return
+    (t / "home").mkdir()
+    env = base_env(t / "home")
+    run([UV, "venv", "--python", PYTHON_VERSION, t / "venv"], env=env)
+    run(
+        [
+            UV,
+            "pip",
+            "install",
+            "--python",
+            t / "venv/bin/python",
+            "--require-hashes",
+            "--no-deps",
+            "-r",
+            LOCKS / "memoryking-0.2.0.lock",
+        ],
+        env=env,
+    )
+    run([t / "venv/bin/python", "-I", "-m", "memoryking", "--version"], env=env)
+
+
 INSTALLERS = {
     "mcp-memory": install_mcp_memory,
     "basic-memory": install_basic_memory,
@@ -244,7 +271,9 @@ INSTALLERS = {
     "mcp-memory-service": install_mcp_memory_service,
     "mem0": install_mem0,
     "graphiti": install_graphiti,
+    "memoryking-0.2.0": install_memoryking_released,
 }
+DEFAULT = [n for n in INSTALLERS if n != "memoryking-0.2.0"]
 
 
 def register(name: str, fn) -> None:
@@ -261,7 +290,7 @@ def main() -> None:
     )
     ap.add_argument("--force", action="store_true", help="delete and reinstall")
     a = ap.parse_args()
-    names = a.names or list(INSTALLERS)
+    names = a.names or DEFAULT
     for n in names:
         if n not in INSTALLERS:
             sys.exit(f"unknown product {n!r}; choose from {', '.join(INSTALLERS)}")

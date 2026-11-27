@@ -89,6 +89,10 @@ class BenchmarkError(Exception):
     pass
 
 
+class CallCapReached(BenchmarkError):
+    """A model call was refused because the call cap is spent; nothing was announced or made."""
+
+
 # --------------------------------------------------------------------- suites
 
 
@@ -328,6 +332,32 @@ def ledger_note(path: str | None, **event) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def announce_call(path: str | None, cap: int | None, **event) -> None:
+    """Announce a model call in the ledger, refusing it when the ledger already holds `cap` calls
+    (reader and judge starts of every arm and every earlier invocation, answered or not). The count
+    and the append are one step under a lock, so arms running at the same time cannot jointly pass
+    the cap."""
+    if cap is None:
+        ledger_note(path, **event)
+        return
+    if not path:
+        raise BenchmarkError("a call cap needs a ledger")
+    import fcntl
+
+    with open(path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        made = 0
+        if Path(path).exists():
+            for line in Path(path).read_text().splitlines():
+                try:
+                    made += json.loads(line).get("ev") in ("reader_start", "judge_start")
+                except ValueError:
+                    continue
+        if made >= cap:
+            raise CallCapReached(f"the ledger holds {made} calls: the cap of {cap} is reached")
+        ledger_note(path, **event)
 
 
 def wait_session_quiet(leader: int, timeout: float) -> dict:
@@ -1109,9 +1139,17 @@ def cmd_report(args):
 # ------------------------------------------------------------------------- T5
 
 
+def t5_draw(data: list[dict], args) -> list[dict]:
+    """The questions of a T5 or T6 run: the plain stratified draw, or with `--t6` the stage T6 draw
+    (from the questions in none of the earlier draws; `lme.t6_draw`)."""
+    if getattr(args, "t6", False):
+        return lme.t6_draw(data, args.size, args.seed)
+    return lme.select(data, args.size, args.seed)
+
+
 def cmd_t5_select(args) -> dict:
     data, digest = lme.load(Path(args.data))
-    chosen = lme.select(data, args.size, args.seed)
+    chosen = t5_draw(data, args)
     counts: dict[str, int] = {}
     for q in chosen:
         counts[q["question_type"]] = counts.get(q["question_type"], 0) + 1
@@ -1121,6 +1159,7 @@ def cmd_t5_select(args) -> dict:
         "seed": args.seed,
         "by_type": counts,
         "question_ids": [q["question_id"] for q in chosen],
+        "ids_sha256": lme.ids_digest(chosen),
     }
     if args.out:
         Path(args.out).write_text(json.dumps(out, indent=1))
@@ -1133,11 +1172,22 @@ def cmd_t5_run(args) -> dict:
     question's result is a file of its own, the reader's answer is kept the moment it arrives, and
     every call is announced in the ledger first, so no call is ever made twice (a call that was
     announced and has no answer is recorded as lost and never asked again)."""
+    dry = getattr(args, "dry", False)
+    if dry and (args.reader_command or args.judge_command):
+        raise BenchmarkError("a dry run makes no reader or judge call: give no commands")
+    if dry and (getattr(args, "t6", False) or args.seed >= 20):
+        raise BenchmarkError("a dry run uses a development draw (seed 1 to 5), never a stage draw")
+    if not dry and not (args.reader_command and args.judge_command):
+        raise BenchmarkError("a real run needs --reader-command and --judge-command")
     data, digest = lme.load(Path(args.data))
-    chosen = lme.select(data, args.size, args.seed)
+    chosen = t5_draw(data, args)
+    if getattr(args, "limit", None):
+        if not dry:
+            raise BenchmarkError("--limit is for dry runs only")
+        chosen = chosen[: args.limit]
     root = Path(args.work) / f"t5-{args.arm}"
     out = Path(args.results) / "t5"
-    qdir = out / args.arm
+    qdir = out / (args.arm + ("-dry" if dry else ""))
     qdir.mkdir(parents=True, exist_ok=True)
     spent = {}
     if args.ledger and Path(args.ledger).exists():
@@ -1158,7 +1208,7 @@ def cmd_t5_run(args) -> dict:
             "-" + hashlib.sha1(item["question_id"].encode()).hexdigest()[:8]
         )  # two ids never share a file
         done = qdir / f"{qid}.json"
-        if done.exists():
+        if done.exists() and not dry:
             rows.append(json.loads(done.read_text()))
             continue
         partial = qdir / f"{qid}.answer.json"
@@ -1190,12 +1240,14 @@ def cmd_t5_run(args) -> dict:
         finally:
             system.close()
         env = agent_env(neutral, {})
-        if partial.exists():
+        if dry:
+            answer = ""  # no model call of any kind
+        elif partial.exists():
             answer = json.loads(partial.read_text())["answer"]
         elif spent.get((qid, "reader_start")):
             answer = None  # announced, never answered: lost, and not asked again
         else:
-            ledger_note(args.ledger, ev="reader_start", arm=args.arm, qid=qid)
+            announce_call(args.ledger, args.call_cap, ev="reader_start", arm=args.arm, qid=qid)
             answer = lme.ask(
                 args.reader_command, lme.reader_prompt(item, context), cwd=neutral, env=env
             )
@@ -1203,14 +1255,16 @@ def cmd_t5_run(args) -> dict:
             ledger_note(args.ledger, ev="reader_end", arm=args.arm, qid=qid)
         verdict, lost = None, answer is None
         jpartial = qdir / f"{qid}.judge.json"
-        if answer is not None:
+        if dry:
+            lost = False
+        elif answer is not None:
             if jpartial.exists():
                 reply = json.loads(jpartial.read_text())["reply"]
             elif spent.get((qid, "judge_start")):
                 reply = None  # announced, never answered: lost, and not asked again
                 lost = True
             else:
-                ledger_note(args.ledger, ev="judge_start", arm=args.arm, qid=qid)
+                announce_call(args.ledger, args.call_cap, ev="judge_start", arm=args.arm, qid=qid)
                 reply = lme.ask(
                     args.judge_command, lme.judge_prompt(item, answer), cwd=neutral, env=env
                 )
@@ -1226,6 +1280,7 @@ def cmd_t5_run(args) -> dict:
             "verdict": verdict,
             "correct": verdict is True,
             "lost_call": lost,
+            "dry": dry,
             "evidence": lme.evidence(item, context),
             "ingest_seconds": ingest_seconds,
             "index": settled,
@@ -1243,13 +1298,16 @@ def cmd_t5_run(args) -> dict:
         "seed": args.seed,
         "questions": len(rows),
         "budget_chars": args.budget_chars,
-        "reader_command": args.reader_command.split()[0],
+        "reader_command": args.reader_command.split()[0] if args.reader_command else None,
+        "dry": dry,
+        "draw": "t6" if getattr(args, "t6", False) else "t5",
+        "draw_ids_sha256": lme.ids_digest(chosen),
         "seed_seconds": seed_seconds,
         "score": lme.score(rows),
         "rows": rows,
         "finished_at": time.time(),
     }
-    file = out / f"{args.arm}-{args.size}.json"
+    file = out / f"{args.arm}-{args.size}{'-dry' if dry else ''}.json"
     file.write_text(json.dumps(result, indent=1))
     shutil.rmtree(root, ignore_errors=True)
     return {"result_file": str(file), "score": result["score"]["overall"]}
@@ -1614,14 +1672,31 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--size", type=int, default=60)
     t.add_argument("--seed", type=int, default=1)
     t.add_argument("--out")
+    t.add_argument(
+        "--t6", action="store_true", help="the stage T6 draw (leaves out the earlier draws)"
+    )
     tr = sub.add_parser("t5-run", help="ingest, retrieve, read and judge for one arm")
     tr.add_argument("--data", default=str(lme.DEFAULT_DATA))
     tr.add_argument("--arm", required=True)
     tr.add_argument("--size", type=int, default=60)
     tr.add_argument("--seed", type=int, default=1)
     tr.add_argument("--budget-chars", type=int, default=12000)
-    tr.add_argument("--reader-command", required=True)
-    tr.add_argument("--judge-command", required=True)
+    tr.add_argument("--reader-command")
+    tr.add_argument("--judge-command")
+    tr.add_argument(
+        "--t6", action="store_true", help="the stage T6 draw (leaves out the earlier draws)"
+    )
+    tr.add_argument(
+        "--dry",
+        action="store_true",
+        help="everything except the reader and judge calls (development draws only)",
+    )
+    tr.add_argument("--limit", type=int, help="dry runs: only the first N questions of the draw")
+    tr.add_argument(
+        "--call-cap",
+        type=int,
+        help="refuse any reader or judge call once the ledger holds this many (needs --ledger)",
+    )
     tr.add_argument(
         "--ledger",
         help="a durable ledger file: every reader and judge call is announced in it first",
