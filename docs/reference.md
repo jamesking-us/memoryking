@@ -177,6 +177,32 @@ Measured on the 226 distinct development questions, of which the 216 that have a
 
 Candidate limits of 96, 128 and 192 gave 75.9%, 75.5% and 75.0% for all, so the choice between 64 and 128 is within the noise of 216 scored questions (one question is 0.5 points). Capping results per session spreads a briefing over more sessions (3.6 on average before, 4.5 with a cap of 4) and loses answers; the newest-first rule helped the stale-facts benchmark and lost more on real questions. By type, all-evidence before and after: knowledge-update 93.5% and 93.5% (31 questions: no change, and none lost), multi-session 57.9% and 59.6%, single-session-assistant 96.2% and 100%, single-session-preference 53.3% and 66.7%, single-session-user 93.1% and 93.1%, temporal-reasoning 65.5% and 65.5%. Distinct sessions shown rose from 3.6 to 3.8 on average. The gain is a few questions (4 of 216 for all, 6 for any), so it is a direction, not a proof; the measured run on a fresh, larger draw beside the other products is still to do.
 
+Where the missing turns were lost. `--diagnose` runs the daemon through `tools/context_trace_serve.py`, which records the pipeline's own lists (the fused candidate order, what survived folding, the order after spreading, the items chosen with their neighbours, and what the packer kept) and assigns each missed answer-bearing turn to the first stage that lost it. On the 417 answer-bearing turns of the 216 scored questions, with the code before the change below, 88 turns of 52 questions were missed:
+
+| Question type | Turns | Missed | Not a candidate | Fused rank beyond the 32 items | Moved out by spreading | Chosen, dropped for budget |
+|---|---|---|---|---|---|---|
+| knowledge-update | 62 | 2 | 0 | 0 | 0 | 2 |
+| multi-session | 156 | 45 | 2 | 8 | 3 | 32 |
+| single-session-assistant | 26 | 0 | 0 | 0 | 0 | 0 |
+| single-session-preference | 23 | 8 | 0 | 2 | 1 | 5 |
+| single-session-user | 29 | 2 | 0 | 0 | 0 | 2 |
+| temporal-reasoning | 121 | 31 | 0 | 10 | 0 | 21 |
+| All | 417 | 88 | 2 | 20 | 4 | 62 |
+
+No turn was lost to folding of near-identical records or to the near-identical cap. Of the missed turns that were candidates, 63 stood at fused rank 1 to 32, 17 at 33 to 64, 3 at 65 to 128 and 1 at 129 to 256; 57 came from both channels, 6 from the keyword stage only and 21 from the semantic stage only. The dominant cause is the budget: a text briefing held about 11 items, and the turns it dropped were short (a median of about 300 bytes) while the items that filled the budget were long assistant turns. What the measure counts as shown: `lme.evidence` calls a turn shown when its first 80 characters (whitespace folded, lower case) occur in the briefing, so a turn counts when the start of it is there, whole or cut. No answer-bearing turn is longer than 4,096 bytes, so none was ever quoted as an excerpt before the change below; 328 of the 329 found turns were shown whole. After the change, 11 found turns are shown in part (a median of about 40% of their text), and 3 turns whose answer may well be in the quoted passage are counted as missed because the quote starts later in the turn; `--diagnose` reports both, and also the share of questions whose every turn is shown whole, which is the stricter reading of the same run.
+
+A text briefing quotes a long observation more briefly (2,500 bytes instead of 4,096; an observation that names a count keeps the full quote), so more records fit. Same 216 questions, retrieval evidence only:
+
+| Longest quote | All | Any | Whole turns only (all) | Items shown | Budget used | Single-session-assistant (26) |
+|---|---|---|---|---|---|---|
+| 4,096 bytes (before) | 75.9% | 92.1% | 75.9% | 11.2 | 97.0% | 100% |
+| 3,000 | 76.9% | 92.6% | 76.4% | 11.5 | 97.3% | 96.2% |
+| 2,500 (shipped) | 79.2% | 93.1% | 78.2% | 12.5 | 98.0% | 96.2% |
+| 2,000 | 79.6% | 93.5% | 78.2% | 13.8 | 98.2% | 92.3% |
+| 1,500 | 81.0% | 95.4% | 77.8% | 15.4 | 98.7% | 88.5% |
+
+Shorter quotes lift the figure further, but they cut the start off a few long assistant answers, which the measure then counts as lost (2 questions at 2,000 and 3 at 1,500, against the rule that no type may lose more than one), and the figure that counts only whole turns stops rising. 2,500 raises every type or leaves it unchanged except single-session-assistant, which loses one question of 26. The remaining 80 missed turns: 54 dropped for budget, 19 beyond the 32 items by fused rank, 4 moved out by spreading, 2 never a candidate, 1 quoted from later in the turn. Briefing time for the text recall rose from a median of 156 ms (p95 264) to 185 ms (p95 304) and for the 2,000-token prompt hook from 115 ms (p95 206) to 136 ms (p95 220), because more long records are read as passages (20 questions, 3 repeats each, a shared host).
+
 #### Scale
 
 `tools/scale_regression.py` builds a local store of N observations and times capture (200 captures), drain per queued job, briefing for a 3-term and a 20-term query (30 each), `status`, reindex (the bounded call and the whole rebuild), backup and restore, then writes a JSON report. Every observation goes through the real capture path (validation, authorization, event, blob, anchors, lexical index and statistics, projection job), about 120 words each from a Zipf-like vocabulary, with a drain between batches as the daemon does; none is inserted behind the store's back. The one shortcut is durability: `fsync` and SQLite's `synchronous` are off while building, and on again for every timed step. `fixtures/evaluation/scale-budgets.json` holds a budget per figure and size, set to roughly two and a half times the measurement so that it catches a step change on a loaded host; `--check` fails past a budget and whenever a single capture, drain call, briefing, `status` or the reindex call takes five seconds or more. `tools/local_ci.py` runs the 20,000-observation size as the `scale` step (about five minutes); `tools/check.py` does not.

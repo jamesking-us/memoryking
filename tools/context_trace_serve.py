@@ -95,7 +95,11 @@ def wrap_pack(original):
     def pack_rendered(*args, **kwargs):
         raw, used, selected, omitted = original(*args, **kwargs)
         state["packed"] = [
-            {"ref": i.get("reference"), "start": i.get("excerpt_start_byte"), "end": i.get("excerpt_end_byte")}
+            {
+                "ref": i.get("reference"),
+                "start": i.get("excerpt_start_byte"),
+                "end": i.get("excerpt_end_byte"),
+            }
             for i in selected
         ]
         state["omitted"] = omitted

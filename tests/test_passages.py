@@ -13,7 +13,7 @@ import test_knowledge as knowledge
 import test_postgres_parity as pg
 from test_lexical_search import LexicalCases
 
-from memoryking.adapters.retrieval import Retrieval
+from memoryking.adapters.retrieval import TEXT_EXCERPT_BYTES, Retrieval
 from memoryking.domain.duplicates import (
     contained,
     duplicate_clusters,
@@ -307,6 +307,23 @@ class PassageCases(LexicalCases):
         self.assertEqual(item["text"], fetched["excerpt"])
         self.assertEqual(item["source_bytes"], fetched["source_bytes"])
         self.assertEqual(1, [g["reference"] for g in packet["guidance"]].count(target))
+
+    def test_a_text_briefing_quotes_a_long_observation_more_briefly(self):
+        # A text briefing that names no count is limited by its budget, so a long record is
+        # quoted in fewer bytes (and more records fit); naming a count keeps the full quote.
+        target = self.capture("long", "Kafka rebalance storm notes for the service. " * 400)
+        self.capture("note", "Unrelated hiring plan.")
+        query = "service kafka rebalance storm"
+        structured = next(g for g in self.brief(query)["guidance"] if g["reference"] == target)
+        full = structured["excerpt_end_byte"] - structured["excerpt_start_byte"]
+        self.assertGreater(full, TEXT_EXCERPT_BYTES)
+        sentence = "Kafka rebalance storm notes for the service."
+        shown = {}
+        for name, extra in (("text", {}), ("counted", {"top_k": 8})):
+            text = self.brief(query, format="text", **extra)["text"]
+            shown[name] = text.count(sentence) * len(sentence)
+        self.assertLessEqual(shown["text"], TEXT_EXCERPT_BYTES)
+        self.assertGreater(shown["counted"], TEXT_EXCERPT_BYTES)
 
     def test_a_long_capture_holding_the_answer_is_not_buried_by_its_length(self):
         # Scored as one document, a 25 KB capture is all but invisible next to short notes;

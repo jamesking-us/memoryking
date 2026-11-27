@@ -75,6 +75,7 @@ DEFAULT_FUSION: dict[str, Any] = {
     "lexical": 1,
     "dense": 1,
 }
+TEXT_EXCERPT_BYTES = 2500  # longest quote of one observation in a text briefing that names no count
 NEIGHBOURS = 2  # turns on each side of a shown result that may fill what is left of a budget
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
 FILL_LIMIT = 32  # items a text briefing may hold when the caller names no count (the maximum)
@@ -1360,6 +1361,13 @@ class Retrieval:
         )
         considered = [o for o in dict.fromkeys(pool) if o not in corrected]
         rows = self.s.observation_rows(who["tenant"], considered)
+        # A text briefing that names no count is limited by its budget, so it quotes a long
+        # observation more briefly and holds more of them.
+        quoted = (
+            TEXT_EXCERPT_BYTES
+            if args.get("format") == "text" and args.get("top_k") is None
+            else EXCERPT_BYTES
+        )
         for observation in considered:
             row = rows.get(observation)
             if row is None or not self.s._visible(who, row, at):
@@ -1381,7 +1389,7 @@ class Retrieval:
             # Only a long observation is read as passages: to quote the one that answers,
             # and (lexical-v2 rescue) to score a long capture by its best passage when that
             # beats the whole, which length normalisation would otherwise bury.
-            parts = split(full) if len(raw) > EXCERPT_BYTES else []
+            parts = split(full) if len(raw) > quoted else []
             passage_scores = [0] * len(parts)
             if parts and (score or lexical_current):
                 passage_scores = [scorer(full[p.start : p.end]) for p in parts]
@@ -1412,7 +1420,7 @@ class Retrieval:
                         )
                         for value, text in zip(passage_scores, folded, strict=True)
                     ]
-            first, last = quote(full, parts, passage_scores) if parts else (0, len(full))
+            first, last = quote(full, parts, passage_scores, quoted) if parts else (0, len(full))
             excerpt_text = full[first:last]
             offset = len(full[:first].encode())
             if score or observation in dense_scores:

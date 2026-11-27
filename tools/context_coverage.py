@@ -35,7 +35,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -125,6 +124,21 @@ def bucket(rank: int) -> str:
     return next((name for top, name in RANK_BUCKETS if rank <= top), ">256")
 
 
+def holder(rows: list[dict], size: int, stored: str) -> dict | None:
+    """The recorded item that is this turn (same stored size, and its quoted start is in the turn)."""
+    return next(
+        (
+            r
+            for r in rows
+            if r["single"]
+            and r["source_bytes"] is not None
+            and abs(r["source_bytes"] - size) <= 2
+            and r["head"] in stored
+        ),
+        None,
+    )
+
+
 def diagnose(item: dict, context: str, trace: dict) -> list[dict]:
     """For every answer-bearing turn: whether `lme.evidence` counts it as shown and, when not,
     the first stage of the pipeline that lost it, read from the recorded lists of the pipeline
@@ -148,19 +162,6 @@ def diagnose(item: dict, context: str, trace: dict) -> list[dict]:
             stored = lme.norm(f"{turn['role']}: {turn['content']}")
             size = len(f"{turn['role']}: {turn['content']}".encode())
 
-            def mine(rows):
-                return next(
-                    (
-                        r
-                        for r in rows
-                        if r["single"]
-                        and r["source_bytes"] is not None
-                        and abs(r["source_bytes"] - size) <= 2
-                        and r["head"] in stored
-                    ),
-                    None,
-                )
-
             found = lme.norm(turn["content"])[: lme.PREFIX] in seen
             share = window_share(turn["content"], seen)
             record = {
@@ -170,8 +171,8 @@ def diagnose(item: dict, context: str, trace: dict) -> list[dict]:
                 "whole_shown": share == 1.0,
                 "cause": None,
             }
-            entry = mine(ranked)
-            near = mine(beside)
+            entry = holder(ranked, size, stored)
+            near = holder(beside, size, stored)
             if entry:
                 record.update(
                     rank=entry["rank"],
@@ -310,7 +311,9 @@ def misses(rows: list[dict]) -> dict:
         "missed_candidate_stage": {
             "lexical_and_dense": sum(1 for g in lost if g.get("in_lexical") and g.get("in_dense")),
             "lexical_only": sum(1 for g in lost if g.get("in_lexical") and not g.get("in_dense")),
-            "dense_only": sum(1 for g in lost if "rank" in g and not g["in_lexical"] and g["in_dense"]),
+            "dense_only": sum(
+                1 for g in lost if "rank" in g and not g["in_lexical"] and g["in_dense"]
+            ),
         },
         "measure": {
             "turns_over_4096_bytes": len(long),
