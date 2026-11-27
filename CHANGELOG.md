@@ -10,7 +10,7 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 - The session-end hook asks Codex for 3 seconds, the limit Codex applies, so Codex no longer prints `clamping SessionEnd hook timeout to 3s`. Claude Code and Grok keep their limits. To stay inside 3 seconds when the daemon has to be started first (about 2 seconds with semantic search on), the Codex session-end hook records its work and returns in about 0.1 second while a background process stores the capture; a record left by a killed hook or worker is finished at the next session start. The details and what can still be lost are in the [agent guide](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md#codex).
 - A Codex session with no transcript file (`--ephemeral`) is captured as nothing, and the hooks exit 0.
 - When Codex's `config.toml` already has a `[mcp_servers.memoryking]` entry, setup still leaves it alone, and now says that it kept the entry, that the new hooks belong to this project and store while the entry may point at another, and how to fix that.
-- The agent guide states what has been checked on a real Codex (CLI 0.166.0 on Ubuntu) and what has not: the pre-compaction hook, long sessions at session end, and Codex on Windows and macOS.
+- The agent guide states what has been checked on a real Codex (CLI 0.166.0 on Ubuntu) and what has not: the start hook after a compaction, long sessions at session end, and Codex on Windows and macOS.
 
 ### Stopping the daemon
 

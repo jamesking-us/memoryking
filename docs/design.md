@@ -64,7 +64,7 @@ flowchart LR
     E[Session ends] -->|session-end hook: capture| M
 ```
 
-**The four moments.** Claude Code, Codex and Grok all run command hooks. MemoryKing ships one command for each moment (`memoryking hook session-start`, `prompt`, `pre-compact` and `session-end`, in `hook_cli.py` and `host_hooks.py`), and `memoryking setup` installs them under the same agent credential as the tool bridge. On Codex CLI 0.166.0 (Ubuntu) the start, prompt and session-end hooks, the briefings and the capture were checked in real sessions; the pre-compaction hook on Codex, Codex on Windows and macOS, and long sessions at session end are not verified (see [the agent guide](agent-guide.md#codex)).
+**The four moments.** Claude Code, Codex and Grok all run command hooks. MemoryKing ships one command for each moment (`memoryking hook session-start`, `prompt`, `pre-compact` and `session-end`, in `hook_cli.py` and `host_hooks.py`), and `memoryking setup` installs them under the same agent credential as the tool bridge. On Codex CLI 0.166.0 (Ubuntu) the start, prompt, pre-compaction and session-end hooks, the briefings and the captures were checked in real sessions; the start hook after a compaction on Codex, Codex on Windows and macOS, and long sessions at session end are not verified (see [the agent guide](agent-guide.md#codex)).
 
 | Moment | What the hook does |
 | --- | --- |
