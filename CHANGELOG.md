@@ -4,6 +4,11 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Stopping the daemon
+
+- `memoryking stop` could fail with `daemon_stop_failed` on a busy machine and then leave the daemon running. A stop signal that arrived at the moment the daemon was starting a thread for a connection (the stop command's own liveness check is such a connection) was lost, because the accept thread released the connection's worker slot twice and the resulting error replaced the interrupt. The slot is now given back exactly once. Under load, 4 and 5 of 40 runs of the setup test failed before and none of 40 after.
+- A daemon that has exited but is not yet collected by its parent (an orphan waits for the machine's or container's init, which may be slow or never collect) now counts as stopped instead of making `stop` wait out its 15 seconds.
+
 ### A briefing shows more of an answer that is spread over sessions
 
 - A text briefing now fills what is left of its budget with the turns beside the results it shows: up to two records on each side of a shown observation, from the same conversation (same project, source and actor, each observed within 30 minutes of the one before), nearest first. They are only filler: they never take a place from a ranked result, they are read through the same authorization as a search (a record that is held, purged, in another project or source, or not readable by the reader is never added), and a briefing with a count (`top_k` or `limit`), an `offset`, `match: "all"`, a `file` or a score floor, such as the prompt hook's, is unchanged. [Details](https://github.com/jamesking-us/memoryking/blob/main/docs/design.md)

@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from memoryking.adapters.local_ipc import Server
@@ -81,6 +82,35 @@ class BusyDaemonTests(unittest.TestCase):
         for stream in holders:
             self.assertEqual(b'{"ok":true}\n', self.reply(stream)[0])
         self.assertEqual(b'{"ok":true}\n', self.reply(self.connect())[0])
+
+    def test_a_stop_signal_that_lands_while_a_worker_starts_still_stops_the_daemon(self):
+        # SIGTERM is delivered as KeyboardInterrupt on the accept thread. When it lands just after
+        # the worker thread started, that thread owns the slot: the accept thread's cleanup must
+        # not release it too. A second release raised ValueError, which replaced the interrupt, so
+        # the accept loop carried on and the daemon never stopped (`daemon_stop_failed`).
+        import socketserver
+
+        real = socketserver.ThreadingMixIn.process_request
+
+        def interrupted(server, request, client_address):
+            real(server, request, client_address)  # the worker thread is started
+            raise KeyboardInterrupt
+
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        self.blocking.release.set()
+        with unittest.mock.patch.object(
+            socketserver.ThreadingMixIn, "process_request", interrupted
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.server.process_request(left, "")
+        deadline = time.monotonic() + 5
+        while self.server.saturation()["local_workers"][1] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        # Every slot is back, once: the limit is neither exceeded nor leaked.
+        self.assertEqual(0, self.server.saturation()["local_workers"][1])
+        self.assertEqual(self.server.max_concurrent, self.server.slots._value)
 
 
 if __name__ == "__main__":

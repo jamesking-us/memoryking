@@ -93,9 +93,17 @@ class PgvectorTests(DenseCases, NativeFixture):
                 0,
             )
 
+    def unhurried(self):
+        """Stop the store's clock, so that the five seconds a request has between authorization
+        and delivery (`release_expired`) cannot run out while a loaded machine works through the
+        thousand-row fixture or the scan over it. What these tests check is which vectors the
+        search returns, not how fast it is; the deadline has its own tests (test_retrieval)."""
+        self.clock()
+
     def fill(self, count, hidden_to):
         """`count` synthetic observations whose vectors lean toward the query direction more
         the lower their number; the first `hidden_to` are readable by the owner only."""
+        self.unhurried()
         config = self.configure()
         with self.store.transaction():
             original = dict(
