@@ -17,6 +17,7 @@ import os
 import socket
 import socketserver
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn
 
@@ -48,6 +49,18 @@ def reap(pid: int) -> None:
         pass
 
 
+def _zombie(pid: int) -> bool:
+    """True when `pid` has exited and only waits to be collected by its parent. `kill(pid, 0)`
+    succeeds for such a process, and an orphan stays one until the container's or the machine's
+    init collects it, which a process 1 that does not reap (a shell, `sleep infinity`) never
+    does. Where /proc has no answer (macOS) the process counts as alive, as before."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    return stat.rpartition(")")[2].strip()[:1] in ("Z", "X")
+
+
 def process_alive(pid: int) -> bool:
     """Whether process `pid` exists. On POSIX `kill(pid, 0)`, as before. On Windows signal
     0 is CTRL_C_EVENT, which `os.kill` would send to the whole console group (this process
@@ -57,7 +70,7 @@ def process_alive(pid: int) -> bool:
             os.kill(pid, 0)
         except OSError:
             return False
-        return True
+        return not _zombie(pid)
     import ctypes
 
     kernel = ctypes.windll.kernel32  # type: ignore[attr-defined,unused-ignore]

@@ -53,9 +53,11 @@ from memoryking.domain.checkpoint import complete
 from memoryking.domain.lexicon import STOP, analyze
 from memoryking.domain.local import LocalError
 from memoryking.domain.names import name_first
+from memoryking.domain.preference import MAX_PER_CAPTURE, accepted_proposals, evidence
 from memoryking.domain.preference import preferences as recognised_preferences
 from memoryking.domain.provenance import (
     HOST_CAPTURE,
+    QUOTE_WORDS,
     QUOTED_PREFIX,
     TOOL_ERROR_PREFIX,
     QuoteIndex,
@@ -282,7 +284,7 @@ def _results(value: Any, out: list[str], names: dict[str, str]) -> None:
             _results(item, out, names)
 
 
-def third_party_index(path: str | Path | None) -> QuoteIndex:
+def third_party_index(path: str | Path | None, words: int = QUOTE_WORDS) -> QuoteIndex:
     """The words of every tool result in the transcript tail (see `provenance.QuoteIndex`)."""
     raw = _read(path)
     texts: list[str] = []
@@ -294,7 +296,7 @@ def third_party_index(path: str | Path | None) -> QuoteIndex:
                 _results(json.loads(line), texts, names)
             except ValueError:
                 continue
-    return QuoteIndex([scrub(t)[0] for t in texts])
+    return QuoteIndex([scrub(t)[0] for t in texts], words)
 
 
 def _read(path: str | Path | None) -> str | None:
@@ -1050,15 +1052,58 @@ def _save_state(
     )
 
 
+SHARED_WORDS = (
+    6  # a proposal that shares this many consecutive words with a tool result is not kept
+)
+
+
+def accepted_pairs(
+    path: str | Path | None, quotes: tuple[QuoteIndex, list[str]]
+) -> list[tuple[str, str]]:
+    """(the assistant's sentence, the user's accepting words) for each standing preference the
+    assistant proposed and the user's next turn accepted (`domain/preference.py`).
+
+    Only conversation text is read: tool-call inputs and successful tool results are never part
+    of it, a copied span of a tool result is replaced by a marker (which makes the turn
+    ineligible), and a sentence that shares a short run of words with any tool result of the
+    session is dropped."""
+    raw = _read(path)
+    if raw is None:
+        return []
+    pieces, parsed = _pieces(raw)
+    if not parsed:
+        return []
+    clean: list[str] = []
+    for piece in pieces:
+        text = scrub(piece)[0]
+        if quotes[0] and piece.startswith("Assistant: "):
+            text = split_quotes(text, quotes[0])[0]
+        clean.append(text)
+    pairs = accepted_proposals(clean)
+    if not pairs:
+        return []
+    shared = third_party_index(path, SHARED_WORDS)
+    return [(said, accepted) for said, accepted in pairs if not shared.shares(said)]
+
+
 def _keep_preferences(
-    turns: str, host: str, socket: Path, credential: Any, project: str, where: dict[str, Any]
+    turns: str,
+    host: str,
+    socket: Path,
+    credential: Any,
+    project: str,
+    where: dict[str, Any],
+    pairs: list[tuple[str, str]] | None = None,
 ) -> int | str:
-    """Capture each standing preference recognised in the user's turns in their own scope; the
-    number captured, or why none was (a credential that acts for no user is not an error)."""
-    found = recognised_preferences(turns)
+    """Capture each standing preference recognised in the user's turns, and each the assistant
+    proposed and the user accepted (`pairs`), in their own scope; the number captured, or why
+    none was (a credential that acts for no user is not an error)."""
+    found = [
+        (recognised, f"user-{host}-preference") for recognised in recognised_preferences(turns)
+    ]
+    found += [(evidence(*pair), f"user-{host}-accepted-preference") for pair in pairs or []]
     kept = 0
-    source = f"user-{host}-preference"
-    for sentence in found:
+    for sentence, source in found[:MAX_PER_CAPTURE]:
         # One key per sentence, so saying it again in any session is a replay of the same record
         # and not a second copy in the briefing. A key whose record the user has since forgotten
         # cannot be used again, so a sentence said once more after a forget takes the next key.
@@ -1167,7 +1212,13 @@ def save(
         summary["user_observation"] = said.get("observation")
         if not said.get("held") and user_preferences_wanted(user_preferences):
             summary["user_preferences"] = _keep_preferences(
-                turns, name, socket, _credential(where), project, where
+                turns,
+                name,
+                socket,
+                _credential(where),
+                project,
+                where,
+                [] if result.get("held") else accepted_pairs(event.get("transcript"), quotes),
             )
     tool_text = "\n\n".join(p for p in [tool_text, *dict.fromkeys(quotes[1])] if p)
     if tool_text:
