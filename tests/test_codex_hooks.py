@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from memoryking import hook_spool, host_hooks, profiles
+from memoryking import hook_spool, host_hooks
 from memoryking.adapters.platform_support import LOCAL_STORE_SUPPORTED
 
 WORD = "zebrafishquartz"
@@ -377,7 +377,7 @@ class CodexSessionTests(Base):
                 "no_user_preferences": False,
             },
         )()
-        for number in range(hook_spool.TRIES):
+        for _number in range(hook_spool.TRIES):
             self.assertTrue(record.exists())
             self.assertEqual(1, hook_spool.finish(worker, record))
         self.assertFalse(record.exists())
