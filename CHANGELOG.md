@@ -4,6 +4,14 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Codex
+
+- `memoryking setup codex`, `--remove`, `--dry-run` and `memoryking hooks install --host codex --scope user` now follow `CODEX_HOME` (Codex's own setting) for `config.toml` and `hooks.json` when it is set and not empty, and `~/.codex` otherwise. `--remove` also looks in `~/.codex`, so files written by an earlier version are still undone. A project's `.codex/hooks.json` does not move.
+- The session-end hook asks Codex for 3 seconds, the limit Codex applies, so Codex no longer prints `clamping SessionEnd hook timeout to 3s`. Claude Code and Grok keep their limits. To stay inside 3 seconds when the daemon has to be started first (about 2 seconds with semantic search on), the Codex session-end hook records its work and returns in about 0.1 second while a background process stores the capture; a record left by a killed hook or worker is finished at the next session start. The details and what can still be lost are in the [agent guide](https://github.com/jamesking-us/memoryking/blob/main/docs/agent-guide.md#codex).
+- A Codex session with no transcript file (`--ephemeral`) is captured as nothing, and the hooks exit 0.
+- When Codex's `config.toml` already has a `[mcp_servers.memoryking]` entry, setup still leaves it alone, and now says that it kept the entry, that the new hooks belong to this project and store while the entry may point at another, and how to fix that.
+- The agent guide states what has been checked on a real Codex (CLI 0.166.0 on Ubuntu) and what has not: the pre-compaction hook, long sessions at session end, and Codex on Windows and macOS.
+
 ### A briefing shows more of an answer that is spread over sessions
 
 - A text briefing now fills what is left of its budget with the turns beside the results it shows: up to two records on each side of a shown observation, from the same conversation (same project, source and actor, each observed within 30 minutes of the one before), nearest first. They are only filler: they never take a place from a ranked result, they are read through the same authorization as a search (a record that is held, purged, in another project or source, or not readable by the reader is never added), and a briefing with a count (`top_k` or `limit`), an `offset`, `match: "all"`, a `file` or a score floor, such as the prompt hook's, is unchanged. [Details](https://github.com/jamesking-us/memoryking/blob/main/docs/design.md)
