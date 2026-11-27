@@ -31,13 +31,13 @@ Post: operating system and version, Python version, Codex version (`codex --vers
 
 ### Phase 2: one session remembers, the next recalls (project `scratch-a`)
 1. Session 1: tell the agent two or three made-up project facts in plain words (for example a deploy command and a naming rule), and end the session normally.
-2. Check with the MemoryKing CLI (`memoryking recent`, `memoryking status`, with the same data directory) what was captured, by which hook, under which source label. Post counts and labels, not text.
+2. Check with the MemoryKing CLI (`memoryking status` and `memoryking recall`; `memoryking --help` lists the rest) what was captured, by which hook, under which source label. Post counts and labels, not text.
 3. Session 2 (a new session in the same directory): does the session-start briefing reach the model? Ask a question that needs one of the facts, without telling it to use memory. Post: did the start hook run, was its output put into the model's context, did the prompt hook run on your question and add a briefing, did the agent answer correctly, and did it call any `memoryking` tool by itself.
 4. Ask the agent to save one more fact with the memory tool, and to recall it; post whether the tool calls succeeded and how Codex named the tools.
 
 ### Phase 3: a preference follows the user to another project
 1. In `scratch-a`, in a session, say one sentence of this kind in your own words: "In all my projects I want dates written as ISO 8601." End the session.
-2. `memoryking setup codex --project scratch-b` with the same data directory, in the second scratch directory. Start a session there and ask it to write today's date in a file header. Post whether the start briefing carried the preference and whether the agent followed it, and what `memoryking` lists under memory about the user.
+2. `memoryking setup codex --project scratch-b` with the same data directory, in the second scratch directory. Start a session there and ask it to write today's date in a file header. Post whether the start briefing carried the preference and whether the agent followed it, and what `memoryking user` shows as memory about the user (counts and labels).
 3. Also in `scratch-b`: confirm that the made-up project facts of `scratch-a` did **not** appear.
 
 ### Phase 4: compaction, and removal
