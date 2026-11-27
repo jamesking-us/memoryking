@@ -355,7 +355,7 @@ T5b-1. The `memoryking` adapter has an explicit option `semantic` (and `via_daem
 
 ## Stage T6: track T5 again on questions nobody has used, four arms including the released 0.2.0
 
-**Declared before the first call of this stage and not changed after any result is seen.** Commit under test and declaration time: **TO BE FILLED IN AT THE GO-AHEAD BY THE COORDINATING SESSION (full commit hash, UTC time; nothing in this section may change after that line is written).**
+**Declared before the first call of this stage and not changed after any result is seen.** Commit under test and declaration time: **the product code is that of commit `83f6ff90bf5b1d76d99cb46a98f248be970101ee` on `main`; this line was written 2026-11-27 19:46 UTC, after the owner's go-ahead for 960 calls and before any call, and it is the only change in the commit that follows that one, from which the run is started. Nothing in this section changes after it.**
 
 **Why this stage exists.** Stages [T5](results/2026-11-23-t5-99b1410.md) and [T5b](results/2026-11-23-t5b-semantic-c79e1a1.md) asked one draw of 60 questions (seed 20). Since then MemoryKing's retrieval was changed (roadmap item P7-2), tuned on development draws (seeds 1 to 5, 226 distinct questions). A fair test of that change needs questions that were neither used for tuning nor already published, and it needs the released product beside it: **was the change worth it, measured on the same footing as a product anyone can install?** The owner has approved this stage. It follows the protocol of [Track T5](#track-t5), [stage T5](#stage-t5-question-answering-on-longmemeval-s-beside-other-products) and [stage T5b](#stage-t5b-track-t5-again-for-memoryking-with-semantic-search-on) with the choices below, all made now.
 
