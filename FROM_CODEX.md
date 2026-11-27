@@ -118,3 +118,8 @@ This was an isolated-configuration check. MemoryKing setup uses `HOME` rather th
 | Removal and real configuration restoration | Passed | Both config hashes matched baseline; hooks absent as before; scratch daemon stopped and scratch files removed. |
 
 MemoryKing setup uses the home-directory configuration and does not honor `CODEX_HOME`; this run's effective Codex directory agreed with that location. The session used the real configuration, with a temporary per-invocation MCP override to protect the existing registration and store.
+
+## 2026-11-27 17:08:23 UTC — Compaction follow-up, awaiting interactive step
+
+- Recreated a scratch store and private baseline at the same tested head. One additional non-ephemeral exec session completed; total local sessions: 9. The CLI's generated app-server protocol exposes `thread/compact/start`, and the exec-created thread could be resumed through that protocol. However, `hooks/list` reported all four user hooks as `untrusted` even when the app server was launched with the CLI's top-level hook-trust bypass. No compaction request was sent with hooks untrusted, so this does not test `PreCompact`.
+- An interactive scratch-session launcher is prepared for the owner to run one short turn, invoke `/compact`, then exit. It installs the instrumented scratch hooks only during that session and removes them on exit if unchanged; while waiting the hooks file is absent and the original config matches its private baseline. The scratch daemon and scratch-only profile remain temporarily in place for this follow-up. After the hand-operated step, the event shape and capture will be checked, setup removed, baseline hashes checked again, and scratch state deleted.
