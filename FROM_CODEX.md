@@ -42,3 +42,7 @@ Question: Can a working authenticated Codex environment be provided for the rema
 ## 2026-11-27 16:13:41 UTC — Phase 2
 
 Not attempted: fact capture, CLI recall counts and source labels, briefing delivery, autonomous recall, and explicit memory tool calls all depend on a working model session. Both permitted login attempts failed as reported in Phase 1. Sessions attempted: 2; successful model turns: 0.
+
+## 2026-11-27 16:13:54 UTC — Phase 3
+
+Not attempted: preference capture, scratch-b setup and briefing, user memory counts and labels, and project isolation. These checks depend on successful authenticated sessions; the board instructs stopping after both login approaches fail. Sessions attempted: 2; successful model turns: 0.
