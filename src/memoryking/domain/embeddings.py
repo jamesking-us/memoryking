@@ -76,6 +76,7 @@ class EmbeddingBatch:
     input_hashes: list[str]
     input_tokens: int | None
     truncated: list[bool]
+    input_token_counts: list[int] | None = None  # per text, when the provider knows them
 
     def validate(self, expected: str, dimensions: int, inputs: list[str]) -> None:
         if self.fingerprint != expected or self.dimensions != dimensions:

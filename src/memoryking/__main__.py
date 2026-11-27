@@ -104,10 +104,18 @@ def semantic_line(semantic: dict[str, Any]) -> str:
         if not item["current_model"] or item["state"] != "experimental":
             continue
         done = item["percent_indexed"]
-        parts.append(
-            f"{item['project']} {item['vectors']:,} vectors"
-            + ("" if done >= 100 else f", {done}% indexed")
+        text = f"{item['project']} {item['vectors']:,} vectors" + (
+            "" if done >= 100 else f", {done}% indexed"
         )
+        if item.get("records_left"):
+            text += f" ({item['records_left']:,} of {item['records']:,} records left"
+            if "estimated_seconds" in item:
+                text += (
+                    f", about {duration(item['estimated_seconds'] * 1000)} at "
+                    f"{item['records_per_minute'] / 60:.1f} a second"
+                )
+            text += ")"
+        parts.append(text)
     return f"{semantic.get('model')}: " + ("; ".join(parts) if parts else "no project enabled yet")
 
 

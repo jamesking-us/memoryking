@@ -31,6 +31,27 @@ export interface Fail {
   duration_ms: number;
 }
 
+export interface ClaimBatch {
+  project: string;
+  fingerprint: string;
+  count: number;
+}
+
+export interface CompleteItem {
+  lease: string;
+  fingerprint: string;
+  input_hash: string;
+  vector: Array<number>;
+  input_tokens: number | null;
+  truncated: boolean;
+  duration_ms: number;
+}
+
+export interface CompleteBatch {
+  project: string;
+  items: Array<CompleteItem>;
+}
+
 export interface Command0 {
   version: 1;
   incarnation: string;
@@ -63,8 +84,22 @@ export interface Command3 {
 export interface Command4 {
   version: 1;
   incarnation: string;
+  action: "claim_batch";
+  args: ClaimBatch;
+}
+
+export interface Command5 {
+  version: 1;
+  incarnation: string;
+  action: "complete_batch";
+  args: CompleteBatch;
+}
+
+export interface Command6 {
+  version: 1;
+  incarnation: string;
   action: "status";
   args: Partition;
 }
 
-export type EmbeddingCommand = Command0 | Command1 | Command2 | Command3 | Command4;
+export type EmbeddingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6;

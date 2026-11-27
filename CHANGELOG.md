@@ -4,6 +4,13 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+### Semantic indexing keeps up with a real history
+
+- Indexing an existing store for search by meaning is about 3.5 times faster: 500 chat turns of mixed length took about 71 seconds and now take about 20 on a four-CPU machine (7.0 and 24.6 records a second, medians of four runs each, measured with the new `tools/indexing_benchmark.py`). The daemon's indexing now takes up to 16 records per model pass, stores their vectors in one transaction, runs two worker threads so that claiming and storing overlap the model, and lets the model use one fewer thread than the machine has cores (one to four). The vectors are identical to the ones made one record at a time, the search model and its 512-token reading are unchanged, and the retrieval and evidence-recall gates give the same figures.
+- `MEMORYKING_EMBEDDING_THREADS` sets the model's threads (a value of 1 restores the old load). While a backlog is indexed a briefing takes about 0.35 s at the median and at most 0.73 s of 50 (0.1 s when nothing is indexing), against 0.23 s and 0.5 s before; the bound and the figures are in the [reference](https://github.com/jamesking-us/memoryking/blob/main/docs/reference.md#indexing-speed). A briefing's own question goes to the model before the next batch of records.
+- `memoryking status` and `memoryking semantic status` show how many records of a project are indexed, how many are left, and the time left at the speed the daemon has measured.
+- The embedding worker for the shared PostgreSQL profile (`memoryking-embedding-worker`) takes `--count` (records per run, 16 by default) and `--until-idle`, and uses new `claim_batch` and `complete_batch` actions of the embedding contract. A record purged while its batch is in flight gets no vector. The error hint for `concurrency_limit` no longer says "four".
+
 ### Releasing
 
 - The release procedure is a skill in the repository (`.claude/skills/release-memoryking/SKILL.md`), corrected after its first use for 0.2.0: on Windows the release files are built inside WSL2 (a Windows build differs byte for byte), the signing consent is the owner's to type, and the logins are entered by the owner.

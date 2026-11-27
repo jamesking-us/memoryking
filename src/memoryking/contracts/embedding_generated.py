@@ -31,6 +31,24 @@ class Fail(TypedDict):
     input_tokens: int | None
     duration_ms: int
 
+class ClaimBatch(TypedDict):
+    project: str
+    fingerprint: str
+    count: int
+
+class CompleteItem(TypedDict):
+    lease: str
+    fingerprint: str
+    input_hash: str
+    vector: list[int]
+    input_tokens: int | None
+    truncated: bool
+    duration_ms: int
+
+class CompleteBatch(TypedDict):
+    project: str
+    items: list[CompleteItem]
+
 class Command0(TypedDict):
     version: Literal[1]
     incarnation: str
@@ -59,7 +77,19 @@ class Command3(TypedDict):
 class Command4(TypedDict):
     version: Literal[1]
     incarnation: str
+    action: Literal["claim_batch"]
+    args: ClaimBatch
+
+class Command5(TypedDict):
+    version: Literal[1]
+    incarnation: str
+    action: Literal["complete_batch"]
+    args: CompleteBatch
+
+class Command6(TypedDict):
+    version: Literal[1]
+    incarnation: str
     action: Literal["status"]
     args: Partition
 
-EmbeddingCommand = Command0 | Command1 | Command2 | Command3 | Command4
+EmbeddingCommand = Command0 | Command1 | Command2 | Command3 | Command4 | Command5 | Command6

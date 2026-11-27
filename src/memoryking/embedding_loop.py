@@ -31,22 +31,41 @@ class EmbeddingLoop:
         provider: Any,
         *,
         interval: float = 3.0,
-        batch: int = 50,
+        batch: int = 64,
+        records_per_call: int = 16,
+        workers: int = 2,
     ):
         self.store, self.socket, self.credential_file = store, socket, credential_file
         self.provider, self.interval, self.batch = provider, interval, batch
-        self.clients: dict[str, Any] = {}
+        self.records_per_call = max(1, min(16, records_per_call))
+        # Each worker has its own connections. While one waits for the model, the other is
+        # claiming or storing, so the model is never idle for the store (and with one worker
+        # the model idles for every claim and completion).
+        self.local = threading.local()
         self.stopping = threading.Event()
-        self.thread = threading.Thread(target=self.run, name="memoryking-embeddings", daemon=True)
+        self.threads = [
+            threading.Thread(target=self.run, name=f"memoryking-embeddings-{n}", daemon=True)
+            for n in range(max(1, min(4, workers)))
+        ]
         self.completed = 0
         self.enabled_at = 0.0
+        self.enable_lock = threading.Lock()
+
+    @property
+    def clients(self) -> dict[str, Any]:
+        if not hasattr(self.local, "clients"):
+            self.local.clients = {}
+        clients: dict[str, Any] = self.local.clients
+        return clients
 
     def start(self) -> None:
-        self.thread.start()
+        for thread in self.threads:
+            thread.start()
 
     def stop(self) -> None:
         self.stopping.set()
-        self.thread.join(timeout=10)
+        for thread in self.threads:
+            thread.join(timeout=10)
 
     def projects(self) -> list[str]:
         with self.store.lock:
@@ -58,9 +77,10 @@ class EmbeddingLoop:
 
     def enable_new_projects(self) -> None:
         """Create the missing partitions, at most once a minute and never above the limit."""
-        if monotonic() - self.enabled_at < 60:
-            return
-        self.enabled_at = monotonic()
+        with self.enable_lock:
+            if monotonic() - self.enabled_at < 60:
+                return
+            self.enabled_at = monotonic()
         with self.store.lock:
             missing = [
                 row[0]
@@ -100,7 +120,7 @@ class EmbeddingLoop:
         return self.clients[project]
 
     def tick(self) -> int:
-        from memoryking.embedding_worker import run_once
+        from memoryking.embedding_worker import run_batch
 
         done = 0
         self.enable_new_projects()
@@ -108,19 +128,17 @@ class EmbeddingLoop:
             try:
                 client = self.client(project)
                 while done < self.batch and not self.stopping.is_set():
-                    result = run_once(client, self.provider)
+                    result = run_batch(client, self.provider, self.records_per_call)
                     if result.get("status") == "idle":
                         break
-                    if (
-                        result.get("status") not in {"complete", "indexed", "ok"}
-                        and "error" in result
-                    ):
+                    if result.get("status") == "attempt_failed":
+                        event("embeddings", "attempt_failed", project=project)
+                    if result.get("status") == "reconciliation_required":
                         event(
                             "embeddings", "attempt_failed", project=project, error=result["error"]
                         )
-                        if result.get("status") == "reconciliation_required":
-                            break
-                    done += 1
+                        break
+                    done += max(1, result.get("count", 0))
             except LocalError as exc:
                 if exc.code in {"history_changed", "context_changed"}:
                     self.clients.pop(project, None)

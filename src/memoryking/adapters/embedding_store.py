@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,9 +27,20 @@ from memoryking.domain.passages import split
 # opening. The passage path is complete and tested; this is the one switch.
 EMBED_PASSAGES = False
 
+LEASE_LIMIT = 4  # live job leases one tenant may hold when claiming one job at a time
+BATCH_LEASE_LIMIT = 64  # ... and when claiming in batches
 VALIDATOR = Draft202012Validator(
     json.loads(Path(__file__).with_name("embedding.schema.json").read_text(encoding="utf-8"))
 )
+
+
+def receipt_observations(result: dict[str, Any]) -> list[str]:
+    """The observations a response delivered text of or stored a vector for, for its receipt."""
+    found = [result["observation"]] if "observation" in result else []
+    for item in [*result.get("jobs", []), *result.get("results", [])]:
+        if "observation" in item:
+            found.append(item["observation"])
+    return found
 
 
 class Embeddings:
@@ -52,8 +64,15 @@ class Embeddings:
                 result = self.configure(who, command, at)
             elif action == "claim":
                 result = self.claim(who, args, at)
+            elif action == "claim_batch":
+                result = self.claim_batch(who, args, at)
+            elif action == "complete_batch":
+                result = self.finish_batch(who, args, at)
+                self.note_rate(sum(1 for item in result["results"] if item["status"] == "complete"))
             elif action in {"complete", "fail"}:
                 result = self.finish(who, args, action == "complete", at)
+                if action == "complete":
+                    self.note_rate(1)
             else:
                 part = self.partition(who, args)
                 result = self.status(part)
@@ -78,7 +97,7 @@ class Embeddings:
                     decision.deadline_ms,
                     *epochs,
                     hashlib.sha256(raw).hexdigest(),
-                    json.dumps([result["observation"]] if "observation" in result else []),
+                    json.dumps(receipt_observations(result)),
                 ),
             )
             index_receipt(self.db, who["tenant"], receipt)
@@ -708,7 +727,8 @@ class Embeddings:
             ),
         )
 
-    def claim(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+    def prepare(self, who: dict[str, Any], args: dict[str, Any], at: int) -> Any:
+        """The partition, scheduled up to date, with expired exhausted leases retired."""
         part = self.partition(who, args)
         if part["state"] != "experimental":
             raise LocalError("embedding_disabled")
@@ -718,14 +738,68 @@ class Embeddings:
             "UPDATE embedding_jobs SET state='dead',fence=fence+1 WHERE tenant=? AND state='leased' AND lease_until<=? AND attempts>=5",
             (who["tenant"], at),
         )
-        if (
+        return part
+
+    def claim(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        part = self.prepare(who, args, at)
+        if self.live_leases(who, at) >= LEASE_LIMIT:
+            raise LocalError("concurrency_limit")
+        return self.claim_one(who, part, args, at)
+
+    def claim_batch(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        """Up to `count` jobs in one call, each with its own lease, usage attempt and fence.
+
+        Every job is claimed exactly as `claim` would hand it out; the batch only saves the
+        round trips. Fewer than asked for are returned when the queue or the lease limit runs
+        out, and none (with the status of `claim`) when there is nothing to do."""
+        part = self.prepare(who, args, at)
+        if self.live_leases(who, at) >= BATCH_LEASE_LIMIT:
+            raise LocalError("concurrency_limit")
+        jobs: list[dict[str, Any]] = []
+        while len(jobs) < args["count"] and self.live_leases(who, at) < BATCH_LEASE_LIMIT:
+            job = self.claim_one(who, part, args, at)
+            if job["job"] is None:
+                if not jobs:
+                    return {"jobs": [], **job}
+                break
+            jobs.append(job)
+        return {"jobs": jobs, "job": jobs[0]["job"] if jobs else None}
+
+    def note_rate(self, count: int) -> None:
+        """Records a second over the time since the previous completion, smoothed. A pause
+        of a minute or more is not indexing speed and starts the measure afresh."""
+        now = time.monotonic()
+        last, self.s._embedding_mark = self.s._embedding_mark, now
+        if last is None or count <= 0 or not 0 < now - last < 60:
+            return
+        sample, before = count / (now - last), self.s._embedding_rate
+        self.s._embedding_rate = sample if before is None else 0.7 * before + 0.3 * sample
+
+    def live_leases(self, who: dict[str, Any], at: int) -> int:
+        return int(
             self.db.execute(
                 "SELECT count(*) FROM embedding_jobs WHERE tenant=? AND state='leased' AND lease_until>?",
                 (who["tenant"], at),
             ).fetchone()[0]
-            >= 4
-        ):
-            raise LocalError("concurrency_limit")
+        )
+
+    def finish_batch(self, who: dict[str, Any], args: dict[str, Any], at: int) -> dict[str, Any]:
+        """Complete several leases in one transaction.
+
+        Each item is checked exactly as `complete` checks it. An item whose lease is stale or
+        whose record was purged, changed or hidden since the claim is refused on its own, with
+        its error code, and writes nothing; the others are stored."""
+        results: list[dict[str, Any]] = []
+        for item in args["items"]:
+            try:
+                results.append(self.finish(who, {"project": args["project"], **item}, True, at))
+            except LocalError as exc:
+                results.append({"status": "refused", "error": exc.code})
+        return {"results": results}
+
+    def claim_one(
+        self, who: dict[str, Any], part: Any, args: dict[str, Any], at: int
+    ) -> dict[str, Any]:
         row = self.db.execute(
             "SELECT j.* FROM embedding_jobs j JOIN observations o ON j.tenant=o.tenant AND j.observation=o.id WHERE j.tenant=? AND j.project=? AND j.fingerprint=? AND j.generation=? AND o.deleted=0 AND (o.readers='null' OR EXISTS(SELECT 1 FROM json_each(o.readers) WHERE value=?)) AND j.attempts<5 AND ((j.state='pending' AND j.available<=?) OR (j.state='leased' AND j.lease_until<=?)) ORDER BY j.position LIMIT 1",
             (
