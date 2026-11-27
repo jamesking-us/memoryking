@@ -308,6 +308,7 @@ def hook_changes(args: Any, agent_profile: str, home: Path, cwd: Path) -> tuple[
         launcher=launcher_parts(),
         tools="mcp",
         prompts=not args.no_prompt_hook,
+        preferences=not getattr(args, "no_user_preferences", False),
     )
     return Path(result["path"]), json.dumps(result["config"], indent=2) + "\n"
 
