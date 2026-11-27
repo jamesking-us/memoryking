@@ -16,6 +16,9 @@ MINUTE = 60_000
 class EpisodeCases:
     clock = 0
 
+    def tenant_id(self):
+        return getattr(self, "tenant", "main")
+
     def turn(self, key, project="q", source="chat", readers=None, at=None, text=None):
         key = "t-" + key
         self.clock += MINUTE
@@ -40,11 +43,11 @@ class EpisodeCases:
         return Episodes(self.store, who, recorded, 1)
 
     def episode(self, episodes, observation):
-        row = self.store.observation_rows("main", [observation])[observation]
+        row = self.store.observation_rows(self.tenant_id(), [observation])[observation]
         return [member["id"] for member in episodes.of(row)]
 
     def ids(self, episodes, observation, reach):
-        row = self.store.observation_rows("main", [observation])[observation]
+        row = self.store.observation_rows(self.tenant_id(), [observation])[observation]
         return [member["id"] for member in episodes.beside(row, reach)]
 
     def test_the_turns_around_a_hit_are_its_episode_nearest_first(self):
@@ -75,7 +78,7 @@ class EpisodeCases:
             self.turn("hidden", readers=["someone_else"]),
             self.turn("f"),
         )
-        Trust(self.store).hold("main", "q", held, "chat", 1)
+        Trust(self.store).hold(self.tenant_id(), "q", held, "chat", 1)
         self.store.purge(self.owner, gone)
         for start in (a, c, f):
             self.assertEqual([a, c, f], self.episode(self.episodes(), start))
@@ -84,7 +87,7 @@ class EpisodeCases:
 
     def test_a_record_captured_after_the_briefing_position_is_not_read(self):
         a, b = self.turn("a"), self.turn("b")
-        row = self.store.observation_rows("main", [b])[b]
+        row = self.store.observation_rows(self.tenant_id(), [b])[b]
         later = self.turn("later")
         episodes = self.episodes(recorded=row["position"])
         self.assertEqual([a, b], self.episode(episodes, b))
@@ -156,7 +159,7 @@ class BriefingCases(EpisodeCases):
 
     def test_a_held_or_purged_neighbour_is_never_brought_in(self):
         ids = self.talk()
-        Trust(self.store).hold("main", "q", ids["after"], "test", 1)
+        Trust(self.store).hold(self.tenant_id(), "q", ids["after"], "test", 1)
         self.store.purge(self.owner, ids["before"])
         packet, found = self.shown()
         self.assertEqual({ids["hit"], ids["later"]}, found)
