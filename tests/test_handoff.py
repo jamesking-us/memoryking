@@ -444,8 +444,14 @@ class HandoffTests(unittest.TestCase):
         helpers.WorkingTests.long_history(self)
         prepared = self.prepare()
         for preview in (True, False):
-            packet = self.view(prepared, preview=preview)
-            self.assertEqual(len(packet["operations"]), 32)
+            # 32 operations with random ids are 5,500 to 6,000 tokens: the default budget of 6000
+            # is sometimes too small (status budget_insufficient, no operations), so give room.
+            packet = self.view(prepared, preview=preview, max_output_tokens=16000)
+            self.assertEqual(
+                len(packet["operations"]),
+                32,
+                (packet["status"], packet.get("reason"), packet["usage"]["output_tokens"]),
+            )
             self.assertTrue(packet["operations_truncated"])
             self.assertIn("open-first", [op["id"] for op in packet["operations"]])
 
