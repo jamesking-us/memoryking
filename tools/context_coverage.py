@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import json
 import statistics
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -51,6 +52,18 @@ from memoryking import hooks  # noqa: E402
 
 DEVELOPMENT_SEEDS = (1, 2, 3, 4, 5)
 SIZE = 60
+TRACE_SERVE = ROOT / "tools" / "context_trace_serve.py"
+CAUSES = (
+    "not_a_candidate",  # neither the semantic nor the keyword stage returned it
+    "below_cut",  # a candidate, but fused rank puts it beyond the items a briefing may hold
+    "folded",  # replaced by a near-identical or containing record in presentation
+    "diversified",  # moved beyond the item limit by the near-identical cap
+    "spread",  # moved beyond the item limit by spreading near-equal items
+    "dropped_for_budget",  # chosen (or a neighbouring turn) but the packer left it out
+    "excerpt_only",  # packed, but what is shown does not hold the start of the turn
+    "shown_other",  # packed with its start and still not found (rendering)
+)
+RANK_BUCKETS = ((32, "1-32"), (64, "33-64"), (128, "65-128"), (256, "129-256"))
 NOTE = (
     "retrieval evidence only: whether the text of the answer-bearing turns is in the context "
     "shown; necessary for a right answer, not sufficient; no model was called"
@@ -98,12 +111,119 @@ def stage(trace: list[dict], name: str) -> dict:
     return next((t for t in trace if t.get("stage") == name), {})
 
 
-def ask(item: dict, stores: Path, budget: int) -> dict:
+def window_share(turn: str, seen: str, size: int = 40) -> float:
+    """Share of the turn's text (in windows of `size` characters) that is inside the context."""
+    text = lme.norm(turn)
+    if len(text) <= size:
+        return 1.0 if text in seen else 0.0
+    windows = [text[i : i + size] for i in range(0, len(text) - size + 1, size)]
+    return sum(1 for w in windows if w in seen) / len(windows)
+
+
+def bucket(rank: int) -> str:
+    return next((name for top, name in RANK_BUCKETS if rank <= top), ">256")
+
+
+def holder(rows: list[dict], size: int, stored: str) -> dict | None:
+    """The recorded item that is this turn (same stored size, and its quoted start is in the turn)."""
+    return next(
+        (
+            r
+            for r in rows
+            if r["single"]
+            and r["source_bytes"] is not None
+            and abs(r["source_bytes"] - size) <= 2
+            and r["head"] in stored
+        ),
+        None,
+    )
+
+
+def diagnose(item: dict, context: str, trace: dict) -> list[dict]:
+    """For every answer-bearing turn: whether `lme.evidence` counts it as shown and, when not,
+    the first stage of the pipeline that lost it, read from the recorded lists of the pipeline
+    itself (`tools/context_trace_serve.py`)."""
+    seen = lme.norm(context)
+    gold = set(item["answer_session_ids"])
+    ranked = trace.get("ranked", [])
+    folded = {r: i for i, r in enumerate(trace.get("folded", []), 1)}
+    diversified = {r: i for i, r in enumerate(trace.get("diversified", []), 1)}
+    spread = {r: i for i, r in enumerate(trace.get("spread", []), 1)}
+    packed = {p["ref"]: p for p in trace.get("packed", [])}
+    beside = trace.get("beside", [])
+    need = trace.get("need", 0)
+    out = []
+    for sid, session in zip(item["haystack_session_ids"], item["haystack_sessions"], strict=True):
+        if sid not in gold:
+            continue
+        for turn in session:
+            if not turn.get("has_answer"):
+                continue
+            stored = lme.norm(f"{turn['role']}: {turn['content']}")
+            size = len(f"{turn['role']}: {turn['content']}".encode())
+
+            found = lme.norm(turn["content"])[: lme.PREFIX] in seen
+            share = window_share(turn["content"], seen)
+            record = {
+                "bytes": size,
+                "found": found,
+                "window_share": round(share, 2),
+                "whole_shown": share == 1.0,
+                "cause": None,
+            }
+            entry = holder(ranked, size, stored)
+            near = holder(beside, size, stored)
+            if entry:
+                record.update(
+                    rank=entry["rank"],
+                    rank_bucket=bucket(entry["rank"]),
+                    in_lexical=entry["lex"] > 0,
+                    in_dense=entry["has_dense"],
+                )
+            if not found:
+                ref = (entry or near or {}).get("ref")
+                if entry is None and near is None:
+                    cause = "not_a_candidate"
+                elif ref in packed:
+                    shown_at = packed[ref]
+                    cause = "excerpt_only" if (shown_at["start"] or 0) > 0 else "shown_other"
+                elif near is not None and entry is None:
+                    cause = "dropped_for_budget"
+                elif ref not in folded:
+                    cause = "folded"
+                elif ref in spread and spread[ref] <= need:
+                    cause = "dropped_for_budget"
+                elif folded[ref] > need:
+                    cause = "below_cut"
+                elif diversified.get(ref, 0) > need:
+                    cause = "diversified"
+                else:
+                    cause = "spread"
+                record["cause"] = cause
+                if entry:
+                    record["cut_position"] = folded.get(ref)
+            out.append(record)
+    return out
+
+
+def ask(item: dict, stores: Path, budget: int, trace: bool = False) -> dict:
     root = stores_path(stores, item)
     marker = root / "seeded"
     system = arm.create_semantic()
     system.ingest = "turns"
     system.prepare(root)
+    dump = root / "trace.json"
+    if trace:
+        dump.unlink(missing_ok=True)
+        original_popen = subprocess.Popen
+
+        def traced(command, *args, **kwargs):
+            if list(command[1:3]) == ["-m", "memoryking"]:
+                command = [command[0], str(TRACE_SERVE), *command[3:]]
+                kwargs["env"] = {**kwargs["env"], "CONTEXT_COVERAGE_TRACE": str(dump)}
+            return original_popen(command, *args, **kwargs)
+
+        subprocess.Popen = traced
     started = time.perf_counter()
     seeded = marker.exists()
     try:
@@ -118,8 +238,12 @@ def ask(item: dict, stores: Path, budget: int) -> dict:
         diagnostics = system._receipt_diagnostics(capture.packet, lme.SCOPE, cred)
     finally:
         system.close()
-    trace = diagnostics.get("trace") or []
-    lexical, dense, paging = stage(trace, "lexical"), stage(trace, "dense"), stage(trace, "paging")
+        if trace:
+            subprocess.Popen = original_popen
+    recorded = json.loads(dump.read_text()) if trace else {}
+    trace_list = diagnostics.get("trace") or []
+    lexical = stage(trace_list, "lexical")
+    dense, paging = stage(trace_list, "dense"), stage(trace_list, "paging")
     found = lme.evidence(item, context)
     return {
         "id": item["question_id"],
@@ -134,6 +258,7 @@ def ask(item: dict, stores: Path, budget: int) -> dict:
         "lexical_candidates": lexical.get("visible_candidates"),
         "matched": paging.get("matched"),
         "items": len(diagnostics.get("selected") or []),
+        **({"gold": diagnose(item, context, recorded)} if trace else {}),
         "seeded_now": not seeded,
         "index_seconds": round(index_seconds, 1),
     }
@@ -162,11 +287,59 @@ def summarize(rows: list[dict], budget: int) -> dict:
     }
 
 
+def misses(rows: list[dict]) -> dict:
+    """Counts of the answer-bearing turns the measure does not find, by the stage that lost them,
+    the fused rank of those that were candidates, and how far the measure can be trusted on
+    turns shown as excerpts."""
+    turns = [(r, g) for r in rows if r.get("gold") for g in r["gold"]]
+    lost = [g for _, g in turns if not g["found"]]
+    causes = {c: sum(1 for g in lost if g["cause"] == c) for c in CAUSES}
+    ranks = {name: 0 for _, name in RANK_BUCKETS}
+    ranks[">256"] = 0
+    for g in lost:
+        if "rank_bucket" in g:
+            ranks[g["rank_bucket"]] += 1
+    found = [g for _, g in turns if g["found"]]
+    long = [g for _, g in turns if g["bytes"] > 4096]
+    return {
+        "answer_turns": len(turns),
+        "found": len(found),
+        "missed": len(lost),
+        "questions_missing_a_turn": len({r["id"] for r, g in turns if not g["found"]}),
+        "cause": causes,
+        "missed_fused_rank": ranks,
+        "missed_candidate_stage": {
+            "lexical_and_dense": sum(1 for g in lost if g.get("in_lexical") and g.get("in_dense")),
+            "lexical_only": sum(1 for g in lost if g.get("in_lexical") and not g.get("in_dense")),
+            "dense_only": sum(
+                1 for g in lost if "rank" in g and not g["in_lexical"] and g["in_dense"]
+            ),
+        },
+        "measure": {
+            "turns_over_4096_bytes": len(long),
+            "found_whole": sum(1 for g in found if g["whole_shown"]),
+            "found_by_start_only": sum(1 for g in found if not g["whole_shown"]),
+            "found_with_under_half_shown": sum(1 for g in found if g["window_share"] < 0.5),
+            "missed_but_part_shown": sum(1 for g in lost if g["window_share"] > 0),
+            "missed_but_half_or_more_shown": sum(1 for g in lost if g["window_share"] >= 0.5),
+        },
+    }
+
+
 def report(rows: list[dict], budget: int) -> dict:
     types = sorted({r["type"] for r in rows})
+    traced = any(r.get("gold") for r in rows)
     return {
         "overall": summarize(rows, budget),
         "by_type": {t: summarize([r for r in rows if r["type"] == t], budget) for t in types},
+        **(
+            {
+                "misses": misses(rows),
+                "misses_by_type": {t: misses([r for r in rows if r["type"] == t]) for t in types},
+            }
+            if traced
+            else {}
+        ),
     }
 
 
@@ -180,6 +353,11 @@ def main() -> int:
     parser.add_argument("--limit", type=int, help="only the first N questions of each draw")
     parser.add_argument(
         "--cached-only", action="store_true", help="skip questions whose store is not built yet"
+    )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="record the pipeline's own lists and report where each missed turn was lost",
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -200,7 +378,7 @@ def main() -> int:
                 continue
             draws[str(seed)].append(item["question_id"])
             if item["question_id"] not in rows:
-                rows[item["question_id"]] = ask(item, args.stores, args.budget_chars)
+                rows[item["question_id"]] = ask(item, args.stores, args.budget_chars, args.diagnose)
             print(
                 f"seed {seed} {number}/{len(chosen)} {item['question_type']} "
                 f"all={rows[item['question_id']]['all']}",
