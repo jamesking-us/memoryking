@@ -96,3 +96,25 @@ This was an isolated-configuration check. MemoryKing setup uses `HOME` rather th
 - A normal scratch-a session stated a cross-project date preference; setup for scratch-b reused the scratch store and installed scratch-b hooks. The pre-existing MCP registration again remained unchanged, and the scratch-b session used the per-invocation scratch bridge override.
 - `memoryking user show` after the preference session reported 2 user observations, 0 claims, 0 constraints, 0 held and 2 agents. Scratch-b start recall included one `user-codex-preference` item containing the preference; other briefing source counts were `user` 2, `user-codex` 1, and `codex-session` 1. After the scratch-b session, neither its start recall nor a targeted scratch-b query returned the three scratch-a fact canaries; the targeted query returned zero items.
 - In scratch-b a session created a header using the requested date convention. The start hook ran and emitted output, and the prompt hook output was suppressed for this test. This is consistent with the preference reaching the session, but the date convention is also a common default, so the header alone does not prove causal reliance on the preference. Despite the instruction not to call memory tools, Codex called `remember` and `save_progress` during this file-writing task; it did not call `recall`. Sessions used: 8.
+
+## 2026-11-27 16:54:39 UTC — Local Phase 4 and summary
+
+- Manual compaction and `PreCompact` payload/capture were not attempted: the installed noninteractive `codex exec` help exposes no manual compaction option, and the board directs an owner-operated step if an interactive session is required. Question: Can the owner run `/compact` in an interactive scratch session after scratch setup is recreated, so its `PreCompact` event and capture can be measured? No automatic-compaction or fabricated hook event is claimed as a substitute.
+- Restored the uninstrumented setup-written hooks before removal. `setup codex --remove` for scratch-a reported MCP unchanged and hooks deleted; removal for scratch-b reported MCP unchanged and hooks absent. The scratch daemon reported stopped, and its process was no longer present. Scratch projects, data, checkout, virtual environment and the newly created scratch-only profiles directory were removed.
+- Existing config and private baseline SHA-256 both `6e635916b4f7d35f80ddb88b59cac6b9cc6dba4f1abbaa7a75439693546c3f72`; byte comparison passed. `~/.codex/hooks.json` was absent both before and after. No login file was copied or moved. Since the baseline timestamp, observed changes under the Codex directory included session files, SQLite databases and sidecars, cache, plugin and automation files, rules, temporary files and root JSON/backup files; this timestamp-based inventory can include concurrent activity and does not attribute every change to these sessions. Sessions used in local run: 8.
+
+| Check | Result | Evidence or limit |
+| --- | --- | --- |
+| Local environment and noninteractive authentication | Passed | Ubuntu 26.04.1; Codex 0.166.0; authenticated exec succeeded. |
+| Test branch and Python installation | Passed | Requested head, fresh Python 3.12.14 venv. |
+| Dry run and scratch setup | Passed | Scratch store, daemon, credential and four hooks created; semantic intentionally off. |
+| Automatic MCP registration | Failed | Existing non-managed `memoryking` entry caused setup to leave it unchanged; a per-invocation override connected the scratch server. |
+| Codex hook acceptance and dispatch | Passed | User hooks file read; exec dispatched SessionStart, UserPromptSubmit and SessionEnd. PreCompact unverified. |
+| Short-session end capture and limit | Passed | Recorded user and assistant turns; measured 0.071–0.095 seconds in three normal sessions including wrapper. Long sessions untested. |
+| Start and prompt briefing delivery | Passed | Each independently supported correct answers with the other hook's stdout suppressed. |
+| Explicit memory tools | Passed | `memoryking` server `remember` and `recall` succeeded; `save_progress` also called. |
+| Preference and project isolation | Passed with limit | Preference appeared in scratch-b start recall; header followed format; scratch-a canaries absent. Header alone cannot establish causal reliance. |
+| Manual compaction and PreCompact shape | Not attempted | Requires the requested owner-operated interactive step. |
+| Removal and real configuration restoration | Passed | Both config hashes matched baseline; hooks absent as before; scratch daemon stopped and scratch files removed. |
+
+MemoryKing setup uses the home-directory configuration and does not honor `CODEX_HOME`; this run's effective Codex directory agreed with that location. The session used the real configuration, with a temporary per-invocation MCP override to protect the existing registration and store.
