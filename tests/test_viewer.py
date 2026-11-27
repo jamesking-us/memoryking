@@ -16,9 +16,10 @@ from test_local_store import FakeClock, delivered, observation
 
 from memoryking.adapters.local_ipc import StoreOperations
 from memoryking.adapters.local_store import LocalStore
+from memoryking.adapters.platform_support import unix_stream_socket
 from memoryking.application.retention import release_receipts
 from memoryking.application.viewer import AUDIENCE, READ_KEYS, Viewer
-from memoryking.contracts.canonical import canonical_hash
+from memoryking.contracts.canonical import canonical_bytes, canonical_hash
 from memoryking.domain.local import LocalError
 
 SESSION = "a" * 64
@@ -466,6 +467,28 @@ class SQLiteViewerTests(ViewerCases, unittest.TestCase):
                         dict(lease_id=lease["lease_id"], session_ref=SESSION),
                     )["closed"]
                 )
+                with unix_stream_socket() as stream:
+                    stream.connect(str(server.path))
+                    stream.sendall(
+                        b" " * 16384
+                        + canonical_bytes(
+                            dict(
+                                version=1,
+                                operation="viewer_read",
+                                credential=self.backend,
+                                args=dict(
+                                    lease_id=lease["lease_id"],
+                                    session_ref=SESSION,
+                                    query="",
+                                    cursor="",
+                                ),
+                            )
+                        )
+                        + b"\n"
+                    )
+                    with stream.makefile("rb") as reply:
+                        refusal = json.loads(reply.readline(1024))
+                    self.assertEqual("bounds_exceeded", refusal["error"])
             finally:
                 server.shutdown()
                 thread.join(5)

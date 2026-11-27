@@ -191,6 +191,11 @@ class Handler(socketserver.StreamRequestHandler):
             value = load_strict(raw)
             if not isinstance(value, dict):
                 raise LocalError("invalid_request")
+            if (
+                value.get("operation") in {"viewer_exchange", "viewer_read", "viewer_close"}
+                and len(raw.removesuffix(b"\n")) > 16384
+            ):
+                raise LocalError("bounds_exceeded")
             operations: LocalOperations = self.server.operations  # type: ignore[attr-defined]
             response = operations.execute(value)
             if isinstance(response, Released):

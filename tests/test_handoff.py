@@ -444,7 +444,10 @@ class HandoffTests(unittest.TestCase):
         helpers.WorkingTests.long_history(self)
         prepared = self.prepare()
         for preview in (True, False):
-            packet = self.view(prepared, preview=preview)
+            # Test the operation-count frontier with ample budget. A 6000-token
+            # packet can refuse the essential set depending on randomized signed ids;
+            # insufficient-budget behavior is covered separately.
+            packet = self.view(prepared, preview=preview, max_output_tokens=16000)
             self.assertEqual(len(packet["operations"]), 32)
             self.assertTrue(packet["operations_truncated"])
             self.assertIn("open-first", [op["id"] for op in packet["operations"]])
@@ -558,5 +561,5 @@ class HandoffTests(unittest.TestCase):
             historical_inventory(db, 4)
         self.store = LocalStore(self.data, self.control)
         self.k = Knowledge(self.store)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 21)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 22)
         self.assertEqual(self.view(self.prepare())["checkpoint"]["id"], self.saved["checkpoint"])

@@ -125,6 +125,14 @@ class SharedHTTPTests(unittest.TestCase):
         self.assertEqual(409, status)
         self.assertEqual("lease_invalid", refused["error"])
         self.assertNotIn(lease["lease_id"], json.dumps(refused))
+        oversized = urllib.request.Request(
+            self.url + f"/v1/tenants/{self.tenant}/operations",
+            b" " * 16384 + canonical_bytes(dict(version=1, operation="viewer_read", args=args)),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + backend},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(oversized)
+        self.assertEqual(413, caught.exception.code)
 
     def raw(self, body, headers=None, tenant=None, timeout=5):
         request = urllib.request.Request(
