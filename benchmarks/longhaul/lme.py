@@ -46,6 +46,54 @@ def select(data: list[dict], size: int = 60, seed: int = 1) -> list[dict]:
     """A subset stratified by question type: each type's share of `size` follows its share of
     the file (largest remainders, at least one per type), the questions of a type are drawn
     with a fixed seed, and the result is sorted by question id."""
+    return _stratified(data, size, seed)
+
+
+#: Draws that stage T6 leaves out: the development draws (seeds 1 to 5) and stage T5's (seed 20), 60 each.
+T6_EARLIER = tuple((seed, 60) for seed in (1, 2, 3, 4, 5, 20))
+#: The stage T6 draw: 120 questions, seed 21, from the questions in none of `T6_EARLIER`.
+T6_SIZE, T6_SEED = 120, 21
+#: How many of the file's 500 questions are in none of the earlier draws (declared in RUNNING.md; the
+#: stage refuses to run if the file gives another number).
+T6_POOL = 232
+
+
+def earlier_ids(data: list[dict], earlier=T6_EARLIER) -> set[str]:
+    """The question ids of the given earlier draws, each `(seed, size)` made by `select`."""
+    out: set[str] = set()
+    for seed, size in earlier:
+        out.update(item["question_id"] for item in select(data, size, seed))
+    return out
+
+
+def select_excluding(
+    data: list[dict], size: int, seed: int, excluded: set[str] | frozenset[str]
+) -> list[dict]:
+    """The same stratified draw as `select`, from only the questions whose id is not in
+    `excluded`: the shares of the types follow the shares in what is left, the questions of a type
+    are drawn with the fixed seed from what is left of it, and the result is sorted by id.
+    It refuses (instead of drawing fewer) when a type has fewer questions left than its share."""
+    pool = [item for item in data if item["question_id"] not in excluded]
+    return _stratified(pool, size, seed, strict=True)
+
+
+def t6_pool(data: list[dict]) -> list[dict]:
+    """The questions that are in none of the earlier draws of stage T6 (232 of the 500)."""
+    skip = earlier_ids(data)
+    return [item for item in data if item["question_id"] not in skip]
+
+
+def t6_draw(data: list[dict], size: int = T6_SIZE, seed: int = T6_SEED) -> list[dict]:
+    """The stage T6 draw, reproducible from the data file, the seed and this rule alone."""
+    skip = earlier_ids(data)
+    chosen = select_excluding(data, size, seed, skip)
+    left = len(data) - len(skip & {i["question_id"] for i in data})
+    if left != T6_POOL:
+        raise ValueError(f"the pool of unused questions is {left}, not the declared {T6_POOL}")
+    return chosen
+
+
+def _stratified(data: list[dict], size: int, seed: int, strict: bool = False) -> list[dict]:
     types: dict[str, list[dict]] = {}
     for item in data:
         types.setdefault(item["question_type"], []).append(item)
@@ -65,9 +113,17 @@ def select(data: list[dict], size: int = 60, seed: int = 1) -> list[dict]:
     chosen = []
     for t in names:
         pool = sorted(types[t], key=lambda i: i["question_id"])
+        if strict and take[t] > len(pool):
+            raise ValueError(f"type {t!r} has {len(pool)} questions left, fewer than its {take[t]}")
         rng = random.Random(f"{seed}:{t}")
         chosen.extend(rng.sample(pool, min(take[t], len(pool))))
     return sorted(chosen, key=lambda i: i["question_id"])
+
+
+def ids_digest(items: list[dict]) -> str:
+    """SHA-256 of the sorted question ids of a draw, one per line: what a record states about a draw."""
+    ids = sorted(i["question_id"] for i in items)
+    return hashlib.sha256(("\n".join(ids) + "\n").encode()).hexdigest()
 
 
 def stamp(date: str) -> str:

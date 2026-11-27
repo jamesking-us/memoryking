@@ -115,3 +115,161 @@ def preferences(text: str) -> list[str]:
                 if len(found) == MAX_PER_CAPTURE:
                     return found
     return found
+
+
+# --- A preference the assistant proposes and the user accepts ------------------------------
+#
+# The user may never state the preference themselves: the assistant says it ("We settled your
+# standing preference for every project: ...") and the user answers "Yes" or "Confirmed". The
+# pair is recognised by a stated rule, without a model, from two adjacent turns and nothing
+# else (the hooks pass no tool input and no tool result):
+#
+# 1. The assistant's turn has exactly one sentence that proposes or restates a standing rule of
+#    the user's for every project: an every-project phrase (the one above, or a bare `for every
+#    project` when the sentence also says `your preference`), an attribution to the user (`your
+#    standing preference`, `you prefer`, `I'll always`), and none of what vetoes a sentence above
+#    (a local word, a named project, code-like text, a rule of someone else) or a hedge (`if`,
+#    `could`, `but`, `instead`). `We settled` and `We agreed` at the start are not a local word
+#    here. A sentence with a scope phrase and no attribution (`Settled for all your projects:
+#    ...`) is not enough: it may report a fact, not state a rule.
+# 2. That turn has no question, no quotation mark, fence or quoted line and no copied text, and
+#    says nothing that narrows the rule to this project, so a `yes` cannot be answering anything
+#    else and the sentence is the assistant's own.
+# 3. The user's very next turn is short and says yes and nothing else: only whole clauses from a
+#    closed list of clear acceptances (`Yes`, `Confirmed`, `That is settled`, `Keep it that way`)
+#    and thanks, with no condition, no narrowing, no question and no negation. A bare `ok` or
+#    `thanks` is not an acceptance: it may answer the work rather than the rule.
+#
+# When in doubt nothing is captured. Both sentences are kept as they were written.
+
+MAX_TURN_CHARS = 800
+MAX_ACCEPTANCE_CHARS = 60
+PROPOSED = "The assistant proposed: "
+ACCEPTED = "The user accepted: "
+
+_BARE_EVERY = re.compile(
+    r"(?i)\b(?:in|on|for|across)\s+(?:all|every|each)\s+(?:of\s+)?(?:projects?|repos?|repositories|"
+    r"codebases)\b(?!\s+(?:in|of|under|inside|within|that|which|here|we|you)\b)"
+)
+_YOUR_PREFERENCE = re.compile(
+    r"(?i)\byour\s+(?:standing\s+|personal\s+|general\s+)?(?:preference|preferences|rule|convention)s?\b"
+)
+_PROPOSES = re.compile(
+    r"(?i)\byour\s+(?:standing\s+|personal\s+|general\s+)?(?:preference|preferences|rule|convention)s?\b"
+    r"|\byou\s+(?:(?:always|generally|usually|really|never)\s+)?(?:want|prefer|like|need|expect|require|"
+    r"dislike|hate|(?:do\s+not|don't)\s+want)\b"
+    r"|\bI(?:'ll|\s+will)\s+(?:always|never)\b"
+)
+_WE_SETTLED = re.compile(
+    r"(?i)^we\s+(?:settled|agreed|decided|confirmed|noted)(?:\s+(?:on|that))?\b"
+)
+_WIDEN = re.compile(
+    r"(?i),?\s*(?:and\s+)?not\s+(?:only|just)\s+(?:here|this\s+one|in\s+this\s+\w+|for\s+this\s+\w+)"
+)
+_HEDGE = re.compile(
+    r"(?i)\b(?:if|unless|would|could|might|may|maybe|perhaps|possibly|whether|suppose|assuming|"
+    r"provided|but|however|except|instead|although|though|unsure|think|guess|probably|seems?)\b"
+)
+_NARROW = re.compile(
+    r"(?i)\b(?:only|just)\s+(?:here|in\s+this|for\s+this|this)\b|\bthis\s+(?:project|repo|repository|"
+    r"codebase)\s+only\b|\bnot\s+(?:for|in)\s+(?:all|every|any|other)\b"
+)
+_QUOTING = re.compile(r"[\"“”`]|\[quoted text left out")
+
+_STRONG = frozenset(
+    {
+        "yes", "yes please", "yep", "yeah", "yup", "correct", "exactly", "confirmed", "agreed",
+        "absolutely", "definitely", "sounds good", "that works", "that works for me",
+        "that is right", "that's right", "that is correct", "that's correct", "that is settled",
+        "that's settled", "that is what we agreed", "that's what we agreed", "that is what i want",
+        "that's what i want", "that is what i wanted", "that's what i wanted", "keep it that way",
+        "keep it like that", "please keep it that way", "please do", "do that",
+    }
+)  # fmt: skip
+_FILLER = frozenset(
+    {
+        "right", "ok", "okay", "good", "great", "perfect", "fine", "nice", "cool", "thanks",
+        "thank you", "thx", "please",
+    }
+)  # fmt: skip
+_CLAUSES = re.compile(r"\s*(?:[,.;!:]+|\s-\s|\s+and\s+)\s*")
+
+
+def is_proposal(sentence: str) -> bool:
+    """True when one sentence of the assistant's turn proposes or restates a standing rule of the
+    user's for every project (rule 1 above). The caller applies rule 2 to the whole turn."""
+    text = " ".join(sentence.split())
+    text = _WE_SETTLED.sub("", _WIDEN.sub("", text), count=1).strip()
+    if not MIN_CHARS <= len(text) <= MAX_CHARS or "?" in text:
+        return False
+    if NOT_A_STATEMENT.match(text) or CODE_LIKE.search(text) or LOCAL.search(text):
+        return False
+    if NAMED_PROJECT.search(text) or OTHERS.search(text) or _HEDGE.search(text):
+        return False
+    if _QUOTING.search(text):
+        return False
+    scope = EVERY_PROJECT.search(text) or (
+        _BARE_EVERY.search(text) and _YOUR_PREFERENCE.search(text)
+    )
+    return bool(scope and _PROPOSES.search(text))
+
+
+def is_acceptance(turn: str) -> bool:
+    """True when the user's turn is a short, plain yes (rule 3 above)."""
+    text = " ".join(turn.replace("’", "'").split()).strip().lower()
+    if not text or len(text) > MAX_ACCEPTANCE_CHARS or "?" in text:
+        return False
+    clauses = [c for c in _CLAUSES.split(text) if c]
+    if not clauses or len(clauses) > 4:
+        return False
+    if any(c not in _STRONG and c not in _FILLER for c in clauses):
+        return False
+    return any(c in _STRONG for c in clauses)
+
+
+def proposal_in(turn: str) -> str | None:
+    """The one sentence of an assistant's turn that proposes a standing rule, or None when the
+    turn has none, has two, or is of a shape a `yes` could answer something else in (rule 2)."""
+    text = turn.strip()
+    if not text or len(text) > MAX_TURN_CHARS or "?" in text:
+        return None
+    if FENCE.search(text) or "```" in text or _QUOTING.search(text):
+        return None
+    if any(ln.lstrip().startswith((">", "|")) for ln in text.split("\n")):
+        return None
+    flat = _WIDEN.sub("", " ".join(text.split()))
+    if _NARROW.search(flat):
+        return None
+    sentences = [" ".join(s.split()) for s in SENTENCES.split(text) if s.strip()]
+    proposals = [s for s in sentences if is_proposal(s)]
+    if len(proposals) != 1:
+        return None
+    for other in sentences:  # a second scope claim that is not the proposal: not clear which
+        if other != proposals[0] and (EVERY_PROJECT.search(other) or _BARE_EVERY.search(other)):
+            return None
+    return proposals[0]
+
+
+def accepted_proposals(pieces: list[str]) -> list[tuple[str, str]]:
+    """(the assistant's sentence, the user's accepting words) for each proposal the user's very
+    next turn accepts. `pieces` are the conversation in order, each opened by `Assistant: `,
+    `User: ` or `Tool error: `; a piece that is none of the first two breaks the pair. At most
+    `MAX_PER_CAPTURE`, each sentence once."""
+    found: list[tuple[str, str]] = []
+    for before, after in zip(pieces, pieces[1:], strict=False):
+        if not (before.startswith("Assistant: ") and after.startswith("User: ")):
+            continue
+        said = after[len("User: ") :].strip()
+        if not is_acceptance(said):
+            continue
+        sentence = proposal_in(before[len("Assistant: ") :])
+        if sentence and all(sentence != s for s, _ in found):
+            found.append((sentence, " ".join(said.split())))
+            if len(found) == MAX_PER_CAPTURE:
+                break
+    return found
+
+
+def evidence(sentence: str, acceptance: str) -> str:
+    """The text a recognised pair is kept as: both sets of words, as written, each labelled."""
+    return f"{PROPOSED}{sentence}\n{ACCEPTED}{acceptance}"

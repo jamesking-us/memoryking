@@ -6,9 +6,18 @@ the benchmark generator's three preference templates. A missed preference costs 
 can say again; a recognised project fact is shown in another project, so every near miss of the
 second kind is a test here."""
 
+import json
 import unittest
+from pathlib import Path
 
-from memoryking.domain.preference import MAX_PER_CAPTURE, is_preference, preferences
+from memoryking.domain.preference import (
+    MAX_PER_CAPTURE,
+    accepted_proposals,
+    evidence,
+    is_acceptance,
+    is_preference,
+    preferences,
+)
 
 RECOGNISED = [
     "I want dates written as ISO 8601 everywhere I work, in all my projects.",
@@ -139,6 +148,97 @@ class RuleTests(unittest.TestCase):
             preferences(turns),
             ["In all my projects I want commit messages in the imperative mood."],
         )
+
+
+FIXTURE = json.loads(
+    (Path(__file__).parent / "fixtures" / "accepted_preference_pairs.json").read_text()
+)
+
+
+def captured(assistant: str, user: str) -> list[tuple[str, str]]:
+    return accepted_proposals([f"Assistant: {assistant}", f"User: {user}"])
+
+
+class AcceptedProposalTests(unittest.TestCase):
+    """A preference the assistant proposes and the user's next turn accepts. The pairs are in
+    fixtures/accepted_preference_pairs.json, written for these tests."""
+
+    def test_written_acceptances_of_a_stated_preference_are_recognised(self):
+        self.assertGreaterEqual(len(FIXTURE["positive"]), 20)
+        for pair in FIXTURE["positive"]:
+            got = captured(pair["assistant"], pair["user"])
+            self.assertEqual(len(got), 1, pair)
+            sentence, said = got[0]
+            self.assertIn(sentence, " ".join(pair["assistant"].split()))
+            self.assertEqual(said, pair["user"])
+
+    def test_no_written_negative_pair_is_ever_recognised(self):
+        self.assertGreaterEqual(len(FIXTURE["negative"]), 60)
+        for pair in FIXTURE["negative"]:
+            self.assertEqual(captured(pair["assistant"], pair["user"]), [], pair)
+
+    def test_the_known_misses_stay_misses(self):
+        # A scope phrase with nobody's preference named could be a report of a fact.
+        for pair in FIXTURE["missed_by_design"]:
+            self.assertEqual(captured(pair["assistant"], pair["user"]), [], pair)
+
+    def test_the_stored_evidence_shows_both_sets_of_words(self):
+        text = evidence("You prefer ISO dates in all your projects.", "Yes, exactly.")
+        self.assertEqual(
+            text,
+            "The assistant proposed: You prefer ISO dates in all your projects.\n"
+            "The user accepted: Yes, exactly.",
+        )
+
+    def test_only_two_adjacent_conversation_turns_make_a_pair(self):
+        proposal = "Assistant: You prefer ISO dates in all your projects."
+        yes = "User: Yes."
+        self.assertEqual(len(accepted_proposals([proposal, yes])), 1)
+        for pieces in (
+            [yes, proposal],
+            [proposal, "Assistant: Done.", yes],
+            [proposal, "Tool error: boom", yes],
+            [proposal, "User: Run the tests.", yes],
+            [yes],
+            [],
+        ):
+            self.assertEqual(accepted_proposals(pieces), [], pieces)
+
+    def test_the_users_own_turn_is_never_the_proposal(self):
+        self.assertEqual(
+            accepted_proposals(["User: You prefer ISO dates in all your projects.", "User: Yes."]),
+            [],
+        )
+        self.assertEqual(
+            accepted_proposals(
+                ["Assistant: Ok.", "User: I prefer ISO dates in all my projects.", "User: Yes."]
+            ),
+            [],
+        )
+
+    def test_a_cut_out_copy_of_a_tool_result_makes_the_turn_ineligible(self):
+        turn = (
+            "You prefer ISO dates in all your projects. [quoted text left out: 140 characters, "
+            "kept in the tool-output record]"
+        )
+        self.assertEqual(captured(turn, "Yes."), [])
+
+    def test_one_capture_keeps_a_few_pairs_and_each_sentence_once(self):
+        pieces = []
+        for word in "alpha beta gamma delta epsilon zeta eta".split():
+            pieces += [
+                f"Assistant: You prefer {word} as the rounding mode in all your projects.",
+                "User: Yes.",
+            ]
+        self.assertEqual(len(accepted_proposals(pieces)), MAX_PER_CAPTURE)
+        same = ["Assistant: You prefer ISO dates in all your projects.", "User: Yes."] * 3
+        self.assertEqual(len(accepted_proposals(same)), 1)
+
+    def test_a_long_reply_is_not_an_acceptance(self):
+        self.assertTrue(is_acceptance("Yes, that is settled. Thanks."))
+        self.assertFalse(is_acceptance("Yes, " + "really " * 12 + "thanks."))
+        self.assertFalse(is_acceptance("thanks"))
+        self.assertFalse(is_acceptance(""))
 
 
 if __name__ == "__main__":
