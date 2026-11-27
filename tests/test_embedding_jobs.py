@@ -149,6 +149,34 @@ class EmbeddingJobCases:
         again = self.complete_batch_e(jobs[:1])
         self.assertEqual(again["results"][0]["error"], "stale_lease")
 
+    def test_a_batch_of_long_records_stays_within_what_one_model_call_takes(self):
+        for n in range(12):
+            self.store.capture(
+                self.owner,
+                self.ns,
+                f"big{n}",
+                {
+                    "version": 1,
+                    "project": "p",
+                    "source": "fixture",
+                    "source_event": f"big{n}",
+                    "text": ("sentence number %d. " % n) * 1000,
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+        config = self.configure()
+        seen = []
+        while True:
+            jobs = self.claim_batch_e(config)["jobs"]
+            if not jobs:
+                break
+            self.assertLessEqual(sum(len(j["input"].encode()) for j in jobs), 131072)
+            seen += jobs
+            self.complete_batch_e(jobs)
+        self.assertEqual(len(seen), 13)  # twelve long records, and the fixture's own
+
     def test_a_record_purged_while_its_batch_is_in_flight_gets_no_vector(self):
         ids = self.capture_more("b", "c")
         config = self.configure()

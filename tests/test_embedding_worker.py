@@ -184,6 +184,39 @@ class EmbeddingBatchWorkerTests(unittest.TestCase):
             self.store.db.execute("SELECT count(*) FROM embedding_vectors").fetchone()[0], 5
         )
 
+    def test_long_records_are_embedded_in_as_many_calls_as_the_model_limits_need(self):
+        provider = self.provider()
+        for n in range(11):
+            self.store.capture(
+                self.owner,
+                self.ns,
+                f"long{n}",
+                {
+                    "version": 1,
+                    "project": "p",
+                    "source": "fixture",
+                    "source_event": f"long{n}",
+                    "text": ("a long record number %d. " % n) * 700,
+                    "readers": None,
+                    "classification": "internal",
+                    "observed_at_ms": 1,
+                },
+            )
+        sizes = []
+        embed = self.fake_embed(provider)
+
+        def counted(texts):
+            sizes.append(sum(len(t.encode()) for t in texts))
+            return embed(texts)
+
+        with patch.object(provider, "embed", side_effect=counted):
+            while run_batch(self.client, provider, 16)["status"] != "idle":
+                pass
+        self.assertTrue(all(size <= 131072 for size in sizes))
+        self.assertEqual(
+            self.store.db.execute("SELECT count(*) FROM embedding_vectors").fetchone()[0], 12
+        )
+
     def test_a_provider_failure_fails_every_job_of_the_batch_once(self):
         provider = self.provider()
         self.capture_extra(2)

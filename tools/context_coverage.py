@@ -6,8 +6,10 @@ not sufficient (the reader may still fail to use it). No model is called: no rea
 judge, no provider.
 
 For each question of a draw the haystack (about 50 sessions) is recorded turn by turn into its
-own store through the `memoryking_semantic` arm of `benchmarks/longhaul` (every turn one
-observation at its session's date, the daemon indexing by meaning with the installed model),
+own store through the `memoryking_semantic` arm of `benchmarks/longhaul` (by default every turn one
+observation at its session's date; with `--unit session` every session one observation, the way
+the hooks store a session, so a long record is what is searched; the daemon indexing by meaning
+with the installed model),
 and the context is the arm's: a text briefing for the question under the character budget
 (default 12,000 characters). Per question type and overall it reports:
 
@@ -20,7 +22,10 @@ and the context is the arm's: a text briefing for the question under the charact
 * `chars`: characters of the budget the context uses;
 * `candidates`: how many records the semantic and keyword stages considered, and the share of
   questions where a stage hit its candidate limit;
-* `sessions`: how many distinct sessions the shown turns come from.
+* `sessions`: how many distinct sessions the shown turns come from;
+* the cost of the store: seconds the daemon took to index a haystack, vectors per haystack,
+  bytes on disk, and the latency (median and 95th percentile, of three calls per question after
+  one that is not counted) of a text briefing and of the prompt-time recall hook.
 
 Only development draws are allowed (seeds 1 to 5); the published draw and the reserved ones are
 refused. A question that appears in several draws is counted once in the pooled figures.
@@ -32,6 +37,7 @@ text and must never be committed. The data file is untrusted third-party text: i
 JSON and nothing in it is executed.
 
     python tools/context_coverage.py --seed 1 --seed 2 --stores /tmp/mk-ptwo --output out.json
+    python tools/context_coverage.py --seed 1 --unit session --stores /tmp/mk-psess
 """
 
 from __future__ import annotations
@@ -52,7 +58,7 @@ sys.path.insert(0, str(ROOT / "benchmarks"))
 from longhaul import lme  # noqa: E402
 from longhaul.systems import memoryking as arm  # noqa: E402
 
-from memoryking import hooks  # noqa: E402
+from memoryking import hooks, host_hooks  # noqa: E402
 
 DEVELOPMENT_SEEDS = (1, 2, 3, 4, 5)
 SIZE = 60
@@ -245,11 +251,36 @@ def diagnose(item: dict, context: str, trace: dict) -> list[dict]:
     return out
 
 
-def ask(item: dict, stores: Path, budget: int, trace: bool = False) -> dict:
+REPEATS = 3
+UNITS = {"turn": "turns", "session": "sessions"}
+
+
+def timed(call, repeats: int = REPEATS) -> float:
+    """Milliseconds of `call`: the median of `repeats` calls after one that is not counted."""
+    try:
+        call()
+        laps = []
+        for _ in range(repeats):
+            started = time.perf_counter()
+            call()
+            laps.append((time.perf_counter() - started) * 1000)
+    except Exception:  # a call that failed (a deadline on a loaded host) has no latency to report
+        return float("nan")
+    return statistics.median(laps)
+
+
+def percentile(values: list[float], share: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    return round(ordered[min(len(ordered) - 1, int(share * len(ordered)))], 1)
+
+
+def ask(item: dict, stores: Path, budget: int, trace: bool = False, unit: str = "turn") -> dict:
     root = stores_path(stores, item)
     marker = root / "seeded"
     system = arm.create_semantic()
-    system.ingest = "turns"
+    system.ingest = UNITS[unit]
     system.prepare(root)
     dump = root / "trace.json"
     if trace:
@@ -268,13 +299,24 @@ def ask(item: dict, stores: Path, budget: int, trace: bool = False) -> dict:
     try:
         if not seeded:
             system.seed(lme.sessions_of(item))
-        system.before_retrieval(lme.SCOPE)
-        marker.write_text("1")
+        waited = system.before_retrieval(lme.SCOPE)
+        if not seeded:
+            marker.write_text(json.dumps({**waited, "store_bytes": system.size_bytes()}))
         index_seconds = time.perf_counter() - started
         with Capture() as capture:
             context = system.context_for(item["question"], lme.SCOPE, budget)
         cred = system._credential(lme.SCOPE)
         diagnostics = system._receipt_diagnostics(capture.packet, lme.SCOPE, cred)
+        recall_ms = timed(lambda: system.context_for(item["question"], lme.SCOPE, budget))
+        prompt_ms = timed(
+            lambda: host_hooks.prompt(
+                {"prompt": item["question"]},
+                socket=system.socket,
+                credential=cred,
+                project=lme.SCOPE.project,
+            )
+        )
+        built = _built(marker, waited, system)
     finally:
         system.close()
         if trace:
@@ -301,12 +343,34 @@ def ask(item: dict, stores: Path, budget: int, trace: bool = False) -> dict:
         **({"gold": diagnose(item, context, recorded)} if trace else {}),
         "seeded_now": not seeded,
         "index_seconds": round(index_seconds, 1),
+        "build_index_seconds": built.get("index_seconds"),
+        "vectors": built.get("vectors"),
+        "store_bytes": built.get("store_bytes"),
+        "recall_ms": round(recall_ms, 1) if recall_ms == recall_ms else None,
+        "prompt_hook_ms": round(prompt_ms, 1) if prompt_ms == prompt_ms else None,
     }
+
+
+def _built(marker: Path, waited: dict, system) -> dict:
+    """What the store's own build recorded (indexing time, vectors, size), or what the daemon
+    reports now when the store was built before this measure kept them."""
+    try:
+        found = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        found = None
+    if isinstance(found, dict) and "vectors" in found:
+        return found
+    return {**waited, "store_bytes": system.size_bytes()}
 
 
 def mean(values) -> float | None:
     values = [v for v in values if v is not None]
     return round(statistics.fmean(values), 3) if values else None
+
+
+def median(values) -> float | None:
+    values = [v for v in values if v is not None]
+    return round(statistics.median(values), 2) if values else None
 
 
 def summarize(rows: list[dict], budget: int) -> dict:
@@ -329,6 +393,20 @@ def summarize(rows: list[dict], budget: int) -> dict:
         "lexical_candidates_mean": mean(r["lexical_candidates"] for r in rows),
         "matched_mean": mean(r["matched"] for r in rows),
         "sessions_mean": mean(r["sessions"] for r in rows),
+        "index_seconds_mean": mean(r["build_index_seconds"] for r in rows),
+        "index_seconds_median": median(r["build_index_seconds"] for r in rows),
+        "vectors_mean": mean(r["vectors"] for r in rows),
+        "store_mb_mean": mean(
+            r["store_bytes"] / 1e6 if r["store_bytes"] is not None else None for r in rows
+        ),
+        "recall_ms_median": median(r["recall_ms"] for r in rows),
+        "recall_ms_p95": percentile(
+            [r["recall_ms"] for r in rows if r["recall_ms"] is not None], 0.95
+        ),
+        "prompt_hook_ms_median": median(r["prompt_hook_ms"] for r in rows),
+        "prompt_hook_ms_p95": percentile(
+            [r["prompt_hook_ms"] for r in rows if r["prompt_hook_ms"] is not None], 0.95
+        ),
     }
 
 
@@ -394,7 +472,19 @@ def main() -> int:
     parser.add_argument("--seed", type=int, action="append", help="development seed 1 to 5")
     parser.add_argument("--size", type=int, default=SIZE)
     parser.add_argument("--budget-chars", type=int, default=12000)
-    parser.add_argument("--stores", type=Path, default=Path("/tmp/mk-ptwo"))
+    parser.add_argument(
+        "--unit",
+        choices=sorted(UNITS),
+        default="turn",
+        help="what one observation is: a chat turn (default) or a whole session, as the hooks "
+        "store it; each has its own stores",
+    )
+    parser.add_argument(
+        "--stores",
+        type=Path,
+        help="where the seeded stores are kept (default /tmp/mk-ptwo for turns, "
+        "/tmp/mk-psess for sessions)",
+    )
     parser.add_argument("--limit", type=int, help="only the first N questions of each draw")
     parser.add_argument(
         "--cached-only", action="store_true", help="skip questions whose store is not built yet"
@@ -410,6 +500,8 @@ def main() -> int:
     bad = [s for s in seeds if s not in DEVELOPMENT_SEEDS]
     if bad:
         parser.error(f"only development seeds {DEVELOPMENT_SEEDS} are allowed, not {bad}")
+    if args.stores is None:
+        args.stores = Path("/tmp/mk-ptwo" if args.unit == "turn" else "/tmp/mk-psess")
     data, digest = lme.load(args.data)
     args.stores.mkdir(parents=True, exist_ok=True)
     rows: dict[str, dict] = {}
@@ -423,7 +515,9 @@ def main() -> int:
                 continue
             draws[str(seed)].append(item["question_id"])
             if item["question_id"] not in rows:
-                rows[item["question_id"]] = ask(item, args.stores, args.budget_chars, args.diagnose)
+                rows[item["question_id"]] = ask(
+                    item, args.stores, args.budget_chars, args.diagnose, args.unit
+                )
             print(
                 f"seed {seed} {number}/{len(chosen)} {item['question_type']} "
                 f"all={rows[item['question_id']]['all']}",
@@ -434,6 +528,7 @@ def main() -> int:
         "note": NOTE,
         "data_sha256": digest,
         "seeds": seeds,
+        "unit": args.unit,
         "budget_chars": args.budget_chars,
         "distinct_questions": len(rows),
         "questions_in_draws": sum(len(v) for v in draws.values()),
