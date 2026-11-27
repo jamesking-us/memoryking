@@ -2,8 +2,10 @@
 (`CODEX_HOME`), the session-end time limit and the hand-off that keeps it from losing a
 session, a session with no transcript, and an MCP entry that already exists."""
 
+import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -14,6 +16,7 @@ from unittest.mock import patch
 
 from memoryking import hook_spool, host_hooks
 from memoryking.adapters.platform_support import LOCAL_STORE_SUPPORTED
+from memoryking.domain.local import LocalError
 
 WORD = "zebrafishquartz"
 
@@ -318,33 +321,188 @@ class CodexSessionTests(Base):
         self.assertIn("User: ", stored[0])
         self.assertIn("Assistant: ", stored[0])
 
-    def _argv(self):
+    def _argv(self, *more, host="codex", kind="session-end", config=True):
+        head = ["--config", str(self.home / ".memoryking" / "config.toml")] if config else []
         return [
+            *head,
             "--profile",
             "default-agent",
             "hook",
-            "session-end",
+            kind,
             "--host",
-            "codex",
+            host,
             "--project",
             "demo",
+            *more,
         ]
 
-    def test_a_worker_killed_midway_leaves_its_record_and_a_young_record_is_left_alone(self):
-        event = self.end_event()
-        args = type("A", (), {"credential": self.parts()["credential"]})()
+    def args(self, argv=None):
+        """The arguments a worker for `argv` would have, parsed as the hook parser does."""
+        from memoryking import hook_cli, profiles
+
+        parsed = hook_cli.build_parser().parse_args(argv or self._argv())
+        profiles.apply(parsed, parsed.profile, parsed.config)
+        return parsed
+
+    def record(self, event=None, argv=None):
+        """Write a record as the hook does, without starting its worker; its path."""
+        argv = argv or self._argv()
+        args = self.args(argv)
         with (
             patch.object(hook_spool, "_worker"),
-            patch("sys.stdin", __import__("io").StringIO(json.dumps(event))),
+            patch("sys.stdin", io.StringIO(json.dumps(event or self.end_event()))),
         ):
-            hook_spool.hand_off(args, self._argv())
+            self.assertTrue(hook_spool.hand_off(args, argv))
+        return self.waiting()[-1]
+
+    def rewrite(self, path, **changes):
+        body = json.loads(path.read_text())
+        body.update(changes)
+        path.write_text(json.dumps(body))
+        path.chmod(0o600)
+        old = time.time() - 60
+        os.utime(path, (old, old))
+
+    def replayed(self):
+        """Run a session-start replay; the workers it would start."""
         with patch.object(hook_spool, "_worker") as worker:
-            hook_spool.replay(args)
-            worker.assert_not_called()  # younger than the settle time
-            old = time.time() - 60
-            os.utime(self.waiting()[0], (old, old))
-            hook_spool.replay(args)
-            worker.assert_called_once()
+            hook_spool.replay(self.args())
+        return worker
+
+    def test_a_young_record_is_left_alone_and_an_old_one_gets_a_worker(self):
+        path = self.record()
+        self.assertEqual(0, self.replayed().call_count)  # younger than the settle time
+        self.rewrite(path)
+        self.assertEqual(1, self.replayed().call_count)
+
+    def test_a_record_that_is_not_what_the_hook_writes_is_removed_and_starts_nothing(self):
+        other = self.home / "other"
+        other.mkdir(mode=0o700)
+        cases = {
+            "another kind": {"argv": self._argv(kind="pre-compact")},
+            "another host": {"argv": self._argv(host="claude")},
+            "a credential elsewhere": {
+                "argv": self._argv("--credential", str(other / "agent.credential"))
+            },
+            "a spool argument": {"argv": self._argv("--spool", "x")},
+            "an extra argument": {"argv": self._argv("--no-such-option")},
+            "a relay": {"argv": ["--relay", "docker:x", *self._argv()]},
+            "argv not a list": {"argv": "hook session-end"},
+            "argv of numbers": {"argv": [1, 2]},
+            "an event that is not a string": {"event": {"a": 1}},
+            "an event that is too long": {"event": "x" * (hook_spool.MAX_EVENT + 1)},
+            "no observation time": {"at": "now"},
+        }
+        for label, change in cases.items():
+            with self.subTest(label):
+                path = self.record()
+                self.rewrite(path, **change)
+                self.assertEqual(0, self.replayed().call_count)
+                self.assertFalse(path.exists())
+
+    def test_an_oversized_a_linked_or_foreign_mode_record_starts_nothing(self):
+        path = self.record()
+        path.write_text(" " * (hook_spool.MAX_RECORD + 1))
+        path.chmod(0o600)
+        os.utime(path, (1, 1))
+        self.assertEqual(0, self.replayed().call_count)
+        self.assertFalse(path.exists())
+        good = self.record()
+        target = self.home / "target.json"
+        target.write_text(good.read_text())
+        target.chmod(0o600)
+        good.unlink()
+        good.symlink_to(target)
+        self.assertEqual(0, self.replayed().call_count)
+        self.assertFalse(good.is_symlink())
+        self.assertTrue(target.exists())  # only the link went, never what it points at
+        shared = self.record()
+        shared.chmod(0o640)
+        os.utime(shared, (1, 1))
+        self.assertEqual(0, self.replayed().call_count)
+        self.assertFalse(shared.exists())
+
+    def test_a_spool_directory_others_can_use_or_a_link_is_not_read_or_touched(self):
+        path = self.record()
+        self.rewrite(path)
+        self.spool.chmod(0o770)
+        self.assertEqual(0, self.replayed().call_count)
+        self.assertTrue(path.exists())
+        self.spool.chmod(0o700)
+        moved = self.spool.with_name("real-spool")
+        self.spool.rename(moved)
+        self.spool.symlink_to(moved)
+        self.assertEqual(0, self.replayed().call_count)
+        self.assertTrue((moved / path.name).exists())
+
+    def test_a_worker_refuses_a_record_that_is_not_in_the_spool_or_not_its_own(self):
+        argv = self._argv()
+        path = self.record(argv=argv)
+        args = self.args(argv)
+        outside = self.home / path.name
+        outside.write_text(path.read_text())
+        outside.chmod(0o600)
+        with patch.object(host_hooks, "save") as save:
+            self.assertEqual(1, hook_spool.finish(args, outside, [*argv, "--spool", str(outside)]))
+            different = self._argv("--task", "other")
+            self.assertEqual(
+                1, hook_spool.finish(self.args(different), path, [*different, "--spool", str(path)])
+            )
+            self.assertFalse(path.exists())  # a record whose arguments are not the worker's goes
+            save.assert_not_called()
+        self.assertTrue(outside.exists())
+
+    def test_a_record_is_given_up_after_its_tries(self):
+        argv = self._argv()
+        path = self.record(argv=argv)
+        args = self.args(argv)
+        with patch.object(host_hooks, "save", side_effect=LocalError("transport_unavailable")):
+            for _number in range(hook_spool.TRIES):
+                self.assertTrue(path.exists())
+                self.assertEqual(1, hook_spool.finish(args, path, [*argv, "--spool", str(path)]))
+        self.assertFalse(path.exists())
+
+    def workers(self):
+        done = subprocess.run(
+            ["ps", "-eo", "pid,args"], capture_output=True, text=True, check=True
+        ).stdout
+        return [int(line.split()[0]) for line in done.splitlines() if str(self.spool) in line]
+
+    def test_a_worker_killed_for_real_loses_nothing_and_the_next_start_stores_it_once(self):
+        self.mk("--profile", "default", "stop")  # the worker has a daemon to start: it is slow
+        before = set(self.workers())
+        self.assertEqual(0, self.hook("session-end", self.end_event()).returncode)
+        killed = []
+        deadline = time.monotonic() + 10
+        while not killed and time.monotonic() < deadline:
+            for pid in set(self.workers()) - before:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    killed.append(pid)
+                except ProcessLookupError:
+                    pass
+            time.sleep(0.005)
+        self.assertTrue(killed, "the worker finished before it could be killed")
+        time.sleep(0.5)
+        self.assertEqual(1, len(self.waiting()))
+        self.assertEqual(0, self.count())
+        os.utime(self.waiting()[0], (1, 1))
+        for number in range(2):  # a second start soon after must not store it twice
+            start = self.hook(
+                "session-start",
+                {
+                    "session_id": f"s{number}",
+                    "cwd": str(self.cwd),
+                    "hook_event_name": "SessionStart",
+                    "source": "startup",
+                    "model": "m",
+                    "transcript_path": None,
+                    "permission_mode": "default",
+                },
+            )
+            self.assertEqual(0, start.returncode, start.stderr)
+        self.settled()
+        self.assertEqual(1, self.count())
 
     def test_the_same_event_twice_is_one_record_and_a_cold_daemon_is_started_by_the_worker(self):
         self.mk("--profile", "default", "stop")
@@ -353,40 +511,6 @@ class CodexSessionTests(Base):
         self.assertEqual(0, self.hook("session-end", event).returncode)
         self.settled()
         self.assertEqual(1, self.count())
-
-    def test_a_record_is_given_up_after_its_tries_and_an_unreadable_one_is_dropped(self):
-        event = self.end_event()
-        args = type("A", (), {"credential": self.parts()["credential"]})()
-        with (
-            patch.object(hook_spool, "_worker"),
-            patch("sys.stdin", __import__("io").StringIO(json.dumps(event))),
-        ):
-            hook_spool.hand_off(args, self._argv())
-        record = self.waiting()[0]
-        worker = type(
-            "W",
-            (),
-            {
-                "socket": self.home / "nowhere.sock",
-                "credential": self.parts()["credential"],
-                "project": "demo",
-                "profile": None,
-                "config": None,
-                "host": "codex",
-                "task": None,
-                "no_user_preferences": False,
-            },
-        )()
-        for _number in range(hook_spool.TRIES):
-            self.assertTrue(record.exists())
-            self.assertEqual(1, hook_spool.finish(worker, record))
-        self.assertFalse(record.exists())
-        record.write_text("not json")
-        with patch.object(hook_spool, "_worker") as started:
-            os.utime(record, (1, 1))
-            hook_spool.replay(args)
-            started.assert_not_called()
-        self.assertFalse(record.exists())
 
     def test_a_session_with_no_transcript_exits_quietly_and_stores_nothing(self):
         base = {

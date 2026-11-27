@@ -236,9 +236,15 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    platform_support.utf8_stdio()
-    parser = argparse.ArgumentParser(prog="memoryking", description=__doc__.split("\n")[0])
+class QuietParser(argparse.ArgumentParser):
+    """A parser that raises `ValueError` on a bad command line instead of exiting."""
+
+    def error(self, message: str) -> Any:
+        raise ValueError(message)
+
+
+def build_parser(parser_class: type[argparse.ArgumentParser] = argparse.ArgumentParser) -> Any:
+    parser = parser_class(prog="memoryking", description=__doc__.split("\n")[0])
     add_global_arguments(parser)
     commands = parser.add_subparsers(dest="command", required=True)
     add_hook_arguments(
@@ -246,6 +252,12 @@ def main(argv: list[str] | None = None) -> int:
             "hook", help="Run as a host hook: read the host's event JSON on stdin, never fail"
         )
     )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    platform_support.utf8_stdio()
+    parser = build_parser()
     args = parser.parse_args(argv)
     try:
         profiles.apply(args, args.profile, args.config)
@@ -274,7 +286,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": code, "hint": hint(code)}), file=sys.stderr)
         return 2
     if args.spool:
-        return hook_spool.finish(args, Path(args.spool))
+        return hook_spool.finish(
+            args, Path(args.spool), list(sys.argv[1:] if argv is None else argv)
+        )
     status = run(args)
     if args.kind == "session-start":
         hook_spool.replay(args)
