@@ -19,6 +19,9 @@ from tools.postgres_dev_cluster import DevCluster
 
 BIN = Path(os.environ.get("MEMORYKING_PG_BIN", "tmp/postgres-dev/runtime/bin")).resolve()
 LATER_TABLES = {
+    "viewer_registries",
+    "viewer_mappings",
+    "viewer_receipt_context",
     "credential_generations",
     "lexical_state",
     "lexical_projects",

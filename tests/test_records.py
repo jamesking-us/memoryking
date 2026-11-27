@@ -80,6 +80,7 @@ ARCHIVE_ADDITIONS = {
     11: (),
     12: ("consolidation_runs", "unreviewed_tier"),
     13: ("embedding_vectors", "embedding_skips"),
+    14: ("viewer_registries", "viewer_mappings", "viewer_receipt_context"),
 }
 
 # The tables the shared worker role was granted write access to before the registry.
@@ -101,6 +102,8 @@ WORKER_TABLES = {
 NEW_HISTORY_STATEMENTS = {
     "UPDATE retries SET result=NULL",
     "DELETE FROM instance_lease",
+    "DELETE FROM viewer_leases",
+    "DELETE FROM viewer_receipt_context",
     "DELETE FROM receipts",
     "UPDATE rendered_artifacts SET state='retired',body=NULL,request_json=NULL,diagnostics=NULL,dependencies='[]'",
     "UPDATE checkpoints SET state='retired',body=NULL,dependencies='[]'",
@@ -132,7 +135,7 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertEqual(records.ARCHIVE_SCHEMA, max(ARCHIVE_ADDITIONS))
         from memoryking.adapters import postgres_recovery as recovery
 
-        self.assertEqual(archive_tables(13), recovery.TABLES)
+        self.assertEqual(archive_tables(14), recovery.TABLES)
         self.assertEqual(archive_tables(1), recovery.TABLES_V1)
         self.assertEqual(archive_tables(12), recovery.TABLES_V12)
 

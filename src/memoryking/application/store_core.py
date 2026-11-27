@@ -61,6 +61,7 @@ Row = Any
 
 
 CAPABILITIES = {
+    "viewer_exchange",
     "capture",
     "read",
     "export",
@@ -725,6 +726,35 @@ class StoreCore:
                 )
         return rows
 
+    def viewer_transaction(self, *, snapshot: bool) -> Any:
+        """One stable source snapshot for candidate scanning and continuation checks."""
+        return self.transaction()
+
+    def viewer_lock(self, tenant: str, lease_hash: str | None, *, metadata: bool) -> None:
+        """SQLite already serializes the transaction; shared backends lock metadata/leases."""
+
+    def observation_item(
+        self, who: dict[str, Any], row: Any, *, handle: bool = True
+    ) -> dict[str, Any]:
+        """Format an already-authorized observation without changing the acting identity."""
+        item = {
+            "id": row["id"],
+            "authority": "observed_episode",
+            "assurance": "actor_reported",
+            "source": row["source"],
+            "source_event": row["source_event"],
+            "principal": row["principal"],
+            "project": row["project"],
+            "text": self.blobs.get(who["tenant"], row["blob"]).decode(),
+            "position": row["position"],
+            "origin": row["origin"],
+            "classification": row["classification"],
+            "observed_at_ms": row["observed_at_ms"],
+        }
+        if handle:
+            item["handle"] = self._token("observation", tenant=who["tenant"], id=row["id"])
+        return item
+
     def read(
         self,
         credential: str,
@@ -784,26 +814,7 @@ class StoreCore:
             for row in rows:
                 last = row["position"]
                 if self._visible(who, row, decision.evaluated_ms):
-                    raw = self.blobs.get(who["tenant"], row["blob"])
-                    items.append(
-                        {
-                            "id": row["id"],
-                            "authority": "observed_episode",
-                            "assurance": "actor_reported",
-                            "handle": self._token(
-                                "observation", tenant=who["tenant"], id=row["id"]
-                            ),
-                            "source": row["source"],
-                            "source_event": row["source_event"],
-                            "principal": row["principal"],
-                            "project": row["project"],
-                            "text": raw.decode(),
-                            "position": row["position"],
-                            "origin": row["origin"],
-                            "classification": row["classification"],
-                            "observed_at_ms": row["observed_at_ms"],
-                        }
-                    )
+                    items.append(self.observation_item(who, row))
                     if sum(len(i["text"].encode()) for i in items) >= 131072:
                         break
             if observation and not items:
@@ -1260,7 +1271,11 @@ class StoreCore:
         if self.db.execute("SELECT 1 FROM tenants WHERE tenant=?", (tenant,)).fetchone() is None:
             raise LocalError("journal_tenant_missing")
         kind = action["kind"]
-        if kind == "grant":
+        if kind in {"viewer_registry", "viewer_mapping"}:
+            from memoryking.application.viewer import Viewer
+
+            Viewer(self).apply(action)
+        elif kind == "grant":
             self.db.execute(
                 upsert("grants"),
                 (

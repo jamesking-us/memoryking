@@ -360,7 +360,8 @@
                   "checkpoint",
                   "handoff",
                   "inference",
-                  "repository"
+                  "repository",
+                  "viewer_exchange"
                 ]
               }
             },
@@ -2091,6 +2092,305 @@
           },
           "required": [
             "command"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "viewer_exchange"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "installation_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "audience": {
+              "const": "clankercity-viewer-read-v1"
+            },
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "provider": {
+              "const": "github.com"
+            },
+            "github_id": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,19}(?![\\s\\S])"
+            },
+            "session_ref": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "installation_id",
+            "audience",
+            "project",
+            "provider",
+            "github_id",
+            "session_ref"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "viewer_read"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lease_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}(?![\\s\\S])"
+            },
+            "session_ref": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+            },
+            "query": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "cursor": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "required": [
+            "lease_id",
+            "session_ref",
+            "query",
+            "cursor"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "viewer_close"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lease_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}(?![\\s\\S])"
+            },
+            "session_ref": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "lease_id",
+            "session_ref"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "viewer_registry"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "installation_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "provider": {
+              "const": "github.com"
+            },
+            "starts": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "expires": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "delegator": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "project": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "audience": {
+              "const": "clankercity-viewer-read-v1"
+            }
+          },
+          "required": [
+            "installation_id",
+            "provider",
+            "starts",
+            "expires",
+            "enabled",
+            "delegator",
+            "project",
+            "audience"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "credential",
+        "operation",
+        "args"
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "operation": {
+          "const": "viewer_mapping"
+        },
+        "args": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "installation_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            },
+            "provider": {
+              "const": "github.com"
+            },
+            "starts": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "expires": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "github_id": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,19}(?![\\s\\S])"
+            },
+            "subject": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,96}(?![\\s\\S])"
+            }
+          },
+          "required": [
+            "installation_id",
+            "provider",
+            "starts",
+            "expires",
+            "enabled",
+            "github_id",
+            "subject"
           ]
         }
       },

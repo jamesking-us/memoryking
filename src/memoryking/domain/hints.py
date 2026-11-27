@@ -8,6 +8,11 @@ from this table so the documentation can never drift from what the software says
 from __future__ import annotations
 
 HINTS: dict[str, str] = {
+    "input_invalid": "The delegated read request does not match its closed contract.",
+    "bounds_exceeded": "The delegated read request exceeds its byte limit.",
+    "lease_invalid": "The delegated read lease is unavailable or no longer valid.",
+    "lease_expired": "The delegated read lease expired; establish a new authorized exchange.",
+    "shared_gate_required": "Use delegated reads through the shared release gate.",
     # Authorization and identity
     "denied": "The credential lacks the capability or project for this action; use a credential with the right grant or ask the owner for one.",
     "credential_required": "Send a credential: Bearer header on HTTP, `credential` on the socket, or `--credential` on the CLI.",

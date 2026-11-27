@@ -29,6 +29,7 @@ from memoryking.adapters.user_scope import UserScope
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.application.store_core import StoreCore
+from memoryking.application.viewer import Viewer
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.contracts.problems import explain
 from memoryking.domain.hints import hint
@@ -99,11 +100,33 @@ class StoreOperations:
         return action if isinstance(action, str) and action.isidentifier() else "-"
 
     def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
+        # Backend authentication precedes shape errors for the private viewer protocol.
+        if isinstance(request, dict) and request.get("operation") in {
+            "viewer_exchange",
+            "viewer_read",
+            "viewer_close",
+        }:
+            if (
+                set(request) != {"version", "credential", "operation", "args"}
+                or type(request.get("version")) is not int
+                or request.get("version") != 1
+            ):
+                raise LocalError("invalid_request")
+            if (
+                len(canonical_bytes({k: v for k, v in request.items() if k != "credential"}))
+                > 16384
+            ):
+                raise LocalError("bounds_exceeded")
+            return Viewer(self.store).execute(
+                request["credential"], request["operation"], request["args"]
+            )
         found = explain(VALIDATOR, request)
         if found is not None:
             raise LocalError("invalid_request", detail=found)
         op, args, credential = request["operation"], request["args"], request["credential"]
         store = self.store
+        if op in {"viewer_registry", "viewer_mapping"}:
+            return Viewer(store).configure(credential, op.removeprefix("viewer_"), args)
         if op == "experience":
             return Experience(store).execute(credential, args["command"])
         if op == "processing":

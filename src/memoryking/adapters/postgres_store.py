@@ -180,6 +180,7 @@ class PostgresStore(StoreCore):
         self.reranker: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
+        self.viewer_snapshot = False
         # An appending request (a capture and the drain after it) shares the gate with briefings
         # and with other appends, which a per-tenant lock serializes among themselves. It may
         # record events but not journal a policy decision, delete files or purge.
@@ -350,7 +351,9 @@ class PostgresStore(StoreCore):
         """Transaction settings. `statement_ms` replaces the request budget for one statement,
         which only journal replay uses: its work is not part of any request's five seconds."""
         self.connection.execute(
-            "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; SET LOCAL search_path=memoryking,pg_catalog"
+            "SET TRANSACTION ISOLATION LEVEL "
+            + ("REPEATABLE READ" if self.viewer_snapshot else "READ COMMITTED")
+            + "; SET LOCAL search_path=memoryking,pg_catalog"
         )
         remaining_ms = (
             5000
@@ -571,6 +574,52 @@ class PostgresStore(StoreCore):
                             "transaction_ms": metric["transaction_ms"],
                         }
                     )
+
+    @contextmanager
+    def viewer_transaction(self, *, snapshot: bool) -> Iterator[Decision]:
+        from memoryking.adapters.postgres_pool import busy_sqlstate
+
+        if not self.release_only:
+            raise LocalError("shared_gate_required")
+        with self.lock:
+            self.viewer_snapshot = snapshot
+            try:
+                with self.transaction() as decision:
+                    yield decision
+            except Exception as exc:
+                if busy_sqlstate(exc):
+                    raise LocalError("service_busy") from None
+                raise
+            finally:
+                self.viewer_snapshot = False
+
+    def viewer_lock(self, tenant: str, lease_hash: str | None, *, metadata: bool) -> None:
+        # transaction() has already acquired the shared tenant release gate. Never upgrade it.
+        if not self.release_only or tenant != self.tenant:
+            raise LocalError("shared_gate_required")
+        self.connection.execute("SET LOCAL lock_timeout = '1ms'")
+        if metadata:
+            key = int.from_bytes(
+                hashlib.sha256(("viewer-metadata:" + tenant).encode()).digest()[:8],
+                "big",
+                signed=True,
+            )
+            if not self.connection.execute(
+                "SELECT pg_try_advisory_xact_lock(%s)", (key,)
+            ).fetchone()[0]:
+                raise LocalError("service_busy")
+        if lease_hash is not None:
+            from memoryking.adapters.postgres_pool import busy_sqlstate
+
+            try:
+                self.connection.execute(
+                    "SELECT lease_hash FROM viewer_leases WHERE tenant=%s AND lease_hash=%s FOR UPDATE NOWAIT",
+                    (tenant, lease_hash),
+                ).fetchone()
+            except Exception as exc:
+                if busy_sqlstate(exc):
+                    raise LocalError("service_busy") from None
+                raise
 
     def _event(self, tenant: str, kind: str, subject: str, at: int, actor: str = "system") -> int:
         if self.release_only or tenant != self.tenant:
