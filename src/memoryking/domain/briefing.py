@@ -118,6 +118,8 @@ def pack(
 
 
 NEIGHBOUR_OF = "_neighbour_of"  # carried by a neighbouring turn until packing, never rendered
+NARROW = "_narrow"  # a long quote's short form (a text and byte range, or a function making them)
+WIDE_FIRST = 2  # ranked records that keep their long quote; the rest start short (measured)
 
 
 def _round_up(tokens: int, step: int = 50) -> int:
@@ -169,6 +171,16 @@ def pack_rendered(
     # ranked groups, and only when its result was packed, so it never takes a place from a
     # ranked group, a ranked group that does not fit still ends a contiguous page, and it is
     # not counted among the matches.
+    lean: dict[int, dict[str, Any]] = {}
+    if any(NARROW in item for group in groups for item in group):
+        # Quotes carry a short form beside the long one. The key is not output and the
+        # caller's items are not changed (a second packing of the same groups reads them again).
+        copies = [[{k: v for k, v in item.items() if k != NARROW} for item in g] for g in groups]
+        for group, copy_ in zip(groups, copies, strict=True):
+            for item, plain in zip(group, copy_, strict=True):
+                if NARROW in item:
+                    lean[id(plain)] = item[NARROW]
+        groups = copies
     owner = {id(g): g[0].pop(NEIGHBOUR_OF) for g in groups if len(g) == 1 and NEIGHBOUR_OF in g[0]}
     everything = [item for group in groups for item in group]
     filler = {id(item) for group in groups if id(group) in owner for item in group}
@@ -206,27 +218,69 @@ def pack_rendered(
     omitted: list[str] = []
     best: tuple[bytes, int] | None = None
     ended = False
-    for group in groups:
+    # A quote with a short form is first taken short; `longer` holds the long form of the
+    # items of `selected` that are short, by position.
+    longer: dict[int, dict[str, Any]] = {}
+    ranked_taken = 0
+
+    def fits(trial: dict[str, Any]) -> tuple[bytes, int] | None:
+        trial_raw, trial_used = measure(trial)
+        return (
+            (trial_raw, trial_used) if trial_used <= budget and len(trial_raw) <= 262144 else None
+        )
+
+    def shortened(item: dict[str, Any]) -> dict[str, Any]:
+        form = lean[id(item)]
+        if callable(form):  # made when first needed: most records are never taken short
+            form = lean[id(item)] = form() or {}
+        return {**item, **form} if form else item
+
+    def take(group: list[dict[str, Any]]) -> bool | None:
+        nonlocal best, ranked_taken
+        brief = id(group) not in owner and ranked_taken >= WIDE_FIRST
+        short = [shortened(item) if brief and id(item) in lean else item for item in group]
+        try:
+            result = fits(noted([*selected, *short]))
+        except ContractError:
+            omitted.append("optional_serialization_limit")
+            return None
+        if result is None:
+            omitted.append("optional_group_budget")
+            return False
+        ranked_taken += id(group) not in owner
+        for item, taken in zip(group, short, strict=True):
+            if taken is not item:
+                longer[len(selected)] = item
+            selected.append(taken)
+        best = result
+        return True
+
+    ranked_groups = [g for g in groups if id(g) not in owner] if lean else groups
+    for group in ranked_groups:
         if id(group) in owner:
             if owner[id(group)] not in {item.get("reference") for item in selected}:
                 continue
         elif ended:
             continue
-        trial = noted([*selected, *group])
-        try:
-            trial_raw, trial_used = measure(trial)
-        except ContractError:
-            omitted.append("optional_serialization_limit")
-            continue
-        if trial_used <= budget and len(trial_raw) <= 262144:
-            selected.extend(group)
-            best = (trial_raw, trial_used)
-        else:
-            omitted.append("optional_group_budget")
-            if contiguous:
-                ended = True
-                if not owner:
-                    break
+        if take(group) is False and contiguous:
+            ended = True
+            if not owner:
+                break
+    if lean:
+        # What the budget still holds goes to the long forms, in rank order.
+        for position in sorted(longer):
+            trial = [*selected]
+            trial[position] = longer[position]
+            try:
+                result = fits(noted(trial))
+            except ContractError:
+                continue
+            if result is not None:
+                selected[position] = longer[position]
+                best = result
+        for group in groups:
+            if id(group) in owner and owner[id(group)] in {i.get("reference") for i in selected}:
+                take(group)
     if best is None:
         # Nothing fits beside the note: say that matches existed, in the fullest form that fits.
         empty = noted([])

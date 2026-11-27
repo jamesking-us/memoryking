@@ -9,6 +9,7 @@ import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -36,6 +37,7 @@ from memoryking.domain.briefing import (
     COMPILER,
     CONFIGURATION,
     LEGACY_CONFIGURATION,
+    NARROW,
     NEIGHBOUR_OF,
     budget_scope,
     counted,
@@ -76,6 +78,7 @@ DEFAULT_FUSION: dict[str, Any] = {
     "dense": 1,
 }
 TEXT_EXCERPT_BYTES = 2500  # longest quote of one observation in a text briefing that names no count
+TEXT_FIRST_BYTES = 600  # first allocation of a long record there, widened with what is left
 NEIGHBOURS = 2  # turns on each side of a shown result that may fill what is left of a budget
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
 FILL_LIMIT = 32  # items a text briefing may hold when the caller names no count (the maximum)
@@ -137,6 +140,31 @@ def search_text(query: str, understanding: Understanding | None) -> str:
         if terms(understanding.remaining):
             return understanding.remaining
     return query
+
+
+def short_quote(
+    full: str,
+    parts: list[Any],
+    passage_scores: list[int],
+    scorer: Callable[[str], int],
+    score: int,
+    long_range: tuple[int, int],
+) -> dict[str, Any] | None:
+    """The first `TEXT_FIRST_BYTES` of a long record's quote (its best passage), as a text and
+    byte range, or None when the quote is no longer than that already."""
+    passages = parts or split(full)
+    scores = passage_scores
+    if not parts:
+        scores = [scorer(full[p.start : p.end]) for p in passages] if score else [0] * len(passages)
+    first, last = quote(full, passages, scores, TEXT_FIRST_BYTES)
+    if (first, last) == long_range:
+        return None
+    start = len(full[:first].encode())
+    return {
+        "text": full[first:last],
+        "excerpt_start_byte": start,
+        "excerpt_end_byte": start + len(full[first:last].encode()),
+    }
 
 
 class Retrieval:
@@ -1424,6 +1452,20 @@ class Retrieval:
             excerpt_text = full[first:last]
             offset = len(full[:first].encode())
             if score or observation in dense_scores:
+                short: dict[str, Any] = {}
+                if (
+                    quoted == TEXT_EXCERPT_BYTES
+                    and TEXT_FIRST_BYTES
+                    and len(raw) > TEXT_FIRST_BYTES
+                ):
+                    # The short form of the quote: a first allocation that lets the packer hold
+                    # more records, widened to the long form with what the budget leaves. It is
+                    # made only for a record the packer takes short.
+                    short = {
+                        NARROW: partial(
+                            short_quote, full, parts, passage_scores, scorer, score, (first, last)
+                        )
+                    }
                 ranked.append(
                     (
                         score,
@@ -1458,6 +1500,7 @@ class Retrieval:
                                 "source_bytes": len(raw),
                                 "content_hash": row["blob"],
                                 **({"scope": "user"} if is_user_project(row["project"]) else {}),
+                                **short,
                             }
                         ],
                     )

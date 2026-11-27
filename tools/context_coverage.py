@@ -13,6 +13,10 @@ and the context is the arm's: a text briefing for the question under the charact
 
 * `all`: the share of questions whose context holds every answer-bearing turn;
 * `any`: the share whose context holds at least one;
+* `strict_all`: the share whose context holds every answer-bearing turn whole;
+* `lenient_all`, `lenient_any`: as `all` and `any`, where a turn counts when any 80-character
+  window of it is in the context (a quote that starts later in the turn counts);
+* `found_in_part`: answer-bearing turns counted by `all` that are shown only in part;
 * `chars`: characters of the budget the context uses;
 * `candidates`: how many records the semantic and keyword stages considered, and the share of
   questions where a stage hit its candidate limit;
@@ -118,6 +122,41 @@ def window_share(turn: str, seen: str, size: int = 40) -> float:
         return 1.0 if text in seen else 0.0
     windows = [text[i : i + size] for i in range(0, len(text) - size + 1, size)]
     return sum(1 for w in windows if w in seen) / len(windows)
+
+
+def lenient_hit(turn: str, seen: str, size: int = 80) -> bool:
+    """Is any `size`-character window of the turn (whitespace folded, lowercased) in the context?
+    A quote that starts later in a turn still counts, as the standard measure would not."""
+    text = lme.norm(turn)
+    if len(text) <= size:
+        return text in seen
+    return any(text[i : i + size] in seen for i in range(len(text) - size + 1))
+
+
+def turn_figures(item: dict, context: str) -> dict:
+    """For the answer-bearing turns: standard (start shown), strict (whole turn shown) and
+    lenient (some window shown) counts, and how many found turns are shown only in part."""
+    seen = lme.norm(context)
+    gold = set(item["answer_session_ids"])
+    turns = [
+        t
+        for sid, session in zip(
+            item["haystack_session_ids"], item["haystack_sessions"], strict=True
+        )
+        if sid in gold
+        for t in session
+        if t.get("has_answer")
+    ]
+    start = [lme.norm(t["content"])[: lme.PREFIX] in seen for t in turns]
+    whole = [window_share(t["content"], seen) == 1.0 for t in turns]
+    window = [lenient_hit(t["content"], seen) for t in turns]
+    return {
+        "strict_all": bool(turns) and all(whole),
+        "lenient_all": bool(turns) and all(window),
+        "lenient_any": any(window),
+        "found_in_part": sum(1 for f, w in zip(start, whole, strict=True) if f and not w),
+        "found_turns": sum(start),
+    }
 
 
 def bucket(rank: int) -> str:
@@ -258,6 +297,7 @@ def ask(item: dict, stores: Path, budget: int, trace: bool = False) -> dict:
         "lexical_candidates": lexical.get("visible_candidates"),
         "matched": paging.get("matched"),
         "items": len(diagnostics.get("selected") or []),
+        **turn_figures(item, context),
         **({"gold": diagnose(item, context, recorded)} if trace else {}),
         "seeded_now": not seeded,
         "index_seconds": round(index_seconds, 1),
@@ -276,6 +316,11 @@ def summarize(rows: list[dict], budget: int) -> dict:
         "scored": len(scored),
         "all": mean(1.0 if r["all"] else 0.0 for r in scored),
         "any": mean(1.0 if r["any"] else 0.0 for r in scored),
+        "strict_all": mean(1.0 if r["strict_all"] else 0.0 for r in scored),
+        "lenient_all": mean(1.0 if r["lenient_all"] else 0.0 for r in scored),
+        "lenient_any": mean(1.0 if r["lenient_any"] else 0.0 for r in scored),
+        "found_in_part": sum(r["found_in_part"] for r in scored),
+        "found_turns": sum(r["found_turns"] for r in scored),
         "chars_mean": mean(r["chars"] for r in rows),
         "budget_used": mean(r["chars"] / budget for r in rows),
         "items_mean": mean(r["items"] for r in rows),

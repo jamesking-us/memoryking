@@ -199,8 +199,11 @@ def excerpt(
         else:
             break
     start, end = passages[low].start, passages[high].end
+    # No byte count of a span of more than `limit` characters is within `limit`, so the search
+    # for the last word boundary starts there instead of scanning the whole passage each time.
+    end = min(end, start + limit + 1)
     while len(text[start:end].encode()) > limit:
-        cut = max((i for i in range(end - 1, start, -1) if text[i - 1].isspace()), default=0)
+        cut = next((i for i in range(end - 1, start, -1) if text[i - 1].isspace()), 0)
         end = cut if cut > start else end - 1
     chunk = text[start:end]
     start += len(chunk) - len(chunk.lstrip())

@@ -155,3 +155,56 @@ class PostgresBudgetTests(BudgetCases, pg.NativeFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShortFirstPackingTests(unittest.TestCase):
+    """`pack_rendered` with quotes that carry a short form (no store needed)."""
+
+    @staticmethod
+    def item(name, size, short=None, **extra):
+        item = {"reference": name, "text": name * size, **extra}
+        if short:
+            item["_narrow"] = {"text": name * short}
+        return item
+
+    def run_pack(self, groups, budget, contiguous=False):
+        from memoryking.domain.briefing import pack_rendered
+
+        base = {"status": "partial", "guidance": [], "usage": {"output_tokens": 0}}
+
+        def render(packet):
+            return " ".join(i["text"] for i in packet["guidance"]) + (
+                "!" if "omitted_for_budget" in packet else ""
+            )
+
+        count = len
+        return pack_rendered(base, groups, count, budget, render, contiguous)
+
+    def test_later_records_start_short_and_leftover_budget_widens_them_in_rank_order(self):
+        groups = [[self.item(c, 400, 100)] for c in "abcd"]
+        raw, used, selected, omitted = self.run_pack(groups, 1350)
+        self.assertEqual([], omitted)
+        self.assertEqual(
+            {"a": 400, "b": 400, "c": 400, "d": 100},
+            {i["reference"]: len(i["text"]) for i in selected},
+        )
+        self.assertLessEqual(used, 1350)
+        self.assertFalse(any("_narrow" in i for i in selected))
+        # the caller's items are not changed, so a second packing reads the same forms
+        self.assertTrue(all("_narrow" in g[0] for g in groups))
+        self.assertEqual(raw, self.run_pack(groups, 1350)[0])
+
+    def test_a_neighbouring_turn_never_takes_the_room_a_ranked_record_could_widen_into(self):
+        groups = [[self.item(c, 400, 100)] for c in "abcd"]
+        near = self.item("n", 300, None, selection_reason="neighbouring_turn")
+        near["_neighbour_of"] = "a"
+        groups.append([near])
+        _, _, selected, _ = self.run_pack(groups, 1650)
+        sizes = {i["reference"]: len(i["text"]) for i in selected}
+        self.assertEqual({"a": 400, "b": 400, "c": 400, "d": 400}, sizes)
+
+    def test_nothing_changes_for_quotes_without_a_short_form(self):
+        groups = [[self.item(c, 400)] for c in "abcd"]
+        _, _, selected, omitted = self.run_pack(groups, 1000)
+        self.assertEqual(["a", "b"], [i["reference"] for i in selected])
+        self.assertIn("optional_group_budget", omitted)
