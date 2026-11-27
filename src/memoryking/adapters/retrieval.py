@@ -17,6 +17,7 @@ from jsonschema import Draft202012Validator
 from memoryking.adapters.corrections import Corrections
 from memoryking.adapters.dense_search import claim_scores as dense_claim_scores
 from memoryking.adapters.dense_search import search as dense_search
+from memoryking.adapters.episodes import Episodes
 from memoryking.adapters.knowledge_store import Knowledge
 from memoryking.adapters.local_store import (
     ARTIFACT_BYTES_LIMIT,
@@ -35,6 +36,7 @@ from memoryking.domain.briefing import (
     COMPILER,
     CONFIGURATION,
     LEGACY_CONFIGURATION,
+    NEIGHBOUR_OF,
     budget_scope,
     counted,
     pack,
@@ -73,6 +75,7 @@ DEFAULT_FUSION: dict[str, Any] = {
     "lexical": 1,
     "dense": 1,
 }
+NEIGHBOURS = 2  # turns on each side of a shown result that may fill what is left of a budget
 RERANK_WINDOW = 16  # fused candidates the cross-encoder reorders
 FILL_LIMIT = 32  # items a text briefing may hold when the caller names no count (the maximum)
 FOLD_WINDOW = 64  # ranked items compared for repeats (a comparison is quadratic)
@@ -789,7 +792,12 @@ class Retrieval:
                     # next page begins. When the window of newest candidates was full, more
                     # matched than were compared: the count is a floor and says so.
                     paging = stage
-                    more = stage["matched"] > stage["offset"] + len(groups)
+                    own = sum(
+                        1
+                        for g in groups
+                        if not (len(g) == 1 and g[0].get("selection_reason") == "neighbouring_turn")
+                    )
+                    more = stage["matched"] > stage["offset"] + own
                     contiguous = more and args.get("format") == "text"
                     if more or stage["offset"]:
                         base["page"] = {"matched": stage["matched"], "offset": stage["offset"]}
@@ -1320,7 +1328,7 @@ class Retrieval:
                     pending.extend(adjacency[current] - group_ids)
             visited |= group_ids
             group = []
-            for revision in sorted(group_ids):
+            for revision in self._newest_revision_first(by_id, group_ids):
                 claim = self._claim(by_id[revision])
                 claim["lexical_score_ppm"] = scorer(by_id[revision]["body"]["text"])
                 claim["conflicts"] = sorted(adjacency[revision])
@@ -1619,7 +1627,16 @@ class Retrieval:
         limit = args.get("top_k", FILL_LIMIT if args.get("format") == "text" else 8)
         offset = args.get("offset", 0)
         presented, collapsed, behind, matched = self._present(
-            who, ranked, limit, positions, families, args.get("min_score_ppm", 0), offset
+            who,
+            ranked,
+            limit,
+            positions,
+            families,
+            args.get("min_score_ppm", 0),
+            offset,
+            args=args,
+            upto=recorded,
+            at=at,
         )
         trace = [
             {"stage": "authorized_eligibility", "visible_claims": len(candidates)},
@@ -1705,6 +1722,10 @@ class Retrieval:
         families: dict[str, tuple[str, str, str]],
         floor: int = 0,
         offset: int = 0,
+        *,
+        args: dict[str, Any] | None = None,
+        upto: int = 0,
+        at: int = 0,
     ) -> tuple[list[list[dict[str, Any]]], dict[str, int], dict[str, list[str]], int]:
         """One answer per fact, after ranking and before packing; the fourth value is how many
         distinct answers matched in all (the page returned starts at `offset` of them).
@@ -1888,6 +1909,19 @@ class Retrieval:
         entries = self._diversify(entries, count)
         entries = self._spread(entries, need, count)
         chosen = entries[offset:need]
+        # Only a briefing that asked for no particular count, page, exact match, file or floor.
+        if args is not None and args.get("format") == "text" and not floor and not offset:
+            if args.get("top_k") is None and args.get("match") != "all" and not args.get("file"):
+                chosen = self._beside(
+                    who,
+                    chosen,
+                    Episodes(self.s, who, upto, at),
+                    positions,
+                    args,
+                    upto,
+                    at,
+                    count,
+                )
         shown = [positions[e[1]] for e in chosen if single(e) and e[1] in positions]
         recorded: dict[int, int] = {}
         if shown:
@@ -1908,6 +1942,101 @@ class Retrieval:
         }
         self._label(who["tenant"], chosen)
         return [group for _, _, group in chosen], count, collapsed, matched
+
+    @staticmethod
+    def _newest_revision_first(by_id: dict[str, dict[str, Any]], group_ids: set[str]) -> list[str]:
+        """The members of a conflict group in a stable order, where revisions of one claim
+        family stand newest first: a later revision of a claim is what the store recorded as
+        replacing the earlier one, so it is listed before it. Members of different families
+        keep their order, and nothing is added or left out."""
+        order = sorted(group_ids)
+        slots: dict[str, list[int]] = {}
+        for place, revision in enumerate(order):
+            slots.setdefault(by_id[revision]["family"], []).append(place)
+        result = list(order)
+        for places in slots.values():
+            members = sorted(
+                (order[i] for i in places),
+                key=lambda r: (-by_id[r].get("created_position", 0), r),
+            )
+            for place, revision in zip(places, members, strict=True):
+                result[place] = revision
+        return result
+
+    def _beside(
+        self,
+        who: dict[str, Any],
+        chosen: list[tuple[int, str, list[dict[str, Any]]]],
+        episodes: Episodes,
+        positions: dict[str, int],
+        args: dict[str, Any],
+        recorded: int,
+        at: int,
+        count: dict[str, int],
+    ) -> list[tuple[int, str, list[dict[str, Any]]]]:
+        window = args.get("time_range")
+        shown = {e[1] for e in chosen}
+        rows = self.s.observation_rows(
+            who["tenant"],
+            [e[1] for e in chosen if len(e[2]) == 1 and e[2][0]["authority"] == "observed_episode"],
+        )
+        wanted: dict[str, list[Any]] = {}
+        for entry in chosen:
+            row = rows.get(entry[1])
+            if row is None:
+                continue
+            mine = []
+            for near in episodes.beside(row, NEIGHBOURS):
+                if near["id"] in shown or near["id"] in wanted or near["id"] in mine:
+                    continue
+                if window and not (
+                    window.get("from_ms", 0)
+                    <= near["observed_at_ms"]
+                    <= window.get("to_ms", MAX_MS)
+                ):
+                    continue
+                mine.append(near["id"])
+                wanted[near["id"]] = [near, entry[1]]
+        if not wanted:
+            return chosen
+        hidden, retiring = Corrections(self.s).screen(who, list(wanted), recorded, at)
+        made: dict[str, tuple[int, str, list[dict[str, Any]]]] = {}
+        for ident, (row, _) in wanted.items():
+            if ident in hidden:
+                continue
+            raw = self._blob(row)
+            full = raw.decode()
+            parts = split(full) if len(raw) > EXCERPT_BYTES else []
+            first, last = quote(full, parts, [0] * len(parts)) if parts else (0, len(full))
+            text = full[first:last]
+            offset = len(full[:first].encode())
+            positions[ident] = row["position"]
+            made[ident] = (
+                0,
+                ident,
+                [
+                    {
+                        "reference": ident,
+                        "authority": "observed_episode",
+                        "text": text,
+                        "actor": row["principal"],
+                        "source": row["source"],
+                        "observed_at_ms": row["observed_at_ms"],
+                        "assurance": "actor_reported",
+                        "selection_reason": "neighbouring_turn",
+                        NEIGHBOUR_OF: wanted[ident][1],
+                        "lexical_score_ppm": 0,
+                        **({"retirement_requested": True} if ident in retiring else {}),
+                        "excerpt_start_byte": offset,
+                        "excerpt_end_byte": offset + len(text.encode()),
+                        "source_bytes": len(raw),
+                        "content_hash": row["blob"],
+                        **({"scope": "user"} if is_user_project(row["project"]) else {}),
+                    }
+                ],
+            )
+        count["neighbours_added"] = len(made)
+        return [*chosen, *made.values()]
 
     def _label(self, tenant: str, chosen: list[tuple[int, str, list[dict[str, Any]]]]) -> None:
         """Say what each record of a long page is about, from what the store already holds: the

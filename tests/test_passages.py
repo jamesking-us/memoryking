@@ -6,6 +6,7 @@ PostgreSQL, so both engines must index, quote, collapse and purge the same way.
 """
 
 import json
+import re
 import unittest
 
 import test_knowledge as knowledge
@@ -703,11 +704,14 @@ class PassageCases(LexicalCases):
         first = self.brief("orders export settled", format="text", max_output_tokens=2500)
         shown = [source["id"] for source in first["sources"]]
         self.assertTrue(0 < len(shown) < 30)
-        self.assertIn(f"`offset` {len(shown)}", first["text"])
+        # The turns beside a shown record fill what the budget leaves; the page's own records
+        # are the first `offset` of the ordered list.
+        offset = int(re.search(r"`offset` (\d+)", first["text"]).group(1))
+        self.assertTrue(0 < offset <= len(shown))
         rest = self.brief(
             "orders export settled",
             format="text",
-            offset=len(shown),
+            offset=offset,
             top_k=32,
             max_output_tokens=60000,
         )
@@ -718,7 +722,8 @@ class PassageCases(LexicalCases):
             )["sources"]
         ]
         later = [source["id"] for source in rest["sources"]]
-        self.assertEqual(whole, shown + later[: len(whole) - len(shown)])
+        self.assertLessEqual(set(whole[:offset]), set(shown))
+        self.assertEqual(whole[offset:], later[: len(whole) - offset])
 
     def test_text_rendering_separates_sections_and_shows_the_recorded_minute(self):
         first = self.capture("a", "Deploys need a second reviewer.")

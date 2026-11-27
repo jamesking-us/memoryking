@@ -117,6 +117,9 @@ def pack(
     return raw, used, selected, omitted
 
 
+NEIGHBOUR_OF = "_neighbour_of"  # carried by a neighbouring turn until packing, never rendered
+
+
 def _round_up(tokens: int, step: int = 50) -> int:
     return -(-tokens // step) * step
 
@@ -162,8 +165,14 @@ def pack_rendered(
         return raw, used, [], ["essential_set_does_not_fit"]
     if not groups:
         return raw, used, [], []
+    # A turn beside a result names that result and is only a filler: it is tried after the
+    # ranked groups, and only when its result was packed, so it never takes a place from a
+    # ranked group, a ranked group that does not fit still ends a contiguous page, and it is
+    # not counted among the matches.
+    owner = {id(g): g[0].pop(NEIGHBOUR_OF) for g in groups if len(g) == 1 and NEIGHBOUR_OF in g[0]}
     everything = [item for group in groups for item in group]
-    total = len(everything)
+    filler = {id(item) for group in groups if id(group) in owner for item in group}
+    total = len(everything) - len(filler)
     whole = copy.deepcopy(value)
     whole["guidance"] = everything
     try:
@@ -173,6 +182,13 @@ def pack_rendered(
     if whole_used <= budget and len(whole_raw) <= 262144:
         return whole_raw, whole_used, everything, []
     # Leave room for the one-line note about what was left out, then pack greedily.
+    if filler:
+        ranked = copy.deepcopy(value)
+        ranked["guidance"] = [item for item in everything if id(item) not in filler]
+        try:
+            whole_used = measure(ranked)[1]
+        except ContractError:
+            pass
     needed = _round_up(whole_used + 60)
 
     def noted(selected: list[dict[str, Any]]) -> dict[str, Any]:
@@ -180,8 +196,8 @@ def pack_rendered(
         trial["guidance"] = list(selected)
         trial["omitted_for_budget"] = {
             "matched": total,
-            "shown": len(selected),
-            "omitted": total - len(selected),
+            "shown": len([item for item in selected if id(item) not in filler]),
+            "omitted": total - len([item for item in selected if id(item) not in filler]),
             "budget_to_include": needed,
         }
         return trial
@@ -189,7 +205,13 @@ def pack_rendered(
     selected: list[dict[str, Any]] = []
     omitted: list[str] = []
     best: tuple[bytes, int] | None = None
+    ended = False
     for group in groups:
+        if id(group) in owner:
+            if owner[id(group)] not in {item.get("reference") for item in selected}:
+                continue
+        elif ended:
+            continue
         trial = noted([*selected, *group])
         try:
             trial_raw, trial_used = measure(trial)
@@ -202,7 +224,9 @@ def pack_rendered(
         else:
             omitted.append("optional_group_budget")
             if contiguous:
-                break
+                ended = True
+                if not owner:
+                    break
     if best is None:
         # Nothing fits beside the note: say that matches existed, in the fullest form that fits.
         empty = noted([])
