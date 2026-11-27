@@ -70,9 +70,9 @@ class Reader:
     def install(self) -> None:
         reader = self
 
-        def present(self, who, ranked, limit, positions, families, *rest):  # type: ignore[no-untyped-def]
+        def present(self, who, ranked, limit, positions, families, *rest, **named):  # type: ignore[no-untyped-def]
             reader.ranked = [(s, r, g[0].get("text", "")) for s, r, g in ranked]
-            return reader._present(self, who, ranked, limit, positions, families, *rest)
+            return reader._present(self, who, ranked, limit, positions, families, *rest, **named)
 
         retrieval.Retrieval._present = present  # type: ignore[method-assign]
 

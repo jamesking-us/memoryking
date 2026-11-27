@@ -465,6 +465,18 @@ class RetrievalTests(unittest.TestCase):
             text.index("## Accepted knowledge"), text.index("## Unreviewed observations")
         )
 
+    def test_revisions_of_one_claim_are_listed_newest_first_whatever_their_ids(self):
+        for family in ("alpha", "beta", "gamma", "delta"):
+            revisions, version = [], 0
+            for number in range(3):
+                text = f"the {family} limit is value{number}"
+                made = self.propose(self.body(text=text), key=family, version=version)
+                version = self.review(made)["family_version"]
+                revisions.append(made["revision"])
+            result = self.run_r(args=self.brief_args(query=f"{family} limit"))
+            listed = [i["reference"] for i in result["guidance"] if i["reference"] in revisions]
+            self.assertEqual(revisions[::-1], listed, family)
+
     def test_multi_word_query_matches_any_term_on_every_backend(self):
         captured = self.observe("deadline", "retry backoff exceeded the total deadline")
         self.observe("unrelated", "astronomy lecture notes")

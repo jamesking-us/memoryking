@@ -24,7 +24,10 @@ SCAN_VECTORS = 200_000
 SCAN_VECTORS_PYTHON = 10_000
 CHUNK = 32768  # rows converted to float32 at a time, which bounds the working memory
 SHORTLIST = 20000  # rows whose per-subject best is taken; exact for up to 64 parts a subject
-RESULTS = 256
+# Set by measurement (tools/context_coverage.py, development draws): with 64 the share of
+# LongMemEval questions whose briefing shows every needed turn was higher than with 256, and the
+# share showing at least one was not lower; more candidates only let weak neighbours into fusion.
+RESULTS = 64
 
 # One statement for both backends: eligibility is inside it, before any limit. The newest
 # vectors come first so that a truncated scan keeps recent memory.

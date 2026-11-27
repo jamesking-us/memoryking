@@ -206,7 +206,7 @@ def _more(packet: dict[str, Any]) -> str:
         1
         for i in packet.get("guidance", [])
         if i.get("authority") != "drafted_unreviewed"
-        and i.get("selection_reason") != "conflict_expansion"
+        and i.get("selection_reason") not in {"conflict_expansion", "neighbouring_turn"}
     )
     if not isinstance(matched, int) or not isinstance(offset, int) or matched <= offset + shown:
         return ""
