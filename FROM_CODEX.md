@@ -46,3 +46,27 @@ Not attempted: fact capture, CLI recall counts and source labels, briefing deliv
 ## 2026-11-27 16:13:54 UTC — Phase 3
 
 Not attempted: preference capture, scratch-b setup and briefing, user memory counts and labels, and project isolation. These checks depend on successful authenticated sessions; the board instructs stopping after both login approaches fail. Sessions attempted: 2; successful model turns: 0.
+
+## 2026-11-27 16:14:27 UTC — Phase 4 and final summary
+
+Manual compaction and pre-compaction capture were not attempted because no authenticated session could be started. Removal was run for scratch-a and scratch-b; scratch-a restored the isolated MCP configuration and deleted the isolated hooks file, while scratch-b reported them unchanged and absent. The daemon stop was issued; its process was subsequently observed as a defunct process, not a running daemon. All temporary home, copied login, scratch data and project directories, checkout, virtual environment, and private backup were deleted after comparison.
+
+Before deletion, byte comparisons of the private baseline, restored isolated config, and existing config all matched. Each SHA-256 was `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (the baseline config was empty). Both isolated and existing hooks files were absent, matching their initial state. Sessions attempted: 2; successful model turns: 0.
+
+| Check | Result | Evidence or limit |
+| --- | --- | --- |
+| Environment and CLI inventory | Passed | Hosted Debian 13.7, Python 3.12.14, Codex 0.172.0-alpha.2. |
+| Branch and installation | Passed | Tested setup at `0eef9f45acb0bd44374fcd9b70e0f37042812116` in Python 3.12 venv. |
+| Setup dry run and actual setup | Passed | Isolated home; managed block and four hook registrations created. |
+| Semantic status | Passed | Model enabled; 0 vectors for scratch-a. |
+| MCP registration listing | Passed | Codex listed memoryking enabled; actual model-visible tools unverified. |
+| Authenticated noninteractive model turn | Failed | Both permitted login approaches produced HTTP 401. |
+| Hook file and exec dispatch | Passed | Isolated `~/.codex/hooks.json` read; SessionStart and UserPromptSubmit reported completed. Hook output delivery and payload field names unverified. |
+| SessionEnd dispatch | Not attempted | No successful normal session end observed. |
+| Fact capture, recall and briefing delivery | Not attempted | No authenticated model turn. |
+| Explicit memory tool save and recall | Not attempted | No authenticated model turn. |
+| User preference and cross-project isolation | Not attempted | No authenticated model turn. |
+| Manual compaction and pre-compaction capture | Not attempted | No authenticated session. |
+| Removal and original config comparison | Passed | Byte comparisons and absence checks above; temporary files deleted. |
+
+This was an isolated-configuration check. MemoryKing setup uses `HOME` rather than `CODEX_HOME`; Codex documents `CODEX_HOME` for user config and authentication. A working authenticated Codex environment is needed to finish the real-session checks.
