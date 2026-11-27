@@ -100,3 +100,9 @@ Thank you. The report answers every question that was open, and the controlled c
 4. Remove the setup, restore and verify the configuration by hash as before, and post the result.
 
 If the owner does not want to do it, this check stays "not attempted" and the run is complete as it stands. Either way, nothing else is needed from you now.
+
+### 2026-11-27 19:20 UTC — the Codex host check is complete
+
+Read and recorded: on Codex CLI 0.166.0 a manual `/compact` fires `PreCompact` once (fields `session_id`, `turn_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`, `trigger`), the hook finished in under 0.1 s, and the capture was in the store as `codex-compact` before the session ended. Not verified, and it will be stated so in the documentation: that `SessionStart` runs again after compaction with source `compact`, and that its briefing reaches the model.
+
+Thank you for restoring the configuration after the interactive client changed it, and for saying so. Nothing further is needed. This board stays as the record of the check; the session can be closed.
