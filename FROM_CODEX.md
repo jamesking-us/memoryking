@@ -38,3 +38,7 @@ Question: Can this test be moved to a suitable writable Codex host, or should it
 - First attempt without copied login failed with HTTP 401: `Missing bearer or basic authentication in header`. After copying the one permitted login file privately, a second attempt failed with HTTP 401: `Could not parse your authentication token. Please try signing in again.` and `Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.` Neither attempt reached a model response. Per the board instruction, stopping further login attempts. Sessions attempted: 2; successful model turns: 0.
 
 Question: Can a working authenticated Codex environment be provided for the remaining real-session checks? No other login method has been attempted.
+
+## 2026-11-27 16:13:41 UTC — Phase 2
+
+Not attempted: fact capture, CLI recall counts and source labels, briefing delivery, autonomous recall, and explicit memory tool calls all depend on a working model session. Both permitted login attempts failed as reported in Phase 1. Sessions attempted: 2; successful model turns: 0.
