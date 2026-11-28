@@ -342,8 +342,8 @@ class LocalRetentionTests(RetentionCases, unittest.TestCase):
         self.store.db.execute("PRAGMA user_version=18")
         self.store.close()
         self.store = LocalStore(self.data, self.control)
-        self.assertEqual(21, SCHEMA_VERSION)
-        self.assertEqual(21, self.store.db.execute("PRAGMA user_version").fetchone()[0])
+        self.assertEqual(22, SCHEMA_VERSION)
+        self.assertEqual(22, self.store.db.execute("PRAGMA user_version").fetchone()[0])
         self.assertEqual(before, self.count("receipt_observations"))
         names = {
             r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='index'")
@@ -378,6 +378,9 @@ class PostgresRetentionTests(RetentionCases, pg.NativeFixture):
         with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as db:
             with db.transaction():
                 db.execute("SET LOCAL search_path=memoryking,pg_catalog")
+                db.execute(
+                    "DROP TABLE viewer_receipt_context, viewer_leases, viewer_mappings, viewer_registries"
+                )
                 db.execute("DROP TABLE receipt_observations")
                 # Schemas 15 and 16 created these; a real schema 13 database has none of them.
                 db.execute("DROP TABLE consolidation_runs, unreviewed_tier")
@@ -387,7 +390,7 @@ class PostgresRetentionTests(RetentionCases, pg.NativeFixture):
             version = db.execute(
                 "SELECT value FROM memoryking.shared_meta WHERE key='schema'"
             ).fetchone()[0]
-        self.assertEqual("16", version)
+        self.assertEqual("17", version)
         self.assertEqual(before, self.count("receipt_observations"))
         # Row-level security is forced again after the copy.
         with psycopg.connect(self.cluster.dsn("mk_migration"), autocommit=True) as db:

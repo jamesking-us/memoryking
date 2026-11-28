@@ -202,7 +202,7 @@ def enable_vector(admin: Any, roles: Roles | None = None) -> None:
 # columns or indexes that this build ignores, and nothing this build writes is read differently
 # by the newer one. Rolling upgrade order for an additive migration: migrate the database, then
 # restart services one at a time. Any other migration needs stop, migrate, start.
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 # Migration 13 -> 14 is not listed: the newer service finds receipts to delete on purge through
 # a join table the older one does not fill, so a mixed fleet could leave a receipt behind.
 ADDITIVE_MIGRATIONS: frozenset[int] = frozenset()
@@ -251,6 +251,7 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
             "14",
             "15",
             "16",
+            "17",
         }:
             raise LocalError("schema_unsupported")
         if version[0] == "1":
@@ -326,6 +327,9 @@ def migrate(connection: Any, roles: Roles | None = None) -> None:
         if int(version[0]) < 16:
             connection.execute(Path(__file__).with_name("postgres_vectors_schema.sql").read_text())
             connection.execute("UPDATE shared_meta SET value='16' WHERE key='schema'")
+        if int(version[0]) < 17:
+            connection.execute(Path(__file__).with_name("postgres_viewer_schema.sql").read_text())
+            connection.execute("UPDATE shared_meta SET value='17' WHERE key='schema'")
         connection.execute("REVOKE ALL ON ALL TABLES IN SCHEMA memoryking FROM PUBLIC")
         connection.execute("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA memoryking FROM PUBLIC")
         tables = [

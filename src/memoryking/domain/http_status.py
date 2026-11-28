@@ -7,7 +7,12 @@ Anything else keeps the transport's default, usually 400 or 403.
 from __future__ import annotations
 
 CONFLICT_SUFFIXES = ("_conflict", "_stale", "_changed", "_consumed", "_superseded")
-CONFLICT_CODES = {"reconciliation_required", "operation_reconciliation_required"}
+CONFLICT_CODES = {
+    "reconciliation_required",
+    "operation_reconciliation_required",
+    "lease_invalid",
+    "lease_expired",
+}
 # 429 means "retry later": stored capacity that frees with time or retention, and the
 # few limits that clear on their own. A fixed input bound (tool_input_limit,
 # checkpoint_input_limit, ...) never clears, so it keeps the transport's 400.
@@ -38,6 +43,10 @@ UNAVAILABLE_CODES = {
 
 
 def http_status(code: str, default: int) -> int:
+    if code == "bounds_exceeded":
+        return 413
+    if code == "input_invalid":
+        return 400
     if code in UNAVAILABLE_CODES:
         return 503
     if code in CAPACITY_CODES or code.endswith(CAPACITY_SUFFIXES):

@@ -216,6 +216,11 @@ def create_app(
             body = load_strict(bytes(data))
             if not isinstance(body, dict):
                 raise LocalError("invalid_request")
+            if (
+                body.get("operation") in {"viewer_exchange", "viewer_read", "viewer_close"}
+                and len(data) > 16384
+            ):
+                raise LocalError("bounds_exceeded")
             # The whole request, body included, shares one five-second budget.
             result = await anyio.to_thread.run_sync(
                 service.execute,

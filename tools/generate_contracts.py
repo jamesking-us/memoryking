@@ -17,6 +17,7 @@ from generate_processing import generate as generate_processing
 from generate_repository import generate as generate_repository
 from generate_retrieval import generate as generate_retrieval
 from generate_stdio import generate as generate_stdio
+from generate_viewer import generate as generate_viewer
 from generate_working import generate as generate_working
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +90,9 @@ def generate() -> dict[Path, bytes]:
     experience = generate_experience(
         processing[ROOT / "src/memoryking/adapters/local_wire.schema.json"]
     )
+    inspection = generate_inspection(
+        experience[ROOT / "src/memoryking/adapters/local_wire.schema.json"]
+    )
     return {
         **generate_retrieval(),
         **working,
@@ -98,7 +102,8 @@ def generate() -> dict[Path, bytes]:
         **embedding,
         **processing,
         **experience,
-        **generate_inspection(experience[ROOT / "src/memoryking/adapters/local_wire.schema.json"]),
+        **inspection,
+        **generate_viewer(inspection[ROOT / "src/memoryking/adapters/local_wire.schema.json"]),
         **generate_stdio(),
         ROOT / "src/memoryking/contracts/generated.py": ("\n".join(py).rstrip() + "\n").encode(),
         ROOT / "packages/contracts/src/generated.ts": ("\n".join(ts).rstrip() + "\n").encode(),

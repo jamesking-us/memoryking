@@ -71,6 +71,69 @@ class SharedHTTPTests(unittest.TestCase):
         self.listener.close()
         self.tmp.cleanup()
 
+    def test_private_viewer_operations_share_the_release_gate(self):
+        from memoryking.application.viewer import AUDIENCE
+
+        backend = self.command(
+            "grant",
+            dict(principal="viewer_backend", project="demo", capabilities=["viewer_exchange"]),
+        )["credential"]
+        self.command(
+            "grant", dict(principal="viewer_subject", project="demo", capabilities=["read"])
+        )
+        common = dict(
+            installation_id="test", provider="github.com", starts=None, expires=None, enabled=True
+        )
+        self.command(
+            "viewer_registry",
+            {**common, "delegator": "viewer_backend", "project": "demo", "audience": AUDIENCE},
+        )
+        self.command("viewer_mapping", {**common, "github_id": "123", "subject": "viewer_subject"})
+        self.command(
+            "capture",
+            dict(
+                namespace=self.namespace,
+                key="viewer1",
+                request=observation(1, readers=["viewer_subject"]),
+            ),
+        )
+        lease = self.command(
+            "viewer_exchange",
+            dict(
+                installation_id="test",
+                audience=AUDIENCE,
+                project="demo",
+                provider="github.com",
+                github_id="123",
+                session_ref="a" * 64,
+            ),
+            backend,
+        )
+        args = dict(lease_id=lease["lease_id"], session_ref="a" * 64, query="", cursor="")
+        result = self.command("viewer_read", args, backend)
+        self.assertEqual(1, len(result["data"]["items"]))
+        self.assertNotIn("handle", result["data"]["items"][0])
+        self.assertTrue(
+            self.command(
+                "viewer_close", dict(lease_id=lease["lease_id"], session_ref="a" * 64), backend
+            )["closed"]
+        )
+        status, refused = self.raw(
+            dict(version=1, operation="viewer_read", args=args),
+            {"Authorization": "Bearer " + backend},
+        )
+        self.assertEqual(409, status)
+        self.assertEqual("lease_invalid", refused["error"])
+        self.assertNotIn(lease["lease_id"], json.dumps(refused))
+        oversized = urllib.request.Request(
+            self.url + f"/v1/tenants/{self.tenant}/operations",
+            b" " * 16384 + canonical_bytes(dict(version=1, operation="viewer_read", args=args)),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + backend},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(oversized)
+        self.assertEqual(413, caught.exception.code)
+
     def raw(self, body, headers=None, tenant=None, timeout=5):
         request = urllib.request.Request(
             self.url + f"/v1/tenants/{tenant or self.tenant}/operations",
