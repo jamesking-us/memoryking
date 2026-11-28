@@ -4,6 +4,10 @@ Every user-visible change, newest first. The **Unreleased** section is the draft
 
 ## Unreleased
 
+## 0.3.0 (2026-11-28)
+
+Every item of phase 7 of the [roadmap](https://github.com/jamesking-us/memoryking/blob/main/docs/roadmap.md) is in this release. The largest changes for someone using it: briefings show more of an answer that is spread over several sessions, indexing for search by meaning is about 3.5 times faster, standing personal preferences follow you to your other projects, and Codex support was checked on a real Codex. Install with `pip install memoryking==0.3.0`, then `memoryking setup claude-code --project my-app`; the local-daemon image is `ghcr.io/jamesking-us/memoryking:0.3.0`. On 120 LongMemEval questions that no tuning had used, MemoryKing answered 103 correctly against 100 for Basic Memory 1.0.0, 97 for 0.2.0 and 87 for MCP Memory Service 13.0.0; only the lead over MCP Memory Service is beyond chance, and the lead over 0.2.0 is not established at the threshold declared for 120 questions (see the [record](https://github.com/jamesking-us/memoryking/blob/main/benchmarks/longhaul/results/2026-11-28-t6-83f6ff9.md)).
+
 ### Codex
 
 - `memoryking setup codex`, `--remove`, `--dry-run` and `memoryking hooks install --host codex --scope user` now follow `CODEX_HOME` (Codex's own setting) for `config.toml` and `hooks.json` when it is set and not empty, and `~/.codex` otherwise. `--remove` also looks in `~/.codex`, so files written by an earlier version are still undone. A project's `.codex/hooks.json` does not move.
