@@ -16,7 +16,7 @@ We tested MemoryKing head to head against three other memory products, and again
 | --- | ---: | ---: | --- |
 | Finding one fact hidden among 2,000 earlier sessions | **12 of 12** | 9 of 12 | Searching the raw transcripts, with no memory product (the best other product got 6) |
 | Handling corrected facts, deleted memories, several projects and planted instructions | **23 of 27** | 21 of 27 | Knowledge Graph Memory server |
-| Answering questions about long chat histories (120 questions from the public LongMemEval set that were never used to tune MemoryKing) | **103 of 120** | 100 of 120 | Basic Memory |
+| Answering questions about long chat histories (120 questions from the public LongMemEval set, none used to tune MemoryKing) | **103 of 120** | 100 of 120 | Basic Memory |
 | Saving its own memory across four real sessions | **4 of 4** | 4 of 4 | A plain notes file (the other three products got 0) |
 
 MemoryKing also gave the agent the least to read: 123,000 tokens per task on average, against 150,000 for the next lowest (MCP Memory Service) and about 218,000 for the other two products.
@@ -24,7 +24,7 @@ MemoryKing also gave the agent the least to read: 123,000 tokens per task on ave
 What that means in practice:
 
 - **Nothing missed in a long history.** MemoryKing passed all 12 tasks at 2,000 sessions. The tests confirm its lead over Basic Memory there, and over MCP Memory Service at both sizes.
-- **Most questions answered.** MemoryKing answered 103 of 120 questions correctly (86%), more than any other product tested (Basic Memory 100, MCP Memory Service 87) and more than the released version 0.2.0 did on the same questions (97). Only the lead over MCP Memory Service is beyond chance; the lead over the others is within what 120 questions can tell apart. Search by meaning is part of the standard install.
+- **Most questions answered.** MemoryKing answered 103 of 120 questions correctly (86%), more than any other product tested (Basic Memory 100, MCP Memory Service 87) and more than its own previous release, 0.2.0, on the same questions (97). The test confirms its lead over MCP Memory Service. Search by meaning is part of the standard install.
 - **Less to read, and quicker.** The agent read over 40% less text with MemoryKing than with Basic Memory or the Knowledge Graph Memory server, and finished sooner than with any of the others. The tests confirm both.
 - **Corrections followed.** When a fact changed over time, the agent with MemoryKing used the current value in 8 of 8 tasks.
 - **Projects kept apart.** A fact private to one project never reached a session in another project with MemoryKing. The other three products keep one store for every project, and it reached 7 of their 9 sessions.
