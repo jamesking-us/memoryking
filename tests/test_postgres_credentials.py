@@ -17,21 +17,8 @@ from memoryking.adapters.local_files import atomic
 from memoryking.adapters.postgres_recovery import backup, end_maintenance, restore, rotate_owner
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
+from memoryking.application.records import archive_tables
 from memoryking.domain.local import LocalError, SystemClock
-
-LATER_TABLES = {
-    "credential_generations",
-    "lexical_state",
-    "lexical_projects",
-    "lexical_terms",
-    "supersessions",
-    "retirement_requests",
-    "pins",
-    "consolidation_runs",
-    "unreviewed_tier",
-    "embedding_vectors",
-    "embedding_skips",
-}
 
 
 class PostgresCredentialTests(unittest.TestCase):
@@ -150,10 +137,13 @@ class PostgresCredentialTests(unittest.TestCase):
         archive, controller = self.backup_to("-legacy")
         manifest = controller.verify_document(archive / "manifest")
         digests = (archive / "blob-index").read_bytes().decode().splitlines()
-        tables = {
-            name: meta for name, meta in manifest["tables"].items() if name not in LATER_TABLES
-        }
         for schema in (7, 6):
+            tables = {
+                name: meta
+                for name, meta in manifest["tables"].items()
+                if name in archive_tables(schema)
+            }
+            self.assertEqual(set(archive_tables(schema)), set(tables))
             legacy = dict(manifest)
             legacy.update(schema=schema, tables=tables)
             if schema == 6:
