@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 # The newest archive schema a shared backup is written with. A table joins the archive in the
 # schema named by `archived_in`; older archives stay restorable with the tables they held.
-ARCHIVE_SCHEMA = 13
+ARCHIVE_SCHEMA = 14
 
 Backend = Literal["both", "shared", "local", "pgvector"]
 Scope = Literal["tenant", "none"]
@@ -235,6 +235,11 @@ RECORD_TYPES: tuple[RecordType, ...] = (
         new_history="delete",
         worker_writes=True,
     ),
+    _t("viewer_registries", "policy", archived_in=14),
+    _t("viewer_mappings", "policy", archived_in=14),
+    _t("viewer_receipt_context", "audit", archived_in=14, purge="delete", new_history="delete"),
+    # Lease hashes are ephemeral, never replayed or restored as authority.
+    _t("viewer_leases", "bookkeeping", new_history="delete"),
     # Not copied into a shared backup.
     _t("meta", "bookkeeping", worker_writes=True),
     _t("instance_lease", "bookkeeping", new_history="delete"),

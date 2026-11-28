@@ -76,6 +76,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | `bootstrap_invalid` | The one-use code is wrong, already used, expired, or issued before a permission change; request a new code. |
 | `bootstrap_limit` | Too many unused sign-in codes are outstanding; wait a minute and request one again. |
 
+## bounds
+
+| Code | What to do |
+| --- | --- |
+| `bounds_exceeded` | The delegated read request exceeds its byte limit. |
+
 ## breadth
 
 | Code | What to do |
@@ -478,6 +484,12 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | --- | --- |
 | `initialization_requires_new_directories` | Initialize into directories that do not exist yet. |
 
+## input
+
+| Code | What to do |
+| --- | --- |
+| `input_invalid` | The delegated read request does not match its closed contract. |
+
 ## inspection
 
 | Code | What to do |
@@ -539,6 +551,13 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `knowledge_reconciliation_required` | Knowledge state changed under a restore; reconcile before reviewing. |
+
+## lease
+
+| Code | What to do |
+| --- | --- |
+| `lease_expired` | The delegated read lease expired; establish a new authorized exchange. |
+| `lease_invalid` | The delegated read lease is unavailable or no longer valid. |
 
 ## legacy
 
@@ -944,6 +963,7 @@ cannot drift from what the service says. Codes are grouped by their first word.
 | Code | What to do |
 | --- | --- |
 | `shared_backup_command_required` | Use the shared backup command for PostgreSQL tenants. |
+| `shared_gate_required` | Use delegated reads through the shared release gate. |
 | `shared_migration_command_required` | Use the shared migrate command for PostgreSQL. |
 | `shared_restore_command_required` | Use the shared restore command for PostgreSQL tenants. |
 | `shared_tls_required` | The shared service requires HTTPS; pass `--tls-cert` and `--tls-key`, or `--loopback-http` for local testing only. |

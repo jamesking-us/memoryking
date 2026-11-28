@@ -413,7 +413,7 @@ The shared profile has the same rule per tenant (`doctor` covers the local profi
 
 ## Upgrades, retention and removal
 
-Current storage schemas are SQLite 19 and PostgreSQL 14 (archive schema 11). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
+Current storage schemas are SQLite 22 and PostgreSQL 17 (shared archive schema 14). Keep the installed revision, wheel/image hashes, locks, content archive and current control evidence before an upgrade. Test on a disposable copy first. Local upgrades run under exclusive store ownership; shared schema migration runs before API/workers start, using the migration role.
 
 Do not run an older binary against a newer schema or manually lower a schema version. Prefer a compatible roll-forward; use verified fresh-history restore when recovery is needed. There is no automatic reverse migration or multi-host failover.
 
@@ -426,3 +426,27 @@ Structured plans use the existing core store and checkpoint permissions; there i
 Stop services before removing runtime environments or images. Removing software does not remove data, control, archives or migration bundles. Keep or deliberately dispose of those separately under your retention policy.
 
 [Back to README](../README.md) · [Reference and troubleshooting](reference.md) · [Security](../SECURITY.md)
+
+
+### Delegated-read storage upgrade
+
+The delegated observation-read interface adds SQLite schema 22 and PostgreSQL
+schema 17. SQLite applies its additive migration when opening the store. For
+PostgreSQL, stop the service, migrate as the existing migration role, then start
+the matching release; mixed old/new services are not supported. New tables use
+the existing tenant RLS policies and runtime role, without a new database role.
+Registry and mapping changes are journaled under the exclusive policy gate.
+Viewer exchange/read/close use the shared release gate, with bounded per-tenant
+metadata admission and per-lease row locks. No scheduler or listener is installed.
+PostgreSQL uses the native READ COMMITTED gate protocol: policy changes and
+purges wait for active reads, while captures can append concurrently without
+invalidating a read's receipt. The candidate page is collected in one query;
+an append during collection can add a continuation whose next page is empty.
+The exchange-only capability requires an explicit grant; bootstrap owners and
+native delegation retain their existing capability sets.
+
+Configure the trusted backend and mapping through the private administrative
+`viewer_registry` and `viewer_mapping` operations described in the
+[reference](reference.md#delegated-observation-reads). Provisioning a backend
+credential, its secret custody and any browser authentication are separate
+operator actions; a GitHub id or a successful login is never a project grant.

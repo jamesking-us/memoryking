@@ -19,6 +19,9 @@ from tools.postgres_dev_cluster import DevCluster
 
 BIN = Path(os.environ.get("MEMORYKING_PG_BIN", "tmp/postgres-dev/runtime/bin")).resolve()
 LATER_TABLES = {
+    "viewer_registries",
+    "viewer_mappings",
+    "viewer_receipt_context",
     "credential_generations",
     "lexical_state",
     "lexical_projects",
@@ -549,7 +552,7 @@ class PostgresStoreTests(unittest.TestCase):
             control = store.control
         self.assertEqual(2, manifest["blob_index"]["count"])
         self.assertNotIn("blobs", manifest)
-        self.assertEqual(13, manifest["schema"])
+        self.assertEqual(14, manifest["schema"])
         index = (archive / "blob-index").read_bytes()
         digests = index.decode().splitlines()
 

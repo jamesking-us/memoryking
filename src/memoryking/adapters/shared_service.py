@@ -381,7 +381,8 @@ class SharedService:
                 self.reject("invalid_request")
             with self.store(tenant, credential, request_deadline=deadline) as store:
                 return {"credential": store.delegate(**args)}
-        if not VALIDATOR.is_valid(value):
+        viewer = request["operation"] in {"viewer_exchange", "viewer_read", "viewer_close"}
+        if not viewer and not VALIDATOR.is_valid(value):
             self.reject("invalid_request")
         if request["operation"] == "dashboard_bootstrap":
             if self.dashboard is None:
@@ -393,13 +394,18 @@ class SharedService:
         # briefings, and a capture appends under the same shared gate; policy changes, purges and
         # restores still take the gate exclusively and wait for both.
         briefing = request["operation"] == "retrieval"
-        release_only = briefing or request["operation"] in {
-            "read",
-            "export",
-            "context",
-            "status",
-            "namespace",
-        }
+        release_only = (
+            viewer
+            or briefing
+            or request["operation"]
+            in {
+                "read",
+                "export",
+                "context",
+                "status",
+                "namespace",
+            }
+        )
         with self.store(
             tenant,
             credential,

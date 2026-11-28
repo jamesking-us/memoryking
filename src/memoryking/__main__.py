@@ -2162,7 +2162,8 @@ def main() -> int:
                     "project": args.project,
                     "capabilities": sorted(set(args.capabilities.split(","))),
                 }
-                unknown = sorted(set(grant["capabilities"]) - (CAPABILITIES - {"admin"}))
+                grant_capabilities = (CAPABILITIES - {"admin"}) | {"viewer_exchange"}
+                unknown = sorted(set(grant["capabilities"]) - grant_capabilities)
                 if unknown:
                     # Say which name is wrong and which exist, not a bare invalid_request.
                     raise LocalError(
@@ -2170,7 +2171,7 @@ def main() -> int:
                         detail={
                             "path": "--capabilities",
                             "problem": "unknown capability " + ", ".join(unknown[:4]),
-                            "expected": "any of " + ", ".join(sorted(CAPABILITIES - {"admin"})),
+                            "expected": "any of " + ", ".join(sorted(grant_capabilities)),
                         },
                     )
                 if args.rotate:

@@ -638,3 +638,56 @@ Every error reply carries a `hint` beside its `error` code, and the complete lis
 | `provider_unavailable`, `provider_response_invalid` | The provider failed, timed out or answered in an unexpected shape; nothing was admitted and the audit record says `failed`. The dispatch is never retried automatically. |
 
 [Back to README](../README.md) · [Agent guide](agent-guide.md) · [Deployment](deployment.md)
+
+## Delegated observation reads
+
+The private socket and shared command transports support `viewer_exchange`,
+`viewer_read` and `viewer_close`. These are backend operations for a separately
+trusted read viewer, not browser endpoints or general credential delegation.
+The closed requests are defined in `contracts/viewer-v1.schema.json`.
+
+An administrator journals a `viewer_registry` entry binding installation, backend,
+project, provider and audience, and a `viewer_mapping` entry binding an immutable
+GitHub numeric id to a MemoryKing subject. Both entries take explicit nullable
+`starts`/`expires` timestamps and an `enabled` boolean; updates advance revisions.
+The supported provider is `github.com` and audience is
+`clankercity-viewer-read-v1`. This does not implement GitHub login or infer grants
+from GitHub identity. A subject still needs an explicit current `read` grant on
+the exact project. Wildcard or administrative access does not qualify, and private
+`_user_*` scopes are excluded.
+
+The backend credential must carry only `viewer_exchange` across all its grants.
+It cannot also be a mapped subject, and mapped subjects cannot be administrators,
+registered backends or exchange-capable principals. Native reads and the existing
+issuer-acting PostgreSQL delegation retain their original behavior.
+
+Exchange takes `installation_id`, `audience`, `project`, `provider`, `github_id`
+and a 64-character lowercase hexadecimal `session_ref`. It returns an opaque
+43-character lease id with an absolute lifetime of at most 30 seconds. Only its
+SHA-256 lookup hash is retained. Read takes `lease_id`, `session_ref`, `query`
+and `cursor` (an empty string starts at the beginning). Close takes `lease_id`
+and `session_ref`; closing an owned retained lease is idempotent. Keep the lease
+and session reference in the trusted backend, outside browser output and logs.
+
+Each read rechecks current backend and subject generations, grants, configuration
+revisions, source history and policy/purge epochs. It applies the subject's reader
+lists and holds. The response contains at most 32 candidates' visible observations,
+without native signed observation handles, and a subject-actor receipt hashing the
+entire response. A nonempty cursor can accompany an empty page because invisible
+candidates are consumed. Cursors are signed context/query/lease bindings, not new
+read authority. A single item exceeding the page bounds yields a content-free
+`oversize` position notice; subsequent rows remain reachable through the cursor.
+
+Operation bodies are limited to 16 KiB, queries to 256 characters, cursors to
+4096 bytes, text to 128 KiB per page and complete responses to 256 KiB. Lease limits
+are 1024 per tenant, 256 per backend and 16 per subject/session; admission refuses
+instead of evicting live authority. Exchange removes at most 64 expired or closed
+leases. Receipts and their viewer provenance follow existing receipt retention
+and observation purge, independently of lease cleanup.
+
+A lease does not extend the source's five-second release deadline. Current
+lease/grant expiry can shorten it. `release_for_ms` and `display_for_ms` are bounded
+server durations; consumers must charge transport time against them. Revocation
+cannot retract bytes already released at an earlier source authorization point.
+Deployment, secret custody, browser authentication and browser release checks
+require their own integration and qualification.

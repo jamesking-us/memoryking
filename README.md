@@ -69,6 +69,8 @@ flowchart LR
 
 ## What is new
 
+Trusted viewer backends can now request short-lived, subject-authorized observation reads through a separate [delegated read interface](docs/reference.md#delegated-observation-reads), without holding a native content-read credential. Browser login and deployment require separate integration.
+
 One command, `memoryking setup`, connects Claude Code, Codex or any other host that starts MCP servers: it creates a store, starts the service, issues the agent its own limited credential, registers the tools and installs session hooks. The default tool set is now small and answers in readable Markdown, and an agent can also keep preferences that follow you across every project. Token budgets count what the model really receives, questions that contain dates ("what did we decide last week") are understood, and a model you allow can draft claims for you to review. Credentials can be rotated, and a delegated token now acts as the person who issued it (a breaking change that the changelog explains). The [changelog](https://github.com/jamesking-us/memoryking/blob/main/CHANGELOG.md) lists everything, newest first, and the [release page](https://github.com/jamesking-us/memoryking/releases) carries the notes of each published version.
 
 ## What it does for agents
