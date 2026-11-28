@@ -133,6 +133,14 @@ class SharedHTTPTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(oversized)
         self.assertEqual(413, caught.exception.code)
+        # An operation that is a JSON list or object is a malformed request (400), never a
+        # service failure (503) with an operator log line.
+        for operation in ([], {}, ["viewer_read"]):
+            status, refused = self.raw(
+                dict(version=1, operation=operation, args={}),
+                {"Authorization": "Bearer " + backend},
+            )
+            self.assertEqual((400, "invalid_request"), (status, refused["error"]), operation)
 
     def raw(self, body, headers=None, tenant=None, timeout=5):
         request = urllib.request.Request(

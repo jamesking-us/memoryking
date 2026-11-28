@@ -12,6 +12,7 @@ from memoryking.adapters.local_contract import VALIDATOR
 from memoryking.adapters.local_ipc import StoreOperations
 from memoryking.adapters.postgres_store import PostgresStore
 from memoryking.adapters.shared_control import SharedControl
+from memoryking.application.viewer import is_operation
 from memoryking.contracts.canonical import canonical_bytes
 from memoryking.domain.local import LocalError, Released
 from memoryking.health import CHECKS
@@ -381,7 +382,7 @@ class SharedService:
                 self.reject("invalid_request")
             with self.store(tenant, credential, request_deadline=deadline) as store:
                 return {"credential": store.delegate(**args)}
-        viewer = request["operation"] in {"viewer_exchange", "viewer_read", "viewer_close"}
+        viewer = is_operation(request["operation"])
         if not viewer and not VALIDATOR.is_valid(value):
             self.reject("invalid_request")
         if request["operation"] == "dashboard_bootstrap":

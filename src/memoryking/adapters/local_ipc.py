@@ -29,7 +29,7 @@ from memoryking.adapters.user_scope import UserScope
 from memoryking.adapters.working import Working
 from memoryking.application.local_port import LocalOperations
 from memoryking.application.store_core import StoreCore
-from memoryking.application.viewer import Viewer
+from memoryking.application.viewer import Viewer, is_operation
 from memoryking.contracts.canonical import ContractError, canonical_bytes, load_strict
 from memoryking.contracts.problems import explain
 from memoryking.domain.hints import hint
@@ -101,11 +101,7 @@ class StoreOperations:
 
     def _execute(self, request: dict[str, Any]) -> dict[str, Any] | Released:
         # Backend authentication precedes shape errors for the private viewer protocol.
-        if isinstance(request, dict) and request.get("operation") in {
-            "viewer_exchange",
-            "viewer_read",
-            "viewer_close",
-        }:
+        if isinstance(request, dict) and is_operation(request.get("operation")):
             if (
                 set(request) != {"version", "credential", "operation", "args"}
                 or type(request.get("version")) is not int
@@ -191,10 +187,7 @@ class Handler(socketserver.StreamRequestHandler):
             value = load_strict(raw)
             if not isinstance(value, dict):
                 raise LocalError("invalid_request")
-            if (
-                value.get("operation") in {"viewer_exchange", "viewer_read", "viewer_close"}
-                and len(raw.removesuffix(b"\n")) > 16384
-            ):
+            if is_operation(value.get("operation")) and len(raw.removesuffix(b"\n")) > 16384:
                 raise LocalError("bounds_exceeded")
             operations: LocalOperations = self.server.operations  # type: ignore[attr-defined]
             response = operations.execute(value)

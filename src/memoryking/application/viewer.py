@@ -27,6 +27,7 @@ HEX = re.compile(r"[0-9a-f]{64}\Z")
 IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,96}\Z")
 GITHUB_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
 LEASE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+OPERATIONS = frozenset({"viewer_exchange", "viewer_read", "viewer_close"})
 READ_KEYS = (
     "id",
     "authority",
@@ -41,6 +42,12 @@ READ_KEYS = (
     "classification",
     "observed_at_ms",
 )
+
+
+def is_operation(value: Any) -> bool:
+    """Whether a request's `operation` names a delegated read. The value is whatever JSON the
+    caller sent: a list or an object is not hashable, so its type is checked before the set."""
+    return isinstance(value, str) and value in OPERATIONS
 
 
 def require(ok: Any, code: str = "input_invalid") -> None:

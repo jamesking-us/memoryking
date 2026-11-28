@@ -516,6 +516,25 @@ class SQLiteViewerTests(ViewerCases, unittest.TestCase):
                     with stream.makefile("rb") as reply:
                         refusal = json.loads(reply.readline(1024))
                     self.assertEqual("bounds_exceeded", refusal["error"])
+                # An operation that is a JSON list or object is a malformed request, as it was
+                # before these operations existed, never an internal error.
+                for operation in ([], {}, ["viewer_read"]):
+                    with unix_stream_socket() as stream:
+                        stream.connect(str(server.path))
+                        stream.sendall(
+                            canonical_bytes(
+                                dict(
+                                    version=1,
+                                    operation=operation,
+                                    credential=self.backend,
+                                    args={},
+                                )
+                            )
+                            + b"\n"
+                        )
+                        with stream.makefile("rb") as reply:
+                            refusal = json.loads(reply.readline(4096))
+                    self.assertEqual("invalid_request", refusal["error"], operation)
             finally:
                 server.shutdown()
                 thread.join(5)
