@@ -420,3 +420,25 @@ Nothing is deleted yet, so everything can still be looked up. The old repository
 1. Delete every old clone on the machine and clone again; set the repository identity as in the 02:20 entry.
 2. OWNER, when satisfied (there is no hurry): delete `memoryking-old`. GitHub can still restore a deleted repository for a time; it is not public meanwhile.
 3. Report as in section E of the 02:45 entry, plus the five release links.
+
+### 2026-11-28 05:25 UTC: publish 0.3.0 (the owner has asked for the release; confirm with the owner in your session before you upload)
+
+The procedure is the skill in the repository, `.claude/skills/release-memoryking/SKILL.md`, parts B and C, with `docs/deployment.md` ("Publishing a release") as the authority for the commands. Part A is done on the Linux side. State:
+
+- **Commit to release:** `2cb1a54e4620affb2feb8ee78d2f346bdf7c708a` on `main` ("Release 0.3.0 (#9)"). The clean-checkout job passed on exactly that commit (21 steps).
+- **Tag:** not created (a cloud session cannot push tags). Create and push it: `git tag -a v0.3.0 -m "MemoryKing 0.3.0" 2cb1a54e4620affb2feb8ee78d2f346bdf7c708a` and `git push origin v0.3.0`.
+- **Release-file hashes at that commit** (Linux, Python 3.12.3, build 1.6.1, setuptools 84.2.1, wheel 0.48.0, source date epoch 1795838909):
+  - `560fd54c033e3007b6143819b034726ecfa71fd505f495f0e97df7beeb33164f  memoryking-0.3.0-py3-none-any.whl`
+  - `3519a8263d2abd06da343eff9952539ddea115dc1ca75727a0527b5e2660d86c  memoryking-0.3.0.tar.gz`
+  Build inside WSL2 from a fresh clone at the tag, as for 0.2.0. If your hashes differ, stop and post both; do not upload.
+
+**Before anything is uploaded: the Windows checks.** Hook code that also runs on Windows changed in this release (`host_hooks.py`, `hook_cli.py` with a new `build_parser`, `hook_spool.py`, `domain/preference.py`, `setup_host.py`, `adapters/platform_support.py`). On Windows itself, at the tag: mypy, `tools/windows_tests.py`, and one hook replay, as you did for 0.2.0. Expected on Windows: the Codex session-end hand-off is off (the capture runs inside the hook, because `LOCAL_STORE_SUPPORTED` is false), and `process_alive` keeps its Windows branch. If any of the three fails, stop, post the failure, and do not publish; the fix would be a new commit and a new set of hashes.
+
+**Then, in order, each reported as done, failed or not attempted** (the owner types every login and consent; never pass `--yes` or a token for them):
+1. PyPI: `twine upload dist/memoryking-0.3.0*`, then compare the hashes at `https://pypi.org/pypi/memoryking/0.3.0/json` with `SHA256SUMS`.
+2. Image: `python tools/image_rehearsal.py --output tmp/image-0.3.0.json`, tag and push `ghcr.io/jamesking-us/memoryking:0.3.0`, note the digest that `docker push` prints, confirm an anonymous pull by digest.
+3. Signature: `cosign sign ghcr.io/jamesking-us/memoryking@sha256:<digest>` with the owner signing in, then the `cosign verify` command from `docs/deployment.md`.
+4. GitHub release for `v0.3.0`: notes are the changelog's `## 0.3.0 (2026-11-28)` section, then the install command, the image digest and the `cosign verify` line; attach `SHA256SUMS`, `RELEASE.json`, the wheel and the sdist; not a pre-release; mark it latest.
+5. Part C of the skill: a fresh-environment install of `memoryking==0.3.0` with `--version` and a dry-run setup in a scratch home (on Windows set `USERPROFILE`, `LOCALAPPDATA` and `HOME`); one real setup, hook replay and `--remove` on Windows from the published package and image; read the release page and the PyPI JSON.
+
+Post in `FROM_WINDOWS.md`: the tag's commit, your two hashes, the three Windows checks, the PyPI link, the image digest, the verify result, the release link, and anything not done. One follow-up for the Linux side comes from your report: `docs/deployment.md` still shows the 0.2.0 image digest as its worked example, and it will be updated to the 0.3.0 digest you post.
