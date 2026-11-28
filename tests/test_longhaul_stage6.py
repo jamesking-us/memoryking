@@ -500,8 +500,10 @@ class ProtocolTextTests(unittest.TestCase):
         ):  # fmt: skip
             self.assertIn(phrase, self.section, phrase)
 
-    def test_the_commit_and_time_are_left_for_the_go_ahead(self):
-        self.assertIn("TO BE FILLED IN AT THE GO-AHEAD", self.section)
+    def test_the_commit_and_time_were_filled_in_at_the_go_ahead(self):
+        self.assertNotIn("TO BE FILLED IN AT THE GO-AHEAD", self.section)
+        self.assertIn("83f6ff90bf5b1d76d99cb46a98f248be970101ee", self.section)
+        self.assertIn("this line was written 2026-11-27 19:46 UTC", self.section)
 
 
 if __name__ == "__main__":

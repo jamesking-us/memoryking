@@ -13,7 +13,7 @@ python3.12 -m venv .venv
 git clone https://github.com/jamesking-us/memoryking.git && cd memoryking
 ```
 
-This installs the released package from PyPI (`0.2.0`). The checkout is for the examples and tools in this guide; the installed service itself does not need it. To pin the wheel by hash, use the `install` line from the release's `RELEASE.json` on the [release page](https://github.com/jamesking-us/memoryking/releases). To build from source instead, install the locks and the checkout as the [contributing guide](../CONTRIBUTING.md) describes, or use the [release wheel or container image](deployment.md#release-build).
+This installs the released package from PyPI (`0.3.0`). The checkout is for the examples and tools in this guide; the installed service itself does not need it. To pin the wheel by hash, use the `install` line from the release's `RELEASE.json` on the [release page](https://github.com/jamesking-us/memoryking/releases). To build from source instead, install the locks and the checkout as the [contributing guide](../CONTRIBUTING.md) describes, or use the [release wheel or container image](deployment.md#release-build).
 
 ## 2. Connect your agent
 
@@ -52,7 +52,7 @@ uv venv --seed --python 3.12 .venv
 Setup says what it found and which one it uses. If you have both WSL2 and Docker Desktop, it asks you to choose by running it again with `--backend wsl:Ubuntu` (your distro's name) or `--backend docker --image memoryking:local` ([the image](deployment.md#windows)). It installs the same MemoryKing version on that side (with its search libraries), creates the store there, downloads the search model there after saying what it fetches (`--no-semantic` skips it), writes the Claude Code hooks and prints the MCP command to run, then checks the whole path and ends with one line:
 
 ```text
-MemoryKing works: wsl:Ubuntu, project my-app, version 0.2.0 on both sides
+MemoryKing works: wsl:Ubuntu, project my-app, version 0.3.0 on both sides
 ```
 
 `--dry-run` shows every change first, and `--remove` undoes the Windows side. `.venv\Scripts\memoryking doctor` reports the back end, both versions and the next step when something is wrong. The [deployment guide](deployment.md#windows) covers upgrades, removal and what is not supported.
