@@ -10,6 +10,7 @@ import threading
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 from test_local_store import FakeClock, delivered, observation
@@ -26,6 +27,32 @@ SESSION = "a" * 64
 
 
 class ViewerCases:
+    def test_native_owner_capabilities_remain_unchanged(self):
+        native = {
+            "capture",
+            "read",
+            "export",
+            "jobs",
+            "admin",
+            "review",
+            "policy",
+            "attest",
+            "task_constraint",
+            "checkpoint",
+            "handoff",
+            "inference",
+            "repository",
+        }
+        with self.open() as store:
+            context = delivered(store.context(self.owner, "demo"))
+            self.assertEqual(native, set(context["capabilities"]))
+            with store.transaction():
+                grant = store.db.execute(
+                    "SELECT capabilities FROM grants WHERE tenant=? AND principal='owner' AND project='*'",
+                    (self.tenant,),
+                ).fetchone()
+                self.assertEqual(native, set(json.loads(grant[0])))
+
     def setup_viewer(self):
         self.clock = FakeClock()
         with self.open() as store:
@@ -589,7 +616,7 @@ class PostgreSQLViewerTests(ViewerCases, unittest.TestCase):
                     ).fetchone()[0],
                 )
 
-    def open(self, credential=None, release=False):
+    def open(self, credential=None, release=False, append=False):
         from memoryking.adapters.postgres_store import PostgresStore
 
         return PostgresStore(
@@ -600,7 +627,97 @@ class PostgreSQLViewerTests(ViewerCases, unittest.TestCase):
             credential or self.owner,
             clock=self.clock,
             release_only=release,
+            append=append,
         )
+
+    def test_concurrent_capture_does_not_abort_viewer_receipt(self):
+        self.capture(1, readers=["subject"])
+        lease = self.exchange()["lease_id"]
+        entered, resume = threading.Event(), threading.Event()
+
+        def reading():
+            with self.open(self.backend, release=True) as store:
+
+                def fault(stage):
+                    if stage == "after_validation":
+                        entered.set()
+                        if not resume.wait(3):
+                            raise AssertionError("capture barrier timed out")
+
+                store.fault = fault
+                return delivered(
+                    Viewer(store).execute(
+                        self.backend,
+                        "viewer_read",
+                        dict(lease_id=lease, session_ref=SESSION, query="", cursor=""),
+                    )
+                )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(reading)
+            self.assertTrue(entered.wait(3))
+            try:
+                with self.open(append=True) as store:
+                    store.capture(self.owner, self.namespace, "concurrent", observation(2))
+            finally:
+                resume.set()
+            self.assertEqual(1, len(future.result(timeout=5)["data"]["items"]))
+
+    def test_read_queued_behind_revocation_evaluates_current_authority(self):
+        from memoryking.adapters.postgres_store import take_gate
+
+        lease = self.exchange()["lease_id"]
+        revoking, resume, queued = threading.Event(), threading.Event(), threading.Event()
+
+        def revoke():
+            with self.open() as store:
+
+                def fault(stage):
+                    if stage == "after_journal":
+                        revoking.set()
+                        if not resume.wait(3):
+                            raise AssertionError("revocation barrier timed out")
+
+                store.fault = fault
+                store.revoke(self.owner, "subject", "demo")
+
+        def gate(connection, tenant, *, shared):
+            if shared and tenant == self.tenant:
+                queued.set()
+            return take_gate(connection, tenant, shared=shared)
+
+        # Construct the reader before the revoker takes the control/journal lock.
+        with self.open(self.backend, release=True) as reader:
+
+            def read():
+                return delivered(
+                    Viewer(reader).execute(
+                        self.backend,
+                        "viewer_read",
+                        dict(lease_id=lease, session_ref=SESSION, query="", cursor=""),
+                    )
+                )
+
+            with patch("memoryking.adapters.postgres_store.take_gate", gate):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    writer = executor.submit(revoke)
+                    self.assertTrue(revoking.wait(3))
+                    result = executor.submit(read)
+                    try:
+                        self.assertTrue(queued.wait(3))
+                        self.assertFalse(result.done())
+                    finally:
+                        resume.set()
+                    writer.result(timeout=5)
+                    with self.assertRaises(LocalError) as caught:
+                        result.result(timeout=5)
+                    self.assertIn(caught.exception.code, {"lease_invalid", "denied"})
+
+    def test_native_delegate_refuses_exchange_only_capability(self):
+        with self.open() as store:
+            with self.assertRaises(LocalError) as caught:
+                store.delegate("subject", "demo", ["viewer_exchange"], 1000)
+            self.assertEqual("invalid_delegation", caught.exception.code)
 
     def test_read_holds_lease_against_close_and_parallel_admission_is_bounded(self):
         lease = self.exchange()["lease_id"]

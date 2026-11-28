@@ -61,7 +61,6 @@ Row = Any
 
 
 CAPABILITIES = {
-    "viewer_exchange",
     "capture",
     "read",
     "export",
@@ -726,8 +725,8 @@ class StoreCore:
                 )
         return rows
 
-    def viewer_transaction(self, *, snapshot: bool) -> Any:
-        """One stable source snapshot for candidate scanning and continuation checks."""
+    def viewer_transaction(self) -> Any:
+        """Freeze authority under the source gate; candidate rows are read in one query."""
         return self.transaction()
 
     def viewer_lock(self, tenant: str, lease_hash: str | None, *, metadata: bool) -> None:
@@ -896,7 +895,9 @@ class StoreCore:
             if not capabilities or not set(capabilities) <= allowed:
                 raise LocalError("invalid_capabilities")
             identifier(project_owner(project))
-        elif not capabilities or not set(capabilities) <= CAPABILITIES - {"admin"}:
+        elif not capabilities or not set(capabilities) <= (CAPABILITIES - {"admin"}) | {
+            "viewer_exchange"
+        }:
             raise LocalError("invalid_capabilities")
         if for_user is not None and for_user != "@self":
             identifier(user_project(for_user))

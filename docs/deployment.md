@@ -425,6 +425,12 @@ the existing tenant RLS policies and runtime role, without a new database role.
 Registry and mapping changes are journaled under the exclusive policy gate.
 Viewer exchange/read/close use the shared release gate, with bounded per-tenant
 metadata admission and per-lease row locks. No scheduler or listener is installed.
+PostgreSQL uses the native READ COMMITTED gate protocol: policy changes and
+purges wait for active reads, while captures can append concurrently without
+invalidating a read's receipt. The candidate page is collected in one query;
+an append during collection can add a continuation whose next page is empty.
+The exchange-only capability requires an explicit grant; bootstrap owners and
+native delegation retain their existing capability sets.
 
 Configure the trusted backend and mapping through the private administrative
 `viewer_registry` and `viewer_mapping` operations described in the

@@ -180,7 +180,6 @@ class PostgresStore(StoreCore):
         self.reranker: Any | None = None
         self.last_utc = self.anchor["last_utc"]
         self.release_only = release_only
-        self.viewer_snapshot = False
         # An appending request (a capture and the drain after it) shares the gate with briefings
         # and with other appends, which a per-tenant lock serializes among themselves. It may
         # record events but not journal a policy decision, delete files or purge.
@@ -351,9 +350,8 @@ class PostgresStore(StoreCore):
         """Transaction settings. `statement_ms` replaces the request budget for one statement,
         which only journal replay uses: its work is not part of any request's five seconds."""
         self.connection.execute(
-            "SET TRANSACTION ISOLATION LEVEL "
-            + ("REPEATABLE READ" if self.viewer_snapshot else "READ COMMITTED")
-            + "; SET LOCAL search_path=memoryking,pg_catalog"
+            "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; "
+            "SET LOCAL search_path=memoryking,pg_catalog"
         )
         remaining_ms = (
             5000
@@ -576,13 +574,18 @@ class PostgresStore(StoreCore):
                     )
 
     @contextmanager
-    def viewer_transaction(self, *, snapshot: bool) -> Iterator[Decision]:
+    def viewer_transaction(self) -> Iterator[Decision]:
         from memoryking.adapters.postgres_pool import busy_sqlstate
 
         if not self.release_only:
             raise LocalError("shared_gate_required")
+        # Use the native READ COMMITTED gate protocol: authority changes and purges
+        # are excluded once the shared gate is held. A REPEATABLE READ snapshot
+        # would start before take_gate finishes waiting, and its receipt's commit
+        # counter update would also conflict with concurrent shared-gate captures.
+        # Candidate scanning is one statement; a concurrent append may only add a
+        # continuation after it, which may legitimately lead to an empty next page.
         with self.lock:
-            self.viewer_snapshot = snapshot
             try:
                 with self.transaction() as decision:
                     yield decision
@@ -590,8 +593,6 @@ class PostgresStore(StoreCore):
                 if busy_sqlstate(exc):
                     raise LocalError("service_busy") from None
                 raise
-            finally:
-                self.viewer_snapshot = False
 
     def viewer_lock(self, tenant: str, lease_hash: str | None, *, metadata: bool) -> None:
         # transaction() has already acquired the shared tenant release gate. Never upgrade it.

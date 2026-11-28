@@ -278,7 +278,7 @@ class Viewer:
                 require(len(args["query"]) <= 256 and len(args["cursor"].encode()) <= 4096)
 
     def execute(self, credential: str, operation: str, args: dict[str, Any]) -> Released:
-        with self.s.viewer_transaction(snapshot=operation == "viewer_read") as decision:
+        with self.s.viewer_transaction() as decision:
             at = decision.evaluated_ms
             who = self._backend(credential, at)
             require(len(canonical_bytes(args)) <= 16384, "bounds_exceeded")
